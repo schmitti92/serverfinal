@@ -422,7 +422,27 @@ return;
       return;
     }
 
-    if(msg.type==="legal_request"){
+    
+
+    if(msg.type==="end_turn" || msg.type==="skip_turn"){
+      if(!requireRoomState(room, ws)) return;
+      if(!requireTurn(room, clientId, ws)) return;
+
+      // Safety: do not allow skipping during mandatory barricade placement
+      if(room.state.phase === "place_barricade"){
+        send(ws,{type:"error", code:"BAD_PHASE", message:"Erst Barikade platzieren"}); return;
+      }
+
+      room.lastRollWasSix = false;
+      room.state.rolled = null;
+      room.state.phase = "need_roll";
+      room.state.turnColor = otherColor(room.state.turnColor);
+
+      broadcast(room, {type:"move", state: room.state});
+      broadcast(room, {type:"room_update", players: currentPlayersList(room), canStart: canStart(room)});
+      return;
+    }
+if(msg.type==="legal_request"){
       if(!requireRoomState(room, ws)) return;
       if(!requireTurn(room, clientId, ws)) return;
       if(room.state.phase !== "need_move"){
