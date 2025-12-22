@@ -48,14 +48,57 @@ function makeRoom(code){
   };
 }
 
+function shuffleInPlace(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function assignColorsRandom(room){
+  // remove offline placeholders on reset (no reservation after reset)
+  for(const p of Array.from(room.players.values())){
+    if(!isConnectedPlayer(p)){
+      room.players.delete(p.id);
+    }
+  }
+  const connected = Array.from(room.players.values()).filter(p=>isConnectedPlayer(p));
+  // clear colors first
+  for(const p of connected) p.color = null;
+
+  if(connected.length === 0) return;
+  if(connected.length > 2){
+    // should not happen because join blocks, but keep it safe
+    connected.length = 2;
+  }
+  shuffleInPlace(connected);
+  const first = connected[0];
+  const second = connected[1] || null;
+  const firstColor = (Math.random() < 0.5) ? "red" : "blue";
+  first.color = firstColor;
+  if(second) second.color = (firstColor === "red") ? "blue" : "red";
+}
+
+
+function isConnectedPlayer(p){
+  const c = clients.get(p.id);
+  return !!(c?.ws && c.ws.readyState === 1);
+}
 function currentPlayersList(room){
   return Array.from(room.players.values()).map(p=>({
-    id:p.id, name:p.name, color:p.color||null, isHost:!!p.isHost
+    id:p.id,
+    name:p.name,
+    color:p.color||null,
+    isHost:!!p.isHost,
+    connected: isConnectedPlayer(p),
+    lastSeen: p.lastSeen || null
   }));
 }
 function canStart(room){
-  const colored = Array.from(room.players.values()).filter(p=>p.color);
-  return colored.length >= 2;
+  // require two connected colored players
+  const coloredConnected = Array.from(room.players.values()).filter(p=>p.color && isConnectedPlayer(p));
+  return coloredConnected.length >= 2;
 }
 function broadcast(room, obj){
   const msg = JSON.stringify(obj);
@@ -289,18 +332,29 @@ wss.on("connection", (ws)=>{
       const hasHost = Array.from(room.players.values()).some(p=>p.isHost);
       const isHost = asHost && !hasHost;
 
-      // color assignment: first two unique sessionTokens get red/blue
-      const usedColors = new Set(Array.from(room.players.values()).map(p=>p.color).filter(Boolean));
-      let color = null;
-      // If reconnect slot existed, keep its color
-      if(existing?.color) color = existing.color;
-      else{
-        if(!usedColors.has("red")) color = "red";
-        else if(!usedColors.has("blue")) color = "blue";
-        else color = null; // spectator
-      }
+      // color assignment (server authoritative, max 2 players: red/blue)
+      const COLORS = ["red","blue"];
+      const used = Array.from(room.players.values()).map(p=>p.color).filter(Boolean);
 
-      room.players.set(clientId, {id:clientId, name, color, isHost, sessionToken, lastSeen:Date.now()});
+      // If reconnect slot existed, keep its color
+      let color = existing?.color || null;
+
+      if(!color){
+        // Room full?
+        if(used.length >= 2){
+          send(ws,{type:"error", code:"ROOM_FULL", message:"Raum ist voll (max. 2 Spieler)."});
+          return;
+        }
+        if(used.length === 0){
+          // first player: random
+          color = COLORS[randInt(0,1)];
+        }else{
+          // second player: the other color
+          color = COLORS.find(c=>!used.includes(c)) || null;
+        }
+      }
+room.players.set(clientId, {id:clientId, name, color, isHost, sessionToken, lastSeen:Date.now()});
+      console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} existing=${!!existing}`);
       c.room = roomCode; c.name = name; c.sessionToken=sessionToken;
 
       send(ws, {type:"room_update", players: currentPlayersList(room), canStart: canStart(room)});
@@ -330,8 +384,27 @@ wss.on("connection", (ws)=>{
       if(!me?.isHost){ send(ws,{type:"error", code:"NOT_HOST", message:"Nur Host kann starten"}); return; }
       if(!canStart(room)){ send(ws,{type:"error", code:"NEED_2P", message:"Mindestens 2 Spieler nötig"}); return; }
       initGameState(room);
+      console.log(`[start] room=${room.code} starter=${room.state.turnColor}`);
       broadcast(room, {type:"started", state: room.state});
+      
+    if(msg.type==="reset"){
+      const me = room.players.get(clientId);
+      if(!me?.isHost){ send(ws,{type:"error", code:"NOT_HOST", message:"Nur Host kann resetten"}); return; }
+
+      // Full reset: new random colors for currently connected players, no reservations.
+      room.state = null;
+      room.lastRollWasSix = false;
+      room.carryingByColor = { red:false, blue:false };
+
+      assignColorsRandom(room);
+      console.log(`[reset] room=${room.code} by=host`);
+
+      broadcast(room, {type:"room_update", players: currentPlayersList(room), canStart: canStart(room)});
+      broadcast(room, {type:"reset_done"});
       return;
+    }
+
+return;
     }
 
     if(msg.type==="roll_request"){
@@ -341,6 +414,7 @@ wss.on("connection", (ws)=>{
         send(ws,{type:"error", code:"BAD_PHASE", message:"Erst Zug beenden"}); return;
       }
       const v = randInt(1,6);
+      console.log(`[roll] room=${room.code} by=${room.state.turnColor} value=${v}`);
       room.state.rolled = v;
       room.lastRollWasSix = (v===6);
       room.state.phase = "need_move";
@@ -428,6 +502,7 @@ wss.on("connection", (ws)=>{
         // wait for placement; keep rolled in state (for possible extra roll after placement)
       }
 
+      console.log(`[move] room=${room.code} color=${pc.color} piece=${pc.id} to=${pc.nodeId} picked=${picked}`);
       broadcast(room, {type:"move", action:{pieceId:pc.id, path: res.path, pickedBarricade: picked}, state: room.state});
       return;
     }
@@ -447,6 +522,7 @@ wss.on("connection", (ws)=>{
         send(ws,{type:"error", code:"BAD_NODE", message:"Hier darf keine Barikade hin"}); return;
       }
       room.state.barricades.push(nodeId);
+      console.log(`[place] room=${room.code} color=${color} node=${nodeId}`);
       room.carryingByColor[color]=false;
 
       // after placement: handle extra roll or turn switch
@@ -474,7 +550,7 @@ wss.on("connection", (ws)=>{
         const p = room.players.get(clientId);
         const wasColor = p?.color;
         const wasTurn = room.state?.turnColor;
-        room.players.delete(clientId);
+        if(p){ p.lastSeen = Date.now(); }
 
         if(room.state && wasColor && wasTurn && wasColor===wasTurn){
           room.state.paused = true;
