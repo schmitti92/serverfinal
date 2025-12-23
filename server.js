@@ -210,15 +210,20 @@ function sendPieceHome(room, piece){
   piece.houseId = nextFreeHouseId(room, piece.color);
 }
 function isPlacableBarricade(room, nodeId){
-  const n=NODES.get(nodeId);
+  const n = NODES.get(nodeId);
   if(!n || n.kind!=="board") return false;
+
+  // Ziel bleibt tabu (sonst kann man das Ziel komplett blockieren)
   if(n.flags?.goal) return false;
-  if(n.flags?.noBarricade) return false;
-  if(n.flags?.startColor) return false;
+
+  // Nie auf bestehende Barikade oder auf Figuren setzen
   if(room.state.barricades.includes(nodeId)) return false;
   if(occupiedAny(room).has(nodeId)) return false;
+
+  // Alles andere ist erlaubt (auch startColor / noBarricade / run etc.)
   return true;
 }
+
 
 /** ---------- Path + legality (exact steps, no immediate backtrack, no revisits) ---------- **/
 function computeAllTargets(room, startNodeId, steps, color, pieceId){
@@ -628,4 +633,3 @@ if(msg.type==="legal_request"){
 });
 
 server.listen(PORT, ()=>console.log("Barikade server listening on", PORT));
-
