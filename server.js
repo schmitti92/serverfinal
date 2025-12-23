@@ -179,16 +179,17 @@ function isPlacableBarricade(room, nodeId){
   const n = NODES.get(nodeId);
   if(!n || n.kind!=="board") return false;
 
-  // Ziel bleibt tabu (sonst blockiert man das Spiel komplett)
+  // Never on the goal
   if(n.flags?.goal) return false;
 
-  // nicht auf Figuren oder bestehende Barikaden setzen
+  // Never on an occupied node or existing barricade
   if(room.state.barricades.includes(nodeId)) return false;
   if(occupiedAny(room).has(nodeId)) return false;
 
-  // ALLES ANDERE ist erlaubt (auch Start/noBarricade usw.)
+  // Everything else is allowed (including startColor / noBarricade / run nodes)
   return true;
 }
+
 
 /** ---------- Path + legality (exact steps, no immediate backtrack, no revisits) ---------- **/
 function computeAllTargets(room, startNodeId, steps, color, pieceId){
@@ -358,16 +359,6 @@ wss.on("connection", (ws)=>{
         }
       }
 room.players.set(clientId, {id:clientId, name, color, isHost, sessionToken, lastSeen:Date.now()});
-
-      // --- Unpause on reconnect (disconnect-safe) ---
-      // If the active turn player reconnects (or both players are connected), resume the game.
-      if(room.state){
-        const turn = room.state.turnColor;
-        const turnPlayer = Array.from(room.players.values()).find(p=>p.color===turn);
-        if(turnPlayer && isConnectedPlayer(turnPlayer)) room.state.paused = false;
-        const coloredConnected = Array.from(room.players.values()).filter(p=>p.color && isConnectedPlayer(p));
-        if(coloredConnected.length >= 2) room.state.paused = false;
-      }
       console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} existing=${!!existing}`);
       c.room = roomCode; c.name = name; c.sessionToken=sessionToken;
 
