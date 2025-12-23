@@ -418,34 +418,34 @@ room.players.set(clientId, {id:clientId, name, color, isHost, sessionToken, last
       return;
     }
 
-    if(msg.type==="start"){
-      const me = room.players.get(clientId);
-      if(!me?.isHost){ send(ws,{type:"error", code:"NOT_HOST", message:"Nur Host kann starten"}); return; }
-      if(!canStart(room)){ send(ws,{type:"error", code:"NEED_2P", message:"Mindestens 2 Spieler nötig"}); return; }
-      initGameState(room);
-      console.log(`[start] room=${room.code} starter=${room.state.turnColor}`);
-      broadcast(room, {type:"started", state: room.state});
-      
-    if(msg.type==="reset"){
-      const me = room.players.get(clientId);
-      if(!me?.isHost){ send(ws,{type:"error", code:"NOT_HOST", message:"Nur Host kann resetten"}); return; }
+if(msg.type==="start"){
+  const me = room.players.get(clientId);
+  if(!me?.isHost){ send(ws,{type:"error", code:"NOT_HOST", message:"Nur Host kann starten"}); return; }
+  if(!canStart(room)){ send(ws,{type:"error", code:"NEED_2P", message:"Mindestens 2 Spieler nötig"}); return; }
 
-      // Full reset: new random colors for currently connected players, no reservations.
-      room.state = null;
-      room.lastRollWasSix = false;
-      room.carryingByColor = { red:false, blue:false };
+  initGameState(room);
+  console.log(`[start] room=${room.code} starter=${room.state.turnColor}`);
+  broadcast(room, {type:"started", state: room.state});
+  return;
+}
 
-      assignColorsRandom(room);
-      console.log(`[reset] room=${room.code} by=host`);
+if(msg.type==="reset"){
+  const me = room.players.get(clientId);
+  if(!me?.isHost){ send(ws,{type:"error", code:"NOT_HOST", message:"Nur Host kann resetten"}); return; }
 
-      broadcast(room, {type:"room_update", players: currentPlayersList(room), canStart: canStart(room)});
-      broadcast(room, {type:"reset_done"});
-      return;
-    }
+  // Full reset: new random colors for currently connected players, no reservations.
+  room.state = null;
+  room.lastRollWasSix = false;
+  room.carryingByColor = { red:false, blue:false };
 
-return;
-    }
+  assignColorsRandom(room);
+  console.log(`[reset] room=${room.code} by=host`);
 
+  broadcast(room, {type:"room_update", players: currentPlayersList(room), canStart: canStart(room)});
+  broadcast(room, {type:"reset_done"});
+  return;
+}
+  
     if(msg.type==="roll_request"){
       if(!requireRoomState(room, ws)) return;
       if(!requireTurn(room, clientId, ws)) return;
