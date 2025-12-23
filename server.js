@@ -354,6 +354,16 @@ wss.on("connection", (ws)=>{
         }
       }
 room.players.set(clientId, {id:clientId, name, color, isHost, sessionToken, lastSeen:Date.now()});
+
+      // --- Unpause on reconnect (disconnect-safe) ---
+      // If the active turn player reconnects (or both players are connected), resume the game.
+      if(room.state){
+        const turn = room.state.turnColor;
+        const turnPlayer = Array.from(room.players.values()).find(p=>p.color===turn);
+        if(turnPlayer && isConnectedPlayer(turnPlayer)) room.state.paused = false;
+        const coloredConnected = Array.from(room.players.values()).filter(p=>p.color && isConnectedPlayer(p));
+        if(coloredConnected.length >= 2) room.state.paused = false;
+      }
       console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} existing=${!!existing}`);
       c.room = roomCode; c.name = name; c.sessionToken=sessionToken;
 
