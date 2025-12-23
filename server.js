@@ -632,6 +632,32 @@ if (msg.type === "place_barricade") {
 
   nodeId = String(nodeId || "").trim();
 
+  // 🔧 normalize ids (host/client may send "12" or "node_12" etc.)
+  if (nodeId && !NODES.has(nodeId)) {
+    const m = String(nodeId).match(/(\d+)/);
+    if (/^\d+$/.test(nodeId)) nodeId = `n_${nodeId}`;
+    else if (m) nodeId = `n_${m[1]}`;
+  }
+
+  // 🔧 fallback: if still unknown but coords exist, snap to nearest board node
+  if (nodeId && !NODES.has(nodeId)) {
+    let x = null, y = null;
+    if (typeof msg.x === "number" && typeof msg.y === "number") { x = msg.x; y = msg.y; }
+    else if (msg.pos && typeof msg.pos.x === "number" && typeof msg.pos.y === "number") { x = msg.pos.x; y = msg.pos.y; }
+    if (x !== null && y !== null) {
+      let best = null;
+      let bestD = Infinity;
+      for (const n of (BOARD.nodes || [])) {
+        if (n.kind !== "board") continue;
+        const dx = (n.x ?? 0) - x;
+        const dy = (n.y ?? 0) - y;
+        const d = dx*dx + dy*dy;
+        if (d < bestD) { bestD = d; best = n; }
+      }
+      if (best?.id) nodeId = best.id;
+    }
+  }
+
   if (!nodeId) {
     send(ws, { type: "error", code: "NO_NODE", message: "Kein Zielfeld" });
     return;
