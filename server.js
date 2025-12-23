@@ -587,58 +587,82 @@ wss.on("connection", (ws) => {
     }
 
     // ---------- PLACE BARRICADE (Host+Client) ----------
-    if (msg.type === "place_barricade") {
-      if (!requireRoomState(room, ws)) return;
+// ---------- PLACE BARRICADE (Host+Client) ----------
+if (msg.type === "place_barricade") {
+  if (!requireRoomState(room, ws)) return;
 
-      if (room.state.phase !== "place_barricade") {
-        send(ws, { type: "error", code: "BAD_PHASE", message: "Keine Barikade zu platzieren" });
-        return;
-      }
+  if (room.state.phase !== "place_barricade") {
+    send(ws, { type: "error", code: "BAD_PHASE", message: "Keine Barikade zu platzieren" });
+    return;
+  }
 
-      const me = room.players.get(clientId);
-      if (!me?.color) {
-        send(ws, { type: "error", code: "SPECTATOR", message: "Du hast keine Farbe" });
-        return;
-      }
+  const me = room.players.get(clientId);
+  if (!me?.color) {
+    send(ws, { type: "error", code: "SPECTATOR", message: "Du hast keine Farbe" });
+    return;
+  }
 
-      const color = room.state.turnColor;
+  const color = room.state.turnColor;
 
-      // ✅ Zug über Spielerfarbe prüfen (Host/Client egal)
-      if (me.color !== color) {
-        send(ws, { type: "error", code: "NOT_YOUR_TURN", message: "Nicht dein Zug" });
-        return;
-      }
+  // Zug über Spielerfarbe prüfen (Host/Client egal)
+  if (me.color !== color) {
+    send(ws, { type: "error", code: "NOT_YOUR_TURN", message: "Nicht dein Zug" });
+    return;
+  }
 
-      if (!room.carryingByColor[color]) {
-        send(ws, { type: "error", code: "NO_BARRICADE", message: "Du trägst keine Barikade" });
-        return;
-      }
+  if (!room.carryingByColor[color]) {
+    send(ws, { type: "error", code: "NO_BARRICADE", message: "Du trägst keine Barikade" });
+    return;
+  }
 
-      const nodeId = String(msg.nodeId || msg.at || "");
-      if (!nodeId) {
-        send(ws, { type: "error", code: "NO_NODE", message: "Kein Zielfeld" });
-        return;
-      }
+  // ✅ Robust: viele mögliche Payload-Formate akzeptieren
+  let nodeId = "";
+  if (typeof msg.nodeId === "string") nodeId = msg.nodeId;
+  else if (typeof msg.at === "string") nodeId = msg.at;
+  else if (typeof msg.id === "string") nodeId = msg.id;
+  else if (typeof msg.targetId === "string") nodeId = msg.targetId;
+  else if (msg.node && typeof msg.node === "object" && typeof msg.node.id === "string") nodeId = msg.node.id;
 
-      if (!isPlacableBarricade(room, nodeId)) {
-        send(ws, { type: "error", code: "BAD_NODE", message: "Hier darf keine Barikade hin" });
-        return;
-      }
+  // falls aus irgendeinem Grund eine Zahl/Index kommt:
+  if (!nodeId && (typeof msg.nodeId === "number" || typeof msg.at === "number" || typeof msg.id === "number")) {
+    const idx = Number(msg.nodeId ?? msg.at ?? msg.id);
+    const n = (BOARD.nodes || [])[idx];
+    if (n?.id) nodeId = String(n.id);
+  }
 
-      // ✅ wirklich platzieren
-      room.state.barricades.push(nodeId);
-      room.carryingByColor[color] = false;
+  nodeId = String(nodeId || "").trim();
 
-      // ✅ nach Platzierung weiter
-      if (room.lastRollWasSix) room.state.turnColor = color; // extra roll
-      else room.state.turnColor = otherColor(color);
+  if (!nodeId) {
+    send(ws, { type: "error", code: "NO_NODE", message: "Kein Zielfeld" });
+    return;
+  }
 
-      room.state.phase = "need_roll";
-      room.state.rolled = null;
+  if (!isPlacableBarricade(room, nodeId)) {
+    // Mini-Debug, damit du es im Render Log sofort siehst:
+    const n = NODES.get(nodeId);
+    console.log("[place_barricade] FAIL",
+      "player=", me.color,
+      "turn=", color,
+      "nodeId=", nodeId,
+      "exists=", !!n,
+      "kind=", n?.kind
+    );
+    send(ws, { type: "error", code: "BAD_NODE", message: "Hier darf keine Barikade hin" });
+    return;
+  }
 
-      broadcast(room, { type: "snapshot", state: room.state });
-      return;
-    }
+  // ✅ platzieren
+  room.state.barricades.push(nodeId);
+  room.carryingByColor[color] = false;
+
+  // ✅ weiter
+  room.state.turnColor = room.lastRollWasSix ? color : otherColor(color);
+  room.state.phase = "need_roll";
+  room.state.rolled = null;
+
+  broadcast(room, { type: "snapshot", state: room.state });
+  return;
+}
 
     // fallback: unknown message
     return;
