@@ -577,61 +577,96 @@ if(msg.type==="legal_request"){
 if(msg.type==="place_barricade"){
   if(!requireRoomState(room, ws)) return;
 
+if(msg.type==="place_barricade"){
+  if(!requireRoomState(room, ws)) return;
+
   if(room.state.phase !== "place_barricade"){
-    send(ws,{
-      type:"error",
-      code:"BAD_PHASE",
-      message:"Keine Barikade zu platzieren"
-    });
+    send(ws,{type:"error", code:"BAD_PHASE", message:"Keine Barikade zu platzieren"});
+    return;
+  }
+
+  const me = room.players.get(clientId);
+  if(!me?.color){
+    send(ws,{type:"error", code:"SPECTATOR", message:"Du hast keine Farbe"});
     return;
   }
 
   const color = room.state.turnColor;
 
-  // ✅ WICHTIG: Farbe prüfen, NICHT requireTurn
-  if(ws.color !== color){
-    send(ws,{
-      type:"error",
-      code:"NOT_YOUR_TURN",
-      message:"Nicht dein Zug"
-    });
+  // ✅ Zug über Spielerfarbe prüfen (Host & Client gleich)
+  if(me.color !== color){
+    send(ws,{type:"error", code:"NOT_YOUR_TURN", message:"Nicht dein Zug"});
     return;
   }
 
   if(!room.carryingByColor[color]){
-    send(ws,{
-      type:"error",
-      code:"NO_BARRICADE",
-      message:"Du trägst keine Barikade"
-    });
+    send(ws,{type:"error", code:"NO_BARRICADE", message:"Du trägst keine Barikade"});
     return;
   }
+
+  const nodeId = String(msg.nodeId || msg.at || "");
+  if(!nodeId){
+    send(ws,{type:"error", code:"NO_NODE", message:"Kein Zielfeld"});
+    return;
+  }
+
+  if(!isPlacableBarricade(room, nodeId)){
+    send(ws,{type:"error", code:"BAD_NODE", message:"Hier darf keine Barikade hin"});
+    return;
+  }
+
+  // ✅ Barikade platzieren
+  room.state.barricades.push(nodeId);
+  room.carryingByColor[color] = false;
+
+  // ✅ Zug fortsetzen
+  if(room.lastRollWasSix){
+    room.state.turnColor = color; // Extra-Wurf
+  }else{
+    room.state.turnColor = otherColor(color);
+  }
+
+  room.state.phase = "need_roll";
+  room.state.rolled = null;
+
+  broadcast(room, {type:"snapshot", state: room.state});
+  return;
 }
 
-  ws.on("close", ()=>{
-    const c = clients.get(clientId);
-    if(!c) return;
-    const roomCode = c.room;
-    if(roomCode){
-      const room = rooms.get(roomCode);
-      if(room){
-        // mark paused if active player disconnected
-        const p = room.players.get(clientId);
-        const wasColor = p?.color;
-        const wasTurn = room.state?.turnColor;
-        if(p){ p.lastSeen = Date.now(); }
+// fallback für unbekannte Nachrichten
+return;
+}); // 🔚 Ende ws.on("message")
 
-        if(room.state && wasColor && wasTurn && wasColor===wasTurn){
-          room.state.paused = true;
-        }
-        broadcast(room, {type:"room_update", players: currentPlayersList(room), canStart: canStart(room)});
-        if(room.state){
-          broadcast(room, {type:"snapshot", state: room.state});
-        }
+ws.on("close", ()=>{
+  const c = clients.get(clientId);
+  if(!c) return;
+
+  const roomCode = c.room;
+  if(roomCode){
+    const room = rooms.get(roomCode);
+    if(room){
+      const p = room.players.get(clientId);
+      const wasColor = p?.color;
+      const wasTurn = room.state?.turnColor;
+      if(p){ p.lastSeen = Date.now(); }
+
+      if(room.state && wasColor && wasTurn && wasColor===wasTurn){
+        room.state.paused = true;
+      }
+
+      broadcast(room, {
+        type:"room_update",
+        players: currentPlayersList(room),
+        canStart: canStart(room)
+      });
+
+      if(room.state){
+        broadcast(room, {type:"snapshot", state: room.state});
       }
     }
-    clients.delete(clientId);
-  });
+  }
+  clients.delete(clientId);
 });
+}); // 🔚 Ende wss.on("connection")
 
 server.listen(PORT, ()=>console.log("Barikade server listening on", PORT));
