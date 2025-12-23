@@ -574,37 +574,39 @@ if(msg.type==="legal_request"){
       return;
     }
 
-    if(msg.type==="place_barricade"){
-      if(!requireRoomState(room, ws)) return;
-      if(!requireTurn(room, clientId, ws)) return;
-      if(room.state.phase !== "place_barricade"){
-        send(ws,{type:"error", code:"BAD_PHASE", message:"Keine Barikade zu platzieren"}); return;
-      }
-      const color = room.state.turnColor;
-      if(!room.carryingByColor[color]){
-        send(ws,{type:"error", code:"NO_CARRY", message:"Du trägst keine Barikade"}); return;
-      }
-      const nodeId = String(msg.nodeId||"");
-      if(!isPlacableBarricade(room, nodeId)){
-        send(ws,{type:"error", code:"BAD_NODE", message:"Hier darf keine Barikade hin"}); return;
-      }
-      room.state.barricades.push(nodeId);
-      console.log(`[place] room=${room.code} color=${color} node=${nodeId}`);
-      room.carryingByColor[color]=false;
+if(msg.type==="place_barricade"){
+  if(!requireRoomState(room, ws)) return;
 
-      // after placement: handle extra roll or turn switch
-      if(room.lastRollWasSix){
-        room.state.turnColor = color;
-      }else{
-        room.state.turnColor = otherColor(color);
-      }
-      room.state.phase = "need_roll";
-      room.state.rolled = null;
+  if(room.state.phase !== "place_barricade"){
+    send(ws,{
+      type:"error",
+      code:"BAD_PHASE",
+      message:"Keine Barikade zu platzieren"
+    });
+    return;
+  }
 
-      broadcast(room, {type:"snapshot", state: room.state});
-      return;
-    }
-  });
+  const color = room.state.turnColor;
+
+  // ✅ WICHTIG: Farbe prüfen, NICHT requireTurn
+  if(ws.color !== color){
+    send(ws,{
+      type:"error",
+      code:"NOT_YOUR_TURN",
+      message:"Nicht dein Zug"
+    });
+    return;
+  }
+
+  if(!room.carryingByColor[color]){
+    send(ws,{
+      type:"error",
+      code:"NO_BARRICADE",
+      message:"Du trägst keine Barikade"
+    });
+    return;
+  }
+}
 
   ws.on("close", ()=>{
     const c = clients.get(clientId);
