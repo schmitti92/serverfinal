@@ -29,6 +29,22 @@ for(const [a,b] of EDGES){
 const STARTS = BOARD.meta?.starts || {};
 const GOAL = BOARD.meta?.goal || null;
 
+const HOUSE_BY_COLOR = (() => {
+  const map = { red: [], blue: [], green: [], yellow: [] };
+  for (const n of BOARD.nodes || []) {
+    if (n.kind !== "house") continue;
+    const c = String(n.flags?.houseColor || "").toLowerCase();
+    const slot = Number(n.flags?.houseSlot || 0);
+    if (!map[c]) map[c] = [];
+    map[c].push([slot, n.id]);
+  }
+  for (const c of Object.keys(map)) {
+    map[c].sort((a,b)=>a[0]-b[0]);
+    map[c] = map[c].map(x=>x[1]);
+  }
+  return map;
+})();
+
 function randInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
 function uid(){
   return Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(2,8);
@@ -175,18 +191,32 @@ function occupiedAny(room){
   }
   return set;
 }
+
+function nextFreeHouseId(room, color){
+  const homes = HOUSE_BY_COLOR[color] || [];
+  if(!homes.length) return null;
+  const used = new Set();
+  for(const p of room.state.pieces){
+    if(p.color===color && p.posKind==="house" && p.houseId) used.add(p.houseId);
+  }
+  for(const hid of homes){
+    if(!used.has(hid)) return hid;
+  }
+  return homes[0];
+}
+function sendPieceHome(room, piece){
+  piece.posKind = "house";
+  piece.nodeId = null;
+  piece.houseId = nextFreeHouseId(room, piece.color);
+}
 function isPlacableBarricade(room, nodeId){
-  const n = NODES.get(nodeId);
+  const n=NODES.get(nodeId);
   if(!n || n.kind!=="board") return false;
-
-  // Ziel bleibt tabu (sonst kann man das Ziel komplett blockieren)
   if(n.flags?.goal) return false;
-
-  // Nie auf bestehende Barikade oder auf Figuren setzen
+  if(n.flags?.noBarricade) return false;
+  if(n.flags?.startColor) return false;
   if(room.state.barricades.includes(nodeId)) return false;
   if(occupiedAny(room).has(nodeId)) return false;
-
-  // Alles andere ist erlaubt (auch startColor / noBarricade / run etc.)
   return true;
 }
 
@@ -497,6 +527,14 @@ if(msg.type==="legal_request"){
 
       // landed on barricade?
       const landed = pc.nodeId;
+      // kicked opponent on landing (send back to first free house slot)
+      const kicked = [];
+      for(const op of room.state.pieces){
+        if(op.posKind==="board" && op.nodeId===landed && op.color!==pc.color){
+          sendPieceHome(room, op);
+          kicked.push(op.id);
+        }
+      }
       const barricades = room.state.barricades;
       const idx = barricades.indexOf(landed);
       let picked = false;
@@ -527,7 +565,7 @@ if(msg.type==="legal_request"){
       }
 
       console.log(`[move] room=${room.code} color=${pc.color} piece=${pc.id} to=${pc.nodeId} picked=${picked}`);
-      broadcast(room, {type:"move", action:{pieceId:pc.id, path: res.path, pickedBarricade: picked}, state: room.state});
+      broadcast(room, {type:"move", action:{pieceId:pc.id, path: res.path, pickedBarricade: picked, kickedPieces: kicked}, state: room.state});
       return;
     }
 
@@ -590,3 +628,4 @@ if(msg.type==="legal_request"){
 });
 
 server.listen(PORT, ()=>console.log("Barikade server listening on", PORT));
+
