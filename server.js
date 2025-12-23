@@ -179,17 +179,16 @@ function isPlacableBarricade(room, nodeId){
   const n = NODES.get(nodeId);
   if(!n || n.kind!=="board") return false;
 
-  // Never on the goal
+  // Ziel bleibt tabu (sonst kann man das Ziel komplett blockieren)
   if(n.flags?.goal) return false;
 
-  // Never on an occupied node or existing barricade
+  // Nie auf bestehende Barikade oder auf Figuren setzen
   if(room.state.barricades.includes(nodeId)) return false;
   if(occupiedAny(room).has(nodeId)) return false;
 
-  // Everything else is allowed (including startColor / noBarricade / run nodes)
+  // Alles andere ist erlaubt (auch startColor / noBarricade / run etc.)
   return true;
 }
-
 
 /** ---------- Path + legality (exact steps, no immediate backtrack, no revisits) ---------- **/
 function computeAllTargets(room, startNodeId, steps, color, pieceId){
