@@ -176,13 +176,17 @@ function occupiedAny(room){
   return set;
 }
 function isPlacableBarricade(room, nodeId){
-  const n=NODES.get(nodeId);
+  const n = NODES.get(nodeId);
   if(!n || n.kind!=="board") return false;
+
+  // Ziel bleibt tabu (sonst blockiert man das Spiel komplett)
   if(n.flags?.goal) return false;
-  if(n.flags?.noBarricade) return false;
-  if(n.flags?.startColor) return false;
+
+  // nicht auf Figuren oder bestehende Barikaden setzen
   if(room.state.barricades.includes(nodeId)) return false;
   if(occupiedAny(room).has(nodeId)) return false;
+
+  // ALLES ANDERE ist erlaubt (auch Start/noBarricade usw.)
   return true;
 }
 
