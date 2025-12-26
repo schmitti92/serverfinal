@@ -442,8 +442,16 @@ wss.on("connection", (ws) => {
       console.log(`[reset] room=${room.code} by=host`);
       broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
       broadcast(room, { type: "reset_done" });
+
+      // ✅ Auto-Neustart: wenn 2 verbundene Spieler da sind, direkt neues Spiel starten
+      if (canStart(room)) {
+        initGameState(room);
+        console.log(`[auto-start] room=${room.code} starter=${room.state.turnColor}`);
+        broadcast(room, { type: "started", state: room.state });
+      }
       return;
     }
+
 
     // ---------- ROLL ----------
     if (msg.type === "roll_request") {
