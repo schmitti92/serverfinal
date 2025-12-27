@@ -99,6 +99,15 @@ function canStart(room) {
   return coloredConnected.length >= 2;
 }
 
+function resumeIfReady(room) {
+  // Wenn ein Spiel pausiert ist (z.B. Turn-Spieler kurz offline) und wieder 2 echte Spieler da sind,
+  // dann automatisch fortsetzen. (Kein Reset, kein Start-Overwrite)
+  if (room.state && room.state.paused && canStart(room)) {
+    room.state.paused = false;
+    console.log(`[resume] room=${room.code} auto-unpaused (2 players connected)`);
+  }
+}
+
 function broadcast(room, obj) {
   const msg = JSON.stringify(obj);
   for (const p of room.players.values()) {
@@ -377,29 +386,61 @@ wss.on("connection", (ws) => {
       const hasHost = Array.from(room.players.values()).some(p => p.isHost);
       const isHost = asHost && !hasHost;
 
-      // color assignment (max 2 players)
+      // color assignment (max 2 players, NO spectators)
       const COLORS = ["red", "blue"];
-      const used = Array.from(room.players.values()).map(p => p.color).filter(Boolean);
 
+      // Which colors are currently held (even by offline placeholders)?
+      const holders = new Map(); // color -> player
+      for (const p of room.players.values()) {
+        if (p.color === "red" || p.color === "blue") holders.set(p.color, p);
+      }
+
+      const connectedColored = Array.from(room.players.values()).filter(p => p.color && isConnectedPlayer(p));
+      const isReconnect = !!existing;
+
+      // If two real players are connected already and this isn't a reconnect -> room full
+      if (!isReconnect && connectedColored.length >= 2) {
+        send(ws, { type: "error", code: "ROOM_FULL", message: "Raum ist voll (max. 2 Spieler)." });
+        return;
+      }
+
+      // Prefer reconnect color if available
       let color = existing?.color || null;
-      if (!color) {
-        const connectedColored = Array.from(room.players.values()).filter(p => p.color && isConnectedPlayer(p));
-        // room is only "full" when BOTH colors are currently connected.
-        if (used.length >= 2 && connectedColored.length >= 2) {
-          send(ws, { type: "error", code: "ROOM_FULL", message: "Raum ist voll (max. 2 Spieler)." });
-          return;
-        }
 
-        // If both colors are already reserved but one is offline, allow joining as spectator (color=null).
-        if (used.length >= 2 && connectedColored.length < 2) {
-          color = null;
+      if (!color) {
+        // Free color not held at all?
+        const held = Array.from(holders.keys());
+        const free = COLORS.find(c => !held.includes(c)) || null;
+
+        if (free) {
+          color = free;
         } else {
-          if (used.length === 0) color = COLORS[randInt(0, 1)];
-          else color = COLORS.find(cc => !used.includes(cc)) || null;
+          // Both colors are held. Kick an OFFLINE placeholder and take its color.
+          // (Prevents "spectator" deadlocks. If the original player returns, they must use the same sessionToken.)
+          let takeover = null;
+          for (const c of COLORS) {
+            const hp = holders.get(c);
+            if (hp && !isConnectedPlayer(hp)) { takeover = { color: c, playerId: hp.id }; break; }
+          }
+          if (!takeover) {
+            // Both colors are held by connected players -> full (should already be caught above, but keep safe)
+            send(ws, { type: "error", code: "ROOM_FULL", message: "Raum ist voll (max. 2 Spieler)." });
+            return;
+          }
+          room.players.delete(takeover.playerId);
+          color = takeover.color;
         }
       }
-      
-room.players.set(clientId, { id: clientId, name, color, isHost, sessionToken, lastSeen: Date.now() });
+
+      // Safety: never allow null color in 2-player mode
+      if (color !== "red" && color !== "blue") {
+        send(ws, { type: "error", code: "BAD_COLOR", message: "Konnte keine Farbe zuweisen." });
+        return;
+      }
+
+      room.players.set(clientId, { id: clientId, name, color, isHost, sessionToken, lastSeen: Date.now() });
+      // If BOTH players are back, resume automatically (prevents dead-lock after reconnect).
+      resumeIfReady(room);
       // If the active player reconnects, resume the game.
       if (room.state && room.state.paused) {
         const effectiveColor = color || existingColor;
