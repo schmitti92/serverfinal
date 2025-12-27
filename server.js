@@ -106,6 +106,7 @@ function uid() {
 function makeRoom(code) {
   return {
     code,
+    hostToken: null, // stable host identity (sessionToken)
     players: new Map(), // clientId -> {id,name,color,isHost,sessionToken,lastSeen}
     state: null,
     lastRollWasSix: false,
@@ -433,13 +434,29 @@ wss.on("connection", (ws) => {
       const existingColor = existing?.color || null;
 
       
-// host assignment:
-// - keep existing host on reconnect
-// - allow takeover if no CONNECTED host is present
-const connectedHostExists = Array.from(room.players.values()).some(p => p.isHost && isConnectedPlayer(p));
+// host assignment (stable, server-chef):
+// - host is bound to room.hostToken (sessionToken)
+// - prevents race condition when BOTH players reconnect
 let isHost = false;
-if (existing?.isHost) isHost = true;
-else if (asHost && !connectedHostExists) isHost = true;
+
+// Establish hostToken once (first host join with sessionToken)
+if (!room.hostToken) {
+  if (existing?.isHost && existing?.sessionToken) {
+    room.hostToken = existing.sessionToken;
+  } else if (asHost && sessionToken) {
+    room.hostToken = sessionToken;
+  }
+}
+
+// Determine host strictly by token
+if (room.hostToken && sessionToken && sessionToken === room.hostToken) {
+  isHost = true;
+}
+
+// Ensure single-host: if true host joins, clear host flag on all others
+if (isHost) {
+  for (const p of room.players.values()) p.isHost = false;
+}
 
 // color assignment (strict 2 players, no spectator)
 const COLORS = ["red", "blue"];
@@ -479,9 +496,7 @@ if (!color) {
 }
 
 room.players.set(clientId, { id: clientId, name, color, isHost, sessionToken, lastSeen: Date.now() });
-
-// If enough players are back, resume automatically
-resumeIfReady(room);
+      // Auto-unpause deaktiviert: Fortsetzen nur per Host (resume)
       c.room = roomCode; c.name = name; c.sessionToken = sessionToken;
 
       console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} existing=${!!existing}`);
@@ -557,22 +572,6 @@ resumeIfReady(room);
     }
 
     // ---------- START / RESET ----------
-    // resume: Host fordert aktuellen Spielstand erneut an (wie nach Reconnect)
-    // WICHTIG: Kein initGameState(), kein Reset – nur Snapshot senden.
-    if (msg.type === "resume") {
-      const me = room.players.get(clientId);
-      if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann fortsetzen" }); return; }
-      if (!room.state) { send(ws, { type: "error", code: "NO_STATE", message: "Kein Spielstand vorhanden" }); return; }
-
-      // falls die Runde durch Disconnect pausiert wurde → wieder freigeben
-      room.state.paused = false;
-      persistRoomState(room);
-
-      broadcast(room, { type: "snapshot", state: room.state });
-      console.log(`[resume] room=${room.code} by=host`);
-      return;
-    }
-
     if (msg.type === "start") {
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
@@ -708,7 +707,7 @@ resumeIfReady(room);
     // wenn Spiel importiert ist, nicht pausieren (sonst lock)
     room.state.paused = false;
     persistRoomState(room);
-    broadcast(room, { type: "snapshot", state: room.state, players: getRoomPlayers(room) });
+    broadcast(room, { type: "snapshot", state: room.state, players: currentPlayersList(room) });
     return;
   }
 
@@ -912,6 +911,12 @@ if (msg.type === "place_barricade") {
           room.state.paused = true;
         }
 
+
+        // Wenn wirklich niemand mehr verbunden ist → sicher pausieren (beide reconnect edge-case)
+        if (room.state) {
+          const anyConnected = Array.from(room.players.values()).some(pp => isConnectedPlayer(pp));
+          if (!anyConnected) room.state.paused = true;
+        }
         broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
         if (room.state) persistRoomState(room);
     broadcast(room, { type: "snapshot", state: room.state });
