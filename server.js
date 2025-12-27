@@ -78,15 +78,6 @@ function shuffleInPlace(arr) {
   return arr;
 }
 
-
-function isColorConnected(room, color) {
-  for (const p of room.players.values()) {
-    if (p.color !== color) continue;
-    if (isConnectedPlayer(p)) return true;
-  }
-  return false;
-}
-
 function isConnectedPlayer(p) {
   const c = clients.get(p.id);
   return !!(c?.ws && c.ws.readyState === 1);
@@ -402,18 +393,17 @@ wss.on("connection", (ws) => {
       console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} existing=${!!existing}`);
 
       send(ws, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
-            // UNPAUSE_ON_JOIN: if active player is connected again, resume the game
-      if (room.state && room.state.paused) {
-        if (isColorConnected(room, room.state.turnColor)) {
-          room.state.paused = false;
+      broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
+
+      // Auto-start: sobald 2 Spieler verbunden sind und noch kein Spiel läuft
+      if (!room.state && canStart(room)) {
+        // Optional: nur starten, wenn es einen Host gibt
+        const hasHostNow = Array.from(room.players.values()).some(p => p.isHost);
+        if (hasHostNow) {
+          initGameState(room);
+          console.log(`[auto-start] room=${room.code} starter=${room.state.turnColor}`);
+          broadcast(room, { type: "started", state: room.state });
         }
-      }
-
-broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
-
-      // ✅ Reconnect: wenn pausiert (z.B. aktiver Spieler war kurz weg), direkt wieder freigeben
-      if (room.state && room.state.paused) {
-        room.state.paused = false;
       }
 
       if (room.state) send(ws, { type: "snapshot", state: room.state });
@@ -458,16 +448,8 @@ broadcast(room, { type: "room_update", players: currentPlayersList(room), canSta
       console.log(`[reset] room=${room.code} by=host`);
       broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
       broadcast(room, { type: "reset_done" });
-
-      // ✅ Auto-Neustart: wenn 2 verbundene Spieler da sind, direkt neues Spiel starten
-      if (canStart(room)) {
-        initGameState(room);
-        console.log(`[auto-start] room=${room.code} starter=${room.state.turnColor}`);
-        broadcast(room, { type: "started", state: room.state });
-      }
       return;
     }
-
 
     // ---------- ROLL ----------
     if (msg.type === "roll_request") {
