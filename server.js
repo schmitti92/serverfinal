@@ -6,6 +6,49 @@ import { WebSocketServer } from "ws";
 
 const PORT = process.env.PORT || 10000;
 
+// ---------- Save / Restore (best-effort) ----------
+// NOTE: On some hosts (z.B. Render free) kann das Dateisystem nach Restart leer sein.
+// Daher zusätzlich "Export/Import" über WebSocket (Host kann JSON herunterladen/hochladen).
+const SAVE_DIR = process.env.SAVE_DIR || path.join(process.cwd(), "saves");
+try { fs.mkdirSync(SAVE_DIR, { recursive: true }); } catch (_e) {}
+
+function savePathForRoom(code){
+  const safe = String(code||"").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,20) || "ROOM";
+  return path.join(SAVE_DIR, safe + ".json");
+}
+
+function persistRoomState(room){
+  try{
+    if(!room || !room.code || !room.state) return;
+    const file = savePathForRoom(room.code);
+    const payload = { code: room.code, ts: Date.now(), state: room.state };
+    fs.writeFileSync(file, JSON.stringify(payload));
+  }catch(_e){}
+}
+
+function restoreRoomState(room){
+  try{
+    if(!room || !room.code) return false;
+    const file = savePathForRoom(room.code);
+    if(!fs.existsSync(file)) return false;
+    const raw = fs.readFileSync(file, "utf8");
+    const payload = JSON.parse(raw);
+    if(payload && payload.state && typeof payload.state === "object"){
+      room.state = payload.state;
+      return true;
+    }
+  }catch(_e){}
+  return false;
+}
+
+function deletePersisted(room){
+  try{
+    if(!room || !room.code) return;
+    const file = savePathForRoom(room.code);
+    if(fs.existsSync(file)) fs.unlinkSync(file);
+  }catch(_e){}
+}
+
 // ---------- Rooms + Clients (müssen vor /health existieren) ----------
 const clients = new Map(); // clientId -> {ws, room, name, sessionToken}
 const rooms = new Map();   // code -> room
@@ -371,6 +414,14 @@ wss.on("connection", (ws) => {
       let room = rooms.get(roomCode);
       if (!room) { room = makeRoom(roomCode); rooms.set(roomCode, room); }
 
+      // If server restarted / room.state missing, try to restore from disk (best-effort)
+      if (!room.state) {
+        const restored = restoreRoomState(room);
+        if (restored) {
+          console.log(`[restore] room=${roomCode} restored state from disk`);
+        }
+      }
+
       // reconnect via sessionToken
       let existing = null;
       if (sessionToken) {
@@ -500,7 +551,8 @@ resumeIfReady(room);
       }
 
       broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
-      if (room.state) broadcast(room, { type: "snapshot", state: room.state });
+      if (room.state) persistRoomState(room);
+    broadcast(room, { type: "snapshot", state: room.state });
       return;
     }
 
@@ -511,12 +563,17 @@ resumeIfReady(room);
       if (!canStart(room)) { send(ws, { type: "error", code: "NEED_2P", message: "Mindestens 2 Spieler nötig" }); return; }
 
       initGameState(room);
+  persistRoomState(room);
       console.log(`[start] room=${room.code} starter=${room.state.turnColor}`);
-      broadcast(room, { type: "started", state: room.state });
+      persistRoomState(room);
+    broadcast(room, { type: "started", state: room.state });
       return;
     }
 
     if (msg.type === "reset") {
+    // reset = neues Spiel, überschreibt Save
+    deletePersisted(room);
+
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann resetten" }); return; }
 
@@ -547,7 +604,8 @@ resumeIfReady(room);
       room.state.rolled = v;
       room.lastRollWasSix = (v === 6);
       room.state.phase = "need_move";
-      broadcast(room, { type: "roll", value: v, state: room.state });
+      persistRoomState(room);
+    broadcast(room, { type: "roll", value: v, state: room.state });
       return;
     }
 
@@ -566,7 +624,8 @@ resumeIfReady(room);
       room.state.phase = "need_roll";
       room.state.turnColor = otherColor(room.state.turnColor);
 
-      broadcast(room, { type: "move", state: room.state });
+      persistRoomState(room);
+    broadcast(room, { type: "move", state: room.state });
       broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
       return;
     }
@@ -605,7 +664,39 @@ resumeIfReady(room);
     }
 
     // ---------- MOVE ----------
-    if (msg.type === "move_request") {
+    
+  // ---------- EXPORT / IMPORT (Host only) ----------
+  // export_state: Server sendet aktuellen room.state zurück (Host kann als JSON speichern)
+  if (msg.type === "export_state") {
+    if (!room) return;
+    const me = room.players.get(clientId);
+    if (!me?.isHost) return send(ws, { type: "error", code: "HOST_ONLY", message: "Nur Host" });
+    if (!room.state) return send(ws, { type: "error", code: "NO_STATE", message: "Spiel nicht gestartet" });
+    return send(ws, { type: "export_state", code: room.code, state: room.state, ts: Date.now() });
+  }
+
+  // import_state: Host sendet state JSON zurück → Server setzt room.state und broadcastet snapshot
+  if (msg.type === "import_state") {
+    if (!room) return;
+    const me = room.players.get(clientId);
+    if (!me?.isHost) return send(ws, { type: "error", code: "HOST_ONLY", message: "Nur Host" });
+    const st = msg.state;
+    if (!st || typeof st !== "object") return send(ws, { type: "error", code: "BAD_STATE", message: "Ungültiger State" });
+
+    // Minimal sanity: muss turnColor & phase besitzen
+    if (!st.turnColor || !st.phase || !Array.isArray(st.pieces) || !Array.isArray(st.barricades)) {
+      return send(ws, { type: "error", code: "BAD_STATE", message: "State-Format passt nicht" });
+    }
+
+    room.state = st;
+    // wenn Spiel importiert ist, nicht pausieren (sonst lock)
+    room.state.paused = false;
+    persistRoomState(room);
+    broadcast(room, { type: "snapshot", state: room.state, players: getRoomPlayers(room) });
+    return;
+  }
+
+if (msg.type === "move_request") {
       if (!requireRoomState(room, ws)) return;
       if (!requireTurn(room, clientId, ws)) return;
 
@@ -778,7 +869,8 @@ if (msg.type === "place_barricade") {
   room.state.phase = "need_roll";
   room.state.rolled = null;
 
-  broadcast(room, { type: "snapshot", state: room.state });
+  persistRoomState(room);
+    broadcast(room, { type: "snapshot", state: room.state });
   return;
 }
 
@@ -805,7 +897,8 @@ if (msg.type === "place_barricade") {
         }
 
         broadcast(room, { type: "room_update", players: currentPlayersList(room), canStart: canStart(room) });
-        if (room.state) broadcast(room, { type: "snapshot", state: room.state });
+        if (room.state) persistRoomState(room);
+    broadcast(room, { type: "snapshot", state: room.state });
       }
     }
 
