@@ -398,9 +398,8 @@ wss.on("connection", (ws) => {
           else color = COLORS.find(cc => !used.includes(cc)) || null;
         }
       }
-
-      room\.players\.set\(clientId, \{ id: clientId, name, color, isHost, sessionToken, lastSeen: Date\.now\(\) \}\);
-
+      
+room.players.set(clientId, { id: clientId, name, color, isHost, sessionToken, lastSeen: Date.now() });
       // If the active player reconnects, resume the game.
       if (room.state && room.state.paused) {
         const effectiveColor = color || existingColor;
