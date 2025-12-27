@@ -557,6 +557,22 @@ resumeIfReady(room);
     }
 
     // ---------- START / RESET ----------
+    // resume: Host fordert aktuellen Spielstand erneut an (wie nach Reconnect)
+    // WICHTIG: Kein initGameState(), kein Reset – nur Snapshot senden.
+    if (msg.type === "resume") {
+      const me = room.players.get(clientId);
+      if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann fortsetzen" }); return; }
+      if (!room.state) { send(ws, { type: "error", code: "NO_STATE", message: "Kein Spielstand vorhanden" }); return; }
+
+      // falls die Runde durch Disconnect pausiert wurde → wieder freigeben
+      room.state.paused = false;
+      persistRoomState(room);
+
+      broadcast(room, { type: "snapshot", state: room.state });
+      console.log(`[resume] room=${room.code} by=host`);
+      return;
+    }
+
     if (msg.type === "start") {
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
