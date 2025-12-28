@@ -233,7 +233,14 @@ function initGameState(room) {
     winner: null,
     legalTargets: [],
   };
+
+// Ensure authoritative board is included in shared state (client rendering + sync)
+room.state.board = BOARD;
+room.state.nodes = BOARD.nodes;
+room.state.edges = BOARD.edges;
+
 }
+
 
 function otherColor(c) { return c === "red" ? "blue" : "red"; }
 function getPiece(room, pieceId) {
