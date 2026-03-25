@@ -64,6 +64,80 @@ for (const [a, b] of EDGES) {
 }
 const STARTS = BOARD.meta?.starts || {};
 const GOAL = BOARD.meta?.goal || null;
+
+
+function computeDistancesFrom(startId){
+  if(!startId) return new Map();
+  const dist = new Map();
+  const q = [startId];
+  dist.set(startId, 0);
+  for(let qi=0; qi<q.length; qi++) {
+    const u = q[qi];
+    const du = dist.get(u);
+    const ns = ADJ.get(u);
+    if(!ns) continue;
+    for(const v of ns){
+      if(!dist.has(v)){
+        dist.set(v, du + 1);
+        q.push(v);
+      }
+    }
+  }
+  return dist;
+}
+const DIST_TO_GOAL = computeDistancesFrom(GOAL);
+
+function setGameOver(room, winnerColor){
+  if(!room || !room.state) return;
+  room.state.finished = true;
+  room.state.winnerColor = String(winnerColor || '').toLowerCase() || null;
+  room.state.phase = 'game_over';
+  room.state.rolled = null;
+  room.state.paused = false;
+  room.state.finishedAt = Date.now();
+}
+
+function activeColorsForRoom(room){
+  if(Array.isArray(room?.state?.activeColors) && room.state.activeColors.length) return room.state.activeColors.map(c => String(c).toLowerCase());
+  const used = [];
+  for(const p of room?.players?.values?.() || []){
+    const c = String(p?.color || '').toLowerCase();
+    if((c === 'red' || c === 'blue') && !used.includes(c)) used.push(c);
+  }
+  return used.length ? used : ['red','blue'];
+}
+
+function closestColorToGoal(room, excludedColor = null){
+  const exclude = String(excludedColor || '').toLowerCase();
+  const active = activeColorsForRoom(room).filter(c => c && c !== exclude);
+  let winnerColor = null;
+  let bestDist = Infinity;
+
+  function minDistForColor(color){
+    let best = Infinity;
+    for(const p of (room?.state?.pieces || [])){
+      if(!p || String(p.color || '').toLowerCase() !== color) continue;
+      if(p.posKind === 'goal') return 0;
+      if(p.posKind !== 'board' || !p.nodeId) continue;
+      const d = DIST_TO_GOAL.get(p.nodeId);
+      if(typeof d === 'number' && d < best) best = d;
+    }
+    return best;
+  }
+
+  for(const color of active){
+    const d = minDistForColor(color);
+    if(d < bestDist){
+      bestDist = d;
+      winnerColor = color;
+    }
+  }
+
+  if(!winnerColor){
+    winnerColor = active[0] || activeColorsForRoom(room)[0] || exclude || 'red';
+  }
+  return winnerColor;
+}
 const HOUSE_BY_COLOR = (() => {
   const map = { red: [], blue: [], green: [], yellow: [] };
   for (const n of BOARD.nodes || []) {
@@ -326,6 +400,40 @@ wss.on("connection", (ws) => {
       if ((now - last) < 1800) return;
       room.emojiCooldowns.set(clientId, now);
       broadcast(room, { type:"emoji_event", playerId:clientId, name:me.name || "Spieler", emoji:key, icon:emojiGlyph(key), ts:now });
+      return;
+    }
+
+
+
+    if (msg.type === "forfeit") {
+      if (!requireRoomState(room, ws)) return;
+      const me = room.players.get(clientId);
+      const myColor = String(me?.color || '').toLowerCase();
+      if (!myColor) { send(ws, { type:"error", code:"SPECTATOR", message:"Du hast keine Farbe" }); return; }
+      if (room.state.finished || room.state.phase === 'game_over') {
+        send(ws, { type:"error", code:"GAME_OVER", message:"Spiel ist bereits beendet" });
+        return;
+      }
+
+      const winnerColor = closestColorToGoal(room, myColor);
+      setGameOver(room, winnerColor);
+      room.state.gameOverReason = 'forfeit';
+      room.state.forfeiterColor = myColor;
+      persistRoomState(room);
+
+      broadcast(room, {
+        type:"forfeit",
+        by: myColor,
+        winner: room.state.winnerColor,
+        state: room.state
+      });
+      broadcast(room, {
+        type:"game_over",
+        winnerColor: room.state.winnerColor,
+        finishedAt: room.state.finishedAt,
+        reason: 'forfeit',
+        forfeiterColor: myColor
+      });
       return;
     }
 
