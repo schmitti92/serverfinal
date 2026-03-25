@@ -109,7 +109,7 @@ function makeRoom(code) {
     lastRollWasSix: false,
     carryingByColor: { red: false, blue: false },
     lobby: { jokerStart: null },
-    emojiCooldownByToken: new Map(),
+    emojiCooldowns: new Map(),
   };
 }
 function shuffleInPlace(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
@@ -127,6 +127,19 @@ function broadcast(room, obj) {
   }
 }
 function send(ws, obj) { try { ws.send(JSON.stringify(obj)); } catch (_e) {} }
+function emojiGlyph(key){
+  if (key === "laugh") return "😂";
+  if (key === "angry") return "😡";
+  if (key === "cool") return "😎";
+  return "";
+}
+function normalizeEmojiKey(value){
+  const v = String(value || "").trim();
+  if (v === "😂" || v.toLowerCase() === "laugh") return "laugh";
+  if (v === "😡" || v.toLowerCase() === "angry") return "angry";
+  if (v === "😎" || v.toLowerCase() === "cool") return "cool";
+  return "";
+}
 function assignColorsRandom(room) {
   for (const p of Array.from(room.players.values())) if (!isConnectedPlayer(p)) room.players.delete(p.id);
   const connected = Array.from(room.players.values()).filter(p => isConnectedPlayer(p));
@@ -302,6 +315,20 @@ wss.on("connection", (ws) => {
     const roomCode = c.room; if (!roomCode) return;
     const room = rooms.get(roomCode); if (!room) return;
 
+    if (msg.type === "emoji_send") {
+      const me = room.players.get(clientId);
+      if (!me) { send(ws, { type:"error", code:"NO_PLAYER", message:"Spieler nicht gefunden" }); return; }
+      if (!room.state || !room.state.started) { send(ws, { type:"error", code:"NO_STATE", message:"Spiel läuft nicht" }); return; }
+      const key = normalizeEmojiKey(msg.emoji);
+      if (!key) { send(ws, { type:"error", code:"BAD_EMOJI", message:"Ungültiges Emoji" }); return; }
+      const now = Date.now();
+      const last = Number(room.emojiCooldowns.get(clientId) || 0);
+      if ((now - last) < 1800) return;
+      room.emojiCooldowns.set(clientId, now);
+      broadcast(room, { type:"emoji_event", playerId:clientId, name:me.name || "Spieler", emoji:key, icon:emojiGlyph(key), ts:now });
+      return;
+    }
+
     if (msg.type === "leave") {
       room.players.delete(clientId); c.room = null;
       send(ws, { type:"room_update", players:[], canStart:false, jokerStart:cloneJokerConfig(room.lobby?.jokerStart || room.state?.action?.startJokers || null) });
@@ -317,22 +344,6 @@ wss.on("connection", (ws) => {
       room.lobby.jokerStart = cfg;
       if (room.state?.action && room.state.mode === "action") room.state.action.startJokers = cloneJokerConfig(cfg);
       broadcast(room, { type:"room_update", players:currentPlayersList(room), canStart:canStart(room), jokerStart:cloneJokerConfig(cfg) });
-      return;
-    }
-
-
-    if (msg.type === "emoji_send") {
-      const me = room.players.get(clientId);
-      if (!me) { send(ws, { type:"error", code:"NO_PLAYER", message:"Spieler nicht gefunden" }); return; }
-      if (!room.state?.started) { send(ws, { type:"error", code:"NO_STATE", message:"Spiel nicht gestartet" }); return; }
-      const emoji = String(msg.emoji || "").toLowerCase().trim();
-      if (!["laugh","angry","cool"].includes(emoji)) { send(ws, { type:"error", code:"BAD_EMOJI", message:"Unbekanntes Emoji" }); return; }
-      const cooldownKey = String(me.sessionToken || me.id || clientId);
-      const now = Date.now();
-      const until = Number(room.emojiCooldownByToken.get(cooldownKey) || 0);
-      if (until > now) return;
-      room.emojiCooldownByToken.set(cooldownKey, now + 1800);
-      broadcast(room, { type:"emoji_event", emoji, playerId:me.id, playerName:me.name, ts:now });
       return;
     }
 
