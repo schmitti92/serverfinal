@@ -377,6 +377,7 @@ wss.on("connection", (ws) => {
       const last = Number(room.emojiCooldowns.get(clientId) || 0);
       if ((now - last) < 1800) return;
       room.emojiCooldowns.set(clientId, now);
+      send(ws, { type:"emoji_ack", emoji:key, icon:emojiGlyph(key), ts:now });
       broadcast(room, { type:"emoji_event", playerId:clientId, name:me.name || "Spieler", emoji:key, icon:emojiGlyph(key), ts:now });
       return;
     }
