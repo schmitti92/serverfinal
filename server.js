@@ -126,6 +126,18 @@ function broadcast(room, obj) {
     if (c?.ws?.readyState === 1) { try { c.ws.send(msg); } catch (_e) {} }
   }
 }
+// Emoji-Reaktionen sind flüchtige UI-Ereignisse. Für sie senden wir bewusst an
+// JEDE aktuell verbundene WebSocket-Verbindung des Raums. Das ist reconnect-sicherer
+// als ausschließlich über room.players zu iterieren.
+function broadcastEmojiToRoom(roomCode, obj) {
+  const code = String(roomCode || "").toUpperCase();
+  const payload = JSON.stringify(obj);
+  for (const c of clients.values()) {
+    if (String(c?.room || "").toUpperCase() !== code) continue;
+    if (c?.ws?.readyState !== 1) continue;
+    try { c.ws.send(payload); } catch (_e) {}
+  }
+}
 function send(ws, obj) { try { ws.send(JSON.stringify(obj)); } catch (_e) {} }
 function emojiGlyph(key){
   if (key === "laugh") return "😂";
@@ -377,7 +389,16 @@ wss.on("connection", (ws) => {
       const last = Number(room.emojiCooldowns.get(clientId) || 0);
       if ((now - last) < 1800) return;
       room.emojiCooldowns.set(clientId, now);
-      broadcast(room, { type:"emoji_event", playerId:clientId, name:me.name || "Spieler", emoji:key, icon:emojiGlyph(key), ts:now });
+      const reactionId = String(msg.reactionId || `${clientId}-${now}`).slice(0, 96);
+      broadcastEmojiToRoom(roomCode, {
+        type:"emoji_event",
+        playerId:clientId,
+        name:me.name || "Spieler",
+        emoji:key,
+        icon:emojiGlyph(key),
+        reactionId,
+        ts:now
+      });
       return;
     }
 
