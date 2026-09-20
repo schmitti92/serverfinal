@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-server-chef-emoji-v9.4-final-20260920";
+const SERVER_BUILD = "barikade-v9.5-joker-start-fix-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1897,17 +1897,25 @@ broadcast(room, roomUpdatePayload(room));
 
       // Server entscheidet zufällig die Startfarbe (Quelle der Wahrheit)
       const starterColor = uniqueAct[Math.floor(Math.random() * uniqueAct.length)];
+      const requestedMode = String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
 
-      const jokerStartCount = Number(room.jokerStartCount);
-      if (!Number.isInteger(jokerStartCount) || jokerStartCount < 1 || jokerStartCount > 5) {
-        send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
-        return;
+      // V9.5: Jokerzahl atomar mit start_request übernehmen. Damit muss sie nicht
+      // vorher in einem separaten Request angekommen sein. Classic braucht keine Jokerzahl.
+      let jokerStartCount = null;
+      if (requestedMode === "action") {
+        const incomingCount = Number(msg.jokerStartCount ?? room.jokerStartCount);
+        if (!Number.isInteger(incomingCount) || incomingCount < 1 || incomingCount > 5) {
+          send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
+          return;
+        }
+        jokerStartCount = incomingCount;
+        room.jokerStartCount = incomingCount;
       }
 
       // pending info (nur im RAM, kein Persist nötig)
-      room._pendingStart = { starterColor, mode: "action", jokerStartCount, ts: Date.now() };
+      room._pendingStart = { starterColor, mode: requestedMode, jokerStartCount, ts: Date.now() };
 
-      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: "action", jokerStartCount, durationMs: 4200 });
+      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, jokerStartCount, durationMs: 4200 });
       return;
     }
 
@@ -1927,16 +1935,22 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       const starter = String(msg.starterColor || room._pendingStart?.starterColor || "").toLowerCase().trim();
-      const jokerStartCount = Number(msg.jokerStartCount ?? room._pendingStart?.jokerStartCount ?? room.jokerStartCount);
-      if (!Number.isInteger(jokerStartCount) || jokerStartCount < 1 || jokerStartCount > 5) {
-        send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
-        return;
+      const requestedMode = String(msg.mode || room._pendingStart?.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      let jokerStartCount = null;
+      if (requestedMode === "action") {
+        const incomingCount = Number(msg.jokerStartCount ?? room._pendingStart?.jokerStartCount ?? room.jokerStartCount);
+        if (!Number.isInteger(incomingCount) || incomingCount < 1 || incomingCount > 5) {
+          send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
+          return;
+        }
+        jokerStartCount = incomingCount;
+        room.jokerStartCount = incomingCount;
       }
-      room.jokerStartCount = jokerStartCount;
-      initGameState(room, uniqueAct, "action", starter, jokerStartCount);
+
+      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount);
       room._pendingStart = null;
       await persistRoomState(room);
-      console.log(`[start] room=${room.code} starter=${room.state.turnColor}`);
+      console.log(`[start] room=${room.code} mode=${requestedMode} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
       broadcast(room, { type: "started", state: room.state });
       return;
     }
