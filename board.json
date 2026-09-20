@@ -2063,7 +2063,7 @@
         "id": "boss_left",
         "name": "Bossfeld I",
         "x": 480,
-        "y": 240,
+        "y": 205,
         "anchors": [
           "n_41",
           "n_47"
@@ -2077,7 +2077,7 @@
         "id": "boss_right",
         "name": "Bossfeld II",
         "x": 880,
-        "y": 240,
+        "y": 205,
         "anchors": [
           "n_96",
           "n_82"
