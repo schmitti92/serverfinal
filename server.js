@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-main4-smiley-roomclients-v4-20260919";
+const SERVER_BUILD = "barikade-main4-smiley-hardwire-v5-20260919";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1654,17 +1654,13 @@ try{
     if (!room.clients || !(room.clients instanceof Map)) room.clients = new Map();
     if (!room.emojiCooldowns || !(room.emojiCooldowns instanceof Map)) room.emojiCooldowns = new Map();
 
-    // ---------- EMOJI / SMILEY ----------
-    // Client sendet: {type:"emoji_send", emoji:"laugh|angry|cool", reactionId?:"..."}
-    // Server verteilt das Event bewusst an ALLE aktuell verbundenen Clients im Raum.
+    // ---------- EMOJI / SMILEY V5 (hardwired through normal game broadcast) ----------
+    // This deliberately uses the SAME broadcast(room, ...) path as rolls/moves/snapshots.
+    // In addition, the event is mirrored inside a normal snapshot as a fallback for clients.
     if (msg.type === "emoji_send" || msg.type === "smiley_send") {
       const me = room.players.get(clientId);
       if (!me) {
         send(ws, { type:"error", code:"NO_PLAYER", message:"Spieler nicht gefunden" });
-        return;
-      }
-      if (!room.state || !room.state.started || room.state.finished) {
-        send(ws, { type:"error", code:"NO_STATE", message:"Spiel laeuft nicht" });
         return;
       }
 
@@ -1674,10 +1670,12 @@ try{
         return;
       }
 
+      // Reactions are allowed whenever the player is connected to the room.
+      // The UI itself still only exposes the buttons during a running game.
       const now = Date.now();
       const cooldownKey = String(me.sessionToken || clientId);
       const last = Number(room.emojiCooldowns.get(cooldownKey) || 0);
-      if ((now - last) < 1200) return;
+      if ((now - last) < 900) return;
       room.emojiCooldowns.set(cooldownKey, now);
       room.emojiSeq = Number(room.emojiSeq || 0) + 1;
 
@@ -1685,27 +1683,38 @@ try{
         .replace(/[^A-Za-z0-9_.:-]/g, "")
         .slice(0, 96);
       const eventId = requestedId || `emoji:${room.code}:${now}:${room.emojiSeq}`;
+      const senderName = me.name || c.name || "Spieler";
 
-      const payload = {
+      const emojiEvent = {
         type: "emoji_event",
         eventId,
         reactionId: eventId,
         playerId: clientId,
         senderId: clientId,
-        name: me.name || c.name || "Spieler",
-        playerName: me.name || c.name || "Spieler",
+        name: senderName,
+        playerName: senderName,
         emoji: key,
         emojiKey: key,
         icon: emojiGlyph(key),
         ts: now
       };
 
-      const delivered = broadcastEmojiToRoom(room, payload);
-      console.log(`[emoji] room=${room.code} sender=${me.name || clientId} key=${key} delivered=${delivered} roomSockets=${room.clients instanceof Map ? room.clients.size : 0}`);
-      // Sender bekommt eine Diagnose nur dann, wenn unerwartet niemand erreichbar war.
-      if (delivered === 0) {
-        send(ws, { type:"error", code:"EMOJI_NOT_DELIVERED", message:"Emoji konnte an keinen Client verteilt werden" });
+      // PATH A: exact same room broadcast used by normal gameplay.
+      broadcast(room, emojiEvent);
+
+      // PATH B: mirror reaction through a normal snapshot. This gives the client a
+      // second independent route without changing game rules. Do NOT persist solely
+      // because of an emoji; the timestamp lets clients ignore an old reaction later.
+      if (room.state && typeof room.state === "object") {
+        room.state.uiReaction = {
+          eventId, reactionId:eventId, playerId:clientId, senderId:clientId,
+          name:senderName, playerName:senderName, emoji:key, emojiKey:key,
+          icon:emojiGlyph(key), ts:now
+        };
+        broadcast(room, { type:"snapshot", state:room.state, emojiEvent, reason:"emoji" });
       }
+
+      console.log(`[emoji-v5] room=${room.code} sender=${senderName} key=${key} event=${eventId} players=${room.players.size} roomSockets=${room.clients instanceof Map ? room.clients.size : 0}`);
       return;
     }
 
