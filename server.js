@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v9.5-joker-start-fix-20260920";
+const SERVER_BUILD = "barikade-v9.6-poop-stats-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -181,12 +181,14 @@ function parseServiceAccountFromEnv() {
 }
 
 function initFirebaseIfConfigured() {
-  if (!FIREBASE_ENABLED) return;
   try {
     if (firestore) return;
     const serviceAccount = parseServiceAccountFromEnv();
+    // Robust: credentials alone are enough. FIREBASE_ENABLED=1 is still supported,
+    // but a missing flag no longer disables statistics when credentials exist.
+    if (!FIREBASE_ENABLED && !serviceAccount) return;
     if (!serviceAccount) {
-      console.warn("[firebase] FIREBASE_ENABLED=1 but no service account JSON found. Falling back to disk only.");
+      console.warn("[firebase] Firebase requested but no service account JSON found. Stats/persistence unavailable.");
       return;
     }
     if (!admin.apps.length) {
@@ -777,7 +779,7 @@ app.get("/stats", async (_req, res) => {
     initFirebaseIfConfigured();
 
     if(!firestore){
-      return res.status(200).json({ ok:true, source:"none", rows: [] });
+      return res.status(200).json({ ok:true, source:"none", rows: [], firebaseEnabled:FIREBASE_ENABLED, credentialsPresent:!!parseServiceAccountFromEnv() });
     }
 
     // Primary: composite sort (needs Firestore composite index)
@@ -1118,6 +1120,7 @@ function normalizeEmojiKey(value) {
   if (v === "😂" || low === "laugh") return "laugh";
   if (v === "😡" || low === "angry") return "angry";
   if (v === "😎" || low === "cool") return "cool";
+  if (v === "💩" || low === "poop" || low === "shit") return "poop";
   return "";
 }
 
@@ -1125,6 +1128,7 @@ function emojiGlyph(key) {
   if (key === "laugh") return "😂";
   if (key === "angry") return "😡";
   if (key === "cool") return "😎";
+  if (key === "poop") return "💩";
   return "";
 }
 
