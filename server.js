@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-main4-smiley-broadcast-v6-20260920";
+const SERVER_BUILD = "barikade-server-authoritative-emoji-v7-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1129,38 +1129,58 @@ function emojiGlyph(key) {
 }
 
 function broadcastEmojiToRoom(room, payload) {
-  if (!room) return 0;
+  // Server-authoritative delivery: the server decides which sockets belong to
+  // the room and sends the display command directly to every connected socket.
+  // Never rely on one single index; reconnects can make room.clients/players stale.
+  if (!room) return { delivered: 0, recipients: [] };
   const code = String(room.code || "").trim().toUpperCase();
-  if (!code) return 0;
-  const raw = JSON.stringify(payload);
-  const sentSockets = new Set();
-  let sent = 0;
+  if (!code) return { delivered: 0, recipients: [] };
 
-  // PRIMARY: exakt derselbe Socket-Index, ueber den auch Spielzuege/Snapshots laufen.
-  // Wenn das Spiel auf einem Geraet synchron ist, erreicht der Smiley es damit ebenfalls.
-  if (room.clients && room.clients instanceof Map) {
-    for (const ws of room.clients.values()) {
-      if (!ws || ws.readyState !== 1 || sentSockets.has(ws)) continue;
-      try {
-        ws.send(raw);
-        sentSockets.add(ws);
-        sent++;
-      } catch (_e) {}
+  const raw = JSON.stringify(payload);
+  const targets = new Map(); // WebSocket -> { clientId, name, source }
+
+  // Source 1 (authoritative live index): every global client that says it is in this room.
+  for (const [id, c] of clients.entries()) {
+    if (String(c?.room || "").trim().toUpperCase() !== code) continue;
+    const sock = c?.ws;
+    if (!sock || sock.readyState !== 1) continue;
+    targets.set(sock, { clientId: id, name: c?.name || "Spieler", source: "global" });
+  }
+
+  // Source 2: per-room socket map, as reconnect fallback.
+  if (room.clients instanceof Map) {
+    for (const [id, sock] of room.clients.entries()) {
+      if (!sock || sock.readyState !== 1) continue;
+      if (!targets.has(sock)) {
+        const c = clients.get(id);
+        targets.set(sock, { clientId: id, name: c?.name || room.players?.get(id)?.name || "Spieler", source: "room" });
+      }
     }
   }
 
-  // FALLBACK: globale Client-Liste fuer Reconnect-/Index-Randfaelle.
-  for (const c of clients.values()) {
-    if (String(c?.room || "").trim().toUpperCase() !== code) continue;
-    const ws = c?.ws;
-    if (!ws || ws.readyState !== 1 || sentSockets.has(ws)) continue;
+  // Source 3: player records -> global sockets, for restored/legacy rooms.
+  if (room.players instanceof Map) {
+    for (const p of room.players.values()) {
+      const c = clients.get(p?.id);
+      const sock = c?.ws;
+      if (!sock || sock.readyState !== 1) continue;
+      if (!targets.has(sock)) {
+        targets.set(sock, { clientId: p.id, name: p.name || c?.name || "Spieler", source: "player" });
+      }
+    }
+  }
+
+  const recipients = [];
+  let delivered = 0;
+  for (const [sock, meta] of targets.entries()) {
     try {
-      ws.send(raw);
-      sentSockets.add(ws);
-      sent++;
+      sock.send(raw);
+      delivered++;
+      recipients.push(meta);
     } catch (_e) {}
   }
-  return sent;
+
+  return { delivered, recipients };
 }
 
 function assignColorsRandom(room) {
@@ -1533,6 +1553,7 @@ wss.on("connection", (ws) => {
         const old = rooms.get(c.room);
         if (old) {
           old.players.delete(clientId);
+          if (old.clients instanceof Map) old.clients.delete(clientId);
           broadcast(old, roomUpdatePayload(old));
         }
       }
@@ -1680,10 +1701,10 @@ try{
     if (!room.clients || !(room.clients instanceof Map)) room.clients = new Map();
     if (!room.emojiCooldowns || !(room.emojiCooldowns instanceof Map)) room.emojiCooldowns = new Map();
 
-    // ---------- EMOJI / SMILEY V6 (room-wide resilient broadcast) ----------
-    // This deliberately uses the SAME broadcast(room, ...) path as rolls/moves/snapshots.
-    // In addition, the event is mirrored inside a normal snapshot as a fallback for clients.
-    if (msg.type === "emoji_send" || msg.type === "smiley_send") {
+    // ---------- EMOJI / SMILEY V7: SERVER IS THE BOSS ----------
+    // Client only requests a reaction. The server creates the event and orders
+    // EVERY connected client in the room (including the sender) to display it.
+    if (msg.type === "emoji_request" || msg.type === "emoji_send" || msg.type === "smiley_send") {
       const me = room.players.get(clientId);
       if (!me) {
         send(ws, { type:"error", code:"NO_PLAYER", message:"Spieler nicht gefunden" });
@@ -1696,8 +1717,6 @@ try{
         return;
       }
 
-      // Reactions are allowed whenever the player is connected to the room.
-      // The UI itself still only exposes the buttons during a running game.
       const now = Date.now();
       const cooldownKey = String(me.sessionToken || clientId);
       const last = Number(room.emojiCooldowns.get(cooldownKey) || 0);
@@ -1705,52 +1724,44 @@ try{
       room.emojiCooldowns.set(cooldownKey, now);
       room.emojiSeq = Number(room.emojiSeq || 0) + 1;
 
-      const requestedId = String(msg.reactionId || msg.eventId || "")
-        .replace(/[^A-Za-z0-9_.:-]/g, "")
-        .slice(0, 96);
-      const eventId = requestedId || `emoji:${room.code}:${now}:${room.emojiSeq}`;
+      // The server owns the event identity. Client-supplied IDs are deliberately ignored.
+      const eventId = `emoji:${room.code}:${now}:${room.emojiSeq}`;
       const senderName = me.name || c.name || "Spieler";
-
-      const emojiEvent = {
-        type: "emoji_event",
+      const command = {
+        type: "emoji_show",
+        serverCommand: true,
+        room: room.code,
         eventId,
-        reactionId: eventId,
-        playerId: clientId,
         senderId: clientId,
+        playerId: clientId,
+        senderName,
         name: senderName,
-        playerName: senderName,
         emoji: key,
-        emojiKey: key,
         icon: emojiGlyph(key),
         ts: now
       };
 
-      // PATH A: dedicated room-wide delivery. This explicitly merges room.clients
-      // with the global client index and deduplicates sockets.
-      const delivered = broadcastEmojiToRoom(room, emojiEvent);
+      const delivery = broadcastEmojiToRoom(room, command);
+      const recipientIds = delivery.recipients.map(r => r.clientId).filter(Boolean);
 
-      // PATH B: mirror reaction through a normal snapshot. This gives the client a
-      // second independent route without changing game rules. Do NOT persist solely
-      // because of an emoji; the timestamp lets clients ignore an old reaction later.
-      if (room.state && typeof room.state === "object") {
-        room.state.uiReaction = {
-          eventId, reactionId:eventId, playerId:clientId, senderId:clientId,
-          name:senderName, playerName:senderName, emoji:key, emojiKey:key,
-          icon:emojiGlyph(key), ts:now
-        };
-        broadcast(room, { type:"snapshot", state:room.state, emojiEvent, reason:"emoji" });
-      }
+      // Sender receives a separate diagnostic acknowledgement. The visual emoji
+      // is NOT shown because of this ack; only emoji_show is allowed to display it.
+      send(ws, {
+        type: "emoji_dispatch_result",
+        eventId,
+        room: room.code,
+        delivered: delivery.delivered,
+        recipients: recipientIds,
+        ts: Date.now()
+      });
 
-      const globalRoomSockets = Array.from(clients.values()).filter(cc =>
-        String(cc?.room || "").trim().toUpperCase() === String(room.code || "").trim().toUpperCase() &&
-        cc?.ws?.readyState === 1
-      ).length;
-      console.log(`[emoji-v6] room=${room.code} sender=${senderName} key=${key} event=${eventId} delivered=${delivered} players=${room.players.size} roomSockets=${room.clients instanceof Map ? room.clients.size : 0} globalRoomSockets=${globalRoomSockets}`);
+      console.log(`[emoji-v7] room=${room.code} sender=${senderName} event=${eventId} key=${key} delivered=${delivery.delivered} recipients=${recipientIds.join(",") || "none"}`);
       return;
     }
 
     if (msg.type === "leave") {
       room.players.delete(clientId);
+      if (room.clients instanceof Map) room.clients.delete(clientId);
       c.room = null;
       send(ws, roomUpdatePayload(room, []));
       broadcast(room, roomUpdatePayload(room));
