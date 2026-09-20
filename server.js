@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-server-chef-emoji-v9-20260920";
+const SERVER_BUILD = "barikade-server-chef-emoji-v9.2-debug-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1685,6 +1685,7 @@ try{
     // Client sendet nur einen Wunsch. Ausschliesslich der Server erzeugt den
     // Anzeige-Befehl und verteilt ihn an ALLE aktuell verbundenen Sockets im Raum.
     if (msg.type === "emoji_request") {
+      console.log(`[emoji-v9.2] REQUEST_RECEIVED room=${room.code} client=${clientId} rawEmoji=${String(msg.emoji || "")}`);
       const me = room.players.get(clientId);
       if (!me) {
         send(ws, { type:"error", code:"NO_PLAYER", message:"Spieler nicht gefunden" });
@@ -1723,12 +1724,29 @@ try{
 
       // EIN Server-Befehl, EIN Broadcast-Weg, ALLE Sockets des Raums.
       const delivered = broadcastEmojiToRoom(room, command);
+      const roomSockets = room.clients instanceof Map
+        ? Array.from(room.clients.values()).filter(s => s?.readyState === 1).length
+        : 0;
       const globalRoomSockets = Array.from(clients.values()).filter(cc =>
         String(cc?.room || "").trim().toUpperCase() === String(room.code || "").trim().toUpperCase() &&
         cc?.ws?.readyState === 1
       ).length;
 
-      console.log(`[emoji-v9] room=${room.code} sender=${senderName} key=${key} event=${eventId} delivered=${delivered} players=${room.players.size} roomSockets=${room.clients instanceof Map ? room.clients.size : 0} globalRoomSockets=${globalRoomSockets}`);
+      // Diagnose nur an den Absender: damit sehen wir im Browser, ob der Server den
+      // Request wirklich verarbeitet hat und wie viele aktive Sockets er erreicht hat.
+      send(ws, {
+        type:"emoji_debug",
+        stage:"server_broadcast",
+        eventId,
+        room:room.code,
+        delivered,
+        roomSockets,
+        globalRoomSockets,
+        players:room.players.size,
+        ts:Date.now()
+      });
+
+      console.log(`[emoji-v9.2] BROADCAST room=${room.code} sender=${senderName} key=${key} event=${eventId} delivered=${delivered} players=${room.players.size} roomSockets=${roomSockets} globalRoomSockets=${globalRoomSockets}`);
       return;
     }
 
