@@ -2062,16 +2062,30 @@
       {
         "id": "boss_left",
         "name": "Bossfeld I",
-        "x": 300,
-        "y": 300,
-        "anchor": "n_47"
+        "x": 480,
+        "y": 240,
+        "anchors": [
+          "n_41",
+          "n_47"
+        ],
+        "path": [
+          "n_41",
+          "n_47"
+        ]
       },
       {
         "id": "boss_right",
         "name": "Bossfeld II",
-        "x": 1060,
-        "y": 300,
-        "anchor": "n_99"
+        "x": 880,
+        "y": 240,
+        "anchors": [
+          "n_96",
+          "n_82"
+        ],
+        "path": [
+          "n_96",
+          "n_82"
+        ]
       }
     ]
   }
