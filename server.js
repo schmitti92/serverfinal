@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-server-chef-emoji-v9.2-debug-20260920";
+const SERVER_BUILD = "barikade-server-chef-emoji-v9.4-final-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1623,7 +1623,7 @@ for (const p of Array.from(room.players.values())) {
 {
   const connectedCount = Array.from(room.players.values()).filter(p => isConnectedPlayer(p)).length;
   if (!existing && connectedCount >= ALLOWED_COLORS.length) {
-    send(clientId, { type: "error", code: "ROOM_FULL", message: `Raum ist voll (max ${ALLOWED_COLORS.length} Spieler).` });
+    send(ws, { type: "error", code: "ROOM_FULL", message: `Raum ist voll (max ${ALLOWED_COLORS.length} Spieler).` });
     return;
   }
 }
