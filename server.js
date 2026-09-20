@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v10.1-dice-styles-20260920";
+const SERVER_BUILD = "barikade-v10.6-stability-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -62,7 +62,7 @@ const KICK_QUOTES = [
 // We keep the existing action.jokersByColor for backwards compatibility,
 // but internally we store earned/base jokers as arrays with an "origin color".
 // This allows: multiple jokers per type, and correct display of the kicked color.
-const ACTION_JOKER_TYPES = ["choose","sum","allColors","barricade","reroll","double"];
+const ACTION_JOKER_TYPES = ["allColors","barricade","reroll","double"];
 
 function ensureActionJokers(action){
   if(!action) return;
@@ -71,20 +71,24 @@ function ensureActionJokers(action){
   } else {
     for(const c of ALLOWED_COLORS){
       if(!Array.isArray(action.jokersOwned[c])) action.jokersOwned[c] = [];
+      // V10.6: legacy Choose/Summe vollständig aus alten Saves entfernen.
+      action.jokersOwned[c] = action.jokersOwned[c].filter(j => ACTION_JOKER_TYPES.includes(String(j?.type || "")));
     }
   }
   if(!action.jokersByColor || typeof action.jokersByColor !== "object"){
     action.jokersByColor = {
-      red:      { choose:0, sum:0, allColors:0, barricade:0, reroll:0, double:0 },
-      blue:     { choose:0, sum:0, allColors:0, barricade:0, reroll:0, double:0 },
-      green:    { choose:0, sum:0, allColors:0, barricade:0, reroll:0, double:0 },
-      yellow:   { choose:0, sum:0, allColors:0, barricade:0, reroll:0, double:0 },
+      red:      { allColors:0, barricade:0, reroll:0, double:0 },
+      blue:     { allColors:0, barricade:0, reroll:0, double:0 },
+      green:    { allColors:0, barricade:0, reroll:0, double:0 },
+      yellow:   { allColors:0, barricade:0, reroll:0, double:0 },
     };
   } else {
     for(const c of ALLOWED_COLORS){
       if(!action.jokersByColor[c] || typeof action.jokersByColor[c] !== "object"){
-        action.jokersByColor[c] = { choose:0, sum:0, allColors:0, barricade:0, reroll:0, double:0 };
+        action.jokersByColor[c] = { allColors:0, barricade:0, reroll:0, double:0 };
       }
+      delete action.jokersByColor[c].choose;
+      delete action.jokersByColor[c].sum;
       for(const t of ACTION_JOKER_TYPES){
         const v = action.jokersByColor[c][t];
         if(v === true) action.jokersByColor[c][t] = 1;
@@ -101,7 +105,7 @@ function syncJokerCountsFromOwned(action){
   ensureActionJokers(action);
   for(const c of ALLOWED_COLORS){
     const owned = action.jokersOwned[c] || [];
-    const counts = { choose:0, sum:0, allColors:0, barricade:0, reroll:0, double:0 };
+    const counts = { allColors:0, barricade:0, reroll:0, double:0 };
     for(const j of owned){
       const t = String(j?.type || "");
       if(counts[t] != null) counts[t] += 1;
@@ -594,6 +598,62 @@ function savePathForRoom(code){
   return path.join(SAVE_DIR, safe + ".json");
 }
 
+function persistedSeatSnapshot(room){
+  try{
+    if(!room || !(room.players instanceof Map)) return [];
+    return Array.from(room.players.values())
+      .filter(p => p && p.sessionToken && ALLOWED_COLORS.includes(String(p.color || "")))
+      .map(p => ({
+        name: String(p.name || "Spieler").slice(0, 32),
+        color: String(p.color || ""),
+        diceStyle: normalizeDiceStyle(p.diceStyle),
+        isHost: !!p.isHost,
+        sessionToken: String(p.sessionToken || "").slice(0, 60),
+        lastSeen: Number(p.lastSeen || Date.now()) || Date.now(),
+      }));
+  }catch(_e){ return []; }
+}
+
+function restorePersistedSeats(room, seats, hostToken){
+  try{
+    if(!room) return;
+    if(!(room.players instanceof Map)) room.players = new Map();
+    if(hostToken) room.hostToken = String(hostToken).slice(0, 60);
+    if(!Array.isArray(seats)) return;
+    for(const seat of seats){
+      const token = String(seat?.sessionToken || "").slice(0, 60);
+      const color = String(seat?.color || "").toLowerCase();
+      if(!token || !ALLOWED_COLORS.includes(color)) continue;
+      const already = Array.from(room.players.values()).some(p => p?.sessionToken === token);
+      if(already) continue;
+      const id = `restored_${color}_${Math.random().toString(36).slice(2, 10)}`;
+      room.players.set(id, {
+        id,
+        name: String(seat?.name || "Spieler").slice(0, 32),
+        color,
+        diceStyle: normalizeDiceStyle(seat?.diceStyle),
+        isHost: !!seat?.isHost,
+        sessionToken: token,
+        lastSeen: Number(seat?.lastSeen || Date.now()) || Date.now(),
+      });
+    }
+    if(room.hostToken){
+      for(const p of room.players.values()) p.isHost = !!(p.sessionToken && p.sessionToken === room.hostToken);
+    }
+  }catch(_e){}
+}
+
+function restoreDerivedRuntimeState(room){
+  try{
+    if(!room?.state) return;
+    const st = room.state;
+    if(typeof st.extraRollPending !== "boolean"){
+      st.extraRollPending = (Number(st.rolled) === 6) && (st.phase === "need_move" || st.phase === "place_barricade");
+    }
+    room.lastRollWasSix = !!st.extraRollPending;
+  }catch(_e){}
+}
+
 async function persistRoomState(room){
   // Disk persistence (kept as fallback)
   try{
@@ -604,7 +664,7 @@ async function persistRoomState(room){
     room.state.rev += 1;
 
     const file = savePathForRoom(room.code);
-    const payload = { code: room.code, ts: Date.now(), state: room.state };
+    const payload = { code: room.code, ts: Date.now(), state: room.state, seats: persistedSeatSnapshot(room), hostToken: room.hostToken || null };
     fs.writeFileSync(file, JSON.stringify(payload));
   }catch(_e){}
 
@@ -619,6 +679,8 @@ async function persistRoomState(room){
       ts: now,
       rev: room.state.rev,
       state: room.state,
+      seats: persistedSeatSnapshot(room),
+      hostToken: room.hostToken || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
   }catch(e){
@@ -637,6 +699,8 @@ async function restoreRoomState(room){
       const data = snap.exists ? snap.data() : null;
       if (data?.state && typeof data.state === "object") {
         room.state = data.state;
+        restorePersistedSeats(room, data.seats, data.hostToken);
+        restoreDerivedRuntimeState(room);
         // Backward-compat + safety defaults
         if (!room.state.carryingByColor || typeof room.state.carryingByColor !== "object") {
           room.state.carryingByColor = { red: false, blue: false, green: false, yellow: false };
@@ -693,6 +757,8 @@ async function restoreRoomState(room){
     const payload = JSON.parse(raw);
     if(payload && payload.state && typeof payload.state === "object"){
       room.state = payload.state;
+      restorePersistedSeats(room, payload.seats, payload.hostToken);
+      restoreDerivedRuntimeState(room);
       if (!room.state.carryingByColor || typeof room.state.carryingByColor !== "object") {
         room.state.carryingByColor = { red: false, blue: false, green: false, yellow: false };
       } else {
@@ -1038,6 +1104,20 @@ function canStart(room) {
   return coloredConnected.length >= 2;
 }
 
+function detachPlayerFromRoom(room, clientId, preserveSeat = true){
+  try{
+    if(!room) return;
+    const p = room.players instanceof Map ? room.players.get(clientId) : null;
+    if(room.clients instanceof Map) room.clients.delete(clientId);
+    if(!(room.players instanceof Map)) return;
+    room.players.delete(clientId);
+    if(preserveSeat && room.state && p?.sessionToken && ALLOWED_COLORS.includes(String(p.color || ""))){
+      const seatId = `offline_${String(p.color)}_${Math.random().toString(36).slice(2, 10)}`;
+      room.players.set(seatId, { ...p, id: seatId, lastSeen: Date.now() });
+    }
+  }catch(_e){}
+}
+
 // Reconnect-Sicherheit:
 // - Sobald weniger als 2 farbige Spieler verbunden sind, pausieren wir IMMER.
 // - Entpausen passiert NUR explizit per Host-Button (msg.type === "resume").
@@ -1277,16 +1357,16 @@ function initGameState(room, activeColors, mode = "classic", starterColor = null
     },
     // Backward compat snapshot for UI (counts)
     jokersByColor: {
-      red:      { choose: baseJokerCount, sum: baseJokerCount, allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
-      blue:     { choose: baseJokerCount, sum: baseJokerCount, allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
-      green:    { choose: baseJokerCount, sum: baseJokerCount, allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
-      yellow:   { choose: baseJokerCount, sum: baseJokerCount, allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
+      red:      { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
+      blue:     { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
+      green:    { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
+      yellow:   { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
     },
     // Active effects for the CURRENT turn only (cleared on end_turn)
     effects: {
       allColorsBy: null,   // color that may move any piece this turn
       barricadeBy: null,   // color that may move one barricade this turn
-      doubleRoll: null,    // {kind:"choose"|"sum", by:"red", rolls:[..], chosen?:n }
+      doubleRoll: null,    // {kind:"sum2", by:"red", pending:true, rolls:[..], chosen?:n }
     },
     // version for future-proofing
     v: 2,
@@ -1310,6 +1390,7 @@ paused: false,
     turnColor,
     phase: "need_roll", // need_roll | need_move | place_barricade
     rolled: null,
+    extraRollPending: false, // persisted: survives server restart after rolling a 6
     pieces,
     barricades,
     goal: GOAL,
@@ -1543,13 +1624,13 @@ wss.on("connection", (ws) => {
 
       if (!roomCode) { send(ws, { type: "error", code: "NO_ROOM", message: "Kein Raumcode" }); return; }
 
-      // leave old room
+      // leave old room; a running match keeps the colored seat reserved for reconnect
       if (c.room) {
         const old = rooms.get(c.room);
         if (old) {
-          old.players.delete(clientId);
-          if (old.clients instanceof Map) old.clients.delete(clientId);
+          detachPlayerFromRoom(old, clientId, true);
           broadcast(old, roomUpdatePayload(old));
+          if(old.state) await persistRoomState(old);
         }
       }
 
@@ -1627,10 +1708,34 @@ if (isHost) {
 // If reconnecting via sessionToken, keep the exact previous color
 let color = existing?.color || null;
 
-// remove offline placeholders that hold a color, so slots become available
-for (const p of Array.from(room.players.values())) {
-  if (p.color && !isConnectedPlayer(p)) {
-    room.players.delete(p.id);
+// V10.6: Once a match exists, colored seats stay reserved for their sessionToken.
+const matchSeatsLocked = !!room.state;
+if(!matchSeatsLocked){
+  for (const p of Array.from(room.players.values())) {
+    if (p.color && !isConnectedPlayer(p)) room.players.delete(p.id);
+  }
+}
+
+const requiredSeatColors = matchSeatsLocked && Array.isArray(room.state?.activeColors)
+  ? room.state.activeColors.map(c => String(c || "").toLowerCase()).filter(c => ALLOWED_COLORS.includes(c))
+  : [];
+const tokenSeatColors = new Set(Array.from(room.players.values())
+  .filter(p => p && p.sessionToken && ALLOWED_COLORS.includes(String(p.color || "")))
+  .map(p => String(p.color).toLowerCase()));
+const seatRosterComplete = requiredSeatColors.length >= 2 && requiredSeatColors.every(c => tokenSeatColors.has(c));
+
+if(matchSeatsLocked && seatRosterComplete && !existing){
+  send(ws, { type: "error", code: "MATCH_LOCKED", message: "Dieses Spiel läuft bereits. Bitte mit der ursprünglichen Sitzung erneut verbinden." });
+  return;
+}
+
+// Migration path for old V10.5 saves that did not persist seat tokens yet:
+// only the original active colors may reclaim a still-unbound seat.
+if(matchSeatsLocked && !seatRosterComplete && !existing && requiredSeatColors.length){
+  const want = ALLOWED_COLORS.includes(requestedColor) ? requestedColor : null;
+  if(!want || !requiredSeatColors.includes(want) || tokenSeatColors.has(want)){
+    send(ws, { type: "error", code: "MATCH_RECOVERY_COLOR", message: "Für diesen alten Spielstand muss die ursprüngliche Spielerfarbe verwendet werden." });
+    return;
   }
 }
 
@@ -1767,11 +1872,11 @@ try{
     }
 
     if (msg.type === "leave") {
-      room.players.delete(clientId);
-      if (room.clients instanceof Map) room.clients.delete(clientId);
+      detachPlayerFromRoom(room, clientId, true);
       c.room = null;
       send(ws, roomUpdatePayload(room, []));
       broadcast(room, roomUpdatePayload(room));
+      if(room.state) await persistRoomState(room);
       return;
     }
 
@@ -1899,6 +2004,7 @@ broadcast(room, roomUpdatePayload(room));
     if (msg.type === "start_request") {
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
+      if (room.state) { send(ws, { type: "error", code: "GAME_EXISTS", message: "Es existiert bereits eine Partie. Nutze Revanche oder Reset." }); return; }
       if (!canStart(room)) { send(ws, { type: "error", code: "NEED_2P", message: "Mindestens 2 Spieler nötig" }); return; }
 
       // aktive Farben anhand verbundener Spieler (mit gewählter Farbe)
@@ -1929,7 +2035,7 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       // pending info (nur im RAM, kein Persist nötig)
-      room._pendingStart = { starterColor, mode: requestedMode, jokerStartCount, ts: Date.now() };
+      room._pendingStart = { starterColor, mode: requestedMode, jokerStartCount, activeColors: uniqueAct.slice(), ts: Date.now() };
 
       broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, jokerStartCount, durationMs: 4200 });
       return;
@@ -1938,6 +2044,7 @@ broadcast(room, roomUpdatePayload(room));
     if (msg.type === "start") {
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
+      if (room.state) { room._pendingStart = null; send(ws, { type: "error", code: "GAME_EXISTS", message: "Es existiert bereits eine Partie. Nutze Revanche oder Reset." }); return; }
       if (!canStart(room)) { send(ws, { type: "error", code: "NEED_2P", message: "Mindestens 2 Spieler nötig" }); return; }
 
       // aktive Farben anhand verbundener Spieler (mit gewählter Farbe)
@@ -1950,12 +2057,32 @@ broadcast(room, roomUpdatePayload(room));
         return;
       }
 
-      const starter = String(msg.starterColor || room._pendingStart?.starterColor || "").toLowerCase().trim();
-      const requestedMode = String(msg.mode || room._pendingStart?.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      // V10.6: finaler Start akzeptiert nur die serverseitig erzeugte Auslosung.
+      const pending = room._pendingStart;
+      if(!pending || !pending.starterColor || (Date.now() - Number(pending.ts || 0)) > 20000){
+        room._pendingStart = null;
+        send(ws, { type: "error", code: "START_NOT_ARMED", message: "Startauslosung abgelaufen. Bitte Spielstart erneut auslösen." });
+        return;
+      }
+      const starter = String(pending.starterColor || "").toLowerCase().trim();
+      if(!uniqueAct.includes(starter)){
+        room._pendingStart = null;
+        send(ws, { type: "error", code: "START_ROSTER_CHANGED", message: "Spielerbelegung hat sich geändert. Bitte Start erneut auslösen." });
+        return;
+      }
+      const pendingColors = Array.isArray(pending.activeColors) ? pending.activeColors : [];
+      const sameRoster = pendingColors.length === uniqueAct.length && pendingColors.every(c => uniqueAct.includes(c));
+      if(!sameRoster){
+        room._pendingStart = null;
+        send(ws, { type: "error", code: "START_ROSTER_CHANGED", message: "Spielerbelegung hat sich geändert. Bitte Start erneut auslösen." });
+        return;
+      }
+      const requestedMode = String(pending.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
       let jokerStartCount = null;
       if (requestedMode === "action") {
-        const incomingCount = Number(msg.jokerStartCount ?? room._pendingStart?.jokerStartCount ?? room.jokerStartCount);
+        const incomingCount = Number(pending.jokerStartCount);
         if (!Number.isInteger(incomingCount) || incomingCount < 1 || incomingCount > 5) {
+          room._pendingStart = null;
           send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
           return;
         }
@@ -1968,6 +2095,53 @@ broadcast(room, roomUpdatePayload(room));
       await persistRoomState(room);
       console.log(`[start] room=${room.code} mode=${requestedMode} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
       broadcast(room, { type: "started", state: room.state });
+      return;
+    }
+
+    if (msg.type === "rematch") {
+      const me = room.players.get(clientId);
+      if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann eine Revanche starten" }); return; }
+      if (!room.state || !room.state.finished) { send(ws, { type: "error", code: "NOT_FINISHED", message: "Revanche ist erst nach Spielende möglich" }); return; }
+
+      // Revanche bedeutet bewusst: gleicher Raum, gleiche Spieler/Farben/Würfel und gleicher Modus.
+      // Deshalb müssen die Teilnehmer der letzten Runde wieder verbunden sein.
+      const prev = room.state;
+      const previousActive = Array.isArray(prev.activeColors)
+        ? prev.activeColors.map(c => String(c || "").toLowerCase()).filter(c => ALLOWED_COLORS.includes(c))
+        : [];
+      const connectedColors = new Set(Array.from(room.players.values())
+        .filter(p => isConnectedPlayer(p) && ALLOWED_COLORS.includes(p.color))
+        .map(p => p.color));
+      const active = previousActive.length ? previousActive : ALLOWED_COLORS.filter(c => connectedColors.has(c));
+
+      if (active.length < 2) {
+        send(ws, { type: "error", code: "NEED_2P", message: "Mindestens 2 Spieler müssen für die Revanche verbunden sein" });
+        return;
+      }
+      const missing = active.filter(c => !connectedColors.has(c));
+      if (missing.length) {
+        send(ws, { type: "error", code: "REMATCH_WAIT_PLAYERS", message: "Für die Revanche müssen alle Spieler der letzten Runde wieder verbunden sein" });
+        return;
+      }
+
+      const requestedMode = String(prev.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      const jokerStartCount = requestedMode === "action"
+        ? Math.max(1, Math.min(5, Number(prev.jokerStartCount ?? room.jokerStartCount ?? 1) || 1))
+        : null;
+      const starterColor = active[Math.floor(Math.random() * active.length)];
+
+      initGameState(room, active, requestedMode, starterColor, jokerStartCount);
+      room._pendingStart = null;
+      await persistRoomState(room);
+      console.log(`[rematch] room=${room.code} mode=${requestedMode} starter=${starterColor} players=${active.join(",")}`);
+
+      broadcast(room, {
+        type: "rematch_started",
+        state: room.state,
+        starterColor,
+        activeColors: active
+      });
+      broadcast(room, roomUpdatePayload(room));
       return;
     }
 
@@ -2011,9 +2185,7 @@ broadcast(room, roomUpdatePayload(room));
       broadcast(room, { type: "snapshot", state: room.state });
       return;
     }    // ---------- ACTION MODE: JOKERS (server is chef) ----------
-    // Safety-first rollout:
-    // - allColors + barricade are enabled (low risk)
-    // - choose + sum are reserved for next step (needs dice UI for 7-12 etc.)
+    // V10.6: four supported jokers only: allColors, barricade, reroll, double.
     if (msg.type === "use_joker") {
       if (!requireRoomState(room, ws)) return;
       if (!requireTurn(room, clientId, ws)) return;
@@ -2084,6 +2256,8 @@ broadcast(room, roomUpdatePayload(room));
         }
         // Wurf verfällt -> zurück in need_roll
         room.state.rolled = null;
+        room.state.extraRollPending = false;
+        room.lastRollWasSix = false; // backward-compat alias
         room.state.phase = "need_roll";
         consumeNow("reroll");
         try{ recordMatchJoker(room, turnColor, "reroll"); }catch(_e){}
@@ -2110,11 +2284,6 @@ broadcast(room, roomUpdatePayload(room));
         try{ recordMatchJoker(room, turnColor, "double"); }catch(_e){}
         await persistRoomState(room);
         broadcast(room, { type: "snapshot", state: room.state, joker: "double" });
-        return;
-      }
-
-if (joker === "choose" || joker === "sum") {
-        send(ws, { type: "error", code: "NOT_READY", message: "Choose/Summe kommt im nächsten Schritt (sonst Risiko mit Würfel-UI)" });
         return;
       }
 
@@ -2168,7 +2337,7 @@ if (joker === "choose" || joker === "sum") {
           syncJokerCountsFromOwned(action);
         }
       } else {
-        // reroll / choose / sum etc. are not cancellable (would change game state)
+        // reroll is not cancellable because it immediately changes the roll state
       }
 
       await persistRoomState(room);
@@ -2268,7 +2437,8 @@ if (msg.type === "action_barricade_move") {
       try{ recordMatchRoll(room, room.state.turnColor, v); }catch(_e){}
 
       room.state.rolled = v;
-      room.lastRollWasSix = (v === 6);
+      room.state.extraRollPending = (v === 6);
+      room.lastRollWasSix = room.state.extraRollPending; // backward-compat alias
       room.state.phase = "need_move";
       await persistRoomState(room);
     broadcast(room, { type: "roll", value: v, state: room.state, double });
@@ -2361,6 +2531,7 @@ if (msg.type === "action_barricade_move") {
       }catch(_e){}
 
       room.lastRollWasSix = false;
+      room.state.extraRollPending = false;
       room.state.rolled = null;
       room.state.phase = "need_roll";
       room.state.turnColor = nextTurnColor(room, room.state.turnColor);
@@ -2424,6 +2595,9 @@ if (msg.type === "action_barricade_move") {
     if (!room) return;
     const me = room.players.get(clientId);
     if (!me?.isHost) return send(ws, { type: "error", code: "HOST_ONLY", message: "Nur Host" });
+    if(String(msg.reason || "") === "init_start_player"){
+      return send(ws, { type: "error", code: "START_SERVER_ONLY", message: "Der Startspieler wird ausschließlich vom Server festgelegt." });
+    }
     const st = msg.state;
     if (!st || typeof st !== "object") return send(ws, { type: "error", code: "BAD_STATE", message: "Ungültiger State" });
 
@@ -2433,6 +2607,7 @@ if (msg.type === "action_barricade_move") {
     }
 
     room.state = st;
+    restoreDerivedRuntimeState(room);
     // wenn Spiel importiert ist, nicht pausieren (sonst lock)
     room.state.paused = false;
     await persistRoomState(room);
@@ -2563,11 +2738,13 @@ if (msg.type === "move_request") {
 
       // if no barricade placement needed:
       if (!picked) {
-        if (room.lastRollWasSix) {
-          room.state.turnColor = activeColor; // extra roll (Joker-sicher)
+        if (room.state.extraRollPending) {
+          room.state.turnColor = activeColor; // extra roll survives restart
         } else {
           room.state.turnColor = nextTurnColor(room, activeColor);
         }
+        room.state.extraRollPending = false;
+        room.lastRollWasSix = false;
         room.state.phase = "need_roll";
         room.state.rolled = null;
       }
@@ -2705,7 +2882,9 @@ if (msg.type === "place_barricade") {
   room.carryingByColor = room.state.carryingByColor; // compat alias
 
   // ✅ weiter
-  room.state.turnColor = room.lastRollWasSix ? color : nextTurnColor(room, color);
+  room.state.turnColor = room.state.extraRollPending ? color : nextTurnColor(room, color);
+  room.state.extraRollPending = false;
+  room.lastRollWasSix = false;
   room.state.phase = "need_roll";
   room.state.rolled = null;
 
