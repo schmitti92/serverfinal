@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v11.5-eventdeck54-20260920";
+const SERVER_BUILD = "barikade-v12.0-release-candidate-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -267,7 +267,7 @@ const EVENT_CARD_DEFS = [
   }),
   ...repeatEventCards("all_forward",1,{
     icon:"⏩", title:"Alle vorwärts!",
-    text:"Alle Figuren auf dem Brett bewegen sich 1 Feld Richtung Ziel. Eigene Figuren im Weg werden übersprungen.",
+    text:"Alle Figuren auf dem Brett bewegen sich 1 Feld Richtung Ziel. Eigene Figuren, die zu Beginn der Kartenaktion im Weg stehen, werden übersprungen.",
     effect:"all_pieces_forward"
   }),
 ];
@@ -298,12 +298,12 @@ const BOSS_EVENT_MIN_DISTANCE = 3;
 function createBossState(){
   const deck=EVENT_CARD_DEFS.map(c=>c.id); shuffleInPlace(deck);
   return {
-    v:4,
+    v:5,
     slots:normalizedBossSlots(),
     // V11.4: Die 8 Ereignisfelder werden serverseitig zufällig verteilt.
     eventFields:[],
     deck, discard:[], lastEvent:null, lastAction:null, history:[],
-    eventSeq:0, actionSeq:0, round:1, turnsInRound:0, sleepRounds:0,
+    eventSeq:0, actionSeq:0, round:1, turnsInRound:0, sleepRounds:0, sleepActiveRound:null,
     rollModsByColor:{red:0,blue:0,green:0,yellow:0},
     skipTurnsByColor:{red:0,blue:0,green:0,yellow:0},
     forcedMoveByColor:{red:0,blue:0,green:0,yellow:0},
@@ -363,8 +363,12 @@ function randomEventFieldLayout(room,b,count=BOSS_EVENT_FIELD_COUNT,{avoidDynami
   const excluded=new Set((excludeIds||[]).map(String));
   const blocked=avoidDynamic?eventFieldDynamicBlocked(room,b):new Set();
   const base=eventFieldStaticCandidates().filter(id=>!excluded.has(id)&&!blocked.has(id));
+  if(count<=0) return [];
+  if(base.length<count) return [];
+
+  // Schneller Zufallsweg für den Normalfall.
   let best=[];
-  for(let attempt=0;attempt<120;attempt++){
+  for(let attempt=0;attempt<220;attempt++){
     const pool=base.slice(); shuffleInPlace(pool);
     const chosen=[];
     for(const id of pool){
@@ -375,7 +379,49 @@ function randomEventFieldLayout(room,b,count=BOSS_EVENT_FIELD_COUNT,{avoidDynami
     }
     if(chosen.length>best.length) best=chosen;
   }
-  return best;
+
+  // Sicherheitsnetz: randomisiertes Backtracking statt eines unsicheren Fallbacks.
+  // Damit bleiben die Bedingungen „genau 8 Felder“ + Mindestabstand 3 erhalten,
+  // solange auf dem Brett überhaupt eine gültige Verteilung existiert.
+  const pool=base.slice(); shuffleInPlace(pool);
+  const compatible=new Map();
+  for(const a of pool){
+    const set=new Set();
+    for(const c of pool){
+      if(a!==c && eventFieldGraphDistance(a,c,BOSS_EVENT_MIN_DISTANCE-1)>=BOSS_EVENT_MIN_DISTANCE) set.add(c);
+    }
+    compatible.set(a,set);
+  }
+
+  let visits=0;
+  const MAX_VISITS=250000;
+  function search(candidates,chosen){
+    visits++;
+    if(chosen.length>=count) return chosen.slice(0,count);
+    const need=count-chosen.length;
+    if(candidates.length<need || visits>MAX_VISITS) return null;
+
+    // Kandidaten mit vielen kompatiblen Restfeldern zuerst probieren.
+    candidates.sort((a,c)=>{
+      const ca=compatible.get(a), cc=compatible.get(c);
+      let na=0,nc=0;
+      for(const x of candidates){ if(ca?.has(x)) na++; if(cc?.has(x)) nc++; }
+      return nc-na;
+    });
+
+    for(let i=0;i<candidates.length;i++){
+      const id=candidates[i];
+      if(!chosen.every(other=>compatible.get(id)?.has(other))) continue;
+      const next=[];
+      const comp=compatible.get(id);
+      for(let j=i+1;j<candidates.length;j++) if(comp?.has(candidates[j])) next.push(candidates[j]);
+      const found=search(next,chosen.concat(id));
+      if(found) return found;
+    }
+    return null;
+  }
+
+  return search(pool,[]) || best;
 }
 
 function ensureBossEventFieldLayout(room,b,force=false){
@@ -385,11 +431,10 @@ function ensureBossEventFieldLayout(room,b,force=false){
   const valid=current.length===BOSS_EVENT_FIELD_COUNT && eventFieldsSpaced(current);
   if(valid && !force){b.eventFields=current;return current;}
 
-  let next=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:true});
-  if(next.length<BOSS_EVENT_FIELD_COUNT){
-    // Sehr defensiver Fallback: dynamische Belegung ignorieren, Mindestabstand aber niemals brechen.
-    next=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:false});
-  }
+  const next=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:true});
+  // Niemals Ereignisfelder unter Figuren, Barikaden oder aktive Bosse legen.
+  // Sollte ein extrem belegtes Brett vorübergehend keine 8 sicheren Felder zulassen,
+  // behalten wir nur die sicher gefundenen Felder statt eine Kollision zu erzeugen.
   b.eventFields=next.slice(0,BOSS_EVENT_FIELD_COUNT);
   return b.eventFields;
 }
@@ -409,19 +454,22 @@ function respawnBossEventField(room,b,usedFieldId){
   let next=candidates[0]||null;
 
   if(!next){
-    // Falls gerade sehr viele Felder belegt sind: Belegung lockern, Abstand bleibt zwingend erhalten.
-    candidates=eventFieldStaticCandidates().filter(id=>
-      id!==used && !b.eventFields.includes(id) &&
-      b.eventFields.every(other=>eventFieldGraphDistance(id,other,BOSS_EVENT_MIN_DISTANCE-1)>=BOSS_EVENT_MIN_DISTANCE)
-    );
-    shuffleInPlace(candidates);
-    next=candidates[0]||null;
+    // Kein unsicherer Fallback: stattdessen alle 8 Felder komplett neu und kollisionsfrei suchen.
+    const relayout=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:true,excludeIds:[used]});
+    if(relayout.length===BOSS_EVENT_FIELD_COUNT){
+      b.eventFields=relayout.slice();
+      next=b.eventFields.find(id=>!remaining.includes(id)) || b.eventFields[b.eventFields.length-1] || null;
+      return next;
+    }
   }
 
   if(next) b.eventFields.push(String(next));
   if(b.eventFields.length!==BOSS_EVENT_FIELD_COUNT || !eventFieldsSpaced(b.eventFields)){
-    ensureBossEventFieldLayout(room,b,true);
-    next=b.eventFields.find(id=>!remaining.includes(id)) || b.eventFields[b.eventFields.length-1] || null;
+    const relayout=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:true,excludeIds:[used]});
+    if(relayout.length===BOSS_EVENT_FIELD_COUNT){
+      b.eventFields=relayout.slice();
+      next=b.eventFields.find(id=>!remaining.includes(id)) || b.eventFields[b.eventFields.length-1] || null;
+    }
   }
   return next;
 }
@@ -476,9 +524,11 @@ function ensureBossState(room){
   }
   b.bountyNextBoss=!!b.bountyNextBoss;
   b.round=Math.max(1,Number(b.round||1)); b.turnsInRound=Math.max(0,Number(b.turnsInRound||0));
-  b.sleepRounds=Math.max(0,Number(b.sleepRounds||0)); b.eventSeq=Math.max(0,Number(b.eventSeq||0)); b.actionSeq=Math.max(0,Number(b.actionSeq||0));
+  b.sleepRounds=Math.max(0,Math.floor(Number(b.sleepRounds||0)));
+  b.sleepActiveRound=Number.isFinite(Number(b.sleepActiveRound))&&Number(b.sleepActiveRound)>0?Math.floor(Number(b.sleepActiveRound)):null;
+  b.eventSeq=Math.max(0,Number(b.eventSeq||0)); b.actionSeq=Math.max(0,Number(b.actionSeq||0));
   ensureBossEventFieldLayout(room,b,false);
-  b.v=4;
+  b.v=5;
   return b;
 }
 
@@ -767,10 +817,16 @@ function forwardChoices(nodeId){
     .sort((a,b)=>Number(DIST_TO_GOAL.get(String(a)))-Number(DIST_TO_GOAL.get(String(b))));
 }
 
-function chooseForwardDestinationForEvent(room,piece){
+function chooseForwardDestinationForEvent(room,piece,{ownSnapshot=null,reservedOwn=null}={}){
   if(!piece?.nodeId) return null;
   const barriers=new Set((room.state.barricades||[]).map(String));
   const bossNodes=new Set(activeBossEntries(room).map(e=>String(e.boss?.nodeId||"")).filter(Boolean));
+  const ownOccupied = ownSnapshot instanceof Set
+    ? ownSnapshot
+    : new Set((room.state.pieces||[])
+        .filter(p=>p!==piece&&p?.posKind==="board"&&p?.color===piece.color&&p?.nodeId)
+        .map(p=>String(p.nodeId)));
+  const reserved = reservedOwn instanceof Set ? reservedOwn : new Set();
   let cursor=String(piece.nodeId);
   const seen=new Set([cursor]);
   for(let skip=0;skip<12;skip++){
@@ -778,11 +834,19 @@ function chooseForwardDestinationForEvent(room,piece){
     if(!choices.length) return null;
     const bestDist=Math.min(...choices.map(id=>Number(DIST_TO_GOAL.get(String(id)))));
     choices=choices.filter(id=>Number(DIST_TO_GOAL.get(String(id)))===bestDist);
-    const next=String(choices[Math.floor(Math.random()*choices.length)]);
-    const own=(room.state.pieces||[]).find(p=>p!==piece&&p?.posKind==="board"&&p?.color===piece.color&&String(p.nodeId||"")===next);
-    if(own){
+    shuffleInPlace(choices);
+
+    // Zielkollisionen mit einer bereits für dieselbe Farbe geplanten Figur vermeiden.
+    // Wenn möglich, wird bei einer Verzweigung ein anderer gleichwertiger Weg genommen.
+    const freeChoice=choices.find(id=>!reserved.has(String(id)));
+    const next=String(freeChoice || choices[0]);
+
+    // Wichtig für die Karte „Alle vorwärts!“: Die Belegung wird vom Zustand VOR
+    // Beginn der Ereigniskarte genommen. Eine vordere eigene Figur wird deshalb
+    // wirklich übersprungen, auch wenn sie in derselben Kartenaktion zuerst zieht.
+    if(ownOccupied.has(next) || reserved.has(next)){
       if(seen.has(next)) return null;
-      seen.add(next); cursor=next; continue; // eigene Figur überspringen
+      seen.add(next); cursor=next; continue;
     }
     return next;
   }
@@ -793,17 +857,33 @@ function moveAllPiecesForwardEvent(room){
   const pcs=(room?.state?.pieces||[])
     .filter(p=>p?.posKind==="board"&&p?.nodeId)
     .sort((a,b)=>(Number(DIST_TO_GOAL.get(String(a.nodeId)))||9999)-(Number(DIST_TO_GOAL.get(String(b.nodeId)))||9999));
+
+  // Snapshot der eigenen Figuren VOR der Kartenwirkung. So hängt „eigene Figur
+  // überspringen“ nicht von der Reihenfolge ab, in der wir die Figuren abarbeiten.
+  const ownByColor={};
+  const reservedByColor={};
+  for(const color of ALLOWED_COLORS){
+    ownByColor[color]=new Set(pcs.filter(p=>p.color===color).map(p=>String(p.nodeId)));
+    reservedByColor[color]=new Set();
+  }
+
   let moved=0,kicked=0;
   for(const pc of pcs){
     if(pc.posKind!=="board"||!pc.nodeId) continue; // könnte vorher geschmissen worden sein
-    const dest=chooseForwardDestinationForEvent(room,pc);
+    const ownSnapshot=new Set(ownByColor[pc.color]||[]);
+    ownSnapshot.delete(String(pc.nodeId));
+    const reserved=reservedByColor[pc.color] || new Set();
+    const dest=chooseForwardDestinationForEvent(room,pc,{ownSnapshot,reservedOwn:reserved});
     if(!dest) continue;
+
     for(const op of (room.state.pieces||[])){
       if(op!==pc&&op?.posKind==="board"&&op?.color!==pc.color&&String(op.nodeId||"")===String(dest)){
         sendPieceHome(room,op); kicked++;
       }
     }
-    pc.nodeId=String(dest); moved++;
+    pc.nodeId=String(dest);
+    reserved.add(String(dest));
+    moved++;
   }
   return {text:`${moved} Figur${moved===1?"":"en"} bewegt${moved===1?" sich":"en sich"} Richtung Ziel.${kicked?` ${kicked} gegnerische Figur${kicked===1?" wurde":"en wurden"} dabei geschmissen.`:""}`};
 }
@@ -875,27 +955,50 @@ function resolveBossBoardHit(room,landed,color){
 }
 
 function isBossDropFieldFree(room,nodeId,ignoreBarricadeNode=null){
-  if(!nodeId||NODES.get(String(nodeId))?.kind!=="board"||String(nodeId)===String(GOAL||"")) return false;
-  const barr=new Set(room?.state?.barricades||[]); if(ignoreBarricadeNode) barr.delete(String(ignoreBarricadeNode));
-  if(barr.has(String(nodeId))) return false;
-  if(piecesOnBossNode(room,nodeId).length) return false;
-  for(const x of activeBossEntries(room)){ if(String(x.boss?.nodeId||"")===String(nodeId)) return false; }
+  const id=String(nodeId||"");
+  if(!id||NODES.get(id)?.kind!=="board"||id===String(GOAL||"")) return false;
+  const starts=new Set(Object.values(STARTS||{}).map(String));
+  if(starts.has(id)) return false;
+  const barr=new Set((room?.state?.barricades||[]).map(String)); if(ignoreBarricadeNode) barr.delete(String(ignoreBarricadeNode));
+  if(barr.has(id)) return false;
+  const b=ensureBossState(room);
+  if((b?.eventFields||[]).map(String).includes(id)) return false;
+  for(const p of (room?.state?.pieces||[])) if(p?.posKind==="board"&&String(p.nodeId||"")===id) return false;
+  for(const x of activeBossEntries(room)){ if(String(x.boss?.nodeId||"")===id) return false; }
   return true;
 }
 
 // Jäger/Schatten: tritt der Boss auf eine Barikade, wandert sie hinter ihn.
-// Bei seltenen Kollisionen (z.B. zwei Barikaden direkt hintereinander) wird das nächste freie
-// Feld aus der gerade gelaufenen Spur verwendet. Die Anzahl bleibt immer identisch.
+// Normalfall: zurück auf ein freies Feld seiner gerade gelaufenen Spur.
+// Sonderfall Portal-Einstieg: dort gibt es noch kein vorheriges Brettfeld. Dann wird zuerst
+// ein freies Nachbarfeld und nur im absoluten Notfall ein anderes freies Brettfeld verwendet.
+// Die Anzahl bleibt in jedem Fall exakt gleich.
 function bossRelocateBarricade(room,toNode,trail){
   const arr=room?.state?.barricades; if(!Array.isArray(arr)) return null;
-  const idx=arr.indexOf(String(toNode)); if(idx<0) return null;
+  const to=String(toNode);
+  const idx=arr.indexOf(to); if(idx<0) return null;
   const before=arr.length;
-  const candidates=(trail||[]).slice(0,-1).reverse().map(String);
-  const dest=candidates.find(id=>isBossDropFieldFree(room,id,toNode));
-  if(!dest) return null; // Eintritt direkt vom Portal: Barikade bleibt notfalls liegen.
+  const walked=(trail||[]).slice(0,-1).reverse().map(String);
+  let dest=walked.find(id=>isBossDropFieldFree(room,id,to))||null;
+
+  if(!dest){
+    const trailSet=new Set((trail||[]).map(String));
+    const neighbors=bossBoardNeighbors(to).filter(id=>!trailSet.has(String(id))&&isBossDropFieldFree(room,id,to));
+    if(neighbors.length) dest=String(neighbors[Math.floor(Math.random()*neighbors.length)]);
+  }
+
+  if(!dest){
+    const candidates=(BOARD.nodes||[])
+      .filter(n=>n?.kind==="board")
+      .map(n=>String(n.id))
+      .filter(id=>id!==to&&isBossDropFieldFree(room,id,to));
+    if(candidates.length) dest=String(candidates[Math.floor(Math.random()*candidates.length)]);
+  }
+
+  if(!dest) return null;
   arr[idx]=dest;
   if(arr.length!==before) throw new Error("Boss darf Barikadenanzahl nicht verändern");
-  return {from:String(toNode),to:dest};
+  return {from:to,to:dest};
 }
 
 function setPieceToStart(room,piece){
@@ -1031,23 +1134,46 @@ function moveBossEntry(room,entry,{forced=false}={}){
   return {wheels:res.wheels,text:`${boss.icon} ${boss.name}: ${route.length} Felder${where}.`};
 }
 
+function bossSleepActiveNow(b){
+  return !!b && Number(b.sleepActiveRound||0)===Number(b.round||0);
+}
+
 // Jäger bewegt sich NACH JEDEM Würfelwurf (auch bei Extra-/Neu-Wurf).
+// Eine gezogene Schlaf-Karte betrifft niemals den Rest der laufenden Runde,
+// sondern erst die nächste vollständig beginnende Spielrunde.
 function bossAfterRoll(room){
-  const b=ensureBossState(room);if(!b||b.sleepRounds>0)return [];
+  const b=ensureBossState(room);if(!b||bossSleepActiveNow(b))return [];
   const wheels=[];
   for(const e of activeBossEntries(room)) if(e.boss?.type==="hunter") wheels.push(...moveBossEntry(room,e).wheels);
   return wheels;
 }
 
 // Fluchmeister + Schatten bewegen sich einmal nach jeder vollständig abgeschlossenen Spielrunde.
+// Schlaf wird rundenrein behandelt: Karte in Runde R -> komplette Runde R+1 schläft.
 function bossTurnCompleted(room,endedColor){
   const b=ensureBossState(room);if(!b)return [];
   const active=activeBossColors(room); b.turnsInRound=Number(b.turnsInRound||0)+1;
   if(b.turnsInRound<active.length)return [];
-  b.turnsInRound=0;b.round=Number(b.round||1)+1;
-  if(b.sleepRounds>0){b.sleepRounds=Math.max(0,b.sleepRounds-1);bossAction(room,"😴","Bossrunde ausgesetzt","Alle Bosse bleiben in dieser vollständigen Runde inaktiv.");return [];}
+
+  b.turnsInRound=0;
+  const completedRound=Math.max(1,Number(b.round||1));
+  const sleeping=bossSleepActiveNow(b);
   const wheels=[];
-  for(const e of activeBossEntries(room)) if(e.boss?.type==="curse"||e.boss?.type==="shadow") wheels.push(...moveBossEntry(room,e).wheels);
+
+  if(sleeping){
+    bossAction(room,"😴","Bossrunde ausgesetzt",`Runde ${completedRound}: Alle Bosse bleiben vollständig inaktiv.`);
+  }else{
+    for(const e of activeBossEntries(room)) if(e.boss?.type==="curse"||e.boss?.type==="shadow") wheels.push(...moveBossEntry(room,e).wheels);
+  }
+
+  // Erst NACH Abschluss der alten Runde beginnt die neue Runde.
+  b.round=completedRound+1;
+  b.sleepActiveRound=null;
+  if(Number(b.sleepRounds||0)>0){
+    b.sleepRounds=Math.max(0,Number(b.sleepRounds||0)-1);
+    b.sleepActiveRound=b.round;
+    bossAction(room,"😴","Bossruhe beginnt",`In Runde ${b.round} setzen alle Bosse ihre regulären Aktionen aus.`);
+  }
   return wheels;
 }
 
@@ -1100,10 +1226,10 @@ function drawBossEventCard(room,fieldId,color){
     const r=spawnBossesFromEvent(room,2); effectText=r.text; wheels.push(...(r.wheels||[]));
   }else if(eff==="extra_roll"){
     room.state.extraRollPending=true;
-    effectText="Du behältst den Zug und darfst nach diesem Zug erneut würfeln.";
+    effectText="Du behältst den Zug und darfst nach diesem Zug erneut würfeln. Zusatzwürfe werden nicht mehrfach gestapelt.";
   }else if(eff==="roll_minus2"){
     b.rollModsByColor[color]=-2;
-    effectText="Dein nächster Würfelwurf erhält −2. Das Ergebnis kann nicht unter 1 fallen.";
+    effectText="Dein nächster Würfelwurf erhält −2. Das Ergebnis kann nicht unter 1 fallen; mehrere −2-Effekte stapeln sich nicht.";
   }else if(eff==="barrier_shuffle_all"){
     effectText=shuffleAllBarricadesEvent(room).text;
   }else if(eff==="boss_action_now"){
@@ -1669,6 +1795,54 @@ function restoreDerivedRuntimeState(room){
   }catch(_e){}
 }
 
+// V11.7: Export/Import und Reconnect muessen dieselben Persistenz-Felder behalten
+// wie ein normaler Firestore-/Disk-Restore. Dadurch gehen Boss-/Event-Zustaende
+// (10-Felder-Zug, Kopfgeld, Bossruhe, Flueche, Deckstand, Joker usw.) beim
+// manuellen Wiederherstellen nicht verloren oder bleiben in einem Altformat haengen.
+function normalizeImportedGameState(room){
+  try{
+    if(!room?.state || typeof room.state !== "object") return;
+    restoreDerivedRuntimeState(room);
+
+    if(!room.state.carryingByColor || typeof room.state.carryingByColor !== "object"){
+      room.state.carryingByColor={red:false,blue:false,green:false,yellow:false};
+    }else{
+      for(const c of ALLOWED_COLORS){
+        if(typeof room.state.carryingByColor[c] !== "boolean") room.state.carryingByColor[c]=false;
+      }
+    }
+    room.carryingByColor=room.state.carryingByColor;
+
+    if(!Array.isArray(room.state.activeColors)) room.state.activeColors=[];
+    if(!room.state.jokerAwardMode) room.state.jokerAwardMode="thrower";
+    room.jokerAwardMode=room.state.jokerAwardMode;
+
+    if(room.state.bossMode) ensureBossState(room);
+
+    if(room.state.action){
+      ensureActionJokers(room.state.action);
+      if(!room.state.action.jokersOwned || typeof room.state.action.jokersOwned !== "object"){
+        room.state.action.jokersOwned={red:[],blue:[],green:[],yellow:[]};
+      }
+      for(const c of ALLOWED_COLORS){
+        if(!Array.isArray(room.state.action.jokersOwned[c])) room.state.action.jokersOwned[c]=[];
+      }
+      const emptyAll=ALLOWED_COLORS.every(c=>room.state.action.jokersOwned[c].length===0);
+      if(emptyAll && room.state.action.jokersByColor){
+        for(const c of ALLOWED_COLORS){
+          const set=room.state.action.jokersByColor[c]||{};
+          for(const t of ACTION_JOKER_TYPES){
+            const v=set[t];
+            const n=(v===true)?1:((typeof v==="number"&&isFinite(v))?Math.max(0,Math.floor(v)):0);
+            for(let i=0;i<n;i++) room.state.action.jokersOwned[c].push({type:t,color:c,source:"legacy",ts:Date.now()});
+          }
+        }
+      }
+      syncJokerCountsFromOwned(room.state.action);
+    }
+  }catch(_e){}
+}
+
 async function persistRoomState(room){
   // Disk persistence (kept as fallback)
   try{
@@ -1785,6 +1959,8 @@ async function restoreRoomState(room){
       if (!Array.isArray(room.state.activeColors)) room.state.activeColors = [];
         if (!room.state.jokerAwardMode) room.state.jokerAwardMode = "thrower";
         room.jokerAwardMode = room.state.jokerAwardMode;
+      // Disk-Restore muss dieselbe Boss-/Event-Migration erhalten wie Firestore-Restore.
+      if(room.state.bossMode){ ensureBossState(room); }
       room.carryingByColor = room.state.carryingByColor;
 
         // Action-Mode Joker backward-compat / defaults
@@ -2739,9 +2915,7 @@ if (isHost) {
 // - Wunschfarbe kann beim Join mitgeschickt werden (requestedColor) und wird nur gesetzt,
 //   wenn der Slot frei ist.
 //
-// NOTE: Das Board/Game-Logic in diesem Server arbeitet aktuell mit 2 Farben (red/blue).
-//       Weitere Farben koennen spaeter additiv freigeschaltet werden.
-//       (ALLOWED_COLORS ist global definiert.)
+// Das aktuelle Board/Game-Logic unterstützt alle vier Farben aus ALLOWED_COLORS.
 
 // If reconnecting via sessionToken, keep the exact previous color
 let color = existing?.color || null;
@@ -3187,11 +3361,12 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "reset") {
-    // reset = neues Spiel, überschreibt Save
-    await deletePersisted(room);
-
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann resetten" }); return; }
+
+      // Erst NACH der Host-Prüfung löschen. Sonst könnte ein normaler Mitspieler
+      // zwar den laufenden State nicht resetten, aber den persistierten Save zerstören.
+      await deletePersisted(room);
 
       room.state = null;
       room.jokerStartCount = null;
@@ -3259,6 +3434,20 @@ broadcast(room, roomUpdatePayload(room));
         ensureBossEventFieldLayout(room,b,true);
         bossAction(room,"🎲","Ereignisfelder","8 Ereignisfelder wurden zufällig neu verteilt (Mindestabstand 3 Felder).");
         text="8 Ereignisfelder zufällig neu verteilt.";
+      } else if (action === "event_card") {
+        const effect=String(msg.eventEffect||"");
+        const card=EVENT_CARD_DEFS.find(c=>String(c.effect)===effect);
+        if(!card){ send(ws,{type:"boss_test_result",ok:false,text:"Unbekannte Ereigniskarte"}); return; }
+        if(!ALLOWED_COLORS.includes(String(me?.color||""))){ send(ws,{type:"boss_test_result",ok:false,text:"Host hat keine aktive Spielerfarbe"}); return; }
+        if(!Array.isArray(b.eventFields)||!b.eventFields.length) ensureBossEventFieldLayout(room,b,true);
+        const field=String(b.eventFields?.[0]||"");
+        if(!field){ send(ws,{type:"boss_test_result",ok:false,text:"Kein Ereignisfeld zum Testen verfügbar"}); return; }
+        // Testkarte wird nur temporär oben auf das Deck gelegt. Dadurch lässt sich jede Wirkung
+        // gezielt im echten Online-Spiel prüfen, ohne die normale Zufallslogik umzubauen.
+        b.deck.unshift(card.id);
+        const evt=drawBossEventCard(room,field,String(me.color));
+        if(Array.isArray(evt?.wheels)) wheels.push(...evt.wheels);
+        text=evt?`${evt.icon||"🃏"} ${evt.title}: ${evt.effectText||""}`:"Ereigniskarte konnte nicht ausgelöst werden.";
       } else if (action === "clear") {
         for(const slot of b.slots) slot.boss=null;
         b.rollModsByColor={red:0,blue:0,green:0,yellow:0};
@@ -3266,6 +3455,7 @@ broadcast(room, roomUpdatePayload(room));
         b.forcedMoveByColor={red:0,blue:0,green:0,yellow:0};
         b.bountyNextBoss=false;
         b.sleepRounds=0;
+        b.sleepActiveRound=null;
         room.state.eventMoveActive=null;
         bossAction(room,"🧹","Boss-Test","Alle Bosse und temporären Boss-/Ereigniseffekte wurden entfernt.");
         text="Alle Bosse entfernt.";
@@ -3729,9 +3919,11 @@ if (msg.type === "action_barricade_move") {
     }
 
     room.state = st;
-    restoreDerivedRuntimeState(room);
-    // wenn Spiel importiert ist, nicht pausieren (sonst lock)
-    room.state.paused = false;
+    normalizeImportedGameState(room);
+    // Import darf die Reconnect-Sicherheit nicht umgehen: mit mindestens zwei
+    // verbundenen farbigen Spielern kann direkt weitergespielt werden, sonst bleibt
+    // der Raum pausiert bis der Host nach dem Reconnect „Fortsetzen“ drückt.
+    room.state.paused = !canStart(room);
     await persistRoomState(room);
     broadcast(room, { type: "snapshot", state: room.state, players: currentPlayersList(room) });
     return;
@@ -3852,7 +4044,9 @@ if (msg.type === "move_request") {
       let eventCard = null;
       try{
         bossHit = resolveBossBoardHit(room, landed, activeColor);
-        eventCard = drawBossEventCard(room, landed, activeColor);
+        // Keine Ereignisketten: Ein durch die Karte „10 Felder laufen“ ausgelöster Zusatzlauf
+        // kann Bosse besiegen und normal schlagen, zieht aber nicht direkt eine weitere Ereigniskarte.
+        eventCard = wasForcedEventMove ? null : drawBossEventCard(room, landed, activeColor);
         if(Array.isArray(eventCard?.wheels) && eventCard.wheels.length){
           wheel = (Array.isArray(wheel) ? wheel : []).concat(eventCard.wheels);
         }
