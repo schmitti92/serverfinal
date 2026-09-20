@@ -2049,6 +2049,30 @@
       "green": "n_87",
       "yellow": "n_64"
     },
-    "goal": "n_1"
+    "goal": "n_1",
+    "eventFields": [
+      "n_12",
+      "n_34",
+      "n_49",
+      "n_71",
+      "n_83",
+      "n_106"
+    ],
+    "bossFields": [
+      {
+        "id": "boss_left",
+        "name": "Bossfeld I",
+        "x": 300,
+        "y": 300,
+        "anchor": "n_47"
+      },
+      {
+        "id": "boss_right",
+        "name": "Bossfeld II",
+        "x": 1060,
+        "y": 300,
+        "anchor": "n_99"
+      }
+    ]
   }
 }
