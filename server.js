@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v11.0-wandering-bosses-20260920";
+const SERVER_BUILD = "barikade-v11.5-eventdeck54-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -164,25 +164,117 @@ const BOSS_TYPES = {
   shadow: { key:"shadow", name:"Der Schatten", icon:"👻", hp:1, steps:3, cadence:"round" },
 };
 
-// Ereigniskarten mit Barikade +1/-1 wurden bewusst entfernt: Barikaden werden nie erzeugt/gelöscht.
+// ---------- V11.5 Ereigniskarten: exakt 54 Karten ----------
+// Jede Karte besitzt eine eindeutige ID. Das Deck wird vollständig gemischt,
+// Karte für Karte gezogen und erst nach Verbrauch aller 54 Karten neu gemischt.
+function repeatEventCards(prefix,count,base){
+  return Array.from({length:count},(_,i)=>({
+    ...base,
+    id:`${prefix}_${String(i+1).padStart(2,"0")}`,
+  }));
+}
+
 const EVENT_CARD_DEFS = [
-  {id:"boss_1a", icon:"👹", title:"Ein Boss erscheint", text:"Ein freies Bossportal wird aktiviert.", effect:"spawn_one"},
-  {id:"boss_1b", icon:"👹", title:"Ein Boss erscheint", text:"Ein weiterer Gegner betritt die Arena.", effect:"spawn_one"},
-  {id:"boss_1c", icon:"👹", title:"Ein Boss erscheint", text:"Aus einem freien Portal kommt ein Boss.", effect:"spawn_one"},
-  {id:"boss_2",  icon:"☠️", title:"Doppelter Ärger", text:"Bis zu zwei freie Bossportale werden sofort besetzt.", effect:"spawn_two"},
-  {id:"wind_1",  icon:"💨", title:"Rückenwind", text:"Du bekommst direkt noch einen Zug.", effect:"extra_roll"},
-  {id:"wind_2",  icon:"⚡", title:"Adrenalinschub", text:"Das Ereignis treibt dich weiter an.", effect:"extra_roll"},
-  {id:"luck_1",  icon:"🎁", title:"Glücksfund", text:"Du erhältst eine Belohnung.", effect:"reward"},
-  {id:"luck_2",  icon:"✨", title:"Mystische Kiste", text:"Eine kleine Belohnung wartet auf dich.", effect:"reward"},
-  {id:"weak_1",  icon:"⚔️", title:"Schwachstelle", text:"Ein aktiver Boss verliert sein Leben.", effect:"boss_damage"},
-  {id:"weak_2",  icon:"💫", title:"Volltreffer", text:"Ein zufälliger Boss wird getroffen.", effect:"boss_damage"},
-  {id:"sleep",   icon:"😴", title:"Bossruhe", text:"Die Bosse setzen die nächste Runde aus.", effect:"boss_sleep"},
-  {id:"mud_1",   icon:"🥾", title:"Schwerer Boden", text:"Dein nächster Würfelwurf wird um 1 reduziert.", effect:"roll_minus"},
-  {id:"mud_2",   icon:"🌧️", title:"Gegenwind", text:"Beim nächsten Wurf fehlt dir ein Punkt.", effect:"roll_minus"},
-  {id:"boost_1", icon:"🔥", title:"Tempo!", text:"Dein nächster Würfelwurf erhält +1.", effect:"roll_plus"},
-  {id:"boost_2", icon:"🚀", title:"Katapult", text:"Beim nächsten Wurf kommt ein Punkt dazu.", effect:"roll_plus"},
-  {id:"calm",    icon:"🌙", title:"Unheimliche Ruhe", text:"Diesmal passiert nichts. Noch nicht.", effect:"none"},
+  ...repeatEventCards("boss_one",15,{
+    icon:"👹", title:"Ein Boss erscheint",
+    text:"Ein zufälliger Boss erscheint an einem freien Bossportal.",
+    effect:"spawn_one"
+  }),
+  ...repeatEventCards("boss_two",3,{
+    icon:"☠️", title:"Zwei Bosse erscheinen",
+    text:"Bis zu zwei zufällige Bosse erscheinen an freien Bossportalen.",
+    effect:"spawn_two"
+  }),
+  ...repeatEventCards("again",5,{
+    icon:"🎲", title:"Nochmal würfeln",
+    text:"Du darfst nach diesem Zug sofort erneut würfeln.",
+    effect:"extra_roll"
+  }),
+  ...repeatEventCards("minus2",2,{
+    icon:"🥾", title:"Schwerer Fluch",
+    text:"Dein nächster Würfelwurf erhält −2. Minimum bleibt 1.",
+    effect:"roll_minus2"
+  }),
+  ...repeatEventCards("barrier_shuffle",1,{
+    icon:"🧱", title:"Barikadenchaos",
+    text:"Alle 12 Barikaden werden zufällig neu auf zulässige Felder verteilt.",
+    effect:"barrier_shuffle_all"
+  }),
+  ...repeatEventCards("boss_now",2,{
+    icon:"⚡", title:"Bossaktion!",
+    text:"Alle aktiven Bosse führen sofort ihre normale Bossaktion aus.",
+    effect:"boss_action_now"
+  }),
+  ...repeatEventCards("joker_one",5,{
+    icon:"🎁", title:"Joker erhalten",
+    text:"Du erhältst einen zufälligen Joker.",
+    effect:"joker_one"
+  }),
+  ...repeatEventCards("positions",1,{
+    icon:"🔀", title:"Positionschaos",
+    text:"Alle Figuren auf dem Brett tauschen ihre Positionen zufällig. Figuren im Starthaus bleiben dort.",
+    effect:"player_positions_shuffle"
+  }),
+  ...repeatEventCards("boss_sleep",2,{
+    icon:"😴", title:"Bosse setzen aus",
+    text:"Alle Bosse setzen die nächste vollständige Bossrunde aus.",
+    effect:"boss_sleep"
+  }),
+  ...repeatEventCards("boss_defeat_all",3,{
+    icon:"⚔️", title:"Alle Bosse besiegt",
+    text:"Alle aktuell aktiven Bosse sind sofort besiegt und verschwinden.",
+    effect:"defeat_all_bosses"
+  }),
+  ...repeatEventCards("walk10",1,{
+    icon:"🚀", title:"10 Felder laufen",
+    text:"Du darfst direkt eine eigene Figur genau 10 Felder bewegen.",
+    effect:"walk10"
+  }),
+  ...repeatEventCards("boss_teleport",2,{
+    icon:"🌀", title:"Boss-Teleport",
+    text:"Ein zufälliger aktiver Boss wird auf ein zufälliges freies Brettfeld teleportiert.",
+    effect:"boss_teleport"
+  }),
+  ...repeatEventCards("bounty",1,{
+    icon:"🎯", title:"Kopfgeld",
+    text:"Der nächste von einem Spieler besiegte Boss bringt 2 Joker statt 1.",
+    effect:"bounty"
+  }),
+  ...repeatEventCards("barrier_wander",2,{
+    icon:"🧱", title:"Barikadenwanderung",
+    text:"Drei zufällige Barikaden werden auf neue zulässige Felder versetzt.",
+    effect:"barrier_wander3"
+  }),
+  ...repeatEventCards("curse_wave",1,{
+    icon:"🧙", title:"Fluchwelle",
+    text:"Spieler in bis zu 3 Feldern Entfernung zum Fluchmeister erhalten −2 auf den nächsten Wurf.",
+    effect:"curse_wave"
+  }),
+  ...repeatEventCards("skip_next",1,{
+    icon:"⏸️", title:"Nächste Runde aussetzen",
+    text:"Du setzt deinen nächsten vollständigen Spielzug aus.",
+    effect:"skip_next_turn"
+  }),
+  ...repeatEventCards("joker_two",5,{
+    icon:"🎁", title:"Doppel-Joker",
+    text:"Du erhältst 2 zufällige Joker.",
+    effect:"joker_two"
+  }),
+  ...repeatEventCards("lose_jokers",1,{
+    icon:"💀", title:"Alle Joker verlieren",
+    text:"Du verlierst alle Joker, die du aktuell besitzt.",
+    effect:"lose_all_jokers"
+  }),
+  ...repeatEventCards("all_forward",1,{
+    icon:"⏩", title:"Alle vorwärts!",
+    text:"Alle Figuren auf dem Brett bewegen sich 1 Feld Richtung Ziel. Eigene Figuren im Weg werden übersprungen.",
+    effect:"all_pieces_forward"
+  }),
 ];
+
+if(EVENT_CARD_DEFS.length !== 54){
+  throw new Error(`Ereigniskartendeck muss exakt 54 Karten enthalten, aktuell: ${EVENT_CARD_DEFS.length}`);
+}
 
 function bossFieldDefs(){
   return Array.isArray(BOARD?.meta?.bossFields) ? BOARD.meta.bossFields : [];
@@ -200,16 +292,138 @@ function normalizedBossSlots(){
   return slots;
 }
 
+const BOSS_EVENT_FIELD_COUNT = 8;
+const BOSS_EVENT_MIN_DISTANCE = 3;
+
 function createBossState(){
   const deck=EVENT_CARD_DEFS.map(c=>c.id); shuffleInPlace(deck);
   return {
-    v:2,
+    v:4,
     slots:normalizedBossSlots(),
-    eventFields:Array.isArray(BOARD?.meta?.eventFields) ? BOARD.meta.eventFields.map(String) : [],
+    // V11.4: Die 8 Ereignisfelder werden serverseitig zufällig verteilt.
+    eventFields:[],
     deck, discard:[], lastEvent:null, lastAction:null, history:[],
     eventSeq:0, actionSeq:0, round:1, turnsInRound:0, sleepRounds:0,
     rollModsByColor:{red:0,blue:0,green:0,yellow:0},
+    skipTurnsByColor:{red:0,blue:0,green:0,yellow:0},
+    forcedMoveByColor:{red:0,blue:0,green:0,yellow:0},
+    bountyNextBoss:false,
   };
+}
+
+function eventFieldStaticCandidates(){
+  const starts=new Set(Object.values(STARTS||{}).map(String));
+  return (BOARD.nodes||[])
+    .filter(n=>n?.kind==="board")
+    .map(n=>String(n.id))
+    .filter(id=>id && id!==String(GOAL||"") && !starts.has(id));
+}
+
+function eventFieldGraphDistance(a,b,stopAt=BOSS_EVENT_MIN_DISTANCE-1){
+  a=String(a||""); b=String(b||"");
+  if(!a||!b) return Infinity;
+  if(a===b) return 0;
+  const q=[[a,0]], seen=new Set([a]);
+  for(let qi=0;qi<q.length;qi++){
+    const [u,d]=q[qi];
+    if(d>=stopAt) continue;
+    const ns=ADJ.get(u); if(!ns) continue;
+    for(const v of ns){
+      if(NODES.get(String(v))?.kind!=="board") continue;
+      if(String(v)===b) return d+1;
+      if(!seen.has(String(v))){seen.add(String(v));q.push([String(v),d+1]);}
+    }
+  }
+  return Infinity;
+}
+
+function eventFieldsSpaced(ids,minDistance=BOSS_EVENT_MIN_DISTANCE){
+  const arr=(ids||[]).map(String);
+  for(let i=0;i<arr.length;i++){
+    for(let j=i+1;j<arr.length;j++){
+      if(eventFieldGraphDistance(arr[i],arr[j],minDistance-1)<minDistance) return false;
+    }
+  }
+  return true;
+}
+
+function eventFieldDynamicBlocked(room,b){
+  const blocked=new Set();
+  for(const id of (room?.state?.barricades||[])) blocked.add(String(id));
+  for(const p of (room?.state?.pieces||[])){
+    if(p?.posKind==="board" && p?.nodeId) blocked.add(String(p.nodeId));
+  }
+  for(const slot of (b?.slots||[])){
+    if(slot?.boss?.nodeId) blocked.add(String(slot.boss.nodeId));
+  }
+  return blocked;
+}
+
+function randomEventFieldLayout(room,b,count=BOSS_EVENT_FIELD_COUNT,{avoidDynamic=true,excludeIds=[]}={}){
+  const excluded=new Set((excludeIds||[]).map(String));
+  const blocked=avoidDynamic?eventFieldDynamicBlocked(room,b):new Set();
+  const base=eventFieldStaticCandidates().filter(id=>!excluded.has(id)&&!blocked.has(id));
+  let best=[];
+  for(let attempt=0;attempt<120;attempt++){
+    const pool=base.slice(); shuffleInPlace(pool);
+    const chosen=[];
+    for(const id of pool){
+      if(chosen.every(other=>eventFieldGraphDistance(id,other,BOSS_EVENT_MIN_DISTANCE-1)>=BOSS_EVENT_MIN_DISTANCE)){
+        chosen.push(id);
+        if(chosen.length>=count) return chosen;
+      }
+    }
+    if(chosen.length>best.length) best=chosen;
+  }
+  return best;
+}
+
+function ensureBossEventFieldLayout(room,b,force=false){
+  if(!b) return [];
+  const staticSet=new Set(eventFieldStaticCandidates());
+  const current=Array.isArray(b.eventFields)?[...new Set(b.eventFields.map(String))].filter(id=>staticSet.has(id)):[];
+  const valid=current.length===BOSS_EVENT_FIELD_COUNT && eventFieldsSpaced(current);
+  if(valid && !force){b.eventFields=current;return current;}
+
+  let next=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:true});
+  if(next.length<BOSS_EVENT_FIELD_COUNT){
+    // Sehr defensiver Fallback: dynamische Belegung ignorieren, Mindestabstand aber niemals brechen.
+    next=randomEventFieldLayout(room,b,BOSS_EVENT_FIELD_COUNT,{avoidDynamic:false});
+  }
+  b.eventFields=next.slice(0,BOSS_EVENT_FIELD_COUNT);
+  return b.eventFields;
+}
+
+function respawnBossEventField(room,b,usedFieldId){
+  if(!b) return null;
+  const used=String(usedFieldId||"");
+  const remaining=(Array.isArray(b.eventFields)?b.eventFields:[]).map(String).filter(id=>id!==used);
+  b.eventFields=[...new Set(remaining)];
+
+  const blocked=eventFieldDynamicBlocked(room,b);
+  let candidates=eventFieldStaticCandidates().filter(id=>
+    id!==used && !b.eventFields.includes(id) && !blocked.has(id) &&
+    b.eventFields.every(other=>eventFieldGraphDistance(id,other,BOSS_EVENT_MIN_DISTANCE-1)>=BOSS_EVENT_MIN_DISTANCE)
+  );
+  shuffleInPlace(candidates);
+  let next=candidates[0]||null;
+
+  if(!next){
+    // Falls gerade sehr viele Felder belegt sind: Belegung lockern, Abstand bleibt zwingend erhalten.
+    candidates=eventFieldStaticCandidates().filter(id=>
+      id!==used && !b.eventFields.includes(id) &&
+      b.eventFields.every(other=>eventFieldGraphDistance(id,other,BOSS_EVENT_MIN_DISTANCE-1)>=BOSS_EVENT_MIN_DISTANCE)
+    );
+    shuffleInPlace(candidates);
+    next=candidates[0]||null;
+  }
+
+  if(next) b.eventFields.push(String(next));
+  if(b.eventFields.length!==BOSS_EVENT_FIELD_COUNT || !eventFieldsSpaced(b.eventFields)){
+    ensureBossEventFieldLayout(room,b,true);
+    next=b.eventFields.find(id=>!remaining.includes(id)) || b.eventFields[b.eventFields.length-1] || null;
+  }
+  return next;
 }
 
 function ensureBossState(room){
@@ -248,15 +462,23 @@ function ensureBossState(room){
     if(!Array.isArray(boss.lastPath)) boss.lastPath=[];
   }
 
-  if(!Array.isArray(b.eventFields)) b.eventFields=Array.isArray(BOARD?.meta?.eventFields)?BOARD.meta.eventFields.map(String):[];
+  if(!Array.isArray(b.eventFields)) b.eventFields=[];
   if(!Array.isArray(b.deck) || b.deck.some(id=>!EVENT_CARD_DEFS.some(c=>c.id===id))) b.deck=[];
   if(!Array.isArray(b.discard)) b.discard=[];
   if(!Array.isArray(b.history)) b.history=[];
   if(!b.rollModsByColor || typeof b.rollModsByColor!=="object") b.rollModsByColor={red:0,blue:0,green:0,yellow:0};
-  for(const c of ALLOWED_COLORS){ if(!Number.isFinite(Number(b.rollModsByColor[c]))) b.rollModsByColor[c]=0; }
+  if(!b.skipTurnsByColor || typeof b.skipTurnsByColor!=="object") b.skipTurnsByColor={red:0,blue:0,green:0,yellow:0};
+  if(!b.forcedMoveByColor || typeof b.forcedMoveByColor!=="object") b.forcedMoveByColor={red:0,blue:0,green:0,yellow:0};
+  for(const c of ALLOWED_COLORS){
+    if(!Number.isFinite(Number(b.rollModsByColor[c]))) b.rollModsByColor[c]=0;
+    b.skipTurnsByColor[c]=Math.max(0,Math.floor(Number(b.skipTurnsByColor[c]||0)));
+    b.forcedMoveByColor[c]=Math.max(0,Math.floor(Number(b.forcedMoveByColor[c]||0)));
+  }
+  b.bountyNextBoss=!!b.bountyNextBoss;
   b.round=Math.max(1,Number(b.round||1)); b.turnsInRound=Math.max(0,Number(b.turnsInRound||0));
   b.sleepRounds=Math.max(0,Number(b.sleepRounds||0)); b.eventSeq=Math.max(0,Number(b.eventSeq||0)); b.actionSeq=Math.max(0,Number(b.actionSeq||0));
-  b.v=2;
+  ensureBossEventFieldLayout(room,b,false);
+  b.v=4;
   return b;
 }
 
@@ -364,14 +586,277 @@ function spawnBoss(room,preferredType=null,preferredSlotId=null){
 }
 function spawnRandomBoss(room){ return spawnBoss(room,null,null); }
 
-function rewardBossHit(room,color){
-  if(room?.state?.action){
-    const t=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
-    addOwnedJoker(room.state.action,color,t,color,"boss");
-    return `Belohnung: 1 ${t}-Joker.`;
+
+function grantRandomEventJokers(room,color,count=1,source="event"){
+  const action=room?.state?.action;
+  const wheels=[];
+  const n=Math.max(0,Math.floor(Number(count||0)));
+  if(!action || !ALLOWED_COLORS.includes(String(color))) return {text:"Joker-System ist nicht aktiv.",wheels};
+  ensureActionJokers(action);
+  const player=Array.from(room.players?.values?.()||[]).find(p=>p?.color===color);
+  for(let i=0;i<n;i++){
+    const result=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
+    addOwnedJoker(action,color,result,color,source);
+    wheels.push({
+      targetColor:color,ownerColor:color,jokerColor:color,result,durationMs:5000,
+      attackerName:"Ereigniskarte",victimName:player?.name||"",
+      headline:n>1?`🎁 Doppel-Joker für ${player?.name||String(color).toUpperCase()}`:`🎁 Joker für ${player?.name||String(color).toUpperCase()}`,
+      quote:n>1?"Zwei zufällige Joker!":"Ein zufälliger Joker!",
+      event:true
+    });
   }
-  const b=ensureBossState(room); if(b) b.rollModsByColor[color]=Math.min(2,Number(b.rollModsByColor[color]||0)+1);
-  return "Belohnung: +1 auf deinen nächsten Wurf.";
+  syncJokerCountsFromOwned(action);
+  return {text:n===1?"Du erhältst 1 zufälligen Joker.":`Du erhältst ${n} zufällige Joker.`,wheels};
+}
+
+function clearAllJokersForColor(room,color){
+  const action=room?.state?.action;
+  if(!action || !ALLOWED_COLORS.includes(String(color))) return 0;
+  ensureActionJokers(action);
+  const count=Array.isArray(action.jokersOwned?.[color])?action.jokersOwned[color].length:0;
+  action.jokersOwned[color]=[];
+  syncJokerCountsFromOwned(action);
+  return count;
+}
+
+function forceAllBossActions(room,{label="Ereignis"}={}){
+  const active=activeBossEntries(room);
+  if(!active.length) return {text:"Kein Boss ist aktiv – die Karte ist wirkungslos.",wheels:[]};
+  const wheels=[],texts=[];
+  for(const e of active){
+    const r=moveBossEntry(room,e,{forced:true});
+    if(Array.isArray(r?.wheels)) wheels.push(...r.wheels);
+    if(r?.text) texts.push(r.text);
+  }
+  bossAction(room,"⚡",label,`${active.length} Boss${active.length===1?"":"e"} führen sofort eine Aktion aus.`);
+  return {text:texts.join(" ")||"Bossaktion sofort ausgeführt.",wheels};
+}
+
+function spawnBossesFromEvent(room,count){
+  const wanted=Math.max(1,Math.floor(Number(count||1)));
+  const texts=[];
+  let spawned=0;
+  for(let i=0;i<wanted;i++){
+    const r=spawnRandomBoss(room);
+    if(r?.ok){spawned++; if(r.text) texts.push(r.text);}
+    else break;
+  }
+  let wheels=[];
+  if(spawned<wanted){
+    const forced=forceAllBossActions(room,{label:"Bossportale belegt"});
+    wheels=forced.wheels||[];
+    if(forced.text) texts.push(`Kein weiteres Bossportal frei: ${forced.text}`);
+  }
+  return {text:texts.join(" ")||"Keine Bossaktion möglich.",wheels};
+}
+
+function teleportRandomBoss(room){
+  const b=ensureBossState(room);
+  const active=activeBossEntries(room);
+  if(!b||!active.length) return {text:"Kein Boss aktiv – Boss-Teleport ist wirkungslos.",wheels:[]};
+  const entry=active[Math.floor(Math.random()*active.length)];
+  const blocked=new Set((room.state.barricades||[]).map(String));
+  for(const p of (room.state.pieces||[])) if(p?.posKind==="board"&&p?.nodeId) blocked.add(String(p.nodeId));
+  for(const e of active) if(e!==entry && e.boss?.nodeId) blocked.add(String(e.boss.nodeId));
+  for(const id of (b.eventFields||[])) blocked.add(String(id));
+  const candidates=(BOARD.nodes||[])
+    .filter(n=>n?.kind==="board")
+    .map(n=>String(n.id))
+    .filter(id=>id!==String(GOAL||"")&&!blocked.has(id));
+  if(!candidates.length) return {text:"Kein freies Feld für den Boss-Teleport gefunden.",wheels:[]};
+  const to=candidates[Math.floor(Math.random()*candidates.length)];
+  const boss=entry.boss;
+  const from=boss.nodeId?String(boss.nodeId):entry.slot?.name||"Bossportal";
+  boss.lastNodeId=boss.nodeId?String(boss.nodeId):null;
+  boss.nodeId=String(to);
+  boss.lastPath=[String(to)];
+  boss.lastMovedAt=Date.now();
+  bossAction(room,"🌀","Boss-Teleport",`${boss.icon} ${boss.name}: ${from} → ${to}.`);
+  return {text:`${boss.icon} ${boss.name} wird auf ${to} teleportiert.`,wheels:[]};
+}
+
+function barrierEventCandidateFields(room,{ignoreStarts=true}={}){
+  const b=ensureBossState(room);
+  const blocked=new Set();
+  for(const p of (room.state.pieces||[])) if(p?.posKind==="board"&&p?.nodeId) blocked.add(String(p.nodeId));
+  for(const e of activeBossEntries(room)) if(e.boss?.nodeId) blocked.add(String(e.boss.nodeId));
+  for(const id of (b?.eventFields||[])) blocked.add(String(id));
+  const starts=new Set(Object.values(STARTS||{}).map(String));
+  return (BOARD.nodes||[])
+    .filter(n=>n?.kind==="board")
+    .map(n=>String(n.id))
+    .filter(id=>id!==String(GOAL||"")&&!blocked.has(id)&&(!ignoreStarts||!starts.has(id)));
+}
+
+function shuffleAllBarricadesEvent(room){
+  const targetCount=12;
+  let pool=barrierEventCandidateFields(room,{ignoreStarts:true});
+  if(pool.length<targetCount) pool=barrierEventCandidateFields(room,{ignoreStarts:false});
+  shuffleInPlace(pool);
+  if(pool.length<targetCount) return {ok:false,text:"Nicht genügend freie Felder für 12 Barikaden gefunden."};
+  room.state.barricades=pool.slice(0,targetCount);
+  return {ok:true,text:"Alle 12 Barikaden wurden zufällig neu verteilt."};
+}
+
+function wanderBarricadesEvent(room,count=3){
+  const arr=Array.isArray(room?.state?.barricades)?room.state.barricades:null;
+  if(!arr||!arr.length) return {ok:false,text:"Keine Barikaden vorhanden."};
+  const n=Math.min(Math.max(1,Math.floor(Number(count||3))),arr.length);
+  const indexes=arr.map((_,i)=>i); shuffleInPlace(indexes);
+  const chosen=indexes.slice(0,n);
+  const oldChosen=new Set(chosen.map(i=>String(arr[i])));
+  const remaining=new Set(arr.filter((_,i)=>!chosen.includes(i)).map(String));
+  let pool=barrierEventCandidateFields(room,{ignoreStarts:true}).filter(id=>!remaining.has(id)&&!oldChosen.has(id));
+  if(pool.length<n) pool=barrierEventCandidateFields(room,{ignoreStarts:false}).filter(id=>!remaining.has(id)&&!oldChosen.has(id));
+  shuffleInPlace(pool);
+  if(pool.length<n) return {ok:false,text:"Die Barikadenwanderung findet keine passenden neuen Felder."};
+  const before=arr.length;
+  chosen.forEach((idx,j)=>{arr[idx]=String(pool[j]);});
+  if(arr.length!==before) throw new Error("Barikadenwanderung darf die Barikadenanzahl nicht verändern");
+  return {ok:true,text:`${n} Barikaden wurden auf neue zufällige Felder versetzt.`};
+}
+
+function shufflePlayerBoardPositions(room){
+  const pcs=(room?.state?.pieces||[]).filter(p=>p?.posKind==="board"&&p?.nodeId);
+  if(pcs.length<2) return {text:"Zu wenige Figuren auf dem Brett – Positionschaos ist wirkungslos."};
+  const original=pcs.map(p=>String(p.nodeId));
+  let shuffled=original.slice();
+  for(let attempt=0;attempt<20;attempt++){
+    shuffleInPlace(shuffled);
+    if(shuffled.some((id,i)=>id!==original[i])) break;
+  }
+  if(!shuffled.some((id,i)=>id!==original[i])){
+    shuffled=original.slice(1).concat(original[0]);
+  }
+  pcs.forEach((p,i)=>{p.nodeId=String(shuffled[i]);});
+  return {text:`${pcs.length} Figuren auf dem Brett haben ihre Positionen zufällig getauscht.`};
+}
+
+function defeatAllBossesEvent(room){
+  const b=ensureBossState(room); if(!b) return {text:"Bossmodus ist aus."};
+  let count=0;
+  for(const slot of b.slots){
+    if(slot?.boss){slot.boss=null;count++;}
+  }
+  if(!count) return {text:"Kein Boss aktiv – die Karte ist wirkungslos."};
+  bossAction(room,"⚔️","Alle Bosse besiegt",`${count} aktiver Boss${count===1?"":"e"} verschwindet${count===1?"":"n"}.`);
+  return {text:`Alle ${count} aktiven Bosse sind besiegt und verschwinden.`};
+}
+
+function curseWaveEvent(room){
+  const b=ensureBossState(room);
+  const curses=activeBossEntries(room).filter(e=>e.boss?.type==="curse"&&e.boss?.nodeId);
+  if(!b||!curses.length) return {text:"Kein Fluchmeister auf dem Brett – die Fluchwelle ist wirkungslos."};
+  const hit=[];
+  for(const color of activeBossColors(room)){
+    const pcs=boardPiecesForColor(room,color);
+    const near=pcs.some(pc=>curses.some(e=>eventFieldGraphDistance(String(pc.nodeId),String(e.boss.nodeId),3)<=3));
+    if(near){b.rollModsByColor[color]=-2;hit.push(color);}
+  }
+  return {text:hit.length?`${hit.map(c=>String(c).toUpperCase()).join(", ")}: nächster Wurf −2.`:"Keine Spielfigur steht innerhalb von 3 Feldern zum Fluchmeister."};
+}
+
+function forwardChoices(nodeId){
+  const cur=Number(DIST_TO_GOAL.get(String(nodeId)));
+  if(!Number.isFinite(cur)) return [];
+  return bossBoardNeighbors(String(nodeId))
+    .filter(id=>{
+      const d=Number(DIST_TO_GOAL.get(String(id)));
+      return Number.isFinite(d)&&d<cur;
+    })
+    .sort((a,b)=>Number(DIST_TO_GOAL.get(String(a)))-Number(DIST_TO_GOAL.get(String(b))));
+}
+
+function chooseForwardDestinationForEvent(room,piece){
+  if(!piece?.nodeId) return null;
+  const barriers=new Set((room.state.barricades||[]).map(String));
+  const bossNodes=new Set(activeBossEntries(room).map(e=>String(e.boss?.nodeId||"")).filter(Boolean));
+  let cursor=String(piece.nodeId);
+  const seen=new Set([cursor]);
+  for(let skip=0;skip<12;skip++){
+    let choices=forwardChoices(cursor).filter(id=>!barriers.has(String(id))&&!bossNodes.has(String(id)));
+    if(!choices.length) return null;
+    const bestDist=Math.min(...choices.map(id=>Number(DIST_TO_GOAL.get(String(id)))));
+    choices=choices.filter(id=>Number(DIST_TO_GOAL.get(String(id)))===bestDist);
+    const next=String(choices[Math.floor(Math.random()*choices.length)]);
+    const own=(room.state.pieces||[]).find(p=>p!==piece&&p?.posKind==="board"&&p?.color===piece.color&&String(p.nodeId||"")===next);
+    if(own){
+      if(seen.has(next)) return null;
+      seen.add(next); cursor=next; continue; // eigene Figur überspringen
+    }
+    return next;
+  }
+  return null;
+}
+
+function moveAllPiecesForwardEvent(room){
+  const pcs=(room?.state?.pieces||[])
+    .filter(p=>p?.posKind==="board"&&p?.nodeId)
+    .sort((a,b)=>(Number(DIST_TO_GOAL.get(String(a.nodeId)))||9999)-(Number(DIST_TO_GOAL.get(String(b.nodeId)))||9999));
+  let moved=0,kicked=0;
+  for(const pc of pcs){
+    if(pc.posKind!=="board"||!pc.nodeId) continue; // könnte vorher geschmissen worden sein
+    const dest=chooseForwardDestinationForEvent(room,pc);
+    if(!dest) continue;
+    for(const op of (room.state.pieces||[])){
+      if(op!==pc&&op?.posKind==="board"&&op?.color!==pc.color&&String(op.nodeId||"")===String(dest)){
+        sendPieceHome(room,op); kicked++;
+      }
+    }
+    pc.nodeId=String(dest); moved++;
+  }
+  return {text:`${moved} Figur${moved===1?"":"en"} bewegt${moved===1?" sich":"en sich"} Richtung Ziel.${kicked?` ${kicked} gegnerische Figur${kicked===1?" wurde":"en wurden"} dabei geschmissen.`:""}`};
+}
+
+function takeForcedEventMove(room,color){
+  const b=ensureBossState(room); if(!b) return 0;
+  const n=Math.max(0,Math.floor(Number(b.forcedMoveByColor?.[color]||0)));
+  if(n>0) b.forcedMoveByColor[color]=0;
+  return n;
+}
+
+function hasAnyLegalMoveForSteps(room,color,steps){
+  const n=Math.max(1,Math.floor(Number(steps||0)));
+  for(const pc of (room?.state?.pieces||[])){
+    if(!pc||pc.color!==color) continue;
+    const startField=STARTS[color];
+    if(!startField) continue;
+    if(pc.posKind==="house"){
+      const remaining=n-1;
+      if(remaining===0){
+        const blocked=occupiedByColor(room,color,pc.id);
+        if(!blocked.has(String(startField))) return true;
+      }else if(remaining>0){
+        const targets=computeAllTargets(room,startField,remaining,color,pc.id);
+        if(targets.size) return true;
+      }
+    }else if(pc.posKind==="board"&&pc.nodeId){
+      const targets=computeAllTargets(room,pc.nodeId,n,color,pc.id);
+      if(targets.size) return true;
+    }
+  }
+  return false;
+}
+
+function rewardBossHit(room,color){
+  const b=ensureBossState(room);
+  const bounty=!!b?.bountyNextBoss;
+  const rewardCount=bounty?2:1;
+  if(bounty) b.bountyNextBoss=false;
+
+  if(room?.state?.action){
+    const gained=[];
+    for(let i=0;i<rewardCount;i++){
+      const t=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
+      addOwnedJoker(room.state.action,color,t,color,bounty?"boss_bounty":"boss");
+      gained.push(t);
+    }
+    return bounty
+      ? `Kopfgeld! Belohnung: 2 Joker (${gained.join(", ")}).`
+      : `Belohnung: 1 ${gained[0]}-Joker.`;
+  }
+  if(b) b.rollModsByColor[color]=Math.min(2,Number(b.rollModsByColor[color]||0)+rewardCount);
+  return bounty?"Kopfgeld! +2 auf deinen nächsten Wurf.":"Belohnung: +1 auf deinen nächsten Wurf.";
 }
 
 function damageBossSlot(room,slot,attackerColor,source="attack"){
@@ -414,9 +899,9 @@ function bossRelocateBarricade(room,toNode,trail){
 }
 
 function setPieceToStart(room,piece){
-  const start=STARTS?.[piece?.color];
-  if(start){piece.posKind="board";piece.nodeId=String(start);piece.houseId=null;}
-  else sendPieceHome(room,piece);
+  // Jäger-Treffer = wie normales Schmeißen im Barikade-Spiel:
+  // Die getroffene Figur geht vollständig zurück ins Haus.
+  sendPieceHome(room,piece);
 }
 
 function removeRandomShadowJoker(room,color){
@@ -523,7 +1008,7 @@ function executeBossRoute(room,entry,route){
     for(const pc of pcs){
       if(hitColors.has(pc.color)) continue; hitColors.add(pc.color);
       if(boss.type==="hunter"){
-        setPieceToStart(room,pc); texts.push(`${String(pc.color).toUpperCase()} wird aufs Startfeld zurückgesetzt.`);
+        setPieceToStart(room,pc); texts.push(`${String(pc.color).toUpperCase()} wird vom Jäger geschmissen und zurück ins Haus gesetzt.`);
       }else if(boss.type==="curse"){
         b.rollModsByColor[pc.color]=-2; texts.push(`${String(pc.color).toUpperCase()} wird verflucht: nächster Wurf −2.`);
       }else if(boss.type==="shadow"){
@@ -566,23 +1051,118 @@ function bossTurnCompleted(room,endedColor){
   return wheels;
 }
 
+function advanceTurnWithEventSkips(room,endedColor){
+  let wheels=[];
+  const first=bossTurnCompleted(room,endedColor);
+  if(Array.isArray(first)) wheels.push(...first);
+
+  let next=nextTurnColor(room,endedColor);
+  const b=ensureBossState(room);
+  const active=activeBossColors(room);
+  const skipped=[];
+  let guard=0;
+
+  while(b && next && active.includes(next) && Number(b.skipTurnsByColor?.[next]||0)>0 && guard<active.length){
+    b.skipTurnsByColor[next]=Math.max(0,Number(b.skipTurnsByColor[next]||0)-1);
+    skipped.push(next);
+    bossAction(room,"⏸️","Spielzug ausgesetzt",`${String(next).toUpperCase()} setzt diesen vollständigen Spielzug aus.`);
+    const bw=bossTurnCompleted(room,next);
+    if(Array.isArray(bw)) wheels.push(...bw);
+    next=nextTurnColor(room,next);
+    guard++;
+  }
+
+  room.state.turnColor=next;
+  return {wheels,skipped,next};
+}
+
 function drawBossEventCard(room,fieldId,color){
-  const b=ensureBossState(room);if(!b||!b.eventFields.includes(String(fieldId)))return null;
-  if(!b.deck.length){b.deck=EVENT_CARD_DEFS.map(c=>c.id);shuffleInPlace(b.deck);b.discard=[];}
-  const cardId=String(b.deck.shift()||"");const card=EVENT_CARD_DEFS.find(c=>c.id===cardId)||EVENT_CARD_DEFS[EVENT_CARD_DEFS.length-1];b.discard.push(card.id);
-  let effectText="";const eff=card.effect;
-  if(eff==="spawn_one") effectText=spawnRandomBoss(room).text;
-  else if(eff==="spawn_two"){const a=spawnRandomBoss(room),c=spawnRandomBoss(room);effectText=[a.text,c.text].filter(Boolean).join(" ");}
-  else if(eff==="extra_roll"){room.state.extraRollPending=true;effectText="Du behältst den Zug und darfst erneut würfeln.";}
-  else if(eff==="reward") effectText=rewardBossHit(room,color);
-  else if(eff==="boss_damage"){
-    const active=activeBossEntries(room); if(active.length){const target=active[Math.floor(Math.random()*active.length)];effectText=damageBossSlot(room,target.slot,color,"event").text;} else effectText=rewardBossHit(room,color)+" Kein Boss war aktiv.";
-  }else if(eff==="boss_sleep"){b.sleepRounds=Math.max(1,Number(b.sleepRounds||0)+1);effectText="Alle Bossaktionen pausieren für die nächste vollständige Runde.";}
-  else if(eff==="roll_minus"){b.rollModsByColor[color]=Math.max(-2,Number(b.rollModsByColor[color]||0)-1);effectText="Dein nächster Wurf erhält −1 (Minimum 1).";}
-  else if(eff==="roll_plus"){b.rollModsByColor[color]=Math.min(2,Number(b.rollModsByColor[color]||0)+1);effectText="Dein nächster Wurf erhält +1.";}
-  else effectText="Keine direkte Auswirkung.";
-  const evt={seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,fieldId:String(fieldId),color:String(color||""),ts:Date.now()};
-  b.lastEvent=evt;b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:evt.effectText,ts:evt.ts,event:true});if(b.history.length>16)b.history.splice(0,b.history.length-16);return evt;
+  const b=ensureBossState(room);
+  if(!b||!b.eventFields.includes(String(fieldId))) return null;
+
+  if(!b.deck.length){
+    b.deck=EVENT_CARD_DEFS.map(c=>c.id);
+    shuffleInPlace(b.deck);
+    b.discard=[];
+  }
+
+  const cardId=String(b.deck.shift()||"");
+  const card=EVENT_CARD_DEFS.find(c=>c.id===cardId)||EVENT_CARD_DEFS[0];
+  b.discard.push(card.id);
+
+  let effectText="";
+  let wheels=[];
+  const eff=card.effect;
+
+  if(eff==="spawn_one"){
+    const r=spawnBossesFromEvent(room,1); effectText=r.text; wheels.push(...(r.wheels||[]));
+  }else if(eff==="spawn_two"){
+    const r=spawnBossesFromEvent(room,2); effectText=r.text; wheels.push(...(r.wheels||[]));
+  }else if(eff==="extra_roll"){
+    room.state.extraRollPending=true;
+    effectText="Du behältst den Zug und darfst nach diesem Zug erneut würfeln.";
+  }else if(eff==="roll_minus2"){
+    b.rollModsByColor[color]=-2;
+    effectText="Dein nächster Würfelwurf erhält −2. Das Ergebnis kann nicht unter 1 fallen.";
+  }else if(eff==="barrier_shuffle_all"){
+    effectText=shuffleAllBarricadesEvent(room).text;
+  }else if(eff==="boss_action_now"){
+    const r=forceAllBossActions(room,{label:"Bossaktion durch Ereigniskarte"});
+    effectText=r.text; wheels.push(...(r.wheels||[]));
+  }else if(eff==="joker_one"){
+    const r=grantRandomEventJokers(room,color,1,"event_one");
+    effectText=r.text; wheels.push(...r.wheels);
+  }else if(eff==="player_positions_shuffle"){
+    effectText=shufflePlayerBoardPositions(room).text;
+  }else if(eff==="boss_sleep"){
+    b.sleepRounds=Math.max(0,Number(b.sleepRounds||0))+1;
+    effectText="Alle Bosse setzen die nächste vollständige Bossrunde aus.";
+  }else if(eff==="defeat_all_bosses"){
+    effectText=defeatAllBossesEvent(room).text;
+  }else if(eff==="walk10"){
+    b.forcedMoveByColor[color]=10;
+    effectText="Nach dieser Bewegung darfst du direkt eine eigene Figur genau 10 Felder bewegen.";
+  }else if(eff==="boss_teleport"){
+    effectText=teleportRandomBoss(room).text;
+  }else if(eff==="bounty"){
+    b.bountyNextBoss=true;
+    effectText="Kopfgeld aktiv: Der nächste von einem Spieler besiegte Boss bringt 2 Joker statt 1.";
+  }else if(eff==="barrier_wander3"){
+    effectText=wanderBarricadesEvent(room,3).text;
+  }else if(eff==="curse_wave"){
+    effectText=curseWaveEvent(room).text;
+  }else if(eff==="skip_next_turn"){
+    b.skipTurnsByColor[color]=Math.max(0,Number(b.skipTurnsByColor[color]||0))+1;
+    effectText="Du setzt deinen nächsten vollständigen Spielzug automatisch aus.";
+  }else if(eff==="joker_two"){
+    const r=grantRandomEventJokers(room,color,2,"event_two");
+    effectText=r.text; wheels.push(...r.wheels);
+  }else if(eff==="lose_all_jokers"){
+    const lost=clearAllJokersForColor(room,color);
+    effectText=lost?`Du verlierst alle deine Joker (${lost}).`:"Du hast keine Joker – die Karte ist wirkungslos.";
+  }else if(eff==="all_pieces_forward"){
+    effectText=moveAllPiecesForwardEvent(room).text;
+  }else{
+    effectText="Keine direkte Auswirkung.";
+  }
+
+  // Das betretene Ereignisfeld verschwindet sofort und wird an einer neuen Zufallsposition gespawnt.
+  // Zu jedem anderen Ereignisfeld bleiben mindestens 3 Brett-Schritte Abstand.
+  const respawnFieldId=respawnBossEventField(room,b,fieldId);
+  effectText=`${effectText} Das Ereignisfeld verschwindet und erscheint zufällig an einer neuen Stelle.`.trim();
+
+  const evt={
+    seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,
+    fieldId:String(fieldId),respawnFieldId:respawnFieldId?String(respawnFieldId):null,
+    color:String(color||""),ts:Date.now(),
+    deckRemaining:b.deck.length,deckSize:EVENT_CARD_DEFS.length
+  };
+  if(wheels.length) evt.wheels=wheels;
+
+  b.lastEvent=evt;
+  b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:evt.effectText,ts:evt.ts,event:true});
+  if(b.history.length>16)b.history.splice(0,b.history.length-16);
+  return evt;
 }
 
 function roomUpdatePayload(room, playersOverride) {
@@ -1837,6 +2417,7 @@ paused: false,
     phase: "need_roll", // need_roll | need_move | place_barricade
     rolled: null,
     extraRollPending: false, // persisted: survives server restart after rolling a 6
+    eventMoveActive: null, // {color,steps,source} während "10 Felder laufen"
     pieces,
     barricades,
     goal: GOAL,
@@ -1855,6 +2436,10 @@ paused: false,
       return { perPlayer, turnStartedAt: Date.now() };
     })(),
   };
+
+  if(bossModeEnabled && room.state.boss){
+    ensureBossEventFieldLayout(room,room.state.boss,true);
+  }
 }
 
 function detectWinnerColor(room) {
@@ -1936,6 +2521,13 @@ function isPlacableBarricade(room, nodeId) {
 
   // goal tabu
   if (n.flags?.goal) return false;
+
+  // Ereignisfelder und aktuelle Bosspositionen bleiben sichtbar/frei.
+  if(room?.state?.bossMode && room.state?.boss){
+    const b=room.state.boss;
+    if(Array.isArray(b.eventFields) && b.eventFields.map(String).includes(String(nodeId))) return false;
+    if(Array.isArray(b.slots) && b.slots.some(slot=>String(slot?.boss?.nodeId||"")===String(nodeId))) return false;
+  }
 
   // not on existing barricade / pieces
   if (room.state.barricades.includes(nodeId)) return false;
@@ -2663,11 +3255,19 @@ broadcast(room, roomUpdatePayload(room));
           if(Array.isArray(r.wheels)) wheels.push(...r.wheels);
         }
         text = parts.join(" ") || "Bossaktion ausgeführt.";
+      } else if (action === "events") {
+        ensureBossEventFieldLayout(room,b,true);
+        bossAction(room,"🎲","Ereignisfelder","8 Ereignisfelder wurden zufällig neu verteilt (Mindestabstand 3 Felder).");
+        text="8 Ereignisfelder zufällig neu verteilt.";
       } else if (action === "clear") {
         for(const slot of b.slots) slot.boss=null;
         b.rollModsByColor={red:0,blue:0,green:0,yellow:0};
+        b.skipTurnsByColor={red:0,blue:0,green:0,yellow:0};
+        b.forcedMoveByColor={red:0,blue:0,green:0,yellow:0};
+        b.bountyNextBoss=false;
         b.sleepRounds=0;
-        bossAction(room,"🧹","Boss-Test","Alle Bosse wurden entfernt.");
+        room.state.eventMoveActive=null;
+        bossAction(room,"🧹","Boss-Test","Alle Bosse und temporären Boss-/Ereigniseffekte wurden entfernt.");
         text="Alle Bosse entfernt.";
       } else {
         send(ws, { type:"boss_test_result", ok:false, text:"Unbekannte Testaktion" }); return;
@@ -2691,6 +3291,10 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       const turnColor = room.state.turnColor;
+      if(room.state.eventMoveActive?.color===turnColor){
+        send(ws,{type:"error",code:"FORCED_EVENT_MOVE",message:"Ereigniskarte: Zuerst die 10-Felder-Bewegung ausführen."});
+        return;
+      }
       const action = room.state.action;
       ensureActionJokers(action);
       const set = action.jokersByColor?.[turnColor];
@@ -3023,6 +3627,10 @@ if (msg.type === "action_barricade_move") {
         send(ws, { type: "error", code: "BAD_PHASE", message: "Erst Barikade platzieren" });
         return;
       }
+      if(room.state.eventMoveActive?.color===room.state.turnColor){
+        send(ws,{type:"error",code:"FORCED_EVENT_MOVE",message:"Ereigniskarte: Du musst zuerst die 10-Felder-Bewegung ausführen."});
+        return;
+      }
 
       // Action-Mode: clear per-turn effects when a turn ends (prevents desync / stuck effects)
       if (jokerGameplayEnabled(room) && room.state.action.effects) {
@@ -3046,8 +3654,9 @@ if (msg.type === "action_barricade_move") {
       room.state.rolled = null;
       room.state.phase = "need_roll";
       const endedBossColor = room.state.turnColor;
-      const bossWheel = bossTurnCompleted(room, endedBossColor);
-      room.state.turnColor = nextTurnColor(room, endedBossColor);
+      const adv=advanceTurnWithEventSkips(room,endedBossColor);
+      const bossWheel=adv?.wheels||[];
+      room.state.eventMoveActive=null;
       if(room.state.matchTrack) room.state.matchTrack.turnStartedAt = Date.now();
 
       await persistRoomState(room);
@@ -3160,6 +3769,14 @@ if (msg.type === "move_request") {
         return;
       }
 
+      // Ein aktiver 10-Felder-Ereigniszug wird mit genau dieser erfolgreichen Bewegung erfüllt.
+      const wasForcedEventMove = !!(
+        room.state.eventMoveActive &&
+        room.state.eventMoveActive.color === activeColor &&
+        Number(room.state.eventMoveActive.steps||0) === Number(room.state.rolled||0)
+      );
+      if(wasForcedEventMove) room.state.eventMoveActive=null;
+
       // apply move
       pc.posKind = "board";
       pc.nodeId = res.path[res.path.length - 1];
@@ -3236,6 +3853,9 @@ if (msg.type === "move_request") {
       try{
         bossHit = resolveBossBoardHit(room, landed, activeColor);
         eventCard = drawBossEventCard(room, landed, activeColor);
+        if(Array.isArray(eventCard?.wheels) && eventCard.wheels.length){
+          wheel = (Array.isArray(wheel) ? wheel : []).concat(eventCard.wheels);
+        }
       }catch(_e){}
 
       // landed on barricade?
@@ -3259,17 +3879,32 @@ if (msg.type === "move_request") {
 
       // if no barricade placement needed:
       if (!picked) {
-        if (room.state.extraRollPending) {
-          room.state.turnColor = activeColor; // extra roll survives restart
-        } else {
-          const bw = bossTurnCompleted(room, activeColor);
-          if(Array.isArray(bw) && bw.length) wheel = (Array.isArray(wheel) ? wheel : []).concat(bw);
-          room.state.turnColor = nextTurnColor(room, activeColor);
+        const forcedSteps=takeForcedEventMove(room,activeColor);
+        const canForced=forcedSteps>0 && hasAnyLegalMoveForSteps(room,activeColor,forcedSteps);
+        if(canForced){
+          // "10 Felder laufen": kein neuer Würfelwurf, daher bewegt sich der Jäger hier NICHT zusätzlich.
+          room.state.turnColor=activeColor;
+          room.state.extraRollPending=false;
+          room.lastRollWasSix=false;
+          room.state.rolled=forcedSteps;
+          room.state.phase="need_move";
+          room.state.eventMoveActive={color:activeColor,steps:forcedSteps,source:"event_walk10"};
+        }else{
+          if(forcedSteps>0 && eventCard){
+            eventCard.effectText=`${eventCard.effectText} Es gibt keine legale 10-Felder-Bewegung; der Zusatzlauf verfällt.`;
+          }
+          if (room.state.extraRollPending) {
+            room.state.turnColor = activeColor; // extra roll survives restart
+          } else {
+            const adv=advanceTurnWithEventSkips(room,activeColor);
+            if(Array.isArray(adv?.wheels) && adv.wheels.length) wheel=(Array.isArray(wheel)?wheel:[]).concat(adv.wheels);
+          }
+          room.state.extraRollPending = false;
+          room.lastRollWasSix = false;
+          room.state.phase = "need_roll";
+          room.state.rolled = null;
+          room.state.eventMoveActive=null;
         }
-        room.state.extraRollPending = false;
-        room.lastRollWasSix = false;
-        room.state.phase = "need_roll";
-        room.state.rolled = null;
       }
 
       // Joker‑Effekt endet nach dem Zug (verhindert Turn‑Chaos)
@@ -3408,16 +4043,28 @@ if (msg.type === "place_barricade") {
 
   // ✅ weiter
   let bossWheel = [];
-  if(room.state.extraRollPending){
-    room.state.turnColor = color;
+  const forcedSteps=takeForcedEventMove(room,color);
+  const canForced=forcedSteps>0 && hasAnyLegalMoveForSteps(room,color,forcedSteps);
+  if(canForced){
+    room.state.turnColor=color;
+    room.state.extraRollPending=false;
+    room.lastRollWasSix=false;
+    room.state.phase="need_move";
+    room.state.rolled=forcedSteps;
+    room.state.eventMoveActive={color,steps:forcedSteps,source:"event_walk10"};
   }else{
-    bossWheel = bossTurnCompleted(room, color);
-    room.state.turnColor = nextTurnColor(room, color);
+    if(room.state.extraRollPending){
+      room.state.turnColor = color;
+    }else{
+      const adv=advanceTurnWithEventSkips(room,color);
+      bossWheel=adv?.wheels||[];
+    }
+    room.state.extraRollPending = false;
+    room.lastRollWasSix = false;
+    room.state.phase = "need_roll";
+    room.state.rolled = null;
+    room.state.eventMoveActive=null;
   }
-  room.state.extraRollPending = false;
-  room.lastRollWasSix = false;
-  room.state.phase = "need_roll";
-  room.state.rolled = null;
 
   await persistRoomState(room);
   broadcast(room, { type: "snapshot", state: room.state, wheel: (bossWheel && bossWheel.length) ? bossWheel : undefined });
