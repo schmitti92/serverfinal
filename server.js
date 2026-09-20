@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v10.6-stability-20260920";
+const SERVER_BUILD = "barikade-v10.9-action-bossmode-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -148,6 +148,283 @@ function countOwnedJokers(action, ownerColor, type){
   let n = 0;
   for(const j of arr){ if(String(j?.type) === t) n++; }
   return n;
+}
+
+
+// ---------- V10.9 Action-Bossmodus ----------
+// Unabhängig vom Joker-Action-Modus. Der Host aktiviert ihn in der Lobby.
+// Server ist Chef für Kartenziehen, Boss-Spawns, Bossaktionen und Belohnungen.
+const BOSS_TYPES = {
+  hunter:    { key:"hunter",    name:"Der Jäger",      icon:"🐺", hp:1, cadence:"turn" },
+  destroyer: { key:"destroyer", name:"Der Zerstörer",  icon:"💥", hp:1, cadence:"round" },
+  robber:    { key:"robber",    name:"Der Räuber",      icon:"🥷", hp:2, cadence:"round" },
+  guardian:  { key:"guardian",  name:"Der Wächter",     icon:"🛡️", hp:1, cadence:"round" },
+  magnet:    { key:"magnet",    name:"Der Magnet",      icon:"🧲", hp:1, cadence:"round" },
+};
+
+const EVENT_CARD_DEFS = [
+  {id:"boss_1a", icon:"👹", title:"Ein Boss erscheint", text:"Ein freies Bossfeld wird aktiviert.", effect:"spawn_one"},
+  {id:"boss_1b", icon:"👹", title:"Ein Boss erscheint", text:"Ein weiterer Gegner betritt die Arena.", effect:"spawn_one"},
+  {id:"boss_1c", icon:"👹", title:"Ein Boss erscheint", text:"Die Bossfelder beginnen zu leuchten.", effect:"spawn_one"},
+  {id:"boss_2",  icon:"☠️", title:"Doppelter Ärger", text:"Bis zu zwei freie Bossfelder werden sofort besetzt.", effect:"spawn_two"},
+  {id:"wind_1",  icon:"💨", title:"Rückenwind", text:"Du bekommst direkt noch einen Zug.", effect:"extra_roll"},
+  {id:"wind_2",  icon:"⚡", title:"Adrenalinschub", text:"Das Ereignis treibt dich weiter an.", effect:"extra_roll"},
+  {id:"luck_1",  icon:"🎁", title:"Glücksfund", text:"Action-Spieler erhalten einen zufälligen Joker, sonst einen Würfelbonus.", effect:"reward"},
+  {id:"luck_2",  icon:"✨", title:"Mystische Kiste", text:"Eine kleine Belohnung wartet auf dich.", effect:"reward"},
+  {id:"bar_down1",icon:"🧱", title:"Mauerbruch", text:"Eine zufällige Barikade verschwindet vom Brett.", effect:"remove_barricade"},
+  {id:"bar_down2",icon:"🔨", title:"Freie Bahn", text:"Ein Weg wird unerwartet geöffnet.", effect:"remove_barricade"},
+  {id:"bar_up1", icon:"🚧", title:"Neue Barriere", text:"Eine zusätzliche Barikade entsteht auf einem freien Feld.", effect:"add_barricade"},
+  {id:"bar_up2", icon:"🧱", title:"Bossmauer", text:"Die Arena wird enger: Eine Barikade kommt hinzu.", effect:"add_barricade"},
+  {id:"weak_1",  icon:"⚔️", title:"Schwachstelle", text:"Ein aktiver Boss verliert einen Trefferpunkt.", effect:"boss_damage"},
+  {id:"weak_2",  icon:"💫", title:"Volltreffer", text:"Ein zufälliger Boss wird getroffen.", effect:"boss_damage"},
+  {id:"sleep",   icon:"😴", title:"Bossruhe", text:"Die Bosse setzen die nächste vollständige Runde aus.", effect:"boss_sleep"},
+  {id:"mud_1",   icon:"🥾", title:"Schwerer Boden", text:"Dein nächster Würfelwurf wird um 1 reduziert.", effect:"roll_minus"},
+  {id:"mud_2",   icon:"🌧️", title:"Gegenwind", text:"Beim nächsten Wurf fehlt dir ein Punkt.", effect:"roll_minus"},
+  {id:"boost_1", icon:"🔥", title:"Tempo!", text:"Dein nächster Würfelwurf erhält +1.", effect:"roll_plus"},
+  {id:"boost_2", icon:"🚀", title:"Katapult", text:"Beim nächsten Wurf kommt ein Punkt dazu.", effect:"roll_plus"},
+  {id:"calm",    icon:"🌙", title:"Unheimliche Ruhe", text:"Diesmal passiert nichts. Noch nicht.", effect:"none"},
+];
+
+function createBossState(){
+  const fields = Array.isArray(BOARD?.meta?.bossFields) ? BOARD.meta.bossFields : [];
+  const slots = fields.slice(0,2).map((f,i)=>(
+    { id:String(f?.id || `boss_${i+1}`), name:String(f?.name || `Bossfeld ${i+1}`), anchor:String(f?.anchor || ""), boss:null }
+  ));
+  while(slots.length < 2) slots.push({id:`boss_${slots.length+1}`,name:`Bossfeld ${slots.length+1}`,anchor:"",boss:null});
+  const deck = EVENT_CARD_DEFS.map(c=>c.id);
+  shuffleInPlace(deck);
+  return {
+    v:1,
+    slots,
+    eventFields:Array.isArray(BOARD?.meta?.eventFields) ? BOARD.meta.eventFields.map(String) : [],
+    deck,
+    discard:[],
+    lastEvent:null,
+    lastAction:null,
+    history:[],
+    eventSeq:0,
+    actionSeq:0,
+    round:1,
+    turnsInRound:0,
+    sleepRounds:0,
+    rollModsByColor:{red:0,blue:0,green:0,yellow:0},
+  };
+}
+
+function ensureBossState(room){
+  if(!room?.state?.bossMode) return null;
+  if(!room.state.boss || typeof room.state.boss !== "object") room.state.boss = createBossState();
+  const b = room.state.boss;
+  if(!Array.isArray(b.slots)) b.slots = createBossState().slots;
+  if(!Array.isArray(b.eventFields)) b.eventFields = Array.isArray(BOARD?.meta?.eventFields) ? BOARD.meta.eventFields.map(String) : [];
+  if(!Array.isArray(b.deck)) b.deck = [];
+  if(!Array.isArray(b.discard)) b.discard = [];
+  if(!Array.isArray(b.history)) b.history = [];
+  if(!b.rollModsByColor || typeof b.rollModsByColor !== "object") b.rollModsByColor={red:0,blue:0,green:0,yellow:0};
+  for(const c of ALLOWED_COLORS){ if(!Number.isFinite(Number(b.rollModsByColor[c]))) b.rollModsByColor[c]=0; }
+  b.round=Math.max(1,Number(b.round||1));
+  b.turnsInRound=Math.max(0,Number(b.turnsInRound||0));
+  b.sleepRounds=Math.max(0,Number(b.sleepRounds||0));
+  b.eventSeq=Math.max(0,Number(b.eventSeq||0));
+  b.actionSeq=Math.max(0,Number(b.actionSeq||0));
+  return b;
+}
+
+function bossAction(room, icon, title, text){
+  const b=ensureBossState(room); if(!b) return null;
+  const a={seq:++b.actionSeq,icon:String(icon||"👹"),title:String(title||"Boss"),text:String(text||""),ts:Date.now()};
+  b.lastAction=a;
+  b.history.push(a);
+  if(b.history.length>12) b.history.splice(0,b.history.length-12);
+  return a;
+}
+
+function activeBossEntries(room){
+  const b=ensureBossState(room); if(!b) return [];
+  return b.slots.map((slot,index)=>({slot,index,boss:slot?.boss})).filter(x=>x.boss);
+}
+
+function spawnRandomBoss(room){
+  const b=ensureBossState(room); if(!b) return {ok:false,text:"Bossmodus ist aus."};
+  const slot=b.slots.find(s=>!s.boss);
+  if(!slot) return {ok:false,text:"Beide Bossfelder sind bereits belegt."};
+  const used=new Set(activeBossEntries(room).map(x=>String(x.boss?.type||"")));
+  let choices=Object.keys(BOSS_TYPES).filter(k=>!used.has(k));
+  if(!choices.length) choices=Object.keys(BOSS_TYPES);
+  const key=choices[Math.floor(Math.random()*choices.length)];
+  const def=BOSS_TYPES[key];
+  slot.boss={id:`${key}_${uid()}`,type:key,name:def.name,icon:def.icon,hp:def.hp,maxHp:def.hp,spawnedAt:Date.now()};
+  bossAction(room,def.icon,"Boss erschienen",`${def.name} besetzt ${slot.name}. Landet auf dem verbundenen Angriffsfeld, um ihn zu treffen.`);
+  return {ok:true,text:`${def.icon} ${def.name} erscheint auf ${slot.name}.`,boss:slot.boss,slotId:slot.id};
+}
+
+function randomPlacableBossBarricadeNode(room){
+  const candidates=(BOARD.nodes||[]).filter(n=>n?.kind==="board" && !n?.flags?.goal && isPlacableBarricade(room,String(n.id)));
+  return candidates.length ? String(candidates[Math.floor(Math.random()*candidates.length)].id) : null;
+}
+
+function addRandomBossBarricade(room){
+  const id=randomPlacableBossBarricadeNode(room);
+  if(!id) return null;
+  room.state.barricades.push(id);
+  return id;
+}
+function removeRandomBossBarricade(room){
+  const arr=room?.state?.barricades;
+  if(!Array.isArray(arr)||!arr.length) return null;
+  const idx=Math.floor(Math.random()*arr.length);
+  return arr.splice(idx,1)[0] || null;
+}
+
+function rewardBossHit(room,color){
+  if(String(room.state.mode||"classic")==="action" && room.state.action){
+    const t=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
+    addOwnedJoker(room.state.action,color,t,color,"boss");
+    return `Belohnung: 1 ${t}-Joker.`;
+  }
+  const b=ensureBossState(room);
+  if(b){ b.rollModsByColor[color]=Math.min(2,Number(b.rollModsByColor[color]||0)+1); }
+  return "Belohnung: +1 auf deinen nächsten Wurf.";
+}
+
+function damageBossSlot(room,slot,attackerColor,source="attack"){
+  if(!slot?.boss) return {hit:false,defeated:false,text:"Kein Boss auf diesem Feld."};
+  const boss=slot.boss;
+  boss.hp=Math.max(0,Number(boss.hp||1)-1);
+  if(boss.hp>0){
+    bossAction(room,boss.icon,"Boss getroffen",`${boss.name}: noch ${boss.hp}/${boss.maxHp} HP.`);
+    return {hit:true,defeated:false,text:`${boss.icon} ${boss.name} getroffen – ${boss.hp}/${boss.maxHp} HP.`};
+  }
+  slot.boss=null;
+  const reward=attackerColor ? rewardBossHit(room,attackerColor) : "";
+  bossAction(room,"🏆","Boss besiegt",`${boss.name} wurde besiegt. ${reward}`.trim());
+  return {hit:true,defeated:true,text:`🏆 ${boss.name} besiegt! ${reward}`.trim()};
+}
+
+function resolveBossAnchorHit(room,landed,color){
+  const b=ensureBossState(room); if(!b) return null;
+  const slot=b.slots.find(s=>s?.boss && String(s.anchor||"")===String(landed||""));
+  if(!slot) return null;
+  return damageBossSlot(room,slot,color,"anchor");
+}
+
+function drawBossEventCard(room,fieldId,color){
+  const b=ensureBossState(room); if(!b) return null;
+  if(!b.eventFields.includes(String(fieldId))) return null;
+  if(!b.deck.length){
+    b.deck=EVENT_CARD_DEFS.map(c=>c.id);
+    shuffleInPlace(b.deck);
+    b.discard=[];
+  }
+  const cardId=String(b.deck.shift()||"");
+  const card=EVENT_CARD_DEFS.find(c=>c.id===cardId) || EVENT_CARD_DEFS[EVENT_CARD_DEFS.length-1];
+  b.discard.push(card.id);
+  let effectText="";
+  const eff=card.effect;
+  if(eff==="spawn_one"){
+    effectText=spawnRandomBoss(room).text;
+  }else if(eff==="spawn_two"){
+    const a=spawnRandomBoss(room), c=spawnRandomBoss(room);
+    effectText=[a.text,c.text].filter(Boolean).join(" ");
+  }else if(eff==="extra_roll"){
+    room.state.extraRollPending=true;
+    effectText="Du behältst den Zug und darfst erneut würfeln.";
+  }else if(eff==="reward"){
+    effectText=rewardBossHit(room,color);
+  }else if(eff==="remove_barricade"){
+    const id=removeRandomBossBarricade(room);
+    effectText=id ? `Barikade ${id} wurde entfernt.` : "Keine Barikade konnte entfernt werden.";
+  }else if(eff==="add_barricade"){
+    const id=addRandomBossBarricade(room);
+    effectText=id ? `Eine neue Barikade erscheint auf ${id}.` : "Kein freies Feld für eine neue Barikade.";
+  }else if(eff==="boss_damage"){
+    const active=activeBossEntries(room);
+    if(active.length){
+      const target=active[Math.floor(Math.random()*active.length)];
+      effectText=damageBossSlot(room,target.slot,color,"event").text;
+    }else{
+      effectText=rewardBossHit(room,color)+" Kein Boss war aktiv.";
+    }
+  }else if(eff==="boss_sleep"){
+    b.sleepRounds=Math.max(1,Number(b.sleepRounds||0)+1);
+    effectText="Alle Bossaktionen pausieren für die nächste vollständige Runde.";
+  }else if(eff==="roll_minus"){
+    b.rollModsByColor[color]=Math.max(-2,Number(b.rollModsByColor[color]||0)-1);
+    effectText="Dein nächster Wurf erhält −1 (Minimum 1).";
+  }else if(eff==="roll_plus"){
+    b.rollModsByColor[color]=Math.min(2,Number(b.rollModsByColor[color]||0)+1);
+    effectText="Dein nächster Wurf erhält +1.";
+  }else{
+    effectText="Keine direkte Auswirkung.";
+  }
+  const evt={seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,fieldId:String(fieldId),color:String(color||""),ts:Date.now()};
+  b.lastEvent=evt;
+  b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:evt.effectText,ts:evt.ts,event:true});
+  if(b.history.length>12) b.history.splice(0,b.history.length-12);
+  return evt;
+}
+
+function bossTurnCompleted(room,endedColor){
+  const b=ensureBossState(room); if(!b) return;
+  const active=Array.isArray(room.state.activeColors)&&room.state.activeColors.length ? room.state.activeColors : ALLOWED_COLORS;
+
+  // Bossruhe gilt wirklich fuer die komplette Runde, inklusive Jaeger.
+  if(b.sleepRounds>0){
+    b.turnsInRound=Number(b.turnsInRound||0)+1;
+    if(b.turnsInRound>=active.length){
+      b.turnsInRound=0;
+      b.round=Number(b.round||1)+1;
+      b.sleepRounds=Math.max(0,Number(b.sleepRounds||0)-1);
+      bossAction(room,"😴","Bossrunde ausgesetzt","Die Bosse bleiben in dieser Runde vollstaendig inaktiv.");
+    }
+    return;
+  }
+
+  // Jaeger: nach jedem vollstaendig abgeschlossenen Spielerzug -> naechster Wurf dieses Spielers -1.
+  for(const x of activeBossEntries(room)){
+    if(x.boss?.type==="hunter"){
+      b.rollModsByColor[endedColor]=Math.max(-2,Number(b.rollModsByColor[endedColor]||0)-1);
+      bossAction(room,x.boss.icon,x.boss.name,`${String(endedColor).toUpperCase()} erhaelt -1 auf den naechsten Wurf.`);
+    }
+  }
+
+  b.turnsInRound=Number(b.turnsInRound||0)+1;
+  if(b.turnsInRound < active.length) return;
+  b.turnsInRound=0;
+  b.round=Number(b.round||1)+1;
+
+  for(const x of activeBossEntries(room)){
+    const boss=x.boss;
+    if(!boss || boss.type==="hunter") continue;
+    if(boss.type==="destroyer"){
+      const id=removeRandomBossBarricade(room);
+      bossAction(room,boss.icon,boss.name,id?`zerstoert Barikade ${id}.`:"findet keine Barikade zum Zerstoeren.");
+    }else if(boss.type==="guardian"){
+      const id=addRandomBossBarricade(room);
+      bossAction(room,boss.icon,boss.name,id?`setzt eine neue Barikade auf ${id}.`:"findet keinen freien Platz fuer eine Barikade.");
+    }else if(boss.type==="robber"){
+      let stole=false;
+      if(String(room.state.mode||"classic")==="action" && room.state.action){
+        const candidates=active.filter(c=>Array.isArray(room.state.action?.jokersOwned?.[c]) && room.state.action.jokersOwned[c].length);
+        if(candidates.length){
+          const victim=candidates[Math.floor(Math.random()*candidates.length)];
+          const arr=room.state.action.jokersOwned[victim];
+          const j=arr[Math.floor(Math.random()*arr.length)];
+          if(j && consumeOwnedJoker(room.state.action,victim,j.type)){
+            stole=true; bossAction(room,boss.icon,boss.name,`stiehlt ${String(victim).toUpperCase()} einen ${j.type}-Joker.`);
+          }
+        }
+      }
+      if(!stole){
+        const victim=active[Math.floor(Math.random()*active.length)];
+        b.rollModsByColor[victim]=Math.max(-2,Number(b.rollModsByColor[victim]||0)-1);
+        bossAction(room,boss.icon,boss.name,`${String(victim).toUpperCase()} erhaelt -1 auf den naechsten Wurf.`);
+      }
+    }else if(boss.type==="magnet"){
+      for(const c of active) b.rollModsByColor[c]=Math.max(-2,Number(b.rollModsByColor[c]||0)-1);
+      bossAction(room,boss.icon,boss.name,"zieht die naechste Wuerfelkraft aller Spieler um 1 nach unten.");
+    }
+  }
 }
 
 function roomUpdatePayload(room, playersOverride) {
@@ -713,6 +990,7 @@ async function restoreRoomState(room){
         if (!Array.isArray(room.state.activeColors)) room.state.activeColors = [];
         if (!room.state.jokerAwardMode) room.state.jokerAwardMode = "thrower";
         room.jokerAwardMode = room.state.jokerAwardMode;
+        if(room.state.bossMode){ ensureBossState(room); }
         room.carryingByColor = room.state.carryingByColor;
 
         // Action-Mode Joker backward-compat / defaults
@@ -1277,7 +1555,7 @@ function assignColorsRandom(room) {
 }
 
 /** ---------- Game state ---------- **/
-function initGameState(room, activeColors, mode = "classic", starterColor = null, jokerStartCount = null) {
+function initGameState(room, activeColors, mode = "classic", starterColor = null, jokerStartCount = null, bossMode = false) {
   // Normalize activeColors (colors that are actually participating in turn order).
   activeColors = Array.isArray(activeColors) && activeColors.length
     ? activeColors.map(c => String(c).toLowerCase())
@@ -1372,6 +1650,9 @@ function initGameState(room, activeColors, mode = "classic", starterColor = null
     v: 2,
   } : null;
 
+  const bossModeEnabled = !!bossMode;
+  const bossState = bossModeEnabled ? createBossState() : null;
+
   room.state = {
     started: true,
     isTest: (room.isTest === true) || isTestRoomCode(room.code),
@@ -1384,6 +1665,8 @@ paused: false,
     winnerColor: null,
     finishedAt: null,
     mode: gameMode,
+    bossMode: bossModeEnabled,
+    boss: bossState,
     jokerStartCount: baseJokerCount,
     jokerAwardMode: (room.state && room.state.jokerAwardMode) ? room.state.jokerAwardMode : (room.jokerAwardMode || "thrower"),
     action,
@@ -2020,6 +2303,7 @@ broadcast(room, roomUpdatePayload(room));
       // Server entscheidet zufällig die Startfarbe (Quelle der Wahrheit)
       const starterColor = uniqueAct[Math.floor(Math.random() * uniqueAct.length)];
       const requestedMode = String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      const requestedBossMode = !!(msg.bossMode ?? msg.actionBossMode ?? false);
 
       // V9.5: Jokerzahl atomar mit start_request übernehmen. Damit muss sie nicht
       // vorher in einem separaten Request angekommen sein. Classic braucht keine Jokerzahl.
@@ -2035,9 +2319,9 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       // pending info (nur im RAM, kein Persist nötig)
-      room._pendingStart = { starterColor, mode: requestedMode, jokerStartCount, activeColors: uniqueAct.slice(), ts: Date.now() };
+      room._pendingStart = { starterColor, mode: requestedMode, bossMode: requestedBossMode, jokerStartCount, activeColors: uniqueAct.slice(), ts: Date.now() };
 
-      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, jokerStartCount, durationMs: 4200 });
+      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, bossMode: requestedBossMode, jokerStartCount, durationMs: 4200 });
       return;
     }
 
@@ -2078,6 +2362,7 @@ broadcast(room, roomUpdatePayload(room));
         return;
       }
       const requestedMode = String(pending.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      const requestedBossMode = !!pending.bossMode;
       let jokerStartCount = null;
       if (requestedMode === "action") {
         const incomingCount = Number(pending.jokerStartCount);
@@ -2090,10 +2375,10 @@ broadcast(room, roomUpdatePayload(room));
         room.jokerStartCount = incomingCount;
       }
 
-      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount);
+      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount, requestedBossMode);
       room._pendingStart = null;
       await persistRoomState(room);
-      console.log(`[start] room=${room.code} mode=${requestedMode} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
+      console.log(`[start] room=${room.code} mode=${requestedMode} bossMode=${requestedBossMode?"on":"off"} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
       broadcast(room, { type: "started", state: room.state });
       return;
     }
@@ -2129,8 +2414,9 @@ broadcast(room, roomUpdatePayload(room));
         ? Math.max(1, Math.min(5, Number(prev.jokerStartCount ?? room.jokerStartCount ?? 1) || 1))
         : null;
       const starterColor = active[Math.floor(Math.random() * active.length)];
+      const requestedBossMode = !!prev.bossMode;
 
-      initGameState(room, active, requestedMode, starterColor, jokerStartCount);
+      initGameState(room, active, requestedMode, starterColor, jokerStartCount, requestedBossMode);
       room._pendingStart = null;
       await persistRoomState(room);
       console.log(`[rematch] room=${room.code} mode=${requestedMode} starter=${starterColor} players=${active.join(",")}`);
@@ -2428,6 +2714,20 @@ if (msg.type === "action_barricade_move") {
         }
       }catch(_e){}
 
+      // Action-Bossmodus: einmaliger Würfelmodifikator aus Events/Bossen.
+      try{
+        const b=ensureBossState(room);
+        if(b){
+          const c=room.state.turnColor;
+          const mod=Math.max(-2,Math.min(2,Number(b.rollModsByColor?.[c]||0)));
+          if(mod){
+            v=Math.max(1,Math.min(12,v+mod));
+            b.rollModsByColor[c]=0;
+            bossAction(room, mod>0?"🔥":"🥾", "Würfelmodifikator", `${String(c).toUpperCase()}: ${mod>0?"+":""}${mod} → ${v}.`);
+          }
+        }
+      }catch(_e){}
+
       console.log(`[roll] room=${room.code} by=${room.state.turnColor} value=${v}`);
 
       // Stats: track rolls for registered players (no Gast)
@@ -2534,7 +2834,9 @@ if (msg.type === "action_barricade_move") {
       room.state.extraRollPending = false;
       room.state.rolled = null;
       room.state.phase = "need_roll";
-      room.state.turnColor = nextTurnColor(room, room.state.turnColor);
+      const endedBossColor = room.state.turnColor;
+      bossTurnCompleted(room, endedBossColor);
+      room.state.turnColor = nextTurnColor(room, endedBossColor);
       if(room.state.matchTrack) room.state.matchTrack.turnStartedAt = Date.now();
 
       await persistRoomState(room);
@@ -2717,6 +3019,14 @@ if (msg.type === "move_request") {
         wheel = null;
       }
 
+      // Action-Bossmodus: Angriffsfeld + Ereignisfeld werden serverseitig ausgewertet.
+      let bossHit = null;
+      let eventCard = null;
+      try{
+        bossHit = resolveBossAnchorHit(room, landed, activeColor);
+        eventCard = drawBossEventCard(room, landed, activeColor);
+      }catch(_e){}
+
       // landed on barricade?
       const barricades = room.state.barricades;
       const idx = barricades.indexOf(landed);
@@ -2741,6 +3051,7 @@ if (msg.type === "move_request") {
         if (room.state.extraRollPending) {
           room.state.turnColor = activeColor; // extra roll survives restart
         } else {
+          bossTurnCompleted(room, activeColor);
           room.state.turnColor = nextTurnColor(room, activeColor);
         }
         room.state.extraRollPending = false;
@@ -2769,6 +3080,8 @@ if (msg.type === "move_request") {
         type: "move",
         action: { pieceId: pc.id, path: res.path, pickedBarricade: picked, kickedPieces: kicked },
         wheel: wheel || undefined,
+        bossHit: bossHit || undefined,
+        eventCard: eventCard || undefined,
         state: room.state
       });
       if (room.state.finished) {
@@ -2882,7 +3195,12 @@ if (msg.type === "place_barricade") {
   room.carryingByColor = room.state.carryingByColor; // compat alias
 
   // ✅ weiter
-  room.state.turnColor = room.state.extraRollPending ? color : nextTurnColor(room, color);
+  if(room.state.extraRollPending){
+    room.state.turnColor = color;
+  }else{
+    bossTurnCompleted(room, color);
+    room.state.turnColor = nextTurnColor(room, color);
+  }
   room.state.extraRollPending = false;
   room.lastRollWasSix = false;
   room.state.phase = "need_roll";
