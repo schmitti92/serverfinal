@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v9.6-poop-stats-20260920";
+const SERVER_BUILD = "barikade-v10.1-dice-styles-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -17,6 +17,11 @@ const SERVER_BUILD = "barikade-v9.6-poop-stats-20260920";
 // Die Turn-Reihenfolge läuft über room.state.activeColors (nur die tatsächlich
 // im Match verwendeten Farben). Pieces existieren aber immer für alle 4 Farben.
 const ALLOWED_COLORS = ["red", "blue", "green", "yellow"];
+const ALLOWED_DICE_STYLES = ["classic", "neon", "royal"];
+function normalizeDiceStyle(value){
+  const v = String(value || "").toLowerCase().trim();
+  return ALLOWED_DICE_STYLES.includes(v) ? v : "classic";
+}
 
 // ---------- Wheel Quotes (Kick) ----------
 const KICK_QUOTES = [
@@ -149,6 +154,7 @@ function roomUpdatePayload(room, playersOverride) {
     jokerAwardMode: (room.state && room.state.jokerAwardMode) ? room.state.jokerAwardMode : (room.jokerAwardMode || "thrower"),
     jokerStartCount: Number.isInteger(room?.jokerStartCount) ? room.jokerStartCount : null,
     allowedColors: ALLOWED_COLORS,
+    allowedDiceStyles: ALLOWED_DICE_STYLES,
   };
 }
 
@@ -536,7 +542,7 @@ function lobbySnapshot(room){
   };
 }
 
-function reserveLobby(room, nameKey, color, status){
+function reserveLobby(room, nameKey, color, status, diceStyle){
   ensureLobby(room);
   lobbyCleanup(room);
   const nk = String(nameKey||"").trim();
@@ -559,13 +565,15 @@ function reserveLobby(room, nameKey, color, status){
 
   // update reservation
   const prev = room.lobby.reservations[nk] || null;
+  const rawDiceStyle = String(diceStyle || "").toLowerCase().trim();
+  const ds = ALLOWED_DICE_STYLES.includes(rawDiceStyle) ? rawDiceStyle : normalizeDiceStyle(prev?.diceStyle || "classic");
   // if changing color, release previous lock
   if(prev && prev.color && prev.color !== c){
     const pc = String(prev.color).toLowerCase();
     if(room.lobby.colorLocks[pc] === nk) delete room.lobby.colorLocks[pc];
   }
 
-  room.lobby.reservations[nk] = { ts: nowMs(), color: c, status: st };
+  room.lobby.reservations[nk] = { ts: nowMs(), color: c, status: st, diceStyle: ds };
   if(c) room.lobby.colorLocks[c] = nk;
   return { ok:true };
 }
@@ -898,9 +906,10 @@ app.post("/room/:code/reserve", (req, res) => {
 
     const nameKey = String(req.body?.nameKey || req.body?.name || "").trim();
     const color = String(req.body?.color || "").toLowerCase().trim();
+    const diceStyle = req.body?.diceStyle;
     const status = String(req.body?.status || "lobby").trim();
 
-    const r = reserveLobby(room, nameKey, color, status);
+    const r = reserveLobby(room, nameKey, color, status, diceStyle);
     if(!r.ok) return res.status(409).json({ ok:false, ...r });
 
     return res.status(200).json({ ok:true, code, ...lobbySnapshot(room) });
@@ -1017,6 +1026,7 @@ function currentPlayersList(room) {
     id: p.id,
     name: p.name,
     color: p.color || null,
+    diceStyle: normalizeDiceStyle(p.diceStyle),
     isHost: !!p.isHost,
     connected: isConnectedPlayer(p),
     lastSeen: p.lastSeen || null
@@ -1529,6 +1539,7 @@ wss.on("connection", (ws) => {
       const asHost = !!msg.asHost;
       const sessionToken = String(msg.sessionToken || "").slice(0, 60);
       const requestedColor = String(msg.requestedColor || "").toLowerCase().trim();
+      const requestedDiceStyle = normalizeDiceStyle(msg.requestedDiceStyle || "classic");
 
       if (!roomCode) { send(ws, { type: "error", code: "NO_ROOM", message: "Kein Raumcode" }); return; }
 
@@ -1644,7 +1655,8 @@ if (!color) {
   }
 }
 
-room.players.set(clientId, { id: clientId, name, color, isHost, sessionToken, lastSeen: Date.now() });
+const diceStyle = msg.requestedDiceStyle ? requestedDiceStyle : normalizeDiceStyle(existing?.diceStyle || requestedDiceStyle);
+room.players.set(clientId, { id: clientId, name, color, diceStyle, isHost, sessionToken, lastSeen: Date.now() });
 	      // Auto-unpause deaktiviert: Fortsetzen nur per Host (resume)
 	      c.room = roomCode; c.name = name; c.sessionToken = sessionToken;
 	      // keep per-room socket map in sync (host-swap/reconnect depends on it)
@@ -1655,7 +1667,7 @@ try{
   ensureLobby(room);
   const nk = typeof normalizeNameKey === "function" ? (normalizeNameKey(name) || name) : name;
   // only lock canonical names + Gast if provided
-  reserveLobby(room, nk, color, "in_game");
+  reserveLobby(room, nk, color, "in_game", diceStyle);
 }catch(_e){}
 
 
@@ -1666,7 +1678,7 @@ try{
         await persistRoomState(room);
       }
 
-      console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} existing=${!!existing}`);
+      console.log(`[join] room=${roomCode} name=${name} host=${isHost} color=${color} dice=${diceStyle} existing=${!!existing}`);
 
       send(ws, roomUpdatePayload(room));
       broadcast(room, roomUpdatePayload(room));
@@ -1829,7 +1841,7 @@ try{
 
 // Also lock the color in lobby reservations so other devices see it immediately.
 try{
-  reserveLobby(room, typeof normalizeNameKey === "function" ? (normalizeNameKey(me.name) || me.name) : me.name, targetColor, "lobby");
+  reserveLobby(room, typeof normalizeNameKey === "function" ? (normalizeNameKey(me.name) || me.name) : me.name, targetColor, "lobby", me.diceStyle);
 }catch(_e){}
 broadcast(room, roomUpdatePayload(room));
       await persistRoomState(room);
