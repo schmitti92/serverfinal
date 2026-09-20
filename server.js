@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-main4-smiley-hardwire-v5-20260919";
+const SERVER_BUILD = "barikade-main4-smiley-broadcast-v6-20260920";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1044,28 +1044,54 @@ function resumeIfReady(room) {
 
 
 function broadcast(room, obj) {
+  if (!room) return 0;
   const msg = JSON.stringify(obj);
+  const sentSockets = new Set();
+  let sent = 0;
 
-  // Hotfix: broadcast to currently connected sockets in this room.
-  // This prevents missing real-time updates when player records are stale
-  // (e.g. refresh/reconnect) but the websocket is already connected.
-  const map = room?.clients;
-  if (map && map instanceof Map) {
-    for (const ws of map.values()) {
-      if (ws?.readyState === 1) {
-        try { ws.send(msg); } catch (_e) {}
-      }
-    }
-    return;
-  }
-
-  // Fallback: older behavior
-  for (const p of room.players.values()) {
-    const c = clients.get(p.id);
-    if (c?.ws?.readyState === 1) {
-      try { c.ws.send(msg); } catch (_e) {}
+  // 1) Per-room socket index. This is the normal realtime path.
+  if (room.clients instanceof Map) {
+    for (const ws of room.clients.values()) {
+      if (!ws || ws.readyState !== 1 || sentSockets.has(ws)) continue;
+      try {
+        ws.send(msg);
+        sentSockets.add(ws);
+        sent++;
+      } catch (_e) {}
     }
   }
+
+  // 2) Global client index. Do NOT return after room.clients: on reconnects the
+  // room index can briefly be stale while the global client already knows the room.
+  const code = String(room.code || "").trim().toUpperCase();
+  if (code) {
+    for (const c of clients.values()) {
+      if (String(c?.room || "").trim().toUpperCase() !== code) continue;
+      const ws = c?.ws;
+      if (!ws || ws.readyState !== 1 || sentSockets.has(ws)) continue;
+      try {
+        ws.send(msg);
+        sentSockets.add(ws);
+        sent++;
+      } catch (_e) {}
+    }
+  }
+
+  // 3) Player-index fallback for older/restored room records.
+  if (room.players instanceof Map) {
+    for (const p of room.players.values()) {
+      const c = clients.get(p?.id);
+      const ws = c?.ws;
+      if (!ws || ws.readyState !== 1 || sentSockets.has(ws)) continue;
+      try {
+        ws.send(msg);
+        sentSockets.add(ws);
+        sent++;
+      } catch (_e) {}
+    }
+  }
+
+  return sent;
 }
 
 
@@ -1654,7 +1680,7 @@ try{
     if (!room.clients || !(room.clients instanceof Map)) room.clients = new Map();
     if (!room.emojiCooldowns || !(room.emojiCooldowns instanceof Map)) room.emojiCooldowns = new Map();
 
-    // ---------- EMOJI / SMILEY V5 (hardwired through normal game broadcast) ----------
+    // ---------- EMOJI / SMILEY V6 (room-wide resilient broadcast) ----------
     // This deliberately uses the SAME broadcast(room, ...) path as rolls/moves/snapshots.
     // In addition, the event is mirrored inside a normal snapshot as a fallback for clients.
     if (msg.type === "emoji_send" || msg.type === "smiley_send") {
@@ -1699,8 +1725,9 @@ try{
         ts: now
       };
 
-      // PATH A: exact same room broadcast used by normal gameplay.
-      broadcast(room, emojiEvent);
+      // PATH A: dedicated room-wide delivery. This explicitly merges room.clients
+      // with the global client index and deduplicates sockets.
+      const delivered = broadcastEmojiToRoom(room, emojiEvent);
 
       // PATH B: mirror reaction through a normal snapshot. This gives the client a
       // second independent route without changing game rules. Do NOT persist solely
@@ -1714,7 +1741,11 @@ try{
         broadcast(room, { type:"snapshot", state:room.state, emojiEvent, reason:"emoji" });
       }
 
-      console.log(`[emoji-v5] room=${room.code} sender=${senderName} key=${key} event=${eventId} players=${room.players.size} roomSockets=${room.clients instanceof Map ? room.clients.size : 0}`);
+      const globalRoomSockets = Array.from(clients.values()).filter(cc =>
+        String(cc?.room || "").trim().toUpperCase() === String(room.code || "").trim().toUpperCase() &&
+        cc?.ws?.readyState === 1
+      ).length;
+      console.log(`[emoji-v6] room=${room.code} sender=${senderName} key=${key} event=${eventId} delivered=${delivered} players=${room.players.size} roomSockets=${room.clients instanceof Map ? room.clients.size : 0} globalRoomSockets=${globalRoomSockets}`);
       return;
     }
 
