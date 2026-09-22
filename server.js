@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v12.11-hunter-retarget-fix-20260922";
+const SERVER_BUILD = "barikade-v12.12-boss-jokers-20260922";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -62,7 +62,13 @@ const KICK_QUOTES = [
 // We keep the existing action.jokersByColor for backwards compatibility,
 // but internally we store earned/base jokers as arrays with an "origin color".
 // This allows: multiple jokers per type, and correct display of the kicked color.
-const ACTION_JOKER_TYPES = ["allColors","barricade","reroll","double"];
+const BASE_ACTION_JOKER_TYPES = ["allColors","barricade","reroll","double"];
+const BOSS_ACTION_JOKER_TYPES = ["bossSpawn","bossRemove"];
+const ACTION_JOKER_TYPES = [...BASE_ACTION_JOKER_TYPES, ...BOSS_ACTION_JOKER_TYPES];
+
+function jokerTypesForRoom(room){
+  return room?.state?.bossMode ? ACTION_JOKER_TYPES : BASE_ACTION_JOKER_TYPES;
+}
 
 function ensureActionJokers(action){
   if(!action) return;
@@ -77,15 +83,15 @@ function ensureActionJokers(action){
   }
   if(!action.jokersByColor || typeof action.jokersByColor !== "object"){
     action.jokersByColor = {
-      red:      { allColors:0, barricade:0, reroll:0, double:0 },
-      blue:     { allColors:0, barricade:0, reroll:0, double:0 },
-      green:    { allColors:0, barricade:0, reroll:0, double:0 },
-      yellow:   { allColors:0, barricade:0, reroll:0, double:0 },
+      red:      { allColors:0, barricade:0, reroll:0, double:0, bossSpawn:0, bossRemove:0 },
+      blue:     { allColors:0, barricade:0, reroll:0, double:0, bossSpawn:0, bossRemove:0 },
+      green:    { allColors:0, barricade:0, reroll:0, double:0, bossSpawn:0, bossRemove:0 },
+      yellow:   { allColors:0, barricade:0, reroll:0, double:0, bossSpawn:0, bossRemove:0 },
     };
   } else {
     for(const c of ALLOWED_COLORS){
       if(!action.jokersByColor[c] || typeof action.jokersByColor[c] !== "object"){
-        action.jokersByColor[c] = { allColors:0, barricade:0, reroll:0, double:0 };
+        action.jokersByColor[c] = { allColors:0, barricade:0, reroll:0, double:0, bossSpawn:0, bossRemove:0 };
       }
       delete action.jokersByColor[c].choose;
       delete action.jokersByColor[c].sum;
@@ -105,7 +111,7 @@ function syncJokerCountsFromOwned(action){
   ensureActionJokers(action);
   for(const c of ALLOWED_COLORS){
     const owned = action.jokersOwned[c] || [];
-    const counts = { allColors:0, barricade:0, reroll:0, double:0 };
+    const counts = { allColors:0, barricade:0, reroll:0, double:0, bossSpawn:0, bossRemove:0 };
     for(const j of owned){
       const t = String(j?.type || "");
       if(counts[t] != null) counts[t] += 1;
@@ -636,6 +642,19 @@ function spawnBoss(room,preferredType=null,preferredSlotId=null){
 }
 function spawnRandomBoss(room){ return spawnBoss(room,null,null); }
 
+function removeBossByJoker(room,{bossId=null,slotId=null}={}){
+  const b=ensureBossState(room);
+  if(!b) return {ok:false,text:"Bossmodus ist aus."};
+  let slot=null;
+  if(slotId) slot=b.slots.find(s=>String(s?.id||"")===String(slotId)&&s?.boss);
+  if(!slot && bossId) slot=b.slots.find(s=>String(s?.boss?.id||"")===String(bossId));
+  if(!slot?.boss) return {ok:false,text:"Dieser Boss ist nicht mehr aktiv."};
+  const removed=slot.boss;
+  slot.boss=null;
+  bossAction(room,"🌀","Boss entfernt",`${removed.icon||"👹"} ${removed.name||"Boss"} wurde durch einen Boss-entfernen-Joker verbannt.`);
+  return {ok:true,text:`${removed.icon||"👹"} ${removed.name||"Boss"} wurde entfernt.`,boss:removed,slotId:slot.id};
+}
+
 
 function grantRandomEventJokers(room,color,count=1,source="event"){
   const action=room?.state?.action;
@@ -645,7 +664,8 @@ function grantRandomEventJokers(room,color,count=1,source="event"){
   ensureActionJokers(action);
   const player=Array.from(room.players?.values?.()||[]).find(p=>p?.color===color);
   for(let i=0;i<n;i++){
-    const result=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
+    const pool=jokerTypesForRoom(room);
+    const result=pool[Math.floor(Math.random()*pool.length)];
     addOwnedJoker(action,color,result,color,source);
     wheels.push({
       targetColor:color,ownerColor:color,jokerColor:color,result,durationMs:5000,
@@ -929,7 +949,8 @@ function rewardBossHit(room,color,bossName="Boss"){
     const gained=[];
     const player=Array.from(room.players?.values?.()||[]).find(p=>p?.color===color);
     for(let i=0;i<rewardCount;i++){
-      const t=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
+      const pool=jokerTypesForRoom(room);
+      const t=pool[Math.floor(Math.random()*pool.length)];
       addOwnedJoker(room.state.action,color,t,color,bounty?"boss_bounty":"boss");
       gained.push(t);
       wheels.push({
@@ -1030,7 +1051,8 @@ function addShadowBonusJokers(room,color,count=2){
   const action=room?.state?.action; const wheels=[]; if(!action) return wheels;
   const player=Array.from(room.players?.values?.()||[]).find(p=>p?.color===color);
   for(let i=0;i<count;i++){
-    const result=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
+    const pool=jokerTypesForRoom(room);
+    const result=pool[Math.floor(Math.random()*pool.length)];
     addOwnedJoker(action,color,result,color,"shadow_bonus");
     wheels.push({targetColor:color,jokerColor:color,result,durationMs:5000,attackerName:"Der Schatten",victimName:player?.name||"",headline:`👻 Schatten-Bonus für ${player?.name||String(color).toUpperCase()}`,quote:"Kein Joker vorhanden – du erhältst zwei neue Joker!",boss:true});
   }
@@ -2656,23 +2678,24 @@ function initGameState(room, activeColors, mode = "classic", starterColor = null
   const baseJokerCount = (gameMode === "action")
     ? Math.max(1, Math.min(5, Number(jokerStartCount ?? room?.jokerStartCount ?? 1) || 1))
     : 0;
+  const startJokerTypes = bossModeEnabled ? ACTION_JOKER_TYPES : BASE_ACTION_JOKER_TYPES;
 
   // Action state lives fully on the server (persisted in room.state).
   // Client UI only reads this snapshot.
   const action = (gameMode === "action" || bossModeEnabled) ? {
     // Earned/base jokers live here (with origin color for display)
     jokersOwned: {
-      red:    ACTION_JOKER_TYPES.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "red",    source: "base", ts: Date.now() }))),
-      blue:   ACTION_JOKER_TYPES.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "blue",   source: "base", ts: Date.now() }))),
-      green:  ACTION_JOKER_TYPES.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "green",  source: "base", ts: Date.now() }))),
-      yellow: ACTION_JOKER_TYPES.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "yellow", source: "base", ts: Date.now() }))),
+      red:    startJokerTypes.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "red",    source: "base", ts: Date.now() }))),
+      blue:   startJokerTypes.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "blue",   source: "base", ts: Date.now() }))),
+      green:  startJokerTypes.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "green",  source: "base", ts: Date.now() }))),
+      yellow: startJokerTypes.flatMap(t => Array.from({ length: baseJokerCount }, () => ({ type: t, color: "yellow", source: "base", ts: Date.now() }))),
     },
     // Backward compat snapshot for UI (counts)
     jokersByColor: {
-      red:      { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
-      blue:     { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
-      green:    { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
-      yellow:   { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount },
+      red:      { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount, bossSpawn: bossModeEnabled ? baseJokerCount : 0, bossRemove: bossModeEnabled ? baseJokerCount : 0 },
+      blue:     { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount, bossSpawn: bossModeEnabled ? baseJokerCount : 0, bossRemove: bossModeEnabled ? baseJokerCount : 0 },
+      green:    { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount, bossSpawn: bossModeEnabled ? baseJokerCount : 0, bossRemove: bossModeEnabled ? baseJokerCount : 0 },
+      yellow:   { allColors: baseJokerCount, barricade: baseJokerCount, reroll: baseJokerCount, double: baseJokerCount, bossSpawn: bossModeEnabled ? baseJokerCount : 0, bossRemove: bossModeEnabled ? baseJokerCount : 0 },
     },
     // Active effects for the CURRENT turn only (cleared on end_turn)
     effects: {
@@ -3584,7 +3607,7 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     // ---------- ACTION MODE / BOSS-JOKER (server is chef) ----------
-    // V10.6: four supported jokers only: allColors, barricade, reroll, double.
+    // V12.12: 4 Basis-Joker + 2 Bossmodus-Joker (Boss spawnen / Boss entfernen).
     if (msg.type === "use_joker") {
       if (!requireRoomState(room, ws)) return;
       if (!requireTurn(room, clientId, ws)) return;
@@ -3687,6 +3710,43 @@ broadcast(room, roomUpdatePayload(room));
         try{ recordMatchJoker(room, turnColor, "double"); }catch(_e){}
         await persistRoomState(room);
         broadcast(room, { type: "snapshot", state: room.state, joker: "double" });
+        return;
+      }
+
+      if (joker === "bossspawn") {
+        if (!room.state.bossMode) { send(ws,{type:"error",code:"BOSS_MODE_ONLY",message:"Dieser Joker ist nur im Bossmodus verfügbar."}); return; }
+        if (!hasJoker("bossSpawn")) { send(ws,{type:"error",code:"USED",message:"Boss-spawnen-Joker nicht verfügbar."}); return; }
+        if (!["need_roll","need_move"].includes(String(room.state.phase||""))) {
+          send(ws,{type:"error",code:"BAD_PHASE",message:"Boss-Joker nur während deines normalen Zuges nutzbar."}); return;
+        }
+        const spawned=spawnRandomBoss(room);
+        if(!spawned?.ok){
+          send(ws,{type:"error",code:"NO_BOSS_PORTAL",message:spawned?.text||"Kein freies Bossportal."});
+          return; // Joker NICHT verbrauchen
+        }
+        consumeNow("bossSpawn");
+        try{ recordMatchJoker(room,turnColor,"bossSpawn"); }catch(_e){}
+        bossAction(room,"👹","Boss-Joker",`${String(turnColor).toUpperCase()} ruft einen Boss: ${spawned.text}`);
+        await persistRoomState(room);
+        broadcast(room,{type:"snapshot",state:room.state,joker:"bossspawn"});
+        return;
+      }
+
+      if (joker === "bossremove") {
+        if (!room.state.bossMode) { send(ws,{type:"error",code:"BOSS_MODE_ONLY",message:"Dieser Joker ist nur im Bossmodus verfügbar."}); return; }
+        if (!hasJoker("bossRemove")) { send(ws,{type:"error",code:"USED",message:"Boss-entfernen-Joker nicht verfügbar."}); return; }
+        if (!["need_roll","need_move"].includes(String(room.state.phase||""))) {
+          send(ws,{type:"error",code:"BAD_PHASE",message:"Boss-Joker nur während deines normalen Zuges nutzbar."}); return;
+        }
+        const removed=removeBossByJoker(room,{bossId:msg.bossId,slotId:msg.slotId});
+        if(!removed?.ok){
+          send(ws,{type:"error",code:"NO_ACTIVE_BOSS",message:removed?.text||"Kein Boss ausgewählt."});
+          return; // Joker NICHT verbrauchen
+        }
+        consumeNow("bossRemove");
+        try{ recordMatchJoker(room,turnColor,"bossRemove"); }catch(_e){}
+        await persistRoomState(room);
+        broadcast(room,{type:"snapshot",state:room.state,joker:"bossremove",removedBossId:removed?.boss?.id||null});
         return;
       }
 
@@ -4124,7 +4184,7 @@ if (msg.type === "move_request") {
             if (pp && pp.color) kickedColors.add(pp.color);
           }
 
-          const segments = ["allColors","barricade","reroll","double"]; // keine Nieten
+          const segments = jokerTypesForRoom(room); // Bossmodus: zusätzlich Boss spawnen / Boss entfernen
           wheel = [];
 
           for (const kc of kickedColors) {
