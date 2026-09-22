@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v12.8-final-release-set-20260922";
+const SERVER_BUILD = "barikade-v12.11-hunter-retarget-fix-20260922";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1068,13 +1068,44 @@ function enumerateBossPaths(startId,steps){
 }
 
 function chooseHunterRoute(room,entry){
-  const boss=entry.boss, slot=entry.slot; const colors=activeBossColors(room);
-  const targets=[]; for(const c of colors) targets.push(...bossTargetNodes(room,c));
+  const boss=entry.boss, slot=entry.slot;
+  const colors=activeBossColors(room);
+
+  // Der Jäger verfolgt immer eine TATSÄCHLICH auf dem Brett stehende Figur.
+  // Wichtig: Spieler ohne Brettfigur dürfen nicht über ihr leeres Startfeld
+  // weiter als Ziel gelten. Sonst kann der Jäger nach einem Abschuss am alten
+  // Spieler hängen bleiben, obwohl ein anderer Spieler noch Figuren auf dem Brett hat.
+  const targets=[];
+  for(const c of colors){
+    for(const pc of boardPiecesForColor(room,c)){
+      targets.push(String(pc.nodeId));
+    }
+  }
+
+  // Nur wenn überhaupt keine Spielerfigur auf dem Brett steht, darf der Jäger
+  // ersatzweise zu einem Startfeld laufen. Sobald wieder eine Figur auf dem Brett
+  // steht, wird automatisch diese gejagt.
+  if(!targets.length){
+    for(const c of colors){
+      const s=STARTS?.[c];
+      if(s) targets.push(String(s));
+    }
+  }
+
   if(!targets.length) return [];
-  if(!boss.nodeId){const a=chooseSpawnAnchor(slot,targets);return a?[a]:[];}
+
+  if(!boss.nodeId){
+    const a=chooseSpawnAnchor(slot,targets);
+    return a?[a]:[];
+  }
+
   let best=null;
-  for(const t of targets){const p=bossShortestPath(boss.nodeId,t);if(p&&(!best||p.length<best.length))best=p;}
-  return best&&best.length>1?[best[1]]:[];
+  for(const t of targets){
+    const p=bossShortestPath(boss.nodeId,t);
+    if(p && (!best || p.length<best.length)) best=p;
+  }
+
+  return best&&best.length>1 ? [best[1]] : [];
 }
 
 function chooseShadowRoute(room,entry,steps=3){
@@ -1140,12 +1171,81 @@ function executeBossRoute(room,entry,route){
 function moveBossEntry(room,entry,{forced=false}={}){
   const boss=entry?.boss;if(!boss)return {wheels:[],text:""};
   const def=BOSS_TYPES[boss.type];if(!def)return {wheels:[],text:""};
-  const route=boss.type==="hunter"?chooseHunterRoute(room,entry):boss.type==="curse"?chooseCurseRoute(room,entry,def.steps):chooseShadowRoute(room,entry,def.steps);
-  const res=executeBossRoute(room,entry,route);
+
+  const chooseRoute=()=>boss.type==="hunter"
+    ? chooseHunterRoute(room,entry)
+    : boss.type==="curse"
+      ? chooseCurseRoute(room,entry,def.steps)
+      : chooseShadowRoute(room,entry,def.steps);
+
+  // Prüft ALLE Spielfiguren auf einem Brettfeld.
+  // Bewusst nicht über activeBossColors(), damit die Zusatzregel auch bei
+  // reconnectenden / momentan nicht verbundenen Sitzplätzen zuverlässig greift.
+  const playerPiecesOnNode=(nodeId)=>(room?.state?.pieces||[]).filter(
+    p=>p && p.posKind==="board" && String(p.nodeId||"")===String(nodeId||"")
+  );
+
+  // 1. normaler Bosszug
+  const route1=chooseRoute();
+  const landingNode1=route1.length ? String(route1[route1.length-1]) : "";
+
+  // WICHTIG: Landing VOR Ausführung merken.
+  // Dadurch kann der Treffer nicht durch spätere Effektlogik "verschwinden".
+  const landingPiecesBefore1=landingNode1 ? playerPiecesOnNode(landingNode1) : [];
+  const landsOnPlayerBefore1=landingPiecesBefore1.length>0;
+
+  const res1=executeBossRoute(room,entry,route1);
+
+  const wheels=[...(res1.wheels||[])];
+  const texts=[...(res1.texts||[])];
+  const combinedRoute=[...route1];
+  let bonusRun=false;
+
+  // Regel:
+  // Landet Fluchmeister oder Schatten EXAKT am Ende ihres Zuges auf mindestens
+  // einer Spielerfigur, die sie nicht schmeißen dürfen, bekommen sie GENAU EINEN
+  // weiteren vollständigen normalen Zug (Fluchmeister 5 / Schatten 3 Felder).
+  // Der Zusatzlauf selbst kann keinen weiteren Zusatzlauf auslösen.
+  const landedOnUnthrowablePiece =
+    boss.type!=="hunter" &&
+    route1.length>0 &&
+    landsOnPlayerBefore1;
+
+  if(landedOnUnthrowablePiece){
+    bonusRun=true;
+    texts.push(`⚡ Zusatzlauf: ${boss.name} ist auf einer Figur gelandet und darf sofort noch einmal ziehen.`);
+
+    const route2=chooseRoute();
+    const res2=executeBossRoute(room,entry,route2);
+
+    wheels.push(...(res2.wheels||[]));
+    texts.push(...(res2.texts||[]));
+    combinedRoute.push(...route2);
+  }
+
+  // Für die Client-Animation den kompletten Weg aus Hauptzug + Zusatzlauf behalten.
+  boss.lastPath=combinedRoute.map(String);
+  boss.lastMovedAt=Date.now();
+
   const where=boss.nodeId?` bis ${boss.nodeId}`:"";
-  const extra=res.texts.length?` ${res.texts.join(" ")}`:"";
-  bossAction(room,boss.icon,boss.name,`${forced?"Test: ":""}${route.length} Feld${route.length===1?"":"er"}${where}.${extra}`.trim());
-  return {wheels:res.wheels,text:`${boss.icon} ${boss.name}: ${route.length} Felder${where}.`};
+  const movedCount=combinedRoute.length;
+  const bonusText=bonusRun?" · ⚡ Zusatzlauf":"";
+  const extra=texts.length?` ${texts.join(" ")}`:"";
+
+  bossAction(
+    room,
+    boss.icon,
+    boss.name,
+    `${forced?"Test: ":""}${movedCount} Feld${movedCount===1?"":"er"}${where}${bonusText}.${extra}`.trim()
+  );
+
+  return {
+    wheels,
+    text:`${boss.icon} ${boss.name}: ${movedCount} Felder${where}${bonusText}.`,
+    bonusRun,
+    landingNode: landingNode1,
+    landedOnPlayer: landsOnPlayerBefore1
+  };
 }
 
 function bossSleepActiveNow(b){
