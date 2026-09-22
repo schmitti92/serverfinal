@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v12.0-release-candidate-20260920";
+const SERVER_BUILD = "barikade-v12.8-final-release-set-20260922";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -918,33 +918,47 @@ function hasAnyLegalMoveForSteps(room,color,steps){
   return false;
 }
 
-function rewardBossHit(room,color){
+function rewardBossHit(room,color,bossName="Boss"){
   const b=ensureBossState(room);
   const bounty=!!b?.bountyNextBoss;
   const rewardCount=bounty?2:1;
   if(bounty) b.bountyNextBoss=false;
 
+  const wheels=[];
   if(room?.state?.action){
     const gained=[];
+    const player=Array.from(room.players?.values?.()||[]).find(p=>p?.color===color);
     for(let i=0;i<rewardCount;i++){
       const t=ACTION_JOKER_TYPES[Math.floor(Math.random()*ACTION_JOKER_TYPES.length)];
       addOwnedJoker(room.state.action,color,t,color,bounty?"boss_bounty":"boss");
       gained.push(t);
+      wheels.push({
+        ownerColor:color,targetColor:color,jokerColor:color,result:t,durationMs:5000,
+        attackerName:String(bossName||"Boss"),victimName:player?.name||"",
+        headline:bounty
+          ? `🏆 Kopfgeld! Joker ${i+1}/2 für ${player?.name||String(color).toUpperCase()}`
+          : `🏆 Boss besiegt! Joker-Belohnung für ${player?.name||String(color).toUpperCase()}`,
+        quote:bounty?"Kopfgeld: Zwei Joker werden am Glücksrad ausgelost!":"Deine Boss-Belohnung wird am Glücksrad ausgelost!",
+        bossReward:true
+      });
     }
-    return bounty
-      ? `Kopfgeld! Belohnung: 2 Joker (${gained.join(", ")}).`
-      : `Belohnung: 1 ${gained[0]}-Joker.`;
+    syncJokerCountsFromOwned(room.state.action);
+    return {
+      text:bounty?"Kopfgeld! Belohnung: 2 Joker über das Glücksrad.":"Belohnung: 1 Joker über das Glücksrad.",
+      wheels
+    };
   }
   if(b) b.rollModsByColor[color]=Math.min(2,Number(b.rollModsByColor[color]||0)+rewardCount);
-  return bounty?"Kopfgeld! +2 auf deinen nächsten Wurf.":"Belohnung: +1 auf deinen nächsten Wurf.";
+  return {text:bounty?"Kopfgeld! +2 auf deinen nächsten Wurf.":"Belohnung: +1 auf deinen nächsten Wurf.",wheels};
 }
 
 function damageBossSlot(room,slot,attackerColor,source="attack"){
-  if(!slot?.boss) return {hit:false,defeated:false,text:"Kein Boss auf diesem Feld."};
+  if(!slot?.boss) return {hit:false,defeated:false,text:"Kein Boss auf diesem Feld.",wheels:[]};
   const boss=slot.boss; boss.hp=0; slot.boss=null;
-  const reward=attackerColor?rewardBossHit(room,attackerColor):"";
+  const rewardResult=attackerColor?rewardBossHit(room,attackerColor,boss.name):{text:"",wheels:[]};
+  const reward=rewardResult?.text||"";
   bossAction(room,"🏆","Boss besiegt",`${boss.icon} ${boss.name} wurde besiegt. ${reward}`.trim());
-  return {hit:true,defeated:true,text:`🏆 ${boss.name} besiegt! ${reward}`.trim(),source};
+  return {hit:true,defeated:true,text:`🏆 ${boss.name} besiegt! ${reward}`.trim(),source,wheels:rewardResult?.wheels||[]};
 }
 
 // Spieler besiegen einen wandernden Boss, indem sie auf seinem aktuellen Feld landen.
@@ -4044,6 +4058,9 @@ if (msg.type === "move_request") {
       let eventCard = null;
       try{
         bossHit = resolveBossBoardHit(room, landed, activeColor);
+        if(Array.isArray(bossHit?.wheels) && bossHit.wheels.length){
+          wheel = (Array.isArray(wheel) ? wheel : []).concat(bossHit.wheels);
+        }
         // Keine Ereignisketten: Ein durch die Karte „10 Felder laufen“ ausgelöster Zusatzlauf
         // kann Bosse besiegen und normal schlagen, zieht aber nicht direkt eine weitere Ereigniskarte.
         eventCard = wasForcedEventMove ? null : drawBossEventCard(room, landed, activeColor);
