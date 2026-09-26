@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v12.12-boss-jokers-20260922";
+const SERVER_BUILD = "barikade-v12.13-boss-joker-seed-fix-20260926";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -117,6 +117,64 @@ function syncJokerCountsFromOwned(action){
       if(counts[t] != null) counts[t] += 1;
     }
     action.jokersByColor[c] = counts;
+  }
+}
+
+function seedBossJokersForLegacyRoom(room){
+  try{
+    const state=room?.state;
+    const action=state?.action;
+    if(!state?.bossMode || !action) return false;
+
+    ensureActionJokers(action);
+
+    // Nur EINMAL pro altem Spielstand. Nach Verbrauch werden die Joker nie automatisch aufgefüllt.
+    if(action.bossJokerSeedV1 === true) return false;
+
+    const configured = Number(state.jokerStartCount ?? room?.jokerStartCount);
+    let seedCount = Number.isFinite(configured) ? Math.max(0, Math.min(5, Math.floor(configured))) : 0;
+
+    // Für ältere Saves ohne jokerStartCount: aus dem vorhandenen Startbestand der
+    // vier bisherigen Joker ableiten. So wird z.B. ein alter x2-Spielstand zu x2/x2.
+    if(seedCount===0){
+      let inferred=0;
+      for(const c of ALLOWED_COLORS){
+        const set=action.jokersByColor?.[c] || {};
+        inferred=Math.max(
+          inferred,
+          Number(set.allColors||0),
+          Number(set.barricade||0),
+          Number(set.reroll||0),
+          Number(set.double||0)
+        );
+      }
+      seedCount=Math.max(0,Math.min(5,Math.floor(inferred||0)));
+    }
+
+    // Nur hinzufügen, wenn die neuen Typen in diesem alten Save noch gar nicht vorhanden sind.
+    for(const c of ALLOWED_COLORS){
+      if(!Array.isArray(action.jokersOwned[c])) action.jokersOwned[c]=[];
+
+      const hasSpawn=action.jokersOwned[c].some(j=>String(j?.type||"")==="bossSpawn");
+      const hasRemove=action.jokersOwned[c].some(j=>String(j?.type||"")==="bossRemove");
+
+      if(!hasSpawn){
+        for(let i=0;i<seedCount;i++){
+          action.jokersOwned[c].push({type:"bossSpawn",color:c,source:"boss-joker-migration",ts:Date.now()});
+        }
+      }
+      if(!hasRemove){
+        for(let i=0;i<seedCount;i++){
+          action.jokersOwned[c].push({type:"bossRemove",color:c,source:"boss-joker-migration",ts:Date.now()});
+        }
+      }
+    }
+
+    action.bossJokerSeedV1=true;
+    syncJokerCountsFromOwned(action);
+    return seedCount>0;
+  }catch(_e){
+    return false;
   }
 }
 
@@ -1957,6 +2015,7 @@ function normalizeImportedGameState(room){
 
     if(room.state.action){
       ensureActionJokers(room.state.action);
+      seedBossJokersForLegacyRoom(room);
       if(!room.state.action.jokersOwned || typeof room.state.action.jokersOwned !== "object"){
         room.state.action.jokersOwned={red:[],blue:[],green:[],yellow:[]};
       }
@@ -2045,6 +2104,7 @@ async function restoreRoomState(room){
         try{
           if (room.state.action) {
             ensureActionJokers(room.state.action);
+            seedBossJokersForLegacyRoom(room);
             // If we restored an old snapshot without jokersOwned, rebuild it from counts/booleans.
             let hasOwned = room.state.action.jokersOwned && typeof room.state.action.jokersOwned === "object";
             if (!hasOwned) room.state.action.jokersOwned = { red: [], blue: [], green: [], yellow: [] };
@@ -2103,6 +2163,7 @@ async function restoreRoomState(room){
         try{
           if (room.state.action) {
             ensureActionJokers(room.state.action);
+            seedBossJokersForLegacyRoom(room);
             // If we restored an old snapshot without jokersOwned, rebuild it from counts/booleans.
             let hasOwned = room.state.action.jokersOwned && typeof room.state.action.jokersOwned === "object";
             if (!hasOwned) room.state.action.jokersOwned = { red: [], blue: [], green: [], yellow: [] };
@@ -2705,6 +2766,7 @@ function initGameState(room, activeColors, mode = "classic", starterColor = null
     },
     // version for future-proofing
     v: 2,
+    bossJokerSeedV1: bossModeEnabled,
   } : null;
 
   const bossState = bossModeEnabled ? createBossState() : null;
