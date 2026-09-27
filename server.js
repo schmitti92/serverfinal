@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.2-wheel-event-sync-20260927b";
+const SERVER_BUILD = "barikade-v13.3-event-wheel-after-ack-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1475,7 +1475,7 @@ function drawBossEventCard(room,fieldId,color){
     seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,
     fieldId:String(fieldId),respawnFieldId:respawnFieldId?String(respawnFieldId):null,
     color:String(color||""),ts:Date.now(),
-    confirmedAt:null,confirmedByColor:null,
+    confirmedAt:null,confirmedByColor:null,wheelDispatchedAt:null,
     deckRemaining:b.deck.length,deckSize:EVENT_CARD_DEFS.length
   };
   if(wheels.length) evt.wheels=wheels;
@@ -3724,13 +3724,18 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       // Idempotent: ein zweiter Klick / verspätetes Paket ist harmlos.
-      if (!evt.confirmedAt) {
+      const firstConfirm = !evt.confirmedAt;
+      if (firstConfirm) {
         evt.confirmedAt = Date.now();
         evt.confirmedByColor = playerColor;
       }
 
-      // Wichtig: zuerst an ALLE senden. Dadurch schließen alle Clients dieselbe Karte
-      // und geben eventuell wartende Joker-Glücksräder gleichzeitig frei.
+      const eventWheels = Array.isArray(evt.wheels) ? evt.wheels.filter(Boolean) : [];
+      const shouldDispatchWheel = eventWheels.length > 0 && !evt.wheelDispatchedAt;
+      if (shouldDispatchWheel) evt.wheelDispatchedAt = Date.now();
+
+      // Reihenfolge ist absichtlich streng:
+      // 1) Karte bei ALLEN schließen.
       broadcast(room, {
         type:"boss_event_ack",
         seq:Number(evt.seq || 0),
@@ -3738,13 +3743,25 @@ broadcast(room, roomUpdatePayload(room));
         confirmedAt:Number(evt.confirmedAt || Date.now())
       });
 
-      // Zusätzliche Selbstheilung: Falls ein Client das reine ACK-Paket verpasst,
-      // sieht er im direkt folgenden Snapshot trotzdem `confirmedAt` und schließt
-      // die offene Ereigniskarte dann ebenfalls. So bleibt kein Gerät hängen.
+      // 2) Bestätigten Zustand an ALLE spiegeln. Falls ein Client das ACK verpasst,
+      //    erkennt er confirmedAt hierüber und schließt die Karte trotzdem.
+      //    wheelDispatchedAt ist hier bereits enthalten und kann als Recovery dienen.
       broadcast(room, {
         type:"snapshot",
         state:room.state
       });
+
+      // 3) Erst NACH der Bestätigung wird das zu dieser Ereigniskarte gehörende
+      //    Glücksrad freigegeben. Das separate Paket macht die Reihenfolge eindeutig.
+      if (shouldDispatchWheel) {
+        broadcast(room, {
+          type:"boss_event_wheel",
+          seq:Number(evt.seq || 0),
+          confirmedAt:Number(evt.confirmedAt || Date.now()),
+          wheel:eventWheels
+        });
+      }
+
       await persistRoomState(room);
       return;
     }
@@ -4434,9 +4451,11 @@ if (msg.type === "move_request") {
         // Keine Ereignisketten: Ein durch die Karte „10 Felder laufen“ ausgelöster Zusatzlauf
         // kann Bosse besiegen und normal schlagen, zieht aber nicht direkt eine weitere Ereigniskarte.
         eventCard = wasForcedEventMove ? null : drawBossEventCard(room, landed, activeColor);
-        if(Array.isArray(eventCard?.wheels) && eventCard.wheels.length){
-          wheel = (Array.isArray(wheel) ? wheel : []).concat(eventCard.wheels);
-        }
+        // V13.3: Räder, die DIREKT zu einer Ereigniskarte gehören, werden absichtlich
+        // NICHT mehr mit dem Move-Paket verschickt. Sie bleiben in eventCard.wheels
+        // serverseitig zurückgehalten und werden erst nach boss_event_ack ausgelöst.
+        // Dadurch kann kein Client das Rad vor der Kartenbestätigung starten oder
+        // durch eine verlorene lokale Warteschlange verschlucken.
       }catch(_e){}
 
       // landed on barricade?
