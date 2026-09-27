@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.7-color-slots-persistent-wheel-jobs-20260927";
+const SERVER_BUILD = "barikade-v13.9-board-themes-color-slots-wheel-jobs-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -18,6 +18,7 @@ const SERVER_BUILD = "barikade-v13.7-color-slots-persistent-wheel-jobs-20260927"
 // im Match verwendeten Farben). Pieces existieren aber immer für alle 4 Farben.
 const ALLOWED_COLORS = ["red", "blue", "green", "yellow"];
 const ALLOWED_DICE_STYLES = ["classic", "neon", "royal"];
+const ALLOWED_BOARD_THEMES = ["classic", "wood"];
 function normalizeDiceStyle(value){
   const v = String(value || "").toLowerCase().trim();
   return ALLOWED_DICE_STYLES.includes(v) ? v : "classic";
@@ -1501,6 +1502,7 @@ function roomUpdatePayload(room, playersOverride) {
     canStart: canStart(room),
     jokerAwardMode: (room.state && room.state.jokerAwardMode) ? room.state.jokerAwardMode : (room.jokerAwardMode || "thrower"),
     jokerStartCount: Number.isInteger(room?.jokerStartCount) ? room.jokerStartCount : null,
+    boardTheme: normalizeBoardTheme(room?.state?.boardTheme || room?.lobby?.boardTheme),
     allowedColors: ALLOWED_COLORS,
     allowedDiceStyles: ALLOWED_DICE_STYLES,
   };
@@ -1866,6 +1868,7 @@ function ensureLobby(room){
   if(!Number.isFinite(Number(room.lobby.colorWheel.durationMs))) room.lobby.colorWheel.durationMs = 4600;
   if(!Number.isFinite(Number(room.lobby.colorWheel.revealAt))) room.lobby.colorWheel.revealAt = 0;
   room.lobby.colorWheel.design = "slots_v1";
+  room.lobby.boardTheme = normalizeBoardTheme(room.lobby.boardTheme);
 }
 
 function lobbyCleanup(room){
@@ -1898,6 +1901,7 @@ function lobbySnapshot(room){
     colorMode: room.lobby.colorMode === "wheel" ? "wheel" : "manual",
     colorsAssigned: !!room.lobby.colorsAssigned,
     colorWheel: room.lobby.colorWheel,
+    boardTheme: normalizeBoardTheme(room.lobby.boardTheme),
     ts: nowMs()
   };
 }
@@ -1974,6 +1978,12 @@ function setLobbyColorMode(room, mode){
     revealAt: 0,
     design: "slots_v1"
   };
+}
+
+function setLobbyBoardTheme(room, theme){
+  ensureLobby(room);
+  room.lobby.boardTheme = normalizeBoardTheme(theme);
+  return room.lobby.boardTheme;
 }
 
 function assignLobbyColorsByWheel(room){
@@ -2488,6 +2498,24 @@ app.post("/room/:code/color-mode", (req, res) => {
   }
 });
 
+// Lobby-Brettdesign: Host-UI wählt klassisches oder helles Holzbrett.
+// Das Ergebnis liegt serverseitig am Raum und wird beim Start in room.state übernommen.
+app.post("/room/:code/board-theme", (req, res) => {
+  try{
+    const code = normalizeRoomCode(req.params.code);
+    if(!code) return res.status(400).json({ ok:false, error:"NO_CODE" });
+    const room = rooms.get(code);
+    if(!room) return res.status(404).json({ ok:false, error:"NO_ROOM" });
+    if(room.state || Array.from(room.players?.values?.() || []).some(p => isConnectedPlayer(p))){
+      return res.status(409).json({ ok:false, error:"PLAYERS_ALREADY_IN_GAME" });
+    }
+    const boardTheme = setLobbyBoardTheme(room, req.body?.theme);
+    return res.status(200).json({ ok:true, code, boardTheme, ...lobbySnapshot(room) });
+  }catch(_e){
+    return res.status(500).json({ ok:false, error:"ERR" });
+  }
+});
+
 app.post("/room/:code/spin-colors", (req, res) => {
   try{
     const code = normalizeRoomCode(req.params.code);
@@ -2577,7 +2605,7 @@ function makeRoom(code) {
   return {
     code,
     isTest: false, // host-toggleable test mode (excluded from stats)
-    lobby: { reservations: {}, colorLocks: {}, colorMode:"manual", colorsAssigned:false, colorWheel:{seq:0,assignments:[],spunAt:0,durationMs:4600,revealAt:0,design:"slots_v1"} },
+    lobby: { reservations: {}, colorLocks: {}, colorMode:"manual", colorsAssigned:false, colorWheel:{seq:0,assignments:[],spunAt:0,durationMs:4600,revealAt:0,design:"slots_v1"}, boardTheme:"wood" },
     hostToken: null, // stable host identity (sessionToken)
     // Socket index for this room (used for host-swap/reconnect messaging)
     clients: new Map(), // clientId -> ws
@@ -3068,7 +3096,7 @@ function assignColorsRandom(room) {
 }
 
 /** ---------- Game state ---------- **/
-function initGameState(room, activeColors, mode = "classic", starterColor = null, jokerStartCount = null, bossMode = false) {
+function initGameState(room, activeColors, mode = "classic", starterColor = null, jokerStartCount = null, bossMode = false, boardTheme = null) {
   // Normalize activeColors (colors that are actually participating in turn order).
   activeColors = Array.isArray(activeColors) && activeColors.length
     ? activeColors.map(c => String(c).toLowerCase())
@@ -3186,6 +3214,7 @@ paused: false,
     finishedAt: null,
     mode: gameMode,
     bossMode: bossModeEnabled,
+    boardTheme: normalizeBoardTheme(boardTheme || room?.lobby?.boardTheme || room?.state?.boardTheme),
     boss: bossState,
     jokerStartCount: baseJokerCount,
     jokerAwardMode: (room.state && room.state.jokerAwardMode) ? room.state.jokerAwardMode : (room.jokerAwardMode || "thrower"),
@@ -3840,6 +3869,7 @@ broadcast(room, roomUpdatePayload(room));
       const starterColor = uniqueAct[Math.floor(Math.random() * uniqueAct.length)];
       const requestedMode = String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
       const requestedBossMode = !!(msg.bossMode ?? msg.actionBossMode ?? false);
+      const requestedBoardTheme = normalizeBoardTheme(room?.lobby?.boardTheme);
 
       // V9.5: Jokerzahl atomar mit start_request übernehmen. Damit muss sie nicht
       // vorher in einem separaten Request angekommen sein. Classic braucht keine Jokerzahl.
@@ -3855,9 +3885,9 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       // pending info (nur im RAM, kein Persist nötig)
-      room._pendingStart = { starterColor, mode: requestedMode, bossMode: requestedBossMode, jokerStartCount, activeColors: uniqueAct.slice(), ts: Date.now() };
+      room._pendingStart = { starterColor, mode: requestedMode, bossMode: requestedBossMode, boardTheme: requestedBoardTheme, jokerStartCount, activeColors: uniqueAct.slice(), ts: Date.now() };
 
-      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, bossMode: requestedBossMode, jokerStartCount, durationMs: 4200 });
+      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, bossMode: requestedBossMode, boardTheme: requestedBoardTheme, jokerStartCount, durationMs: 4200 });
       return;
     }
 
@@ -3899,6 +3929,7 @@ broadcast(room, roomUpdatePayload(room));
       }
       const requestedMode = String(pending.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
       const requestedBossMode = !!pending.bossMode;
+      const requestedBoardTheme = normalizeBoardTheme(pending.boardTheme || room?.lobby?.boardTheme);
       let jokerStartCount = null;
       if (requestedMode === "action") {
         const incomingCount = Number(pending.jokerStartCount);
@@ -3911,10 +3942,10 @@ broadcast(room, roomUpdatePayload(room));
         room.jokerStartCount = incomingCount;
       }
 
-      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount, requestedBossMode);
+      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount, requestedBossMode, requestedBoardTheme);
       room._pendingStart = null;
       await persistRoomState(room);
-      console.log(`[start] room=${room.code} mode=${requestedMode} bossMode=${requestedBossMode?"on":"off"} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
+      console.log(`[start] room=${room.code} mode=${requestedMode} bossMode=${requestedBossMode?"on":"off"} boardTheme=${requestedBoardTheme} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
       broadcast(room, { type: "started", state: room.state });
       return;
     }
@@ -3951,8 +3982,9 @@ broadcast(room, roomUpdatePayload(room));
         : null;
       const starterColor = active[Math.floor(Math.random() * active.length)];
       const requestedBossMode = !!prev.bossMode;
+      const requestedBoardTheme = normalizeBoardTheme(prev.boardTheme || room?.lobby?.boardTheme);
 
-      initGameState(room, active, requestedMode, starterColor, jokerStartCount, requestedBossMode);
+      initGameState(room, active, requestedMode, starterColor, jokerStartCount, requestedBossMode, requestedBoardTheme);
       room._pendingStart = null;
       await persistRoomState(room);
       console.log(`[rematch] room=${room.code} mode=${requestedMode} starter=${starterColor} players=${active.join(",")}`);
