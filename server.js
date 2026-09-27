@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.9-board-themes-color-slots-wheel-jobs-20260927";
+const SERVER_BUILD = "barikade-v13.9.1-board-theme-hostfix-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -2440,7 +2440,19 @@ app.post("/room/:code/ensure", (req, res) => {
       room = makeRoom(code);
       rooms.set(code, room);
     }
-    return res.status(200).json({ ok: true, code, rooms: rooms.size });
+
+    // V13.9.1: Schon die Lobby kann die stabile Host-Sitzung an den Raum binden.
+    // Dadurch entscheidet bei Lobby-Einstellungen der Server und nicht nur die UI.
+    const token = String(req.body?.sessionToken || "").trim().slice(0, 80);
+    const asHost = req.body?.asHost === true;
+    if(asHost && token){
+      if(!room.hostToken) room.hostToken = token;
+      else if(room.hostToken !== token){
+        return res.status(403).json({ ok:false, error:"NOT_HOST" });
+      }
+    }
+
+    return res.status(200).json({ ok: true, code, rooms: rooms.size, hostClaimed: !!(asHost && token && room.hostToken===token), ...lobbySnapshot(room) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: "ERR" });
   }
@@ -2500,16 +2512,33 @@ app.post("/room/:code/color-mode", (req, res) => {
 
 // Lobby-Brettdesign: Host-UI wählt klassisches oder helles Holzbrett.
 // Das Ergebnis liegt serverseitig am Raum und wird beim Start in room.state übernommen.
-app.post("/room/:code/board-theme", (req, res) => {
+app.post("/room/:code/board-theme", async (req, res) => {
   try{
     const code = normalizeRoomCode(req.params.code);
     if(!code) return res.status(400).json({ ok:false, error:"NO_CODE" });
     const room = rooms.get(code);
     if(!room) return res.status(404).json({ ok:false, error:"NO_ROOM" });
-    if(room.state || Array.from(room.players?.values?.() || []).some(p => isConnectedPlayer(p))){
-      return res.status(409).json({ ok:false, error:"PLAYERS_ALREADY_IN_GAME" });
+
+    // Brettdesign ist eine reine Darstellungseinstellung. Sie darf deshalb auch
+    // bei einem vorhandenen Spielzustand geändert werden. Der Server prüft aber
+    // strikt die stabile Host-Sitzung.
+    const token = String(req.body?.sessionToken || "").trim().slice(0, 80);
+    if(!token || !room.hostToken || token !== room.hostToken){
+      return res.status(403).json({ ok:false, error:"NOT_HOST" });
     }
+
     const boardTheme = setLobbyBoardTheme(room, req.body?.theme);
+
+    // Falls bereits ein Spielzustand existiert, ziehen wir die rein visuelle
+    // Einstellung direkt nach. So können Lobby, Reconnect und offene Spiel-Tabs
+    // niemals unterschiedliche Brettdesigns anzeigen.
+    if(room.state){
+      room.state.boardTheme = boardTheme;
+      try{ await persistRoomState(room); }catch(_e){}
+      broadcast(room, { type:"snapshot", state:room.state });
+      broadcast(room, roomUpdatePayload(room));
+    }
+
     return res.status(200).json({ ok:true, code, boardTheme, ...lobbySnapshot(room) });
   }catch(_e){
     return res.status(500).json({ ok:false, error:"ERR" });
@@ -3982,7 +4011,7 @@ broadcast(room, roomUpdatePayload(room));
         : null;
       const starterColor = active[Math.floor(Math.random() * active.length)];
       const requestedBossMode = !!prev.bossMode;
-      const requestedBoardTheme = normalizeBoardTheme(prev.boardTheme || room?.lobby?.boardTheme);
+      const requestedBoardTheme = normalizeBoardTheme(room?.lobby?.boardTheme || prev.boardTheme);
 
       initGameState(room, active, requestedMode, starterColor, jokerStartCount, requestedBossMode, requestedBoardTheme);
       room._pendingStart = null;
