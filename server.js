@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.9.3-roomcreate-fix-20260927";
+const SERVER_BUILD = "barikade-v13.16-burgstein-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -18,7 +18,7 @@ const SERVER_BUILD = "barikade-v13.9.3-roomcreate-fix-20260927";
 // im Match verwendeten Farben). Pieces existieren aber immer für alle 4 Farben.
 const ALLOWED_COLORS = ["red", "blue", "green", "yellow"];
 const ALLOWED_DICE_STYLES = ["classic", "neon", "royal"];
-const ALLOWED_BOARD_THEMES = ["classic", "wood"];
+const ALLOWED_BOARD_THEMES = ["classic", "wood", "stone"];
 function normalizeDiceStyle(value){
   const v = String(value || "").toLowerCase().trim();
   return ALLOWED_DICE_STYLES.includes(v) ? v : "classic";
@@ -2463,7 +2463,7 @@ app.post("/room/:code/ensure", (req, res) => {
       // V13.9.2: /ensure ist die einzige Host-Wahrheit fuer Lobby-Einstellungen.
       // Raum anlegen/beanspruchen und Brettdesign setzen passieren atomar.
       const requestedTheme=String(req.body?.boardTheme || "").toLowerCase();
-      if(requestedTheme==='classic' || requestedTheme==='wood'){
+      if(requestedTheme==='classic' || requestedTheme==='wood' || requestedTheme==='stone'){
         const boardTheme=setLobbyBoardTheme(room,requestedTheme);
         if(room.state){
           room.state.boardTheme=boardTheme;
@@ -2533,7 +2533,7 @@ app.post("/room/:code/color-mode", (req, res) => {
   }
 });
 
-// Lobby-Brettdesign: Host-UI wählt klassisches oder helles Holzbrett.
+// Lobby-Brettdesign: Host-UI wählt Klassisch, Holz oder Burgstein.
 // Das Ergebnis liegt serverseitig am Raum und wird beim Start in room.state übernommen.
 app.post("/room/:code/board-theme", async (req, res) => {
   try{
