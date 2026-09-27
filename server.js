@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.3-event-wheel-after-ack-20260927";
+const SERVER_BUILD = "barikade-v13.4-wheel-reliable-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1478,7 +1478,18 @@ function drawBossEventCard(room,fieldId,color){
     confirmedAt:null,confirmedByColor:null,wheelDispatchedAt:null,
     deckRemaining:b.deck.length,deckSize:EVENT_CARD_DEFS.length
   };
-  if(wheels.length) evt.wheels=wheels;
+  if(wheels.length){
+    // Jede Rad-Belohnung wird eindeutig an DIESE Ereigniskarte gebunden.
+    // So kann der Client Ereignis-Räder sicher von normalen Kick-/Boss-Rädern unterscheiden
+    // und eine doppelte Auslieferung zuverlässig erkennen.
+    evt.wheelBatchId=`event-${evt.seq}-${evt.ts}`;
+    evt.wheels=wheels.map((w,i)=>({
+      ...w,
+      eventSeq:evt.seq,
+      eventWheelBatchId:evt.wheelBatchId,
+      eventWheelIndex:i
+    }));
+  }
 
   b.lastEvent=evt;
   b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:evt.effectText,ts:evt.ts,event:true});
@@ -3757,6 +3768,7 @@ broadcast(room, roomUpdatePayload(room));
         broadcast(room, {
           type:"boss_event_wheel",
           seq:Number(evt.seq || 0),
+          batchId:String(evt.wheelBatchId || `event-${Number(evt.seq||0)}-${Number(evt.ts||0)}`),
           confirmedAt:Number(evt.confirmedAt || Date.now()),
           wheel:eventWheels
         });
@@ -3810,7 +3822,9 @@ broadcast(room, roomUpdatePayload(room));
         // gezielt im echten Online-Spiel prüfen, ohne die normale Zufallslogik umzubauen.
         b.deck.unshift(card.id);
         const evt=drawBossEventCard(room,field,String(me.color));
-        if(Array.isArray(evt?.wheels)) wheels.push(...evt.wheels);
+        // WICHTIG V13.4: Ereignis-Räder NICHT in das generische Snapshot-Wheel kopieren.
+        // Sie werden ausschließlich nach der Kartenbestätigung über boss_event_wheel ausgeliefert.
+        // Der alte Doppelweg war die Ursache für verspätete/mehrfache Räder bei Testwiederholungen.
         text=evt?`${evt.icon||"🃏"} ${evt.title}: ${evt.effectText||""}`:"Ereigniskarte konnte nicht ausgelöst werden.";
       } else if (action === "clear") {
         for(const slot of b.slots) slot.boss=null;
