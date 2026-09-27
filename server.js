@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v12.13-boss-joker-seed-fix-20260926";
+const SERVER_BUILD = "barikade-v13.1-wheel-event-sync-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1475,6 +1475,7 @@ function drawBossEventCard(room,fieldId,color){
     seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,
     fieldId:String(fieldId),respawnFieldId:respawnFieldId?String(respawnFieldId):null,
     color:String(color||""),ts:Date.now(),
+    confirmedAt:null,confirmedByColor:null,
     deckRemaining:b.deck.length,deckSize:EVENT_CARD_DEFS.length
   };
   if(wheels.length) evt.wheels=wheels;
@@ -1848,6 +1849,11 @@ function ensureLobby(room){
   if(!room.lobby || typeof room.lobby !== "object") room.lobby = { reservations:{}, colorLocks:{} };
   if(!room.lobby.reservations || typeof room.lobby.reservations !== "object") room.lobby.reservations = {};
   if(!room.lobby.colorLocks || typeof room.lobby.colorLocks !== "object") room.lobby.colorLocks = {};
+  if(room.lobby.colorMode !== "wheel") room.lobby.colorMode = "manual";
+  if(typeof room.lobby.colorsAssigned !== "boolean") room.lobby.colorsAssigned = false;
+  if(!room.lobby.colorWheel || typeof room.lobby.colorWheel !== "object") room.lobby.colorWheel = { seq:0, assignments:[], spunAt:0 };
+  if(!Number.isInteger(room.lobby.colorWheel.seq)) room.lobby.colorWheel.seq = 0;
+  if(!Array.isArray(room.lobby.colorWheel.assignments)) room.lobby.colorWheel.assignments = [];
 }
 
 function lobbyCleanup(room){
@@ -1877,6 +1883,9 @@ function lobbySnapshot(room){
   return {
     reservations: room.lobby.reservations,
     colorLocks: room.lobby.colorLocks,
+    colorMode: room.lobby.colorMode === "wheel" ? "wheel" : "manual",
+    colorsAssigned: !!room.lobby.colorsAssigned,
+    colorWheel: room.lobby.colorWheel,
     ts: nowMs()
   };
 }
@@ -1886,14 +1895,28 @@ function reserveLobby(room, nameKey, color, status, diceStyle){
   lobbyCleanup(room);
   const nk = String(nameKey||"").trim();
   if(!nk) return { ok:false, error:"NO_NAME" };
-  const c = ALLOWED_COLORS.includes(String(color||"").toLowerCase()) ? String(color).toLowerCase() : null;
   const st = (status === "in_game") ? "in_game" : "lobby";
+  const prev = room.lobby.reservations[nk] || null;
+  let c = ALLOWED_COLORS.includes(String(color||"").toLowerCase()) ? String(color).toLowerCase() : null;
+
+  // Glücksrad-Modus: Vor der Auslosung darf niemand selbst eine Farbe reservieren.
+  // Nach der Auslosung bleibt die serverseitig zugeloste Farbe stabil.
+  if(room.lobby.colorMode === "wheel"){
+    if(room.lobby.colorsAssigned && prev && ALLOWED_COLORS.includes(String(prev.color||"").toLowerCase())){
+      c = String(prev.color).toLowerCase();
+    }else{
+      c = null;
+      if(room.lobby.colorsAssigned && !prev){
+        // Ein neuer Spieler ist nach einer Auslosung hinzugekommen: Host muss erneut auslosen.
+        room.lobby.colorsAssigned = false;
+      }
+    }
+  }
 
   // enforce unique color lock (if requested)
   if(c){
     const currentHolder = room.lobby.colorLocks[c];
     if(currentHolder && currentHolder !== nk){
-      // If current holder is stale (not reserved anymore), allow
       if(!room.lobby.reservations[currentHolder]){
         delete room.lobby.colorLocks[c];
       } else {
@@ -1902,11 +1925,8 @@ function reserveLobby(room, nameKey, color, status, diceStyle){
     }
   }
 
-  // update reservation
-  const prev = room.lobby.reservations[nk] || null;
   const rawDiceStyle = String(diceStyle || "").toLowerCase().trim();
   const ds = ALLOWED_DICE_STYLES.includes(rawDiceStyle) ? rawDiceStyle : normalizeDiceStyle(prev?.diceStyle || "classic");
-  // if changing color, release previous lock
   if(prev && prev.color && prev.color !== c){
     const pc = String(prev.color).toLowerCase();
     if(room.lobby.colorLocks[pc] === nk) delete room.lobby.colorLocks[pc];
@@ -1915,6 +1935,51 @@ function reserveLobby(room, nameKey, color, status, diceStyle){
   room.lobby.reservations[nk] = { ts: nowMs(), color: c, status: st, diceStyle: ds };
   if(c) room.lobby.colorLocks[c] = nk;
   return { ok:true };
+}
+
+function setLobbyColorMode(room, mode){
+  ensureLobby(room);
+  const next = String(mode||"").toLowerCase() === "wheel" ? "wheel" : "manual";
+  if(room.lobby.colorMode === next) return;
+  room.lobby.colorMode = next;
+  room.lobby.colorsAssigned = false;
+  room.lobby.colorLocks = {};
+  for(const r of Object.values(room.lobby.reservations)){
+    if(r && typeof r === "object") r.color = null;
+  }
+  room.lobby.colorWheel = {
+    seq: Number(room.lobby.colorWheel?.seq||0),
+    assignments: [],
+    spunAt: 0
+  };
+}
+
+function assignLobbyColorsByWheel(room){
+  ensureLobby(room);
+  lobbyCleanup(room);
+  if(room.lobby.colorMode !== "wheel") return { ok:false, error:"NOT_WHEEL_MODE" };
+  const entries = Object.entries(room.lobby.reservations)
+    .filter(([,r]) => r && typeof r === "object")
+    .slice(0, ALLOWED_COLORS.length);
+  if(!entries.length) return { ok:false, error:"NO_PLAYERS" };
+
+  const colors = shuffleInPlace([...ALLOWED_COLORS]);
+  room.lobby.colorLocks = {};
+  const assignments = [];
+  entries.forEach(([nameKey, r], i) => {
+    const color = colors[i];
+    r.color = color;
+    r.ts = nowMs();
+    room.lobby.colorLocks[color] = nameKey;
+    assignments.push({ nameKey, color });
+  });
+  room.lobby.colorsAssigned = true;
+  room.lobby.colorWheel = {
+    seq: Number(room.lobby.colorWheel?.seq||0) + 1,
+    assignments,
+    spunAt: nowMs()
+  };
+  return { ok:true, assignments };
 }
 
 // ---------- Match Stats safety guard ----------
@@ -2373,6 +2438,40 @@ app.post("/room/:code/reserve", (req, res) => {
   }
 });
 
+// Lobby-Farbmodus: optional manuell oder serverseitiges Glücksrad.
+app.post("/room/:code/color-mode", (req, res) => {
+  try{
+    const code = normalizeRoomCode(req.params.code);
+    if(!code) return res.status(400).json({ ok:false, error:"NO_CODE" });
+    const room = rooms.get(code);
+    if(!room) return res.status(404).json({ ok:false, error:"NO_ROOM" });
+    if(room.state || Array.from(room.players?.values?.() || []).some(p => isConnectedPlayer(p))){
+      return res.status(409).json({ ok:false, error:"PLAYERS_ALREADY_IN_GAME" });
+    }
+    setLobbyColorMode(room, req.body?.mode);
+    return res.status(200).json({ ok:true, code, ...lobbySnapshot(room) });
+  }catch(_e){
+    return res.status(500).json({ ok:false, error:"ERR" });
+  }
+});
+
+app.post("/room/:code/spin-colors", (req, res) => {
+  try{
+    const code = normalizeRoomCode(req.params.code);
+    if(!code) return res.status(400).json({ ok:false, error:"NO_CODE" });
+    const room = rooms.get(code);
+    if(!room) return res.status(404).json({ ok:false, error:"NO_ROOM" });
+    if(room.state || Array.from(room.players?.values?.() || []).some(p => isConnectedPlayer(p))){
+      return res.status(409).json({ ok:false, error:"PLAYERS_ALREADY_IN_GAME" });
+    }
+    const result = assignLobbyColorsByWheel(room);
+    if(!result.ok) return res.status(409).json({ ok:false, ...result, code, ...lobbySnapshot(room) });
+    return res.status(200).json({ ok:true, code, ...lobbySnapshot(room) });
+  }catch(_e){
+    return res.status(500).json({ ok:false, error:"ERR" });
+  }
+});
+
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -2445,7 +2544,7 @@ function makeRoom(code) {
   return {
     code,
     isTest: false, // host-toggleable test mode (excluded from stats)
-    lobby: { reservations: {}, colorLocks: {} },
+    lobby: { reservations: {}, colorLocks: {}, colorMode:"manual", colorsAssigned:false, colorWheel:{seq:0,assignments:[],spunAt:0} },
     hostToken: null, // stable host identity (sessionToken)
     // Socket index for this room (used for host-swap/reconnect messaging)
     clients: new Map(), // clientId -> ws
@@ -3598,6 +3697,47 @@ broadcast(room, roomUpdatePayload(room));
       room.state.paused = false;
       await persistRoomState(room);
       broadcast(room, { type: "snapshot", state: room.state });
+      return;
+    }
+
+    // ---------- EREIGNISKARTE: eine Bestätigung schließt sie bei ALLEN ----------
+    // Nur der Spieler, der die Karte ausgelöst hat, darf sie bestätigen.
+    // Der aktuelle turnColor kann zu diesem Zeitpunkt bereits weitergeschaltet sein,
+    // deshalb prüfen wir bewusst gegen lastEvent.color.
+    if (msg.type === "boss_event_ack") {
+      if (!requireRoomState(room, ws)) return;
+      const b = ensureBossState(room);
+      const evt = b?.lastEvent || null;
+      const me = room.players.get(clientId);
+      const seq = Math.max(0, Math.floor(Number(msg.seq || 0)));
+
+      if (!evt || !seq || Number(evt.seq || 0) !== seq) {
+        send(ws, { type:"boss_event_ack_result", ok:false, code:"EVENT_STALE", seq, message:"Diese Ereigniskarte ist nicht mehr aktiv." });
+        return;
+      }
+
+      const eventColor = String(evt.color || "").toLowerCase();
+      const playerColor = String(me?.color || "").toLowerCase();
+      if (!eventColor || playerColor !== eventColor) {
+        send(ws, { type:"boss_event_ack_result", ok:false, code:"NOT_EVENT_PLAYER", seq, message:"Nur der Spieler dieser Ereigniskarte kann bestätigen." });
+        return;
+      }
+
+      // Idempotent: ein zweiter Klick / verspätetes Paket ist harmlos.
+      if (!evt.confirmedAt) {
+        evt.confirmedAt = Date.now();
+        evt.confirmedByColor = playerColor;
+      }
+
+      // Wichtig: zuerst an ALLE senden. Dadurch schließen alle Clients dieselbe Karte
+      // und geben eventuell wartende Joker-Glücksräder gleichzeitig frei.
+      broadcast(room, {
+        type:"boss_event_ack",
+        seq:Number(evt.seq || 0),
+        byColor:playerColor,
+        confirmedAt:Number(evt.confirmedAt || Date.now())
+      });
+      await persistRoomState(room);
       return;
     }
 
