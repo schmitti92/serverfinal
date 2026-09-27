@@ -3082,6 +3082,7 @@ function normalizeEmojiKey(value) {
   if (v === "😡" || low === "angry") return "angry";
   if (v === "😎" || low === "cool") return "cool";
   if (v === "💩" || low === "poop" || low === "shit") return "poop";
+  if (v === "⏳" || v === "⌛" || low === "clock" || low === "hourglass" || low === "timer" || low === "zeituhr") return "clock";
   return "";
 }
 
@@ -3090,6 +3091,7 @@ function emojiGlyph(key) {
   if (key === "angry") return "😡";
   if (key === "cool") return "😎";
   if (key === "poop") return "💩";
+  if (key === "clock") return "⏳";
   return "";
 }
 
