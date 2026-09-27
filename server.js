@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.6-persistent-wheel-jobs-20260927";
+const SERVER_BUILD = "barikade-v13.7-color-slots-persistent-wheel-jobs-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1859,9 +1859,13 @@ function ensureLobby(room){
   if(!room.lobby.colorLocks || typeof room.lobby.colorLocks !== "object") room.lobby.colorLocks = {};
   if(room.lobby.colorMode !== "wheel") room.lobby.colorMode = "manual";
   if(typeof room.lobby.colorsAssigned !== "boolean") room.lobby.colorsAssigned = false;
-  if(!room.lobby.colorWheel || typeof room.lobby.colorWheel !== "object") room.lobby.colorWheel = { seq:0, assignments:[], spunAt:0 };
+  if(!room.lobby.colorWheel || typeof room.lobby.colorWheel !== "object") room.lobby.colorWheel = { seq:0, assignments:[], spunAt:0, durationMs:4600, revealAt:0, design:"slots_v1" };
   if(!Number.isInteger(room.lobby.colorWheel.seq)) room.lobby.colorWheel.seq = 0;
   if(!Array.isArray(room.lobby.colorWheel.assignments)) room.lobby.colorWheel.assignments = [];
+  if(!Number.isFinite(Number(room.lobby.colorWheel.spunAt))) room.lobby.colorWheel.spunAt = 0;
+  if(!Number.isFinite(Number(room.lobby.colorWheel.durationMs))) room.lobby.colorWheel.durationMs = 4600;
+  if(!Number.isFinite(Number(room.lobby.colorWheel.revealAt))) room.lobby.colorWheel.revealAt = 0;
+  room.lobby.colorWheel.design = "slots_v1";
 }
 
 function lobbyCleanup(room){
@@ -1907,7 +1911,14 @@ function reserveLobby(room, nameKey, color, status, diceStyle){
   const prev = room.lobby.reservations[nk] || null;
   let c = ALLOWED_COLORS.includes(String(color||"").toLowerCase()) ? String(color).toLowerCase() : null;
 
-  // Glücksrad-Modus: Vor der Auslosung darf niemand selbst eine Farbe reservieren.
+  // Farb-Slots laufen als serverautoritärer Startschritt. Während die Reels noch
+  // drehen, darf niemand bereits mit der zugelosten Farbe ins Spiel wechseln.
+  if(room.lobby.colorMode === "wheel" && room.lobby.colorsAssigned){
+    const revealAt = Number(room.lobby.colorWheel?.revealAt || 0);
+    if(revealAt && nowMs() < revealAt) return { ok:false, error:"COLOR_SLOTS_SPINNING", revealAt };
+  }
+
+  // Slot-Modus: Vor der Auslosung darf niemand selbst eine Farbe reservieren.
   // Nach der Auslosung bleibt die serverseitig zugeloste Farbe stabil.
   if(room.lobby.colorMode === "wheel"){
     if(room.lobby.colorsAssigned && prev && ALLOWED_COLORS.includes(String(prev.color||"").toLowerCase())){
@@ -1958,7 +1969,10 @@ function setLobbyColorMode(room, mode){
   room.lobby.colorWheel = {
     seq: Number(room.lobby.colorWheel?.seq||0),
     assignments: [],
-    spunAt: 0
+    spunAt: 0,
+    durationMs: 4600,
+    revealAt: 0,
+    design: "slots_v1"
   };
 }
 
@@ -1966,10 +1980,14 @@ function assignLobbyColorsByWheel(room){
   ensureLobby(room);
   lobbyCleanup(room);
   if(room.lobby.colorMode !== "wheel") return { ok:false, error:"NOT_WHEEL_MODE" };
+  const activeRevealAt = Number(room.lobby.colorWheel?.revealAt || 0);
+  if(room.lobby.colorsAssigned && activeRevealAt && nowMs() < activeRevealAt){
+    return { ok:false, error:"COLOR_SLOTS_SPINNING", revealAt:activeRevealAt };
+  }
   const entries = Object.entries(room.lobby.reservations)
     .filter(([,r]) => r && typeof r === "object")
     .slice(0, ALLOWED_COLORS.length);
-  if(!entries.length) return { ok:false, error:"NO_PLAYERS" };
+  if(entries.length < 2) return { ok:false, error:"NEED_2P" };
 
   const colors = shuffleInPlace([...ALLOWED_COLORS]);
   room.lobby.colorLocks = {};
@@ -1982,10 +2000,15 @@ function assignLobbyColorsByWheel(room){
     assignments.push({ nameKey, color });
   });
   room.lobby.colorsAssigned = true;
+  const spunAt = nowMs();
+  const durationMs = 4600;
   room.lobby.colorWheel = {
     seq: Number(room.lobby.colorWheel?.seq||0) + 1,
     assignments,
-    spunAt: nowMs()
+    spunAt,
+    durationMs,
+    revealAt: spunAt + durationMs,
+    design: "slots_v1"
   };
   return { ok:true, assignments };
 }
@@ -2448,7 +2471,7 @@ app.post("/room/:code/reserve", (req, res) => {
   }
 });
 
-// Lobby-Farbmodus: optional manuell oder serverseitiges Glücksrad.
+// Lobby-Farbmodus: optional manuell oder serverseitige Farb-Slots.
 app.post("/room/:code/color-mode", (req, res) => {
   try{
     const code = normalizeRoomCode(req.params.code);
@@ -2554,7 +2577,7 @@ function makeRoom(code) {
   return {
     code,
     isTest: false, // host-toggleable test mode (excluded from stats)
-    lobby: { reservations: {}, colorLocks: {}, colorMode:"manual", colorsAssigned:false, colorWheel:{seq:0,assignments:[],spunAt:0} },
+    lobby: { reservations: {}, colorLocks: {}, colorMode:"manual", colorsAssigned:false, colorWheel:{seq:0,assignments:[],spunAt:0,durationMs:4600,revealAt:0,design:"slots_v1"} },
     hostToken: null, // stable host identity (sessionToken)
     // Socket index for this room (used for host-swap/reconnect messaging)
     clients: new Map(), // clientId -> ws
