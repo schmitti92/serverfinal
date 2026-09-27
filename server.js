@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.1-wheel-event-sync-20260927";
+const SERVER_BUILD = "barikade-v13.2-wheel-event-sync-20260927b";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -3736,6 +3736,14 @@ broadcast(room, roomUpdatePayload(room));
         seq:Number(evt.seq || 0),
         byColor:playerColor,
         confirmedAt:Number(evt.confirmedAt || Date.now())
+      });
+
+      // Zusätzliche Selbstheilung: Falls ein Client das reine ACK-Paket verpasst,
+      // sieht er im direkt folgenden Snapshot trotzdem `confirmedAt` und schließt
+      // die offene Ereigniskarte dann ebenfalls. So bleibt kein Gerät hängen.
+      broadcast(room, {
+        type:"snapshot",
+        state:room.state
       });
       await persistRoomState(room);
       return;
