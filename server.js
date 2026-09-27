@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.4-wheel-reliable-20260927";
+const SERVER_BUILD = "barikade-v13.6-persistent-wheel-jobs-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -1399,6 +1399,10 @@ function advanceTurnWithEventSkips(room,endedColor){
 function drawBossEventCard(room,fieldId,color){
   const b=ensureBossState(room);
   if(!b||!b.eventFields.includes(String(fieldId))) return null;
+  // Server-Schutz gegen überlappende Ereigniskarten: Eine neue Karte darf die noch
+  // unbestätigte lastEvent niemals überschreiben. Das verhindert verlorene/gestapelte
+  // Rad-Belohnungen bei sehr schnellen Tests oder doppelten Aktionen.
+  if(b.lastEvent && !b.lastEvent.confirmedAt) return null;
 
   if(!b.deck.length){
     b.deck=EVENT_CARD_DEFS.map(c=>c.id);
@@ -1475,21 +1479,14 @@ function drawBossEventCard(room,fieldId,color){
     seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,
     fieldId:String(fieldId),respawnFieldId:respawnFieldId?String(respawnFieldId):null,
     color:String(color||""),ts:Date.now(),
-    confirmedAt:null,confirmedByColor:null,wheelDispatchedAt:null,
+    confirmedAt:null,confirmedByColor:null,
+    wheelJobId:null,wheelJobCreatedAt:null,
     deckRemaining:b.deck.length,deckSize:EVENT_CARD_DEFS.length
   };
-  if(wheels.length){
-    // Jede Rad-Belohnung wird eindeutig an DIESE Ereigniskarte gebunden.
-    // So kann der Client Ereignis-Räder sicher von normalen Kick-/Boss-Rädern unterscheiden
-    // und eine doppelte Auslieferung zuverlässig erkennen.
-    evt.wheelBatchId=`event-${evt.seq}-${evt.ts}`;
-    evt.wheels=wheels.map((w,i)=>({
-      ...w,
-      eventSeq:evt.seq,
-      eventWheelBatchId:evt.wheelBatchId,
-      eventWheelIndex:i
-    }));
-  }
+  // Die Belohnung selbst ist bereits serverseitig vergeben; evt.wheels enthält nur
+  // die visuellen Rad-Daten. Erst boss_event_ack wandelt sie in einen persistenten
+  // serverautoritären wheelJob um.
+  if(wheels.length) evt.wheels=wheels.map(w=>({...w}));
 
   b.lastEvent=evt;
   b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:evt.effectText,ts:evt.ts,event:true});
@@ -2062,6 +2059,8 @@ function restoreDerivedRuntimeState(room){
       st.extraRollPending = (Number(st.rolled) === 6) && (st.phase === "need_move" || st.phase === "place_barricade");
     }
     room.lastRollWasSix = !!st.extraRollPending;
+    ensurePersistentWheelJobs(room);
+    recoverHeldPersistentWheelJobs(room);
   }catch(_e){}
 }
 
@@ -2685,6 +2684,276 @@ function broadcast(room, obj) {
   return sent;
 }
 
+// ---------- V13.6: PERSISTENTE SERVER-AUTORITÄT FÜR JOKER-RÄDER ----------
+// Grundsatz: Der Joker ist Spielzustand und wird sofort serverseitig vergeben.
+// Das Glücksrad ist ein separater visueller Auftrag. Jeder Auftrag lebt in room.state,
+// wird also auf Disk/Firebase gespeichert, und bleibt dort, bis jeder vorgesehene
+// Spieler JEDE Rad-Animation als vollständig beendet bestätigt hat.
+//
+// Zustellung = "at least once": der Server darf denselben Auftrag mehrfach senden.
+// visualId macht jeden einzelnen Radlauf idempotent; der Client spielt ihn nur einmal.
+// Damit sind verlorene UND doppelte WebSocket-Pakete harmlos.
+const WHEEL_JOB_PROTOCOL = 1;
+const WHEEL_JOB_RETRY_MS = 900;
+
+function stableWheelSpinTurns(visualId){
+  const str=String(visualId||"");
+  let h=2166136261;
+  for(let i=0;i<str.length;i++){
+    h^=str.charCodeAt(i);
+    h=Math.imul(h,16777619)>>>0;
+  }
+  return 6+(h%3); // immer 6, 7 oder 8 volle Umdrehungen – serverbestimmt
+}
+
+function ensurePersistentWheelJobs(room){
+  if(!room?.state) return [];
+  const st=room.state;
+  if(!Array.isArray(st.wheelJobs)) st.wheelJobs=[];
+  if(!Number.isInteger(st.wheelJobSeq) || st.wheelJobSeq<0) st.wheelJobSeq=0;
+
+  // Bereits sauberer V13.6-Zustand bleibt objektidentisch. Das vermeidet unnötige
+  // Kopien/stale Referenzen während Dispatch + ACK.
+  const alreadyNormalized = Number(st.wheelProtocolVersion||0)===WHEEL_JOB_PROTOCOL &&
+    st.wheelJobs.every(j=>j && typeof j==="object" && typeof j.id==="string" &&
+      Array.isArray(j.expectedColors) && Array.isArray(j.wheel) &&
+      typeof j.released==="boolean" && j.finishedByColor && typeof j.finishedByColor==="object");
+  if(alreadyNormalized) return st.wheelJobs;
+
+  st.wheelProtocolVersion=WHEEL_JOB_PROTOCOL;
+  // Alt-/Importdaten defensiv normalisieren. Ausschließlich JSON-kompatible Werte,
+  // weil room.state unverändert in Disk/Firebase geschrieben wird.
+  st.wheelJobs=st.wheelJobs.filter(j=>j && typeof j==="object").map((j,jobIndex)=>{
+    const id=String(j.id||`restored-wheel-${Number(st.startedAt||0)}-${jobIndex}`);
+    const expected=[...new Set((Array.isArray(j.expectedColors)?j.expectedColors:[])
+      .map(c=>String(c||"").toLowerCase()).filter(c=>ALLOWED_COLORS.includes(c)))];
+    const wheel=(Array.isArray(j.wheel)?j.wheel:[]).filter(Boolean).map((w,i)=>{
+      const visualId=String(w?.visualId||`${id}:${i}`);
+      return {
+        ...w,
+        visualId,
+        spinTurns:Number.isInteger(w?.spinTurns)?Math.max(6,Math.min(8,w.spinTurns)):stableWheelSpinTurns(visualId),
+        serverWheelJobId:id,
+        serverWheelIndex:Number.isInteger(w?.serverWheelIndex)?w.serverWheelIndex:i
+      };
+    });
+    const finishedByColor={};
+    const src=(j.finishedByColor && typeof j.finishedByColor==="object")?j.finishedByColor:{};
+    for(const c of expected){
+      finishedByColor[c]=[...new Set((Array.isArray(src[c])?src[c]:[]).map(String)
+        .filter(v=>wheel.some(w=>w.visualId===v)))];
+    }
+    return {
+      id,
+      source:String(j.source||"server"),
+      seq:Number(j.seq||0),
+      createdAt:Number(j.createdAt||Date.now()),
+      released:j.released!==false,
+      releaseAt:Number(j.releaseAt||j.createdAt||Date.now()),
+      expectedColors:expected,
+      finishedByColor,
+      wheel
+    };
+  });
+  return st.wheelJobs;
+}
+
+function wheelJobRecipientColors(room){
+  const active=Array.isArray(room?.state?.activeColors)
+    ? room.state.activeColors.map(c=>String(c||"").toLowerCase()).filter(c=>ALLOWED_COLORS.includes(c))
+    : [];
+  if(active.length) return [...new Set(active)];
+  const current=[];
+  for(const p of room?.players?.values?.() || []){
+    const c=String(p?.color||"").toLowerCase();
+    if(ALLOWED_COLORS.includes(c)) current.push(c);
+  }
+  return [...new Set(current)];
+}
+
+function wheelJobVisualIds(job){
+  return (Array.isArray(job?.wheel)?job.wheel:[]).map(w=>String(w?.visualId||"")).filter(Boolean);
+}
+
+function wheelJobFinishedIds(job,color){
+  const c=String(color||"").toLowerCase();
+  if(!job.finishedByColor || typeof job.finishedByColor!=="object") job.finishedByColor={};
+  if(!Array.isArray(job.finishedByColor[c])) job.finishedByColor[c]=[];
+  return job.finishedByColor[c];
+}
+
+function wheelJobComplete(job){
+  if(!job) return true;
+  const ids=wheelJobVisualIds(job);
+  const colors=Array.isArray(job.expectedColors)?job.expectedColors:[];
+  if(!ids.length || !colors.length) return true;
+  for(const color of colors){
+    const done=new Set(wheelJobFinishedIds(job,color));
+    for(const id of ids) if(!done.has(id)) return false;
+  }
+  return true;
+}
+
+function findPersistentWheelJob(room,jobId){
+  const id=String(jobId||"");
+  return ensurePersistentWheelJobs(room).find(j=>j.id===id)||null;
+}
+
+function createPersistentWheelJob(room,{source="server",seq=0,jobId="",wheel=[],released=true,releaseAt=Date.now()}={}){
+  if(!room?.state) return null;
+  const items=(Array.isArray(wheel)?wheel:[]).filter(Boolean);
+  if(!items.length) return null;
+  const jobs=ensurePersistentWheelJobs(room);
+  const st=room.state;
+  let id=String(jobId||"").trim();
+  if(!id){
+    st.wheelJobSeq=(Number(st.wheelJobSeq)||0)+1;
+    id=`wheel-${String(st.matchId||"match")}-${st.wheelJobSeq}`;
+  }
+  const existing=jobs.find(j=>j.id===id);
+  if(existing) return existing;
+
+  const expectedColors=wheelJobRecipientColors(room);
+  const finishedByColor={};
+  for(const c of expectedColors) finishedByColor[c]=[];
+  const job={
+    id,
+    source:String(source||"server"),
+    seq:Number(seq||0),
+    createdAt:Date.now(),
+    released:released!==false,
+    releaseAt:released===false ? 0 : Math.max(Date.now(),Number(releaseAt)||Date.now()),
+    expectedColors,
+    finishedByColor,
+    wheel:items.map((w,i)=>{
+      const visualId=`${id}:${i}`;
+      return {
+        ...w,
+        visualId,
+        spinTurns:Number.isInteger(w?.spinTurns)?Math.max(6,Math.min(8,w.spinTurns)):stableWheelSpinTurns(visualId),
+        serverWheelJobId:id,
+        serverWheelIndex:i
+      };
+    })
+  };
+  jobs.push(job);
+  return job;
+}
+
+function releasePersistentWheelJob(room,jobId,delayMs=0){
+  const job=findPersistentWheelJob(room,jobId);
+  if(!job) return null;
+  job.released=true;
+  job.releaseAt=Date.now()+Math.max(0,Number(delayMs)||0);
+  return job;
+}
+
+function recoverHeldPersistentWheelJobs(room){
+  try{
+    if(!room?.state) return;
+    const lastEvt=room.state?.boss?.lastEvent||null;
+    for(const job of ensurePersistentWheelJobs(room)){
+      if(job.released!==false) continue;
+      // Ein bestätigtes Ereignis darf nach einem Serverneustart nicht in "held" hängen.
+      if(job.source==="boss_event" && lastEvt?.confirmedAt && Number(lastEvt.seq||0)===Number(job.seq||0)){
+        job.released=true;
+        job.releaseAt=Date.now()+250;
+      }
+    }
+  }catch(_e){}
+}
+
+function unfinishedWheelItemsForColor(job,color){
+  const c=String(color||"").toLowerCase();
+  if(!Array.isArray(job?.expectedColors) || !job.expectedColors.includes(c)) return [];
+  const done=new Set(wheelJobFinishedIds(job,c));
+  return (Array.isArray(job.wheel)?job.wheel:[]).filter(w=>!done.has(String(w?.visualId||"")));
+}
+
+function wheelJobPayload(job,color){
+  return {
+    type:"server_wheel_job",
+    serverCommand:true,
+    protocol:WHEEL_JOB_PROTOCOL,
+    jobId:String(job?.id||""),
+    source:String(job?.source||"server"),
+    seq:Number(job?.seq||0),
+    createdAt:Number(job?.createdAt||0),
+    releaseAt:Number(job?.releaseAt||0),
+    wheel:unfinishedWheelItemsForColor(job,color)
+  };
+}
+
+function sendPendingWheelJobsToPlayer(room,player,wsOverride=null){
+  try{
+    if(!room?.state||!player) return 0;
+    const color=String(player.color||"").toLowerCase();
+    if(!ALLOWED_COLORS.includes(color)) return 0;
+    const ws=wsOverride || clients.get(player.id)?.ws || null;
+    if(!ws || ws.readyState!==1) return 0;
+    const now=Date.now();
+    let sent=0;
+    for(const job of ensurePersistentWheelJobs(room)){
+      if(job.released!==true) continue;
+      if(Number(job.releaseAt||0)>now) continue;
+      const pending=unfinishedWheelItemsForColor(job,color);
+      if(!pending.length) continue;
+      send(ws,wheelJobPayload(job,color));
+      sent++;
+    }
+    return sent;
+  }catch(_e){ return 0; }
+}
+
+function dispatchPendingWheelJobs(room){
+  try{
+    if(!room?.state) return 0;
+    let sent=0;
+    for(const p of room.players?.values?.() || []){
+      if(!isConnectedPlayer(p)) continue;
+      sent+=sendPendingWheelJobsToPlayer(room,p);
+    }
+    return sent;
+  }catch(_e){ return 0; }
+}
+
+function acknowledgePersistentWheelFinished(room,playerColor,jobId,visualId){
+  if(!room?.state) return {ok:false,changed:false,jobRemoved:false};
+  const color=String(playerColor||"").toLowerCase();
+  const id=String(jobId||"");
+  const vid=String(visualId||"");
+  if(!ALLOWED_COLORS.includes(color)||!id||!vid) return {ok:false,changed:false,jobRemoved:false};
+  const jobs=ensurePersistentWheelJobs(room);
+  const idx=jobs.findIndex(j=>j.id===id);
+  if(idx<0){
+    // Job bereits komplett entfernt: ACK darf idempotent erneut kommen.
+    return {ok:true,changed:false,jobRemoved:true};
+  }
+  const job=jobs[idx];
+  if(!job.expectedColors.includes(color)) return {ok:false,changed:false,jobRemoved:false};
+  if(!job.wheel.some(w=>String(w?.visualId||"")===vid)) return {ok:false,changed:false,jobRemoved:false};
+  const done=wheelJobFinishedIds(job,color);
+  let changed=false;
+  if(!done.includes(vid)){ done.push(vid); changed=true; }
+  let jobRemoved=false;
+  if(wheelJobComplete(job)){
+    jobs.splice(idx,1);
+    jobRemoved=true;
+    changed=true;
+  }
+  return {ok:true,changed,jobRemoved};
+}
+
+// Ein einziger, kleiner Server-Puls ersetzt alle per-Job-Timer. Solange ein Auftrag
+// nicht vollständig bestätigt wurde, wird er den noch offenen verbundenen Spielern
+// erneut angeboten. Es gibt bewusst KEIN 15-Sekunden-Verfallsdatum.
+const _wheelJobRetryTimer=setInterval(()=>{
+  try{
+    for(const room of rooms.values()) dispatchPendingWheelJobs(room);
+  }catch(_e){}
+},WHEEL_JOB_RETRY_MS);
+if(typeof _wheelJobRetryTimer?.unref==="function") _wheelJobRetryTimer.unref();
+
 
 function send(ws, obj) {
   try { ws.send(JSON.stringify(obj)); } catch (_e) {}
@@ -2908,6 +3177,9 @@ paused: false,
     goal: GOAL,
     carryingByColor,
     activeColors: active,
+    wheelProtocolVersion: WHEEL_JOB_PROTOCOL,
+    wheelJobSeq: 0,
+    wheelJobs: [],
 
     // ---- Per-match tracking (for end-of-game title ceremony) ----
     matchTrack: (function(){
@@ -3311,6 +3583,9 @@ try{
 
 
       if (room.state) send(ws, { type: "snapshot", state: room.state });
+      // Reconnect: persistente, noch nicht vollständig abgespielte Rad-Aufträge
+      // werden ausschließlich für diese Spielerfarbe erneut zugestellt.
+      sendPendingWheelJobsToPlayer(room, room.players.get(clientId), ws);
       return;
     }
 
@@ -3711,6 +3986,20 @@ broadcast(room, roomUpdatePayload(room));
       return;
     }
 
+    // ---------- V13.6: Client bestätigt die VOLLSTÄNDIG BEENDETE Animation ----------
+    // Der Server löscht einen persistenten Rad-Auftrag erst, wenn jede vorgesehene
+    // Spielerfarbe jeden Radlauf als fertig bestätigt hat.
+    if (msg.type === "wheel_visual_finished") {
+      if (!requireRoomState(room, ws)) return;
+      const me = room.players.get(clientId);
+      const result=acknowledgePersistentWheelFinished(room, me?.color, msg.jobId, msg.visualId);
+      if(result.ok){
+        send(ws,{type:"wheel_visual_finished_ack",jobId:String(msg.jobId||""),visualId:String(msg.visualId||"")});
+        if(result.changed) await persistRoomState(room);
+      }
+      return;
+    }
+
     // ---------- EREIGNISKARTE: eine Bestätigung schließt sie bei ALLEN ----------
     // Nur der Spieler, der die Karte ausgelöst hat, darf sie bestätigen.
     // Der aktuelle turnColor kann zu diesem Zeitpunkt bereits weitergeschaltet sein,
@@ -3742,39 +4031,53 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       const eventWheels = Array.isArray(evt.wheels) ? evt.wheels.filter(Boolean) : [];
-      const shouldDispatchWheel = eventWheels.length > 0 && !evt.wheelDispatchedAt;
-      if (shouldDispatchWheel) evt.wheelDispatchedAt = Date.now();
+      let eventWheelJob=null;
 
-      // Reihenfolge ist absichtlich streng:
-      // 1) Karte bei ALLEN schließen.
+      // Ereignis-Rad zunächst bewusst "held" anlegen. Der globale Retry-Puls darf
+      // diesen Auftrag in dieser Phase NICHT senden. Dadurch ist selbst bei einer
+      // langsamen Firestore-Antwort garantiert: kein Rad vor dem gemeinsamen Schließen.
+      if(eventWheels.length && !evt.wheelJobCreatedAt){
+        const deterministicId=String(evt.wheelJobId || `event-${String(room.state.matchId||"match")}-${Number(evt.seq||0)}`);
+        eventWheelJob=createPersistentWheelJob(room,{
+          source:"boss_event",
+          seq:Number(evt.seq||0),
+          jobId:deterministicId,
+          wheel:eventWheels,
+          released:false
+        });
+        if(eventWheelJob){
+          evt.wheelJobId=eventWheelJob.id;
+          evt.wheelJobCreatedAt=Date.now();
+        }
+      }else if(evt.wheelJobId){
+        eventWheelJob=findPersistentWheelJob(room,evt.wheelJobId);
+      }
+
+      // 1) Bestätigung + HELD-Radauftrag dauerhaft sichern.
+      await persistRoomState(room);
+
+      // 2) Jetzt erst Ereigniskarte bei allen schließen.
       broadcast(room, {
         type:"boss_event_ack",
         seq:Number(evt.seq || 0),
         byColor:playerColor,
         confirmedAt:Number(evt.confirmedAt || Date.now())
       });
+      broadcast(room, { type:"snapshot", state:room.state });
 
-      // 2) Bestätigten Zustand an ALLE spiegeln. Falls ein Client das ACK verpasst,
-      //    erkennt er confirmedAt hierüber und schließt die Karte trotzdem.
-      //    wheelDispatchedAt ist hier bereits enthalten und kann als Recovery dienen.
-      broadcast(room, {
-        type:"snapshot",
-        state:room.state
-      });
-
-      // 3) Erst NACH der Bestätigung wird das zu dieser Ereigniskarte gehörende
-      //    Glücksrad freigegeben. Das separate Paket macht die Reihenfolge eindeutig.
-      if (shouldDispatchWheel) {
-        broadcast(room, {
-          type:"boss_event_wheel",
-          seq:Number(evt.seq || 0),
-          batchId:String(evt.wheelBatchId || `event-${Number(evt.seq||0)}-${Number(evt.ts||0)}`),
-          confirmedAt:Number(evt.confirmedAt || Date.now()),
-          wheel:eventWheels
-        });
+      // 3) Nach dem Schließen Radauftrag freigeben und erneut dauerhaft sichern.
+      // Bei einem Serverneustart genau zwischen 2) und 3) erkennt Restore den bestätigten
+      // Event-Job und gibt ihn automatisch frei; er kann also weder zu früh noch verloren gehen.
+      if(eventWheelJob && eventWheelJob.released===false){
+        eventWheelJob=releasePersistentWheelJob(room,eventWheelJob.id,180);
+        await persistRoomState(room);
       }
 
-      await persistRoomState(room);
+      // 4) Nach Freigabe zügig zustellen; danach übernimmt der unbegrenzte Retry-Puls.
+      if(eventWheelJob){
+        const wait=Math.max(0,Number(eventWheelJob.releaseAt||0)-Date.now())+20;
+        setTimeout(()=>{ try{ dispatchPendingWheelJobs(room); }catch(_e){} },wait);
+      }
       return;
     }
 
@@ -3811,6 +4114,10 @@ broadcast(room, roomUpdatePayload(room));
         bossAction(room,"🎲","Ereignisfelder","8 Ereignisfelder wurden zufällig neu verteilt (Mindestabstand 3 Felder).");
         text="8 Ereignisfelder zufällig neu verteilt.";
       } else if (action === "event_card") {
+        if(b.lastEvent && !b.lastEvent.confirmedAt){
+          send(ws,{type:"boss_test_result",ok:false,text:"Die vorherige Ereigniskarte ist noch offen. Erst für alle bestätigen."});
+          return;
+        }
         const effect=String(msg.eventEffect||"");
         const card=EVENT_CARD_DEFS.find(c=>String(c.effect)===effect);
         if(!card){ send(ws,{type:"boss_test_result",ok:false,text:"Unbekannte Ereigniskarte"}); return; }
@@ -3822,9 +4129,9 @@ broadcast(room, roomUpdatePayload(room));
         // gezielt im echten Online-Spiel prüfen, ohne die normale Zufallslogik umzubauen.
         b.deck.unshift(card.id);
         const evt=drawBossEventCard(room,field,String(me.color));
-        // WICHTIG V13.4: Ereignis-Räder NICHT in das generische Snapshot-Wheel kopieren.
-        // Sie werden ausschließlich nach der Kartenbestätigung über boss_event_wheel ausgeliefert.
-        // Der alte Doppelweg war die Ursache für verspätete/mehrfache Räder bei Testwiederholungen.
+        // Ereignis-Räder werden NICHT in Snapshot/Move kopiert. Sie bleiben bis zur
+        // Bestätigung an der Ereigniskarte und werden danach in genau EINEN persistenten
+        // serverautoritären wheelJob überführt.
         text=evt?`${evt.icon||"🃏"} ${evt.title}: ${evt.effectText||""}`:"Ereigniskarte konnte nicht ausgelöst werden.";
       } else if (action === "clear") {
         for(const slot of b.slots) slot.boss=null;
@@ -3841,8 +4148,13 @@ broadcast(room, roomUpdatePayload(room));
         send(ws, { type:"boss_test_result", ok:false, text:"Unbekannte Testaktion" }); return;
       }
 
+      let testWheelJob=null;
+      if(wheels.length){
+        testWheelJob=createPersistentWheelJob(room,{source:"boss_test",wheel:wheels,releaseAt:Date.now()});
+      }
       await persistRoomState(room);
-      broadcast(room, { type:"snapshot", state:room.state, wheel:wheels.length?wheels:undefined });
+      broadcast(room, { type:"snapshot", state:room.state });
+      if(testWheelJob) dispatchPendingWheelJobs(room);
       send(ws, { type:"boss_test_result", ok:true, text });
       return;
     }
@@ -4264,8 +4576,13 @@ if (msg.type === "action_barricade_move") {
       room.state.eventMoveActive=null;
       if(room.state.matchTrack) room.state.matchTrack.turnStartedAt = Date.now();
 
+      let endTurnWheelJob=null;
+      if(bossWheel && bossWheel.length){
+        endTurnWheelJob=createPersistentWheelJob(room,{source:"end_turn_boss",wheel:bossWheel,releaseAt:Date.now()});
+      }
       await persistRoomState(room);
-    broadcast(room, { type: "move", state: room.state, wheel: (bossWheel && bossWheel.length) ? bossWheel : undefined });
+      broadcast(room, { type: "move", state: room.state });
+      if(endTurnWheelJob) dispatchPendingWheelJobs(room);
       broadcast(room, roomUpdatePayload(room));
       return;
     }
@@ -4536,20 +4853,28 @@ if (msg.type === "move_request") {
         await finalizeMatchStats(room, room.state.winnerColor);
       }
 
+      // Alle NICHT an eine offene Ereigniskarte gebundenen Rad-Belohnungen werden
+      // jetzt ebenfalls über denselben persistenten Server-Job ausgeliefert.
+      let moveWheelJob=null;
+      if(Array.isArray(wheel) && wheel.length){
+        moveWheelJob=createPersistentWheelJob(room,{source:"move_reward",wheel,releaseAt:Date.now()});
+      }
+
+      // Erst Spielzustand + Radauftrag dauerhaft sichern, danach an Clients senden.
+      await persistRoomState(room);
+
       console.log(`[move] room=${room.code} active=${activeColor} moved=${pc.color} piece=${pc.id} to=${pc.nodeId} picked=${picked}`);
       broadcast(room, {
         type: "move",
         action: { pieceId: pc.id, path: res.path, pickedBarricade: picked, kickedPieces: kicked },
-        wheel: wheel || undefined,
         bossHit: bossHit || undefined,
         eventCard: eventCard || undefined,
         state: room.state
       });
+      if(moveWheelJob) dispatchPendingWheelJobs(room);
       if (room.state.finished) {
         broadcast(room, { type: "game_over", winnerColor: room.state.winnerColor, finishedAt: room.state.finishedAt, awards: room.state.matchAwards || [] });
       }
-      // Persist after every successful move so a server restart has the newest possible state.
-      await persistRoomState(room);
       return;
     }
 
@@ -4680,8 +5005,13 @@ if (msg.type === "place_barricade") {
     room.state.eventMoveActive=null;
   }
 
+  let placeWheelJob=null;
+  if(bossWheel && bossWheel.length){
+    placeWheelJob=createPersistentWheelJob(room,{source:"place_barricade_boss",wheel:bossWheel,releaseAt:Date.now()});
+  }
   await persistRoomState(room);
-  broadcast(room, { type: "snapshot", state: room.state, wheel: (bossWheel && bossWheel.length) ? bossWheel : undefined });
+  broadcast(room, { type: "snapshot", state: room.state });
+  if(placeWheelJob) dispatchPendingWheelJobs(room);
   return;
 }
 
