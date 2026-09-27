@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.9.1-board-theme-hostfix-20260927";
+const SERVER_BUILD = "barikade-v13.9.2-boardtheme-ensure-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -2449,6 +2449,19 @@ app.post("/room/:code/ensure", (req, res) => {
       if(!room.hostToken) room.hostToken = token;
       else if(room.hostToken !== token){
         return res.status(403).json({ ok:false, error:"NOT_HOST" });
+      }
+
+      // V13.9.2: /ensure ist die einzige Host-Wahrheit fuer Lobby-Einstellungen.
+      // Raum anlegen/beanspruchen und Brettdesign setzen passieren atomar.
+      const requestedTheme=String(req.body?.boardTheme || "").toLowerCase();
+      if(requestedTheme==='classic' || requestedTheme==='wood'){
+        const boardTheme=setLobbyBoardTheme(room,requestedTheme);
+        if(room.state){
+          room.state.boardTheme=boardTheme;
+          try{ Promise.resolve(persistRoomState(room)).catch(()=>{}); }catch(_e){}
+          broadcast(room,{type:"snapshot",state:room.state});
+          broadcast(room,roomUpdatePayload(room));
+        }
       }
     }
 
