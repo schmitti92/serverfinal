@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v13.9.2-boardtheme-ensure-20260927";
+const SERVER_BUILD = "barikade-v13.9.3-roomcreate-fix-20260927";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -22,6 +22,15 @@ const ALLOWED_BOARD_THEMES = ["classic", "wood"];
 function normalizeDiceStyle(value){
   const v = String(value || "").toLowerCase().trim();
   return ALLOWED_DICE_STYLES.includes(v) ? v : "classic";
+}
+
+// V13.9.3: Zentrale Normalisierung fuer das Brettdesign.
+// Diese Funktion wurde in V13.9.x bereits aufgerufen, fehlte aber versehentlich
+// in der Serverdatei. Das fuehrte bei /ensure zur Laufzeit zu ReferenceError
+// und damit zu "Raum konnte nicht erstellt werden".
+function normalizeBoardTheme(value){
+  const v = String(value || "").toLowerCase().trim();
+  return ALLOWED_BOARD_THEMES.includes(v) ? v : "wood";
 }
 
 // ---------- Wheel Quotes (Kick) ----------
@@ -2467,6 +2476,7 @@ app.post("/room/:code/ensure", (req, res) => {
 
     return res.status(200).json({ ok: true, code, rooms: rooms.size, hostClaimed: !!(asHost && token && room.hostToken===token), ...lobbySnapshot(room) });
   } catch (e) {
+    console.error("[room/ensure]", e);
     return res.status(500).json({ ok: false, error: "ERR" });
   }
 });
