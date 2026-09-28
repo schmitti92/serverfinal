@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v15.0-doppel-weltenfresser-20260928";
+const SERVER_BUILD = "barikade-v17.0-event-confirm-boss-zugzwang-20260928";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -348,7 +348,7 @@ function bossEventFieldCount(room,b){
 function createBossState(eventFieldCount=BOSS_EVENT_FIELD_DEFAULT){
   const deck=EVENT_CARD_DEFS.map(c=>c.id); shuffleInPlace(deck);
   return {
-    v:7,
+    v:8,
     slots:normalizedBossSlots(),
     eventFieldCount:normalizeBossEventFieldCount(eventFieldCount),
     // Anzahl ist in der Lobby zwischen 5 und 20 wählbar.
@@ -368,6 +368,8 @@ function createBossState(eventFieldCount=BOSS_EVENT_FIELD_DEFAULT){
     bountyNextBoss:false,
     deckVersion:EVENT_DECK_VERSION,
     pendingChoice:null,
+    // V17: hält den Spielerzug an, bis die sichtbare Ereigniskarte bestätigt und vollständig abgearbeitet wurde.
+    pendingEventTurn:null,
     globalBossShieldRounds:0,
     doubleDiceByColor:{red:false,blue:false,green:false,yellow:false},
     exactRollByColor:{red:false,blue:false,green:false,yellow:false},
@@ -638,6 +640,9 @@ function ensureBossState(room){
   }
   b.bountyNextBoss=!!b.bountyNextBoss;
   b.pendingChoice=(b.pendingChoice&&typeof b.pendingChoice==="object")?b.pendingChoice:null;
+  b.pendingEventTurn=(b.pendingEventTurn&&typeof b.pendingEventTurn==="object"&&Number(b.pendingEventTurn.seq)>0)
+    ? {seq:Math.floor(Number(b.pendingEventTurn.seq)),color:String(b.pendingEventTurn.color||""),pickedBarricade:!!b.pendingEventTurn.pickedBarricade,createdAt:Number(b.pendingEventTurn.createdAt||Date.now())}
+    : null;
   b.globalBossShieldRounds=Math.max(0,Math.floor(Number(b.globalBossShieldRounds||0)));
   b.globalBossShieldStartRound=Math.max(1,Math.floor(Number(b.globalBossShieldStartRound||1)));
   for(const key of ["doubleDiceByColor","exactRollByColor","threeRuleByColor","minimum3ByColor","sixHuntByColor","jokerLockByColor"]){
@@ -689,7 +694,7 @@ function ensureBossState(room){
   b.sleepActiveRound=Number.isFinite(Number(b.sleepActiveRound))&&Number(b.sleepActiveRound)>0?Math.floor(Number(b.sleepActiveRound)):null;
   b.eventSeq=Math.max(0,Number(b.eventSeq||0)); b.actionSeq=Math.max(0,Number(b.actionSeq||0));
   ensureBossEventFieldLayout(room,b,false);
-  b.v=6;
+  b.v=8;
   return b;
 }
 
@@ -842,32 +847,50 @@ function chooseDoppelRoute(room,entry,steps){
   if(!steps) return [];
   const boss=entry?.boss, slot=entry?.slot; if(!boss) return [];
   const targets=doppelTargetNodes(room); if(!targets.length) return [];
+
   const starts=[];
-  if(boss.nodeId) starts.push({node:String(boss.nodeId),path:[],used:new Set([String(boss.nodeId)])});
-  else{
+  if(boss.nodeId){
+    starts.push({node:String(boss.nodeId),path:[],used:new Set([String(boss.nodeId)]),left:steps});
+  }else{
     for(const a of (slot?.anchors||[]).map(String)){
-      if(doppelNodeAllowed(room,a,steps===1)) starts.push({node:a,path:[a],used:new Set([a])});
+      if(!doppelNodeAllowed(room,a,steps===1)) continue;
+      starts.push({node:a,path:[a],used:new Set([a]),left:steps-1});
     }
   }
   if(!starts.length) return [];
 
-  const startDistance=boss.nodeId?minDistanceFromNodeToTargets(String(boss.nodeId),targets,room):Infinity;
-  let best=null,bestDist=Infinity,visits=0;
-  const MAX_VISITS=40000;
-
+  // ZUGZWANG: Ein legaler Weg darf auch vom Ziel WEG führen (z.B. rückwärts vor einer
+  // Barikade). Priorität bleibt: möglichst viele der kopierten Felder laufen; bei gleicher
+  // Länge endet der Doppelgänger möglichst nah am Zielspieler. Nur wenn überhaupt kein
+  // einziger legaler Schritt existiert, bleibt er stehen.
+  let best=[],bestLen=-1,bestDist=Infinity,visits=0;
+  const MAX_VISITS=60000;
   function consider(path,end){
+    if(!path.length) return;
     const d=minDistanceFromNodeToTargets(String(end),targets,room);
-    if(d<bestDist){bestDist=d;best=path.slice();}
+    if(path.length>bestLen || (path.length===bestLen && d<bestDist)){
+      best=path.slice();bestLen=path.length;bestDist=d;
+    }
   }
   function dfs(node,path,used,left){
     if(++visits>MAX_VISITS) return;
-    if(left===0){consider(path,node);return;}
+    consider(path,node);
+    if(left<=0) return;
     const ns=bossBoardNeighbors(node).map(String);
-    // Zunächst Wege probieren, die den Zielspieler näher bringen.
     ns.sort((a,c)=>minDistanceFromNodeToTargets(a,targets,room)-minDistanceFromNodeToTargets(c,targets,room));
     for(const nx of ns){
       if(used.has(nx)) continue;
       const isFinal=left===1;
+      const isBarricade=(room.state.barricades||[]).map(String).includes(String(nx));
+      // Zugzwang-Sonderfall: Liegt eine bewegliche Barikade direkt im einzig möglichen Weg,
+      // darf der Doppelgänger auf ihr LANDEN und dort seinen verkürzten Lauf beenden.
+      // Er darf sie niemals vor dem letzten tatsächlich gelaufenen Schritt überschreiten.
+      if(isBarricade && !isFinal){
+        if(canDoppelLandOnBarricade(room,nx)){
+          path.push(nx); consider(path,nx); path.pop();
+        }
+        continue;
+      }
       if(!doppelNodeAllowed(room,nx,isFinal)) continue;
       used.add(nx);path.push(nx);dfs(nx,path,used,left-1);path.pop();used.delete(nx);
       if(visits>MAX_VISITS) break;
@@ -875,15 +898,11 @@ function chooseDoppelRoute(room,entry,steps){
   }
 
   for(const st of starts){
-    const consumed=boss.nodeId?0:1;
-    if(consumed===steps) consider(st.path,st.node);
-    else dfs(st.node,st.path,st.used,steps-consumed);
+    consider(st.path,st.node);
+    dfs(st.node,st.path,st.used,st.left);
+    if(bestLen===steps) break;
   }
-  if(!best) return [];
-  // "in Richtung" bedeutet: Ein bereits auf dem Brett stehender Doppelgänger
-  // läuft nur, wenn die komplette Bewegung ihn tatsächlich näher zum Zielspieler bringt.
-  if(boss.nodeId && Number.isFinite(startDistance) && !(bestDist<startDistance)) return [];
-  return best;
+  return bestLen>0?best:[];
 }
 
 function relocateDoppelLandingBarricade(room,nodeId){
@@ -921,16 +940,20 @@ function moveDoppelgangerEntry(room,entry,steps,{forced=false,actorColor=null}={
   boss.lastCopiedSteps=steps;
   const route=chooseDoppelRoute(room,entry,steps);
   const parts=[];
-  if(route.length===steps){
-    const r=executeDoppelRoute(room,entry,route); if(r.text) parts.push(r.text);
+  if(route.length){
+    const r=executeDoppelRoute(room,entry,route);
+    if(route.length<steps) parts.push(`Zugzwang: kein vollständiger ${steps}-Felder-Weg möglich – ${route.length} legal${route.length===1?"es Feld":"e Felder"} gelaufen.`);
+    if(r.text) parts.push(r.text);
   }else{
-    parts.push(`Kein vollständiger legaler ${steps}-Felder-Weg – der Doppelgänger bleibt stehen.`);
+    parts.push(`Kein einziger legaler Schritt möglich – der Doppelgänger muss stehen bleiben.`);
   }
   if(boss.rageDoubleNext){
     boss.rageDoubleNext=false;
     const r2=chooseDoppelRoute(room,entry,steps);
-    if(r2.length===steps){ const rr=executeDoppelRoute(room,entry,r2); parts.push(`🔥 Wutanfall: zweiter ${steps}-Felder-Lauf.${rr.text?` ${rr.text}`:""}`); }
-    else parts.push("🔥 Wutanfall: Auch der zweite Lauf ist blockiert.");
+    if(r2.length){
+      const rr=executeDoppelRoute(room,entry,r2);
+      parts.push(`🔥 Wutanfall: zweiter Lauf mit ${r2.length}/${steps} Feldern.${rr.text?` ${rr.text}`:""}`);
+    } else parts.push("🔥 Wutanfall: Kein legaler Schritt möglich.");
   }
   if(Number(boss.eventShieldActivations||0)>0) boss.eventShieldActivations=Math.max(0,Number(boss.eventShieldActivations||0)-1);
   const target=doppelTargetColor(room);
@@ -2022,6 +2045,28 @@ function enumerateBossPaths(startId,steps,room=null){
   dfs(String(startId),Math.max(0,steps),new Set([String(startId)]),[String(startId)]); return out;
 }
 
+function chooseBossZugzwangFallback(room,entry,steps=1){
+  const boss=entry?.boss;
+  if(!boss?.nodeId) return [];
+  steps=Math.max(1,Math.min(20,Math.floor(Number(steps||1))));
+  const paths=enumerateBossPaths(String(boss.nodeId),steps,room)
+    .map(p=>Array.isArray(p)?p.slice(1).map(String):[])
+    .filter(p=>p.length>0);
+  if(!paths.length) return [];
+  let maxLen=Math.max(...paths.map(p=>p.length));
+  const longest=paths.filter(p=>p.length===maxLen);
+  // Bei mehreren Rück-/Ausweichwegen weiterhin möglichst sinnvoll in Richtung einer Spielfigur.
+  const targets=[];
+  for(const c of activeBossColors(room)) targets.push(...bossTargetNodes(room,c));
+  let best=longest[0],bestDist=Infinity;
+  for(const p of longest){
+    const end=p[p.length-1];
+    const d=targets.length?minDistanceFromNodeToTargets(end,targets,room):Infinity;
+    if(d<bestDist){best=p;bestDist=d;}
+  }
+  return best||[];
+}
+
 function chooseHunterRoute(room,entry){
   const boss=entry.boss, slot=entry.slot;
   const colors=activeBossColors(room);
@@ -2070,9 +2115,11 @@ function chooseShadowRoute(room,entry,steps=3){
   if(!start){const a=chooseSpawnAnchor(slot,targets,room); if(!a)return []; prefix=[a];start=a;left--;}
   if(left<=0) return prefix;
   const paths=enumerateBossPaths(start,left,room);
+  const candidates=paths.map(p=>prefix.concat(p.slice(1)));
+  const maxLen=candidates.length?Math.max(...candidates.map(p=>p.length)):0;
+  const longest=candidates.filter(p=>p.length===maxLen);
   let best=[],bestTargetHit=-1,bestHits=-1,bestDist=Infinity;
-  for(const p of paths){
-    const tail=p.slice(1); const full=prefix.concat(tail);
+  for(const full of longest){
     let targetHit=0; for(const id of full){if(piecesOnBossNode(room,id).some(pc=>pc.color===targetColor))targetHit++;}
     const hits=bossPathScoreHits(room,full); const end=full[full.length-1]||start; const d=minDistanceFromNodeToTargets(end,targets,room);
     if(targetHit>bestTargetHit || (targetHit===bestTargetHit&&hits>bestHits) || (targetHit===bestTargetHit&&hits===bestHits&&d<bestDist)){
@@ -2088,9 +2135,13 @@ function chooseCurseRoute(room,entry,steps=5){
   let prefix=[];let start=boss.nodeId;let left=steps;
   if(!start){const a=chooseSpawnAnchor(slot,allTargets.length?allTargets:leadTargets,room);if(!a)return [];prefix=[a];start=a;left--;}
   if(left<=0)return prefix;
-  const paths=enumerateBossPaths(start,left,room);let best=[],bestHits=-1,bestDist=Infinity;
-  for(const p of paths){
-    const full=prefix.concat(p.slice(1)); const hits=bossPathScoreHits(room,full); const end=full[full.length-1]||start; const d=minDistanceFromNodeToTargets(end,leadTargets,room);
+  const paths=enumerateBossPaths(start,left,room);
+  const candidates=paths.map(p=>prefix.concat(p.slice(1)));
+  const maxLen=candidates.length?Math.max(...candidates.map(p=>p.length)):0;
+  const longest=candidates.filter(p=>p.length===maxLen);
+  let best=[],bestHits=-1,bestDist=Infinity;
+  for(const full of longest){
+    const hits=bossPathScoreHits(room,full); const end=full[full.length-1]||start; const d=minDistanceFromNodeToTargets(end,leadTargets,room);
     if(hits>bestHits || (hits===bestHits&&d<bestDist)){best=full;bestHits=hits;bestDist=d;}
   }
   return best;
@@ -2127,11 +2178,19 @@ function moveBossEntry(room,entry,{forced=false}={}){
   const boss=entry?.boss;if(!boss)return {wheels:[],text:""};
   const def=BOSS_TYPES[boss.type];if(!def)return {wheels:[],text:""};
 
-  const chooseRoute=()=>boss.type==="hunter"
+  const preferredRoute=()=>boss.type==="hunter"
     ? chooseHunterRoute(room,entry)
     : boss.type==="curse"
       ? chooseCurseRoute(room,entry,def.steps)
       : chooseShadowRoute(room,entry,def.steps);
+  const desiredSteps=boss.type==="hunter"?1:Math.max(1,Number(def.steps||1));
+  const chooseRoute=()=>{
+    const preferred=preferredRoute();
+    if(Array.isArray(preferred)&&preferred.length) return preferred;
+    // V17 Zugzwang: Wenn der bevorzugte Vorwärtsweg nicht möglich ist, muss der Boss
+    // einen legalen Rück-/Ausweichweg nehmen. Nur ohne jeden legalen Schritt bleibt er stehen.
+    return chooseBossZugzwangFallback(room,entry,desiredSteps);
+  };
 
   // Prüft ALLE Spielfiguren auf einem Brettfeld.
   // Bewusst nicht über activeBossColors(), damit die Zusatzregel auch bei
@@ -2301,32 +2360,68 @@ function advanceTurnWithEventSkips(room,endedColor){
   return {wheels,skipped,next};
 }
 
-function drawBossEventCard(room,fieldId,color,ctx={}){
+function finalizePendingEventTurn(room,seq=null){
   const b=ensureBossState(room);
-  if(!b||!b.eventFields.includes(String(fieldId))) return null;
-  // Server-Schutz gegen überlappende Ereigniskarten: Eine neue Karte darf die noch
-  // unbestätigte lastEvent niemals überschreiben. Das verhindert verlorene/gestapelte
-  // Rad-Belohnungen bei sehr schnellen Tests oder doppelten Aktionen.
-  if(b.lastEvent && !b.lastEvent.confirmedAt) return null;
+  const pending=b?.pendingEventTurn;
+  if(!b||!pending) return {done:false,wheels:[]};
+  if(seq!=null && Number(pending.seq||0)!==Number(seq||0)) return {done:false,wheels:[]};
+  // Solange eine Auswahl zur gerade bestätigten Karte offen ist, bleibt der Zug eingefroren.
+  if(b.pendingChoice) return {done:false,wheels:[]};
 
-  // Jedes tatsächlich betretene Ereignisfeld zählt für den globalen Boss-Countdown.
-  // Nach genau 3 Auslösungen erscheint ein Boss; bei zwei belegten Portalen wartet er.
-  const bossCountdownResult=advanceBossEventCountdown(room);
-
-  if(!b.deck.length){
-    b.deck=EVENT_CARD_DEFS.map(c=>c.id);
-    shuffleInPlace(b.deck);
-    b.discard=[];
+  const color=String(pending.color||"");
+  const wheels=[];
+  if(!ALLOWED_COLORS.includes(color)){
+    b.pendingEventTurn=null;
+    if(room.state.phase==="event_wait") room.state.phase="need_roll";
+    return {done:true,wheels};
   }
 
-  const cardId=String(b.deck.shift()||"");
-  const card=EVENT_CARD_DEFS.find(c=>c.id===cardId)||EVENT_CARD_DEFS[0];
-  b.discard.push(card.id);
+  room.state.turnColor=color;
 
+  // Extrem seltener Legacy-Fall: Ereignisfeld und aufhebbare Barikade lagen gleichzeitig.
+  // Dann wird nach der Kartenbestätigung zuerst die normale Barikadenplatzierung beendet.
+  if(pending.pickedBarricade && !b.barricadesDisabled && !!room.state.carryingByColor?.[color]){
+    room.state.phase="place_barricade";
+    room.state.rolled=null;
+    b.pendingEventTurn=null;
+    return {done:true,wheels};
+  }
+
+  const forcedSteps=takeNextLegalForcedEventMove(room,color);
+  if(forcedSteps>0){
+    room.state.rolled=forcedSteps;
+    room.state.phase="need_move";
+    room.state.eventMoveActive={color,steps:forcedSteps,source:`event_walk_${forcedSteps}`};
+  }else{
+    if(room.state.extraRollPending){
+      room.state.turnColor=color;
+    }else{
+      const adv=advanceTurnWithEventSkips(room,color);
+      if(Array.isArray(adv?.wheels) && adv.wheels.length) wheels.push(...adv.wheels);
+    }
+    room.state.extraRollPending=false;
+    room.lastRollWasSix=false;
+    room.state.phase="need_roll";
+    room.state.rolled=null;
+    room.state.eventMoveActive=null;
+  }
+  b.pendingEventTurn=null;
+  return {done:true,wheels};
+}
+
+function applyBossEventEffect(room,evt){
+  const b=ensureBossState(room);
+  if(!b||!evt) return {effectText:"",wheels:[]};
+  if(evt.effectAppliedAt) return {effectText:String(evt.effectText||""),wheels:Array.isArray(evt.wheels)?evt.wheels:[]};
+  const card=EVENT_CARD_DEFS.find(c=>String(c.id)===String(evt.cardId||""))||EVENT_CARD_DEFS[0];
+  const fieldId=String(evt.fieldId||"");
+  const color=String(evt.color||"");
+  const ctx={pieceId:String(evt.triggerPieceId||"")};
   let effectText="";
   let wheels=[];
   const eff=card.effect;
-
+  // V17: Countdown, Kartenwirkung und Respawn passieren ERST nach der sichtbaren Bestätigung.
+  const bossCountdownResult=advanceBossEventCountdown(room);
   if(eff==="spawn_one"){
     const r=spawnBossesFromEvent(room,1); effectText=r.text; wheels.push(...(r.wheels||[]));
   }else if(eff==="spawn_two"){
@@ -2454,21 +2549,43 @@ function drawBossEventCard(room,fieldId,color,ctx={}){
   const respawnFieldId=respawnBossEventField(room,b,fieldId);
   effectText=`${effectText} Das Ereignisfeld verschwindet und erscheint zufällig an einer neuen Stelle.`.trim();
 
+  evt.effectText=String(effectText||"");
+  evt.respawnFieldId=respawnFieldId?String(respawnFieldId):null;
+  evt.effectAppliedAt=Date.now();
+  evt.wheels=wheels.length?wheels.map(w=>({...w})):[];
+  const hist=(b.history||[]).find(h=>h&&Number(h.seq||0)===Number(evt.seq||0)&&h.event);
+  if(hist) hist.text=evt.effectText;
+  return {effectText:evt.effectText,wheels:evt.wheels,respawnFieldId:evt.respawnFieldId};
+}
+
+function drawBossEventCard(room,fieldId,color,ctx={}){
+  const b=ensureBossState(room);
+  if(!b||!b.eventFields.includes(String(fieldId))) return null;
+  // Solange die sichtbare Karte nicht bestätigt wurde, darf keine zweite Ereigniskarte darübergelegt werden.
+  if(b.lastEvent && !b.lastEvent.confirmedAt) return null;
+
+  if(!b.deck.length){
+    b.deck=EVENT_CARD_DEFS.map(c=>c.id);
+    shuffleInPlace(b.deck);
+    b.discard=[];
+  }
+
+  const cardId=String(b.deck.shift()||"");
+  const card=EVENT_CARD_DEFS.find(c=>c.id===cardId)||EVENT_CARD_DEFS[0];
+  b.discard.push(card.id);
+
   const evt={
-    seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,effectText,
-    fieldId:String(fieldId),respawnFieldId:respawnFieldId?String(respawnFieldId):null,
-    color:String(color||""),ts:Date.now(),
-    confirmedAt:null,confirmedByColor:null,
+    seq:++b.eventSeq,cardId:card.id,icon:card.icon,title:card.title,text:card.text,
+    effectText:"Bestätige die Ereigniskarte – danach wird der Effekt ausgelöst.",
+    fieldId:String(fieldId),respawnFieldId:null,
+    color:String(color||""),triggerPieceId:String(ctx?.pieceId||""),ts:Date.now(),
+    confirmedAt:null,confirmedByColor:null,effectAppliedAt:null,
     wheelJobId:null,wheelJobCreatedAt:null,
     deckRemaining:b.deck.length,deckSize:EVENT_CARD_DEFS.length
   };
-  // Die Belohnung selbst ist bereits serverseitig vergeben; evt.wheels enthält nur
-  // die visuellen Rad-Daten. Erst boss_event_ack wandelt sie in einen persistenten
-  // serverautoritären wheelJob um.
-  if(wheels.length) evt.wheels=wheels.map(w=>({...w}));
 
   b.lastEvent=evt;
-  b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:evt.effectText,ts:evt.ts,event:true});
+  b.history.push({seq:evt.seq,icon:evt.icon,title:evt.title,text:"Wartet auf Bestätigung.",ts:evt.ts,event:true});
   if(b.history.length>16)b.history.splice(0,b.history.length-16);
   return evt;
 }
@@ -5134,7 +5251,15 @@ broadcast(room, roomUpdatePayload(room));
         evt.confirmedByColor = playerColor;
       }
 
-      const eventWheels = Array.isArray(evt.wheels) ? evt.wheels.filter(Boolean) : [];
+      // V17: Die Karte wurde bis hierhin NUR angezeigt. Erst mit diesem bestätigten OK
+      // werden Countdown, Kartenwirkung und Ereignisfeld-Respawn serverautoritär ausgeführt.
+      if(!evt.effectAppliedAt) applyBossEventEffect(room,evt);
+
+      // Karten ohne nachfolgende Auswahl können den eingefrorenen Spielerzug sofort
+      // fortsetzen. Öffnet der Effekt eine Auswahl, bleibt der Zug bis zu deren Abschluss stehen.
+      const continuation=finalizePendingEventTurn(room,seq);
+      const continuationWheels=Array.isArray(continuation?.wheels)?continuation.wheels.filter(Boolean):[];
+      const eventWheels = (Array.isArray(evt.wheels) ? evt.wheels.filter(Boolean) : []).concat(continuationWheels);
       let eventWheelJob=null;
 
       // Ereignis-Rad zunächst bewusst "held" anlegen. Der globale Retry-Puls darf
@@ -5248,6 +5373,8 @@ broadcast(room, roomUpdatePayload(room));
         b.sleepRounds=0;
         b.sleepActiveRound=null;
         b.pendingChoice=null;
+        b.pendingEventTurn=null;
+        if(room.state.phase==="event_wait") room.state.phase="need_roll";
         b.bossEventCountdown=BOSS_EVENT_BOSS_TRIGGER;
         b.bossCountdownPending=false;
         b.bossEventTriggersTotal=0;
@@ -5410,10 +5537,18 @@ broadcast(room, roomUpdatePayload(room));
         text=`🎯 Würfelwert angepasst auf ${room.state.rolled}.`;
       }else{send(ws,{type:"error",code:"BAD_CHOICE",message:"Unbekannte Ereignis-Auswahl."});return;}
 
-      if(done) clearEventChoice(room);
+      let continuationWheelJob=null;
+      if(done){
+        clearEventChoice(room);
+        const evtSeq=Number(b?.lastEvent?.seq||0);
+        const cont=finalizePendingEventTurn(room,evtSeq||null);
+        if(Array.isArray(cont?.wheels) && cont.wheels.length){
+          continuationWheelJob=createPersistentWheelJob(room,{source:"event_continue",wheel:cont.wheels,releaseAt:Date.now()});
+        }
+      }
       if(text) bossAction(room,"🃏","Ereignis-Auswahl",text);
       await persistRoomState(room); broadcast(room,{type:"snapshot",state:room.state,eventChoiceResult:text});
-      if(wheelJob) dispatchPendingWheelJobs(room);
+      if(wheelJob||continuationWheelJob) dispatchPendingWheelJobs(room);
       return;
     }
 
@@ -6180,8 +6315,16 @@ if (msg.type === "move_request") {
         else { doppelgangerAfterPlayerMove(room,activeColor,doppelCopySteps); clearImpossibleEventChoice(room,"Doppelgänger"); }
       }
 
-      // if no barricade placement needed:
-      if (!picked) {
+      // V17: Bei einem Ereignisfeld friert der Server den Zug ein, bis der auslösende
+      // Spieler die sichtbare Karte mit OK bestätigt hat. Erst DANACH wird die Wirkung
+      // ausgeführt und der Zug fortgesetzt. Dadurch kann kein Effekt vor der Karte passieren.
+      if(eventCard){
+        const eb=ensureBossState(room);
+        eb.pendingEventTurn={seq:Number(eventCard.seq||0),color:activeColor,pickedBarricade:!!picked,createdAt:Date.now()};
+        room.state.turnColor=activeColor;
+        room.state.phase="event_wait";
+        room.state.rolled=null;
+      } else if (!picked) {
         const forcedSteps=takeNextLegalForcedEventMove(room,activeColor);
         const canForced=forcedSteps>0;
         if(canForced){
