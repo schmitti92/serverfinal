@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v17.0-event-confirm-boss-zugzwang-20260928";
+const SERVER_BUILD = "barikade-v24-boss-reveal-random-portals-turn-cadence-20260929";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -233,11 +233,11 @@ function jokerGameplayEnabled(room){
 // Bossfelder sind nur Eintrittsportale. Danach laufen Bosse auf dem kompletten Brett.
 // WICHTIG: Bosse erzeugen/vernichten KEINE Barikaden. Die vorhandene Anzahl bleibt erhalten.
 const BOSS_TYPES = {
-  hunter:   { key:"hunter",   name:"Der Jäger",         icon:"🐺", hp:1, steps:1, cadence:"roll",        rewardJokers:1 },
+  hunter:   { key:"hunter",   name:"Der Jäger",         icon:"🐺", hp:1, steps:1, cadence:"player_move", rewardJokers:1 },
   curse:    { key:"curse",    name:"Der Fluchmeister", icon:"🧙", hp:1, steps:5, cadence:"round",       rewardJokers:1 },
   shadow:   { key:"shadow",   name:"Der Schatten",     icon:"👻", hp:1, steps:3, cadence:"round",       rewardJokers:1 },
   doppel:   { key:"doppel",   name:"Der Doppelgänger", icon:"👥", hp:1, steps:0, cadence:"player_move", rewardJokers:2 },
-  devourer: { key:"devourer", name:"Der Weltenfresser",icon:"🌌", hp:1, steps:0, cadence:"round",       rewardJokers:3 },
+  devourer: { key:"devourer", name:"Der Weltenfresser",icon:"🌌", hp:1, steps:0, cadence:"turn5",       rewardJokers:3 },
 };
 
 // ---------- V14 Ereigniskarten: exakt 106 Karten ----------
@@ -329,7 +329,9 @@ const BOSS_EVENT_FIELD_DEFAULT = 8;
 const BOSS_EVENT_FIELD_MIN = 5;
 const BOSS_EVENT_FIELD_MAX = 20;
 const BOSS_EVENT_MIN_DISTANCE = 3;
-const BOSS_EVENT_BOSS_TRIGGER = 3;
+const BOSS_EVENT_BOSS_TRIGGER_DEFAULT = 3;
+const BOSS_EVENT_BOSS_TRIGGER_MIN = 0;
+const BOSS_EVENT_BOSS_TRIGGER_MAX = 10;
 
 function normalizeBossEventFieldCount(value, fallback=BOSS_EVENT_FIELD_DEFAULT){
   const n=Math.floor(Number(value));
@@ -345,21 +347,37 @@ function bossEventFieldCount(room,b){
   );
 }
 
-function createBossState(eventFieldCount=BOSS_EVENT_FIELD_DEFAULT){
+function normalizeBossEventBossTrigger(value, fallback=BOSS_EVENT_BOSS_TRIGGER_DEFAULT){
+  const n=Math.floor(Number(value));
+  if(Number.isInteger(n) && n>=BOSS_EVENT_BOSS_TRIGGER_MIN && n<=BOSS_EVENT_BOSS_TRIGGER_MAX) return n;
+  const f=Math.floor(Number(fallback));
+  return Number.isInteger(f) && f>=BOSS_EVENT_BOSS_TRIGGER_MIN && f<=BOSS_EVENT_BOSS_TRIGGER_MAX ? f : BOSS_EVENT_BOSS_TRIGGER_DEFAULT;
+}
+
+function bossEventBossTrigger(room,b){
+  return normalizeBossEventBossTrigger(
+    b?.bossEventTrigger ?? room?.state?.bossEventTrigger ?? room?.bossEventTrigger,
+    BOSS_EVENT_BOSS_TRIGGER_DEFAULT
+  );
+}
+
+function createBossState(eventFieldCount=BOSS_EVENT_FIELD_DEFAULT, bossEventTrigger=BOSS_EVENT_BOSS_TRIGGER_DEFAULT){
   const deck=EVENT_CARD_DEFS.map(c=>c.id); shuffleInPlace(deck);
   return {
-    v:8,
+    v:9,
     slots:normalizedBossSlots(),
     eventFieldCount:normalizeBossEventFieldCount(eventFieldCount),
+    bossEventTrigger:normalizeBossEventBossTrigger(bossEventTrigger),
     // Anzahl ist in der Lobby zwischen 5 und 20 wählbar.
     eventFields:[],
-    // Boss-Countdown: Nach jeweils 3 tatsächlich ausgelösten Ereignisfeldern
-    // erscheint ein zufälliger Boss. Sind beide Portale belegt, wartet der Spawn
-    // bei 0, bis wieder ein Portal frei wird.
-    bossEventCountdown:BOSS_EVENT_BOSS_TRIGGER,
+    // Zusatzboss-Countdown: 0 = deaktiviert, 1–10 = nach so vielen bestätigten Ereigniskarten.
+    // Sind beide Portale beim Erreichen von 0 belegt, wartet der Spawn auf ein freies Portal.
+    bossEventCountdown:normalizeBossEventBossTrigger(bossEventTrigger),
     bossCountdownPending:false,
     bossEventTriggersTotal:0,
     deck, discard:[], lastEvent:null, lastAction:null, history:[],
+    // V24: persistente Boss-Enthuellung fuer alle Clients.
+    lastSpawn:null, spawnHistory:[], spawnSeq:0,
     eventSeq:0, actionSeq:0, round:1, turnsInRound:0, sleepRounds:0, sleepActiveRound:null,
     rollModsByColor:{red:0,blue:0,green:0,yellow:0},
     skipTurnsByColor:{red:0,blue:0,green:0,yellow:0},
@@ -578,7 +596,7 @@ function respawnBossEventField(room,b,usedFieldId){
 
 function ensureBossState(room){
   if(!room?.state?.bossMode) return null;
-  if(!room.state.boss || typeof room.state.boss!=="object") room.state.boss=createBossState(room?.state?.eventFieldCount);
+  if(!room.state.boss || typeof room.state.boss!=="object") room.state.boss=createBossState(room?.state?.eventFieldCount, room?.state?.bossEventTrigger ?? room?.bossEventTrigger);
   const b=room.state.boss;
   const defs=normalizedBossSlots();
 
@@ -610,13 +628,21 @@ function ensureBossState(room){
     boss.nodeId=boss.nodeId ? String(boss.nodeId) : null;
     boss.lastNodeId=boss.lastNodeId ? String(boss.lastNodeId) : null;
     if(!Array.isArray(boss.lastPath)) boss.lastPath=[];
+    if(boss.type==="devourer") boss.turnsSinceAction=Math.max(0,Math.min(4,Math.floor(Number(boss.turnsSinceAction||0))));
   }
 
   if(!Array.isArray(b.eventFields)) b.eventFields=[];
   b.eventFieldCount=normalizeBossEventFieldCount(b.eventFieldCount ?? room?.state?.eventFieldCount);
   room.state.eventFieldCount=b.eventFieldCount;
-  b.bossEventCountdown=Math.max(0,Math.min(BOSS_EVENT_BOSS_TRIGGER,Math.floor(Number(b.bossEventCountdown ?? BOSS_EVENT_BOSS_TRIGGER))));
-  b.bossCountdownPending=!!b.bossCountdownPending;
+  b.bossEventTrigger=normalizeBossEventBossTrigger(b.bossEventTrigger ?? room?.state?.bossEventTrigger ?? room?.bossEventTrigger);
+  room.state.bossEventTrigger=b.bossEventTrigger;
+  if(b.bossEventTrigger<=0){
+    b.bossEventCountdown=0;
+    b.bossCountdownPending=false;
+  }else{
+    b.bossEventCountdown=Math.max(0,Math.min(b.bossEventTrigger,Math.floor(Number(b.bossEventCountdown ?? b.bossEventTrigger))));
+    b.bossCountdownPending=!!b.bossCountdownPending;
+  }
   b.bossEventTriggersTotal=Math.max(0,Math.floor(Number(b.bossEventTriggersTotal||0)));
   if(Number(b.deckVersion||0)!==EVENT_DECK_VERSION){
     b.deck=EVENT_CARD_DEFS.map(c=>c.id); shuffleInPlace(b.deck); b.discard=[]; b.deckVersion=EVENT_DECK_VERSION;
@@ -693,8 +719,12 @@ function ensureBossState(room){
   b.sleepRounds=Math.max(0,Math.floor(Number(b.sleepRounds||0)));
   b.sleepActiveRound=Number.isFinite(Number(b.sleepActiveRound))&&Number(b.sleepActiveRound)>0?Math.floor(Number(b.sleepActiveRound)):null;
   b.eventSeq=Math.max(0,Number(b.eventSeq||0)); b.actionSeq=Math.max(0,Number(b.actionSeq||0));
+  b.spawnSeq=Math.max(0,Math.floor(Number(b.spawnSeq||0)));
+  b.lastSpawn=(b.lastSpawn&&typeof b.lastSpawn==="object"&&Number(b.lastSpawn.seq)>0)?b.lastSpawn:null;
+  if(!Array.isArray(b.spawnHistory)) b.spawnHistory=[];
+  b.spawnHistory=b.spawnHistory.filter(x=>x&&Number(x.seq)>0).slice(-8);
   ensureBossEventFieldLayout(room,b,false);
-  b.v=8;
+  b.v=10;
   return b;
 }
 
@@ -1099,71 +1129,118 @@ function chooseSpawnAnchor(slot,targetNodes,room=null){
   return best || anchors[0];
 }
 
-function spawnBoss(room,preferredType=null,preferredSlotId=null){
+function freeBossSlots(room){
+  const b=ensureBossState(room); if(!b) return [];
+  return (b.slots||[]).filter(slot=>slot&&!slot.boss);
+}
+
+function pickRandomBossType(room){
+  const used=new Set(activeBossEntries(room).map(x=>String(x.boss?.type||"")));
+  let choices=Object.keys(BOSS_TYPES).filter(k=>!used.has(k));
+  if(!choices.length) choices=Object.keys(BOSS_TYPES);
+  return choices[Math.floor(Math.random()*choices.length)] || Object.keys(BOSS_TYPES)[0];
+}
+
+function bossSlotSideLabel(b,slot){
+  const idx=(b?.slots||[]).findIndex(s=>s===slot||String(s?.id||"")===String(slot?.id||""));
+  if(String(slot?.id||"").toLowerCase().includes("left")||idx===0) return "LINKS";
+  if(String(slot?.id||"").toLowerCase().includes("right")||idx===1) return "RECHTS";
+  return String(slot?.name||"BOSSFELD").toUpperCase();
+}
+
+function recordBossSpawn(room,boss,slot,source="random"){
+  const b=ensureBossState(room); if(!b||!boss||!slot) return null;
+  const rec={
+    seq:++b.spawnSeq,
+    bossId:String(boss.id||""), bossType:String(boss.type||""), bossName:String(boss.name||"Boss"),
+    icon:String(boss.icon||"👹"), slotId:String(slot.id||""), slotName:String(slot.name||"Bossfeld"),
+    side:bossSlotSideLabel(b,slot), source:String(source||"random"), ts:Date.now()
+  };
+  b.lastSpawn=rec;
+  if(!Array.isArray(b.spawnHistory)) b.spawnHistory=[];
+  b.spawnHistory.push({...rec});
+  if(b.spawnHistory.length>8) b.spawnHistory=b.spawnHistory.slice(-8);
+  return rec;
+}
+
+function spawnBoss(room,preferredType=null,preferredSlotId=null,source="random"){
   const b=ensureBossState(room); if(!b) return {ok:false,text:"Bossmodus ist aus."};
   let slot=preferredSlotId?b.slots.find(s=>String(s.id)===String(preferredSlotId)&&!s.boss):null;
-  if(!slot) slot=b.slots.find(s=>!s.boss);
-  if(!slot) return {ok:false,text:"Beide Bossportale sind bereits belegt."};
-  const used=new Set(activeBossEntries(room).map(x=>String(x.boss?.type||"")));
-  let key=String(preferredType||"");
-  if(!BOSS_TYPES[key]){
-    let choices=Object.keys(BOSS_TYPES).filter(k=>!used.has(k)); if(!choices.length) choices=Object.keys(BOSS_TYPES);
-    key=choices[Math.floor(Math.random()*choices.length)];
+  if(preferredSlotId && !slot) return {ok:false,text:"Dieses Bossportal ist nicht mehr frei."};
+  if(!slot){
+    const free=freeBossSlots(room);
+    if(!free.length) return {ok:false,text:"Beide Bossportale sind bereits belegt."};
+    slot=free[Math.floor(Math.random()*free.length)];
   }
+  let key=String(preferredType||"");
+  if(!BOSS_TYPES[key]) key=pickRandomBossType(room);
   const def=BOSS_TYPES[key];
   slot.boss={id:`${key}_${uid()}`,type:key,name:def.name,icon:def.icon,hp:1,maxHp:1,nodeId:null,lastNodeId:null,lastPath:[],spawnedAt:Date.now()};
+  if(key==="devourer") slot.boss.turnsSinceAction=0;
   const spawnRule=key==="devourer"
-    ? "teleportiert nach der nächsten vollständigen Runde ins Spielfeld"
+    ? "aktiviert sich nach jeweils 5 abgeschlossenen Spielerzügen"
     : key==="doppel"
       ? "kopiert nach der nächsten Spielerbewegung deren Schrittzahl"
-      : "läuft bei seiner nächsten Aktivierung über einen Bossweg ins Spielfeld";
-  bossAction(room,def.icon,"Boss erschienen",`${def.name} wartet an ${slot.name} und ${spawnRule}.`);
-  return {ok:true,text:`${def.icon} ${def.name} erscheint an ${slot.name}.`,boss:slot.boss,slotId:slot.id};
+      : key==="hunter"
+        ? "jagt erst nach der nächsten abgeschlossenen Spielerbewegung"
+        : "läuft bei seiner nächsten Aktivierung über einen Bossweg ins Spielfeld";
+  const spawnRec=recordBossSpawn(room,slot.boss,slot,source);
+  bossAction(room,def.icon,"Boss erschienen",`${def.name} erscheint ${spawnRec?.side?`${spawnRec.side.toLowerCase()} `:""}an ${slot.name} und ${spawnRule}.`);
+  return {ok:true,text:`${def.icon} ${def.name} erscheint ${spawnRec?.side?`${spawnRec.side.toLowerCase()} `:""}an ${slot.name}.`,boss:slot.boss,slotId:slot.id,spawn:spawnRec};
 }
-function spawnRandomBoss(room){ return spawnBoss(room,null,null); }
+function spawnRandomBoss(room,source="random"){ return spawnBoss(room,null,null,source); }
 
 function advanceBossEventCountdown(room){
   const b=ensureBossState(room);
-  if(!b) return {spawned:false,pending:false,text:""};
+  if(!b) return {spawned:false,pending:false,disabled:false,text:""};
 
   b.bossEventTriggersTotal=Math.max(0,Math.floor(Number(b.bossEventTriggersTotal||0)))+1;
+  const trigger=bossEventBossTrigger(room,b);
+
+  if(trigger<=0){
+    b.bossEventCountdown=0;
+    b.bossCountdownPending=false;
+    return {spawned:false,pending:false,disabled:true,text:"👹 Automatischer Zusatzboss ist deaktiviert."};
+  }
 
   // Wenn bereits ein Boss auf ein freies Portal wartet, bleibt der Countdown bei 0.
   if(b.bossCountdownPending){
     b.bossEventCountdown=0;
-    return {spawned:false,pending:true,text:"👹 Boss-Countdown wartet auf ein freies Bossportal."};
+    return {spawned:false,pending:true,disabled:false,text:"👹 Boss-Countdown wartet auf ein freies Bossportal."};
   }
 
-  const current=Math.max(1,Math.min(BOSS_EVENT_BOSS_TRIGGER,Math.floor(Number(b.bossEventCountdown||BOSS_EVENT_BOSS_TRIGGER))));
+  const current=Math.max(1,Math.min(trigger,Math.floor(Number(b.bossEventCountdown||trigger))));
   const next=current-1;
   b.bossEventCountdown=Math.max(0,next);
 
   if(next>0){
-    return {spawned:false,pending:false,text:`👹 Boss-Countdown: noch ${next} Ereignisfeld${next===1?"":"er"} bis zum nächsten Boss.`};
+    return {spawned:false,pending:false,disabled:false,text:`👹 Boss-Countdown: noch ${next} bestätigte Ereigniskarte${next===1?"":"n"} bis zum nächsten Zusatzboss.`};
   }
 
-  const spawned=spawnRandomBoss(room);
+  const spawned=spawnRandomBoss(room,"countdown");
   if(spawned?.ok){
-    b.bossEventCountdown=BOSS_EVENT_BOSS_TRIGGER;
+    b.bossEventCountdown=trigger;
     b.bossCountdownPending=false;
-    return {spawned:true,pending:false,text:`👹 Countdown erreicht 0: ${spawned.text}`};
+    return {spawned:true,pending:false,disabled:false,text:`👹 Countdown erreicht 0: ${spawned.text}`};
   }
 
   b.bossEventCountdown=0;
   b.bossCountdownPending=true;
-  bossAction(room,"⏳","Boss wartet",`3 Ereignisfelder wurden ausgelöst, aber beide Bossportale sind belegt. Der nächste Countdown-Boss erscheint, sobald ein Portal frei wird.`);
-  return {spawned:false,pending:true,text:"👹 Countdown erreicht 0: Boss wartet auf ein freies Bossportal."};
+  bossAction(room,"⏳","Boss wartet",`${trigger} bestätigte Ereigniskarte${trigger===1?"":"n"} wurden ausgelöst, aber beide Bossportale sind belegt. Der nächste Zusatzboss erscheint, sobald ein Portal frei wird.`);
+  return {spawned:false,pending:true,disabled:false,text:"👹 Countdown erreicht 0: Boss wartet auf ein freies Bossportal."};
 }
 
 function resolvePendingCountdownBoss(room){
   const b=ensureBossState(room);
   if(!b?.bossCountdownPending) return null;
+  const trigger=bossEventBossTrigger(room,b);
+  if(trigger<=0){ b.bossCountdownPending=false; b.bossEventCountdown=0; return null; }
   if(!b.slots?.some(s=>!s?.boss)) return null;
-  const r=spawnRandomBoss(room);
+  const r=spawnRandomBoss(room,"countdown_pending");
   if(!r?.ok) return null;
   b.bossCountdownPending=false;
-  b.bossEventCountdown=BOSS_EVENT_BOSS_TRIGGER;
-  bossAction(room,"👹","Countdown-Boss erscheint",`${r.text} Der Ereignis-Countdown startet wieder bei ${BOSS_EVENT_BOSS_TRIGGER}.`);
+  b.bossEventCountdown=trigger;
+  bossAction(room,"👹","Countdown-Boss erscheint",`${r.text} Der Ereignis-Countdown startet wieder bei ${trigger}.`);
   return r;
 }
 
@@ -1234,7 +1311,7 @@ function spawnBossesFromEvent(room,count){
   const texts=[];
   let spawned=0;
   for(let i=0;i<wanted;i++){
-    const r=spawnRandomBoss(room);
+    const r=spawnRandomBoss(room,"event_multi");
     if(r?.ok){spawned++; if(r.text) texts.push(r.text);}
     else break;
   }
@@ -1478,6 +1555,7 @@ function eventChoiceStillPossible(room){
   const oppBoard=()=> (room.state.pieces||[]).filter(p=>p?.color!==color&&p?.posKind==="board"&&!pieceEventShieldActive(room,p));
   const movable=()=>movableEventBarricades(room);
   if(type==="own_board_piece_home") return ownBoard().some(p=>!pieceEventShieldActive(room,p));
+  if(type==="boss_spawn_slot") return freeBossSlots(room).length>0 && !!BOSS_TYPES[String(ch.bossType||"")];
   if(type==="swap_piece"){
     if(ch.stage==="own") return ownBoard().length>0 && oppBoard().length>0;
     const a=getPiece(room,String(ch.selectedPieceId||"")); return !!(a&&a.posKind==="board"&&a.color===color&&oppBoard().length>0);
@@ -2278,32 +2356,45 @@ function bossSleepActiveNow(b){
   return !!b && Number(b.sleepActiveRound||0)===Number(b.round||0);
 }
 
-// Jäger bewegt sich NACH JEDEM Würfelwurf (auch bei Extra-/Neu-Wurf).
-// Eine gezogene Schlaf-Karte betrifft niemals den Rest der laufenden Runde,
-// sondern erst die nächste vollständig beginnende Spielrunde.
-function bossAfterRoll(room){
+// V24: Der Jäger reagiert NICHT mehr auf den Würfelwurf. Er läuft erst,
+// nachdem der Spieler seine normale Würfelbewegung tatsächlich abgeschlossen hat.
+function hunterAfterPlayerMove(room){
   const b=ensureBossState(room);if(!b||bossSleepActiveNow(b))return [];
   const wheels=[];
   for(const e of activeBossEntries(room)) if(e.boss?.type==="hunter") wheels.push(...moveBossEntry(room,e).wheels);
   return wheels;
 }
 
-// Fluchmeister, Schatten und Weltenfresser handeln einmal nach jeder vollständig abgeschlossenen Spielrunde.
-// Schlaf wird rundenrein behandelt: Karte in Runde R -> komplette Runde R+1 schläft.
+// V24: Der Weltenfresser aktiviert sich nach jeweils 5 abgeschlossenen Spielerzügen,
+// unabhängig von der Spielerzahl. Fluchmeister und Schatten bleiben Rundenbosse.
 function bossTurnCompleted(room,endedColor){
   const b=ensureBossState(room);if(!b)return [];
-  const active=activeBossColors(room); b.turnsInRound=Number(b.turnsInRound||0)+1;
-  if(b.turnsInRound<active.length)return [];
-
-  b.turnsInRound=0;
-  const completedRound=Math.max(1,Number(b.round||1));
+  const active=activeBossColors(room);
   const sleeping=bossSleepActiveNow(b);
   const wheels=[];
 
+  for(const e of activeBossEntries(room)){
+    if(String(e.boss?.type||"")!=="devourer") continue;
+    e.boss.turnsSinceAction=Math.max(0,Math.floor(Number(e.boss.turnsSinceAction||0)))+1;
+    if(e.boss.turnsSinceAction>=5){
+      e.boss.turnsSinceAction=0;
+      if(!sleeping){
+        const r=activateBossEntry(room,e,{completedRound:Number(b.round||1)});
+        if(Array.isArray(r?.wheels)) wheels.push(...r.wheels);
+      }
+    }
+  }
+
+  b.turnsInRound=Number(b.turnsInRound||0)+1;
+  if(b.turnsInRound<active.length)return wheels;
+
+  b.turnsInRound=0;
+  const completedRound=Math.max(1,Number(b.round||1));
+
   if(sleeping){
-    bossAction(room,"😴","Bossrunde ausgesetzt",`Runde ${completedRound}: Alle Bosse bleiben vollständig inaktiv.`);
+    bossAction(room,"😴","Bossrunde ausgesetzt",`Runde ${completedRound}: Alle regulären Bossaktionen dieser Runde bleiben aus.`);
   }else{
-    for(const e of activeBossEntries(room)) if(["curse","shadow","devourer"].includes(String(e.boss?.type||""))){
+    for(const e of activeBossEntries(room)) if(["curse","shadow"].includes(String(e.boss?.type||""))){
       const r=activateBossEntry(room,e,{completedRound});
       if(Array.isArray(r?.wheels)) wheels.push(...r.wheels);
     }
@@ -2425,7 +2516,22 @@ function applyBossEventEffect(room,evt){
   // V17: Countdown, Kartenwirkung und Respawn passieren ERST nach der sichtbaren Bestätigung.
   const bossCountdownResult=advanceBossEventCountdown(room);
   if(eff==="spawn_one"){
-    const r=spawnBossesFromEvent(room,1); effectText=r.text; wheels.push(...(r.wheels||[]));
+    const free=freeBossSlots(room);
+    if(!free.length){
+      effectText="Beide Bossportale sind bereits belegt – kein neuer Boss erscheint.";
+    }else{
+      const bossType=pickRandomBossType(room), def=BOSS_TYPES[bossType];
+      if(free.length===1){
+        const r=spawnBoss(room,bossType,free[0].id,"event_single_only_slot");
+        effectText=r.text;
+      }else{
+        setEventChoice(room,color,"boss_spawn_slot",{
+          bossType,
+          message:`${def.icon} ${def.name} erscheint! Wähle sein Bossfeld: links oder rechts.`
+        });
+        effectText=`${def.icon} ${def.name} wurde enthüllt. Wähle jetzt, ob er links oder rechts erscheint.`;
+      }
+    }
   }else if(eff==="spawn_two"){
     const r=spawnBossesFromEvent(room,2); effectText=r.text; wheels.push(...(r.wheels||[]));
   }else if(eff==="extra_roll"){
@@ -2762,133 +2868,150 @@ function initFirebaseIfConfigured() {
    await statsUpsert(name, { rollCount: 1, rollSum: Number(value)||0 });
  }
  
- // ---------------- Match tracking (titles per finished game) ----------------
- function ensureMatchTrack(room){
-   if(!room?.state) return;
-   if(!room.state.matchTrack){
-     const perPlayer = {};
-     (room.players||[]).forEach(p=>{
-       const nk = String(p.nameKey||"").trim();
-       if(!nk) return;
-       perPlayer[nk] = { kills:0, deaths:0, six:0, one:0, distance:0, turnSumMs:0, turnCount:0 };
-     });
-     room.state.matchTrack = { perPlayer, turnStartedAt: Date.now() };
-   }
+ // ---------------- Match tracking / final scoreboard ----------------
+ function blankMatchRow(color, name){
+   return {
+     color:String(color||'').toLowerCase(),
+     name:normName(name)||String(color||'Spieler'),
+     kills:0, deaths:0, six:0, one:0, distance:0,
+     jokersUsed:0, rollCount:0, rollSum:0,
+     turnSumMs:0, turnCount:0
+   };
  }
- function ensureMatchPlayer(room, nameKey){
-   ensureMatchTrack(room);
-   if(!room?.state?.matchTrack) return null;
-   const nk = String(nameKey||"").trim();
-   if(!nk) return null;
-   const per = room.state.matchTrack.perPlayer;
-   if(!per[nk]) per[nk] = { kills:0, deaths:0, six:0, one:0, distance:0, turnSumMs:0, turnCount:0 };
-   return per[nk];
+ function ensureMatchTrack(room){
+   if(!room?.state) return null;
+   if(!room.state.matchTrack || typeof room.state.matchTrack!=="object"){
+     room.state.matchTrack={perColor:{},turnStartedAt:Date.now(),turnColor:String(room.state.turnColor||'').toLowerCase()};
+   }
+   const mt=room.state.matchTrack;
+   if(!mt.perColor || typeof mt.perColor!=="object") mt.perColor={};
+   const active=Array.isArray(room.state.activeColors)&&room.state.activeColors.length?room.state.activeColors:ALLOWED_COLORS;
+   for(const c0 of active){
+     const c=String(c0||'').toLowerCase();
+     if(!c) continue;
+     const currentName=getPlayerNameByColor(room,c)||c;
+     if(!mt.perColor[c]){
+       // Migrate older V22 perPlayer saves if present.
+       const legacy=mt.perPlayer&&typeof mt.perPlayer==='object'?mt.perPlayer[currentName]:null;
+       mt.perColor[c]={...blankMatchRow(c,currentName),...(legacy&&typeof legacy==='object'?legacy:{})};
+     }
+     mt.perColor[c].color=c;
+     mt.perColor[c].name=normName(currentName)||mt.perColor[c].name||c;
+     for(const k of ['kills','deaths','six','one','distance','jokersUsed','rollCount','rollSum','turnSumMs','turnCount']){
+       if(!Number.isFinite(Number(mt.perColor[c][k]))) mt.perColor[c][k]=0;
+     }
+   }
+   if(!Number.isFinite(Number(mt.turnStartedAt)) && !room.state.finished) mt.turnStartedAt=Date.now();
+   if(!mt.turnColor) mt.turnColor=String(room.state.turnColor||'').toLowerCase();
+   return mt;
+ }
+ function ensureMatchColor(room,color){
+   const mt=ensureMatchTrack(room); if(!mt) return null;
+   const c=String(color||'').toLowerCase(); if(!c) return null;
+   if(!mt.perColor[c]) mt.perColor[c]=blankMatchRow(c,getPlayerNameByColor(room,c)||c);
+   const row=mt.perColor[c];
+   row.color=c;
+   row.name=normName(getPlayerNameByColor(room,c))||row.name||c;
+   return row;
  }
  function recordMatchRoll(room, color, value){
-   const name = getPlayerNameByColor(room, color);
-   if(!name || isGuestName(name)) return;
-   const st = ensureMatchPlayer(room, name);
-   if(!st) return;
-   const v = Number(value)||0;
-   if(v===1) st.one++;
-   if(v===6) st.six++;
+   const st=ensureMatchColor(room,color); if(!st) return;
+   const v=Number(value)||0;
+   st.rollCount+=1; st.rollSum+=v;
+   if(v===1) st.one+=1;
+   if(v===6) st.six+=1;
  }
  function recordMatchMove(room, color, steps){
-   const name = getPlayerNameByColor(room, color);
-   if(!name || isGuestName(name)) return;
-   const st = ensureMatchPlayer(room, name);
-   if(!st) return;
-   st.distance += Math.max(0, Number(steps)||0);
+   const st=ensureMatchColor(room,color); if(!st) return;
+   st.distance += Math.max(0,Number(steps)||0);
  }
-
-// Track joker usage per match (for titles). Server is chef.
-function recordMatchJoker(room, color, type){
-  const name = getPlayerNameByColor(room, color);
-  if(!name || isGuestName(name)) return;
-  const st = ensureMatchPlayer(room, name);
-  if(!st) return;
-  if(typeof st.jokersUsed !== "number") st.jokersUsed = 0;
-  st.jokersUsed += 1;
-  const k = String(type||"").toLowerCase();
-  if(k){
-    if(!st.jokersByType || typeof st.jokersByType !== "object") st.jokersByType = {};
-    st.jokersByType[k] = (typeof st.jokersByType[k]==="number" ? st.jokersByType[k] : 0) + 1;
-  }
-}
+ function recordMatchJoker(room, color, type){
+   const st=ensureMatchColor(room,color); if(!st) return;
+   st.jokersUsed += 1;
+   const k=String(type||'').toLowerCase();
+   if(k){
+     if(!st.jokersByType||typeof st.jokersByType!=="object") st.jokersByType={};
+     st.jokersByType[k]=(Number(st.jokersByType[k])||0)+1;
+   }
+ }
  function recordMatchKick(room, attackerColor, victimColor){
-   const attacker = getPlayerNameByColor(room, attackerColor);
-   const victim   = getPlayerNameByColor(room, victimColor);
-   if(attacker && !isGuestName(attacker)){
-     const a = ensureMatchPlayer(room, attacker);
-     if(a) a.kills++;
-   }
-   if(victim && !isGuestName(victim)){
-     const v = ensureMatchPlayer(room, victim);
-     if(v) v.deaths++;
-   }
+   const a=ensureMatchColor(room,attackerColor); if(a) a.kills+=1;
+   const v=ensureMatchColor(room,victimColor); if(v) v.deaths+=1;
  }
  function recordMatchTurnTime(room, color, ms){
-   const name = getPlayerNameByColor(room, color);
-   if(!name || isGuestName(name)) return;
-   const st = ensureMatchPlayer(room, name);
-   if(!st) return;
-   const capped = Math.max(0, Math.min(60000, Number(ms)||0)); // cap at 60s (AFK/reconnect safe)
-   st.turnSumMs += capped;
-   st.turnCount += 1;
+   const st=ensureMatchColor(room,color); if(!st) return;
+   const capped=Math.max(0,Math.min(120000,Number(ms)||0)); // 2 min cap: reconnect/AFK safe, but realistic long turns remain visible
+   st.turnSumMs+=capped;
+   st.turnCount+=1;
+ }
+ function closeCurrentTurnTimer(room){
+   try{
+     const mt=ensureMatchTrack(room); if(!mt) return;
+     const started=Number(mt.turnStartedAt||0);
+     if(started>0){
+       const c=String(mt.turnColor||room.state?.turnColor||'').toLowerCase();
+       if(c) recordMatchTurnTime(room,c,Date.now()-started);
+     }
+     mt.turnStartedAt=0;
+     mt.turnColor='';
+   }catch(_e){}
+ }
+ function matchRows(room){
+   const mt=ensureMatchTrack(room);
+   const active=Array.isArray(room?.state?.activeColors)&&room.state.activeColors.length?room.state.activeColors:ALLOWED_COLORS;
+   return active.map(c=>{
+     const r=ensureMatchColor(room,c)||blankMatchRow(c,getPlayerNameByColor(room,c));
+     const avgTurnMs=r.turnCount?r.turnSumMs/r.turnCount:null;
+     const avgRoll=r.rollCount?r.rollSum/r.rollCount:null;
+     return {
+       color:String(c),name:r.name||getPlayerNameByColor(room,c)||String(c).toUpperCase(),
+       kills:Number(r.kills)||0,deaths:Number(r.deaths)||0,six:Number(r.six)||0,one:Number(r.one)||0,
+       distance:Number(r.distance)||0,jokersUsed:Number(r.jokersUsed)||0,
+       rollCount:Number(r.rollCount)||0,avgRoll:avgRoll!=null?Math.round(avgRoll*100)/100:null,
+       turnCount:Number(r.turnCount)||0,avgTurnMs:avgTurnMs!=null?Math.round(avgTurnMs):null
+     };
+   });
+ }
+ function topHighlight(rows,key,title,icon,unit,preferMin=false){
+   const valid=(rows||[]).filter(r=>r[key]!=null && Number.isFinite(Number(r[key])));
+   if(!valid.length) return null;
+   const vals=valid.map(r=>Number(r[key]));
+   const value=preferMin?Math.min(...vals):Math.max(...vals);
+   if(!preferMin && value<=0) return null;
+   const winners=valid.filter(r=>Number(r[key])===value).map(r=>r.name);
+   return {key,title,icon,unit,value,winners};
  }
  function computeMatchAwards(room){
-   ensureMatchTrack(room);
-   const per = room?.state?.matchTrack?.perPlayer || {};
-   const rows = Object.entries(per).map(([name, s])=>({
-     name,
-     kills: s.kills||0,
-     deaths: s.deaths||0,
-     six: s.six||0,
-     one: s.one||0,
-     distance: s.distance||0,
-     jokersUsed: s.jokersUsed||0,
-     avgTurnMs: (s.turnCount ? (s.turnSumMs/s.turnCount) : null)
-   })).filter(r=>r.name && !isGuestName(r.name));
-
-   const winnersMax = (key)=>{
-     const max = rows.reduce((m,r)=>Math.max(m, r[key]??0), -Infinity);
-     const ws = rows.filter(r=>(r[key]??0)===max).map(r=>r.name);
-     return { value:max, winners:ws };
+   const rows=matchRows(room);
+   const candidates=[
+     topHighlight(rows,'kills','Rauswurf-König','👊','Rauswürfe'),
+     topHighlight(rows,'six','Glückspilz','🎲','Sechsen'),
+     topHighlight(rows,'jokersUsed','Joker-Meister','🃏','Joker'),
+     topHighlight(rows,'deaths','Stehauf-Männchen','🛡️','Rückschläge'),
+     topHighlight(rows,'avgTurnMs','Blitzspieler','⚡','Ø Zug',true)
+   ].filter(Boolean);
+   return candidates.map(a=>({
+     id:a.key,title:`${a.icon} ${a.title}`,unit:a.unit,
+     value:a.key==='avgTurnMs'?Math.round(a.value/100)/10:a.value,
+     winners:a.winners
+   }));
+ }
+ function buildMatchSummary(room,winnerColor){
+   const rows=matchRows(room);
+   const startedAt=Number(room?.state?.startedAt||0)||0;
+   const finishedAt=Number(room?.state?.finishedAt||Date.now())||Date.now();
+   const durationMs=startedAt?Math.max(0,finishedAt-startedAt):0;
+   const winner=String(winnerColor||room?.state?.winnerColor||'').toLowerCase();
+   const totalRolls=rows.reduce((a,r)=>a+(Number(r.rollCount)||0),0);
+   const totalTurns=rows.reduce((a,r)=>a+(Number(r.turnCount)||0),0);
+   const totalKicks=rows.reduce((a,r)=>a+(Number(r.kills)||0),0);
+   const totalJokers=rows.reduce((a,r)=>a+(Number(r.jokersUsed)||0),0);
+   const awards=computeMatchAwards(room).slice(0,3);
+   return {
+     version:1,winnerColor:winner,winnerName:getPlayerNameByColor(room,winner)||winner.toUpperCase(),
+     startedAt,finishedAt,durationMs,totalRolls,totalTurns,totalKicks,totalJokers,
+     reason:String(room?.state?.gameOverReason||'goal'),players:rows,highlights:awards
    };
-   const winnersMinAvg = ()=>{
-     const valid = rows.filter(r=>r.avgTurnMs!=null && isFinite(r.avgTurnMs));
-     if(valid.length===0) return { value:null, winners:[] };
-     const min = valid.reduce((m,r)=>Math.min(m, r.avgTurnMs), Infinity);
-     const ws = valid.filter(r=>r.avgTurnMs===min).map(r=>r.name);
-     return { value:min, winners:ws };
-   };
-   const winnersMaxAvg = ()=>{
-     const valid = rows.filter(r=>r.avgTurnMs!=null && isFinite(r.avgTurnMs));
-     if(valid.length===0) return { value:null, winners:[] };
-     const max = valid.reduce((m,r)=>Math.max(m, r.avgTurnMs), -Infinity);
-     const ws = valid.filter(r=>r.avgTurnMs===max).map(r=>r.name);
-     return { value:max, winners:ws };
-   };
-
-   const a1 = winnersMax("kills");
-   const a2 = winnersMax("deaths");
-   const a3 = winnersMax("six");
-   const a4 = winnersMax("one");
-   const a5 = winnersMax("distance");
-   const a8 = winnersMax("jokersUsed");
-   const a6 = winnersMaxAvg();
-   const a7 = winnersMinAvg();
-
-   return [
-     { id:"kills",    title:"👊 Rauswurf‑König",      unit:"Gegner rausgeworfen", value:a1.value, winners:a1.winners },
-     { id:"deaths",   title:"🛡 Stehauf‑Männchen",    unit:"mal rausgeworfen",    value:a2.value, winners:a2.winners },
-     { id:"six",      title:"🎲 Glückspilz",         unit:"× 6 gewürfelt",       value:a3.value, winners:a3.winners },
-     { id:"one",      title:"🧊 Pechvogel",           unit:"× 1 gewürfelt",       value:a4.value, winners:a4.winners },
-     { id:"distance", title:"🥾 Wanderer",            unit:"Felder gelaufen",     value:a5.value, winners:a5.winners },
-     { id:"jokers",   title:"🃏 Joker‑Meister",       unit:"Joker genutzt",       value:a8.value, winners:a8.winners },
-     { id:"slow",     title:"🐢 Vieldenker",          unit:"Ø Sekunden pro Zug",  value:a6.value!=null?Math.round(a6.value/100)/10:null, winners:a6.winners },
-     { id:"fast",     title:"⚡ Blitzspieler",        unit:"Ø Sekunden pro Zug",  value:a7.value!=null?Math.round(a7.value/100)/10:null, winners:a7.winners },
-   ];
  }
  // --------------------------------------------------------------------------
 
@@ -3474,6 +3597,7 @@ app.get("/stats", async (_req, res) => {
           forfeits: Number(d.forfeits||0)||0,
           avgRoll: rollCount ? (rollSum/rollCount) : 0,
           playMs,
+          avgGameMs: games ? (playMs/games) : 0,
           updatedAt: Number(d.updatedAt||0)||0,
         });
       });
@@ -3504,6 +3628,7 @@ app.get("/stats", async (_req, res) => {
           forfeits: Number(d.forfeits||0)||0,
           avgRoll: rollCount ? (rollSum/rollCount) : 0,
           playMs,
+          avgGameMs: games ? (playMs/games) : 0,
           updatedAt: Number(d.updatedAt||0)||0,
         });
       });
@@ -4239,7 +4364,7 @@ function assignColorsRandom(room) {
 }
 
 /** ---------- Game state ---------- **/
-function initGameState(room, activeColors, mode = "classic", starterColor = null, jokerStartCount = null, bossMode = false, boardTheme = null, eventFieldCount = BOSS_EVENT_FIELD_DEFAULT) {
+function initGameState(room, activeColors, mode = "classic", starterColor = null, jokerStartCount = null, bossMode = false, boardTheme = null, eventFieldCount = BOSS_EVENT_FIELD_DEFAULT, bossEventTrigger = BOSS_EVENT_BOSS_TRIGGER_DEFAULT) {
   // Normalize activeColors (colors that are actually participating in turn order).
   activeColors = Array.isArray(activeColors) && activeColors.length
     ? activeColors.map(c => String(c).toLowerCase())
@@ -4343,7 +4468,8 @@ function initGameState(room, activeColors, mode = "classic", starterColor = null
   } : null;
 
   const selectedEventFieldCount = bossModeEnabled ? normalizeBossEventFieldCount(eventFieldCount) : 0;
-  const bossState = bossModeEnabled ? createBossState(selectedEventFieldCount) : null;
+  const selectedBossEventTrigger = bossModeEnabled ? normalizeBossEventBossTrigger(bossEventTrigger) : 0;
+  const bossState = bossModeEnabled ? createBossState(selectedEventFieldCount, selectedBossEventTrigger) : null;
 
   room.state = {
     started: true,
@@ -4359,6 +4485,7 @@ paused: false,
     mode: gameMode,
     bossMode: bossModeEnabled,
     eventFieldCount: selectedEventFieldCount,
+    bossEventTrigger: selectedBossEventTrigger,
     boardTheme: normalizeBoardTheme(boardTheme || room?.lobby?.boardTheme || room?.state?.boardTheme),
     boss: bossState,
     jokerStartCount: baseJokerCount,
@@ -4379,16 +4506,13 @@ paused: false,
     wheelJobSeq: 0,
     wheelJobs: [],
 
-    // ---- Per-match tracking (for end-of-game title ceremony) ----
+    // ---- Per-match tracking for the compact final scoreboard ----
     matchTrack: (function(){
-      const perPlayer = {};
-      (room.players || []).forEach(p=>{
-        // room.players is a Map; values contain {name,...}. nameKey is not guaranteed.
-        const nk = String(p?.name || p?.nameKey || "").trim();
-        if(!nk) return;
-        perPlayer[nk] = { kills:0, deaths:0, six:0, one:0, distance:0, turnSumMs:0, turnCount:0 };
-      });
-      return { perPlayer, turnStartedAt: Date.now() };
+      const perColor={};
+      for(const c of active){
+        perColor[c]=blankMatchRow(c,getPlayerNameByColor(room,c)||c);
+      }
+      return {perColor,turnStartedAt:Date.now(),turnColor:String(turnColor||'').toLowerCase()};
     })(),
   };
 
@@ -4411,13 +4535,16 @@ function detectWinnerColor(room) {
 function setGameOver(room, winnerColor) {
   if (!room || !room.state) return;
   if (room.state.finished) return;
+  // The winning turn previously never reached end_turn, so its duration was missing.
+  closeCurrentTurnTimer(room);
   room.state.finished = true;
   room.state.winnerColor = String(winnerColor || "").toLowerCase() || null;
   room.state.finishedAt = Date.now();
   room.state.phase = "game_over";
   try{
     room.state.matchAwards = computeMatchAwards(room);
-  }catch(_e){ room.state.matchAwards = []; }
+    room.state.matchSummary = buildMatchSummary(room,room.state.winnerColor);
+  }catch(_e){ room.state.matchAwards = []; room.state.matchSummary = null; }
 }
 
 function nextTurnColor(room, current) {
@@ -5030,7 +5157,11 @@ broadcast(room, roomUpdatePayload(room));
       const requestedEventFieldCount = requestedBossMode
         ? normalizeBossEventFieldCount(msg.eventFieldCount ?? room?.eventFieldCount)
         : BOSS_EVENT_FIELD_DEFAULT;
+      const requestedBossEventTrigger = requestedBossMode
+        ? normalizeBossEventBossTrigger(msg.bossEventTrigger ?? room?.bossEventTrigger)
+        : 0;
       room.eventFieldCount = requestedEventFieldCount;
+      room.bossEventTrigger = requestedBossEventTrigger;
 
       // V9.5: Jokerzahl atomar mit start_request übernehmen. Damit muss sie nicht
       // vorher in einem separaten Request angekommen sein. Classic braucht keine Jokerzahl.
@@ -5046,9 +5177,9 @@ broadcast(room, roomUpdatePayload(room));
       }
 
       // pending info (nur im RAM, kein Persist nötig)
-      room._pendingStart = { starterColor, mode: requestedMode, bossMode: requestedBossMode, boardTheme: requestedBoardTheme, jokerStartCount, eventFieldCount: requestedEventFieldCount, activeColors: uniqueAct.slice(), ts: Date.now() };
+      room._pendingStart = { starterColor, mode: requestedMode, bossMode: requestedBossMode, boardTheme: requestedBoardTheme, jokerStartCount, eventFieldCount: requestedEventFieldCount, bossEventTrigger: requestedBossEventTrigger, activeColors: uniqueAct.slice(), ts: Date.now() };
 
-      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, bossMode: requestedBossMode, boardTheme: requestedBoardTheme, jokerStartCount, eventFieldCount: requestedEventFieldCount, durationMs: 4200 });
+      broadcast(room, { type: "start_spin", activeColors: uniqueAct, starterColor, mode: requestedMode, bossMode: requestedBossMode, boardTheme: requestedBoardTheme, jokerStartCount, eventFieldCount: requestedEventFieldCount, bossEventTrigger: requestedBossEventTrigger, durationMs: 4200 });
       return;
     }
 
@@ -5094,7 +5225,11 @@ broadcast(room, roomUpdatePayload(room));
       const requestedEventFieldCount = requestedBossMode
         ? normalizeBossEventFieldCount(pending.eventFieldCount ?? room?.eventFieldCount)
         : BOSS_EVENT_FIELD_DEFAULT;
+      const requestedBossEventTrigger = requestedBossMode
+        ? normalizeBossEventBossTrigger(pending.bossEventTrigger ?? room?.bossEventTrigger)
+        : 0;
       room.eventFieldCount = requestedEventFieldCount;
+      room.bossEventTrigger = requestedBossEventTrigger;
       let jokerStartCount = null;
       if (requestedMode === "action") {
         const incomingCount = Number(pending.jokerStartCount);
@@ -5107,10 +5242,10 @@ broadcast(room, roomUpdatePayload(room));
         room.jokerStartCount = incomingCount;
       }
 
-      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount, requestedBossMode, requestedBoardTheme, requestedEventFieldCount);
+      initGameState(room, uniqueAct, requestedMode, starter, jokerStartCount, requestedBossMode, requestedBoardTheme, requestedEventFieldCount, requestedBossEventTrigger);
       room._pendingStart = null;
       await persistRoomState(room);
-      console.log(`[start] room=${room.code} mode=${requestedMode} bossMode=${requestedBossMode?"on":"off"} eventFields=${requestedEventFieldCount} boardTheme=${requestedBoardTheme} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
+      console.log(`[start] room=${room.code} mode=${requestedMode} bossMode=${requestedBossMode?"on":"off"} eventFields=${requestedEventFieldCount} bossTrigger=${requestedBossEventTrigger} boardTheme=${requestedBoardTheme} jokerStartCount=${jokerStartCount ?? "-"} starter=${room.state.turnColor}`);
       broadcast(room, { type: "started", state: room.state });
       return;
     }
@@ -5151,9 +5286,13 @@ broadcast(room, roomUpdatePayload(room));
       const requestedEventFieldCount = requestedBossMode
         ? normalizeBossEventFieldCount(prev.eventFieldCount ?? prev?.boss?.eventFieldCount ?? room?.eventFieldCount)
         : BOSS_EVENT_FIELD_DEFAULT;
+      const requestedBossEventTrigger = requestedBossMode
+        ? normalizeBossEventBossTrigger(prev.bossEventTrigger ?? prev?.boss?.bossEventTrigger ?? room?.bossEventTrigger)
+        : 0;
       room.eventFieldCount = requestedEventFieldCount;
+      room.bossEventTrigger = requestedBossEventTrigger;
 
-      initGameState(room, active, requestedMode, starterColor, jokerStartCount, requestedBossMode, requestedBoardTheme, requestedEventFieldCount);
+      initGameState(room, active, requestedMode, starterColor, jokerStartCount, requestedBossMode, requestedBoardTheme, requestedEventFieldCount, requestedBossEventTrigger);
       room._pendingStart = null;
       await persistRoomState(room);
       console.log(`[rematch] room=${room.code} mode=${requestedMode} starter=${starterColor} players=${active.join(",")}`);
@@ -5328,7 +5467,7 @@ broadcast(room, roomUpdatePayload(room));
       if (action === "spawn") {
         const type = String(msg.bossType || "").toLowerCase();
         if (!BOSS_TYPES[type]) { send(ws, { type:"boss_test_result", ok:false, text:"Unbekannter Boss" }); return; }
-        const r = spawnBoss(room, type, msg.slotId || null);
+        const r = spawnBoss(room, type, msg.slotId || null,"boss_test");
         text = r.text;
         if(!r.ok){ send(ws, { type:"boss_test_result", ok:false, text }); return; }
       } else if (action === "act") {
@@ -5378,7 +5517,7 @@ broadcast(room, roomUpdatePayload(room));
         b.pendingChoice=null;
         b.pendingEventTurn=null;
         if(room.state.phase==="event_wait") room.state.phase="need_roll";
-        b.bossEventCountdown=BOSS_EVENT_BOSS_TRIGGER;
+        b.bossEventCountdown=Math.max(0,Number(b.bossEventTrigger||0));
         b.bossCountdownPending=false;
         b.bossEventTriggersTotal=0;
         b.globalBossShieldRounds=0;
@@ -5422,7 +5561,15 @@ broadcast(room, roomUpdatePayload(room));
       const node=String(msg.nodeId||"");
       const chosenPiece=piece(msg.pieceId);
 
-      if(type==="own_board_piece_home"){
+      if(type==="boss_spawn_slot"){
+        const bossType=String(ch.bossType||"");
+        const slot=b?.slots?.find(s=>String(s?.id||"")===String(msg.slotId||"")&&!s?.boss);
+        if(!BOSS_TYPES[bossType]){send(ws,{type:"error",code:"BAD_BOSS",message:"Der angekündigte Boss ist nicht mehr gültig."});return;}
+        if(!slot){send(ws,{type:"error",code:"BAD_CHOICE",message:"Dieses Bossfeld ist nicht frei. Wähle ein freies Bossfeld."});return;}
+        const r=spawnBoss(room,bossType,slot.id,"event_single_choice");
+        if(!r?.ok){send(ws,{type:"error",code:"NO_BOSS_PORTAL",message:r?.text||"Boss konnte nicht erscheinen."});return;}
+        text=`👹 ${r.text}`;
+      }else if(type==="own_board_piece_home"){
         if(!chosenPiece||chosenPiece.color!==myColor||chosenPiece.posKind!=="board"){send(ws,{type:"error",code:"BAD_CHOICE",message:"Wähle eine eigene Brettfigur."});return;}
         if(pieceEventShieldActive(room,chosenPiece)){send(ws,{type:"error",code:"SHIELDED",message:"Diese Figur ist durch ihr Ereignis-Schutzschild geschützt. Wähle eine andere Figur."});return;}
         sendPieceHome(room,chosenPiece); text="🏠 Die gewählte Figur wurde ins Haus teleportiert.";
@@ -5503,7 +5650,7 @@ broadcast(room, roomUpdatePayload(room));
           if(oldType==="devourer") clearWorldEaterHoleForBoss(room,slot.boss.id);
           const nt=pool[Math.floor(Math.random()*pool.length)], d=BOSS_TYPES[nt];
           slot.boss.type=nt;slot.boss.name=d.name;slot.boss.icon=d.icon;slot.boss.hp=1;slot.boss.maxHp=1;
-          slot.boss.lastCopiedSteps=0;
+          slot.boss.lastCopiedSteps=0; slot.boss.turnsSinceAction=(nt==="devourer"?0:undefined);
           text=`🔀 Boss-Wechsel: ${d.icon} ${d.name}.`;
         }
       }else if(type==="trap"){
@@ -5697,7 +5844,7 @@ broadcast(room, roomUpdatePayload(room));
         if (!["need_roll","need_move"].includes(String(room.state.phase||""))) {
           send(ws,{type:"error",code:"BAD_PHASE",message:"Boss-Joker nur während deines normalen Zuges nutzbar."}); return;
         }
-        const spawned=spawnRandomBoss(room);
+        const spawned=spawnRandomBoss(room,"joker");
         if(!spawned?.ok){
           send(ws,{type:"error",code:"NO_BOSS_PORTAL",message:spawned?.text||"Kein freies Bossportal."});
           return; // Joker NICHT verbrauchen
@@ -5978,8 +6125,7 @@ if (msg.type === "action_barricade_move") {
       room.__eventThreeExtra=false;
       room.lastRollWasSix = room.state.extraRollPending; // backward-compat alias
       room.state.phase = "need_move";
-      // Jäger läuft wirklich nach JEDEM Würfelwurf, bevor der Spieler seine Figur zieht.
-      try{ bossAfterRoll(room); }catch(e){ console.warn("[boss] after-roll failed", e?.message||e); }
+      // V24: Der Jäger wartet bis NACH der tatsächlichen Spielerbewegung.
       await persistRoomState(room);
       broadcast(room, { type: "roll", value: v, state: room.state, double, rollVisual:room.state.rollVisual });
       if(eventRollWheelJob) dispatchPendingWheelJobs(room);
@@ -6025,11 +6171,10 @@ if (msg.type === "action_barricade_move") {
       // If distances are missing (shouldn't), fall back to turnColor
       if(!winnerColor) winnerColor = room.state.turnColor || active[0] || myColor;
 
-      setGameOver(room, winnerColor);
-
-      // Mark reason + forfeiter
+      // Mark reason before the final summary is calculated.
       room.state.gameOverReason = "forfeit";
       room.state.forfeiterColor = myColor;
+      setGameOver(room, winnerColor);
 
       await finalizeMatchStats(room, room.state.winnerColor, { forfeiterColor: myColor });
       await persistRoomState(room);
@@ -6086,7 +6231,7 @@ if (msg.type === "action_barricade_move") {
       const adv=advanceTurnWithEventSkips(room,endedBossColor);
       const bossWheel=adv?.wheels||[];
       room.state.eventMoveActive=null;
-      if(room.state.matchTrack) room.state.matchTrack.turnStartedAt = Date.now();
+      if(room.state.matchTrack){ room.state.matchTrack.turnStartedAt = Date.now(); room.state.matchTrack.turnColor = String(room.state.turnColor||'').toLowerCase(); }
 
       let endTurnWheelJob=null;
       if(bossWheel && bossWheel.length){
@@ -6225,6 +6370,7 @@ if (msg.type === "move_request") {
       if(wasForcedEventMove) room.state.eventMoveActive=null;
 
       // apply move
+      const movedFromHouse = pc.posKind === "house";
       pc.posKind = "board";
       pc.nodeId = res.path[res.path.length - 1];
 
@@ -6249,7 +6395,10 @@ if (msg.type === "move_request") {
       }catch(_e){}
 
       // Per-match titles: count walked fields (server authoritative)
-      try{ recordMatchMove(room, activeColor, Number(room.state.rolled||0) || 0); }catch(_e){}
+      try{
+        const actualSteps = movedFromHouse ? Math.max(1,res.path.length) : Math.max(0,res.path.length-1);
+        recordMatchMove(room, activeColor, actualSteps || Number(room.state.rolled||0) || 0);
+      }catch(_e){}
 
       // kick opponent on landing
       const kicked = [];
@@ -6353,6 +6502,15 @@ if (msg.type === "move_request") {
         room.state.phase = "need_roll";
       }
 
+      // V24: Erst nachdem die Spielfigur wirklich gelaufen ist, reagiert der Jäger.
+      // Ereignis-Zusatzbewegungen (3/10/20 Felder) lösen keinen zusätzlichen Jägerlauf aus.
+      if(!wasForcedEventMove){
+        try{
+          const hw=hunterAfterPlayerMove(room);
+          if(Array.isArray(hw)&&hw.length) wheel=(Array.isArray(wheel)?wheel:[]).concat(hw);
+        }catch(e){ console.warn("[boss] hunter after player move failed",e?.message||e); }
+      }
+
       // Doppelgänger bewegt sich nach jeder abgeschlossenen Spielerbewegung.
       // Muss der Spieler erst eine aufgehobene Barikade neu setzen, wird der Bosszug
       // persistent bis direkt NACH dieser Platzierung aufgeschoben.
@@ -6376,7 +6534,7 @@ if (msg.type === "move_request") {
         const forcedSteps=takeNextLegalForcedEventMove(room,activeColor);
         const canForced=forcedSteps>0;
         if(canForced){
-          // "10 Felder laufen": kein neuer Würfelwurf, daher bewegt sich der Jäger hier NICHT zusätzlich.
+          // Ereignis-Zusatzbewegung: Der Jäger reagiert nur auf die normale Würfelbewegung und läuft hier NICHT zusätzlich.
           room.state.turnColor=activeColor;
           // Einen bereits verdienten Extra-Wurf (z.B. gewürfelte 6 / Dreier-Regel /
           // Ereigniskarte „Nochmal würfeln“) über die Zusatzbewegung hinweg erhalten.
@@ -6437,7 +6595,7 @@ if (msg.type === "move_request") {
       });
       if(moveWheelJob) dispatchPendingWheelJobs(room);
       if (room.state.finished) {
-        broadcast(room, { type: "game_over", winnerColor: room.state.winnerColor, finishedAt: room.state.finishedAt, awards: room.state.matchAwards || [] });
+        broadcast(room, { type: "game_over", winnerColor: room.state.winnerColor, finishedAt: room.state.finishedAt, awards: room.state.matchAwards || [], summary: room.state.matchSummary || null });
       }
       return;
     }
