@@ -2383,6 +2383,7 @@ function finalizePendingEventTurn(room,seq=null){
   if(pending.pickedBarricade && !b.barricadesDisabled && !!room.state.carryingByColor?.[color]){
     room.state.phase="place_barricade";
     room.state.rolled=null;
+    room.state.rollVisual=null;
     b.pendingEventTurn=null;
     return {done:true,wheels};
   }
@@ -2403,6 +2404,7 @@ function finalizePendingEventTurn(room,seq=null){
     room.lastRollWasSix=false;
     room.state.phase="need_roll";
     room.state.rolled=null;
+    room.state.rollVisual=null;
     room.state.eventMoveActive=null;
   }
   b.pendingEventTurn=null;
@@ -4365,6 +4367,7 @@ paused: false,
     turnColor,
     phase: "need_roll", // need_roll | need_move | place_barricade
     rolled: null,
+    rollVisual: null,
     extraRollPending: false, // persisted: survives server restart after rolling a 6
     eventMoveActive: null, // {color,steps,source} während "10 Felder laufen"
     pieces,
@@ -5531,7 +5534,19 @@ broadcast(room, roomUpdatePayload(room));
         // bleiben erhalten; außerdem kann „Minimum 3“ nicht nachträglich auf 2
         // abgesenkt werden. Doppelwürfe dürfen durch +1 auch 13 erreichen.
         const hadExtra=!!room.state.extraRollPending;
-        room.state.rolled=Math.max(minRoll,Math.min(20,Number(room.state.rolled)+delta));
+        const beforeAdjust=Number(room.state.rolled);
+        const targetAdjust=beforeAdjust+delta;
+        room.state.rolled=Math.max(minRoll,Math.min(20,targetAdjust));
+        if(room.state.rollVisual && typeof room.state.rollVisual==="object"){
+          if(!Array.isArray(room.state.rollVisual.mods)) room.state.rollVisual.mods=[];
+          if(delta){
+            room.state.rollVisual.mods.push({kind:"delta",value:delta,label:`${delta>0?"+":""}${delta}`,source:"Exakter Zug"});
+          }
+          if(Number(room.state.rolled)!==targetAdjust){
+            room.state.rollVisual.mods.push({kind:"minimum",value:0,label:`MIN ${minRoll}`,source:"Minimum garantiert"});
+          }
+          room.state.rollVisual.result=Number(room.state.rolled);
+        }
         room.state.extraRollPending=hadExtra;
         room.lastRollWasSix=room.state.extraRollPending;
         text=`🎯 Würfelwert angepasst auf ${room.state.rolled}.`;
@@ -5639,6 +5654,7 @@ broadcast(room, roomUpdatePayload(room));
         }
         // Wurf verfällt -> zurück in need_roll
         room.state.rolled = null;
+      room.state.rollVisual = null;
         room.state.extraRollPending = false;
         room.lastRollWasSix = false; // backward-compat alias
         room.state.phase = "need_roll";
@@ -5849,6 +5865,8 @@ if (msg.type === "action_barricade_move") {
 
       let v = randInt(1, 6);
       let double = null;
+      // V21: echte Würfelaugen getrennt von späteren Modifikatoren speichern.
+      let rollVisual = { dice:[v], base:v, mods:[], result:v, isDouble:false };
 
       // Action-Mode: Doppelwurf (2x würfeln, Summe) – wird VOR dem Würfeln aktiviert
       try{
@@ -5859,6 +5877,10 @@ if (msg.type === "action_barricade_move") {
             const b = randInt(1, 6);
             v = a + b;
             double = [a, b];
+            rollVisual.dice=[a,b];
+            rollVisual.base=v;
+            rollVisual.result=v;
+            rollVisual.isDouble=true;
             eff.pending = false;
             eff.rolls = [a, b];
             eff.chosen = v;
@@ -5872,7 +5894,14 @@ if (msg.type === "action_barricade_move") {
       try{
         const b=ensureBossState(room); const c=room.state.turnColor;
         if(b?.doubleDiceByColor?.[c]){
-          if(!double){ const a=randInt(1,6), d=randInt(1,6); v=a+d; double=[a,d]; }
+          if(!double){
+            const a=randInt(1,6), d=randInt(1,6);
+            v=a+d; double=[a,d];
+            rollVisual.dice=[a,d];
+            rollVisual.base=v;
+            rollVisual.result=v;
+            rollVisual.isDouble=true;
+          }
           b.doubleDiceByColor[c]=false;
         }
       }catch(_e){}
@@ -5884,7 +5913,16 @@ if (msg.type === "action_barricade_move") {
           const c=room.state.turnColor;
           const mod=Math.max(-2,Math.min(2,Number(b.rollModsByColor?.[c]||0)));
           if(mod){
-            v=Math.max(1,Math.min(12,v+mod));
+            const before=v;
+            const target=before+mod;
+            v=Math.max(1,Math.min(12,target));
+            // Den eigentlichen Effekt immer sichtbar machen, auch wenn Minimum/Maximum
+            // den rechnerischen Wert anschließend begrenzt.
+            rollVisual.mods.push({kind:"delta",value:mod,label:`${mod>0?"+":""}${mod}`,source:"Effekt"});
+            if(v!==target){
+              rollVisual.mods.push({kind:"minimum",value:0,label:v===1?"MIN 1":"MAX 12",source:"Würfelgrenze"});
+            }
+            rollVisual.result=v;
             b.rollModsByColor[c]=0;
             bossAction(room, mod>0?"🔥":"🥾", "Würfelmodifikator", `${String(c).toUpperCase()}: ${mod>0?"+":""}${mod} → ${v}.`);
           }
@@ -5896,7 +5934,13 @@ if (msg.type === "action_barricade_move") {
       try{
         const b=ensureBossState(room), c=room.state.turnColor;
         const minimum3Active=!!b?.minimum3ByColor?.[c];
-        if(minimum3Active){ v=Math.max(3,v); b.minimum3ByColor[c]=false; }
+        if(minimum3Active){
+          const before=v;
+          v=Math.max(3,v);
+          if(v!==before) rollVisual.mods.push({kind:"minimum",value:v-before,label:"MIN 3",source:"Minimum garantiert"});
+          rollVisual.result=v;
+          b.minimum3ByColor[c]=false;
+        }
         const threeActive=!!b?.threeRuleByColor?.[c]; if(threeActive) b.threeRuleByColor[c]=false;
         if(b?.predictionByColor?.[c]){
           const predicted=b.predictionByColor[c]; b.predictionByColor[c]=null;
@@ -5927,6 +5971,8 @@ if (msg.type === "action_barricade_move") {
       // Per-match titles: count rolled 1/6 etc. (server authoritative)
       try{ recordMatchRoll(room, room.state.turnColor, v); }catch(_e){}
 
+      rollVisual.result=v;
+      room.state.rollVisual=rollVisual;
       room.state.rolled = v;
       room.state.extraRollPending = (v === 6) || !!room.__eventThreeExtra;
       room.__eventThreeExtra=false;
@@ -5935,7 +5981,7 @@ if (msg.type === "action_barricade_move") {
       // Jäger läuft wirklich nach JEDEM Würfelwurf, bevor der Spieler seine Figur zieht.
       try{ bossAfterRoll(room); }catch(e){ console.warn("[boss] after-roll failed", e?.message||e); }
       await persistRoomState(room);
-      broadcast(room, { type: "roll", value: v, state: room.state, double });
+      broadcast(room, { type: "roll", value: v, state: room.state, double, rollVisual:room.state.rollVisual });
       if(eventRollWheelJob) dispatchPendingWheelJobs(room);
       return;
     }
@@ -6034,6 +6080,7 @@ if (msg.type === "action_barricade_move") {
       room.lastRollWasSix = false;
       room.state.extraRollPending = false;
       room.state.rolled = null;
+      room.state.rollVisual = null;
       room.state.phase = "need_roll";
       const endedBossColor = room.state.turnColor;
       const adv=advanceTurnWithEventSkips(room,endedBossColor);
@@ -6324,6 +6371,7 @@ if (msg.type === "move_request") {
         room.state.turnColor=activeColor;
         room.state.phase="event_wait";
         room.state.rolled=null;
+    room.state.rollVisual=null;
       } else if (!picked) {
         const forcedSteps=takeNextLegalForcedEventMove(room,activeColor);
         const canForced=forcedSteps>0;
@@ -6349,6 +6397,7 @@ if (msg.type === "move_request") {
           room.lastRollWasSix = false;
           room.state.phase = "need_roll";
           room.state.rolled = null;
+      room.state.rollVisual = null;
           room.state.eventMoveActive=null;
         }
       }
@@ -6535,6 +6584,7 @@ if (msg.type === "place_barricade") {
     room.lastRollWasSix = false;
     room.state.phase = "need_roll";
     room.state.rolled = null;
+      room.state.rollVisual = null;
     room.state.eventMoveActive=null;
   }
 
