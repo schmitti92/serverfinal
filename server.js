@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v24-boss-reveal-random-portals-turn-cadence-20260929";
+const SERVER_BUILD = "barikade-v28-skyjo-firestore-20261003";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -364,7 +364,7 @@ function bossEventBossTrigger(room,b){
 function createBossState(eventFieldCount=BOSS_EVENT_FIELD_DEFAULT, bossEventTrigger=BOSS_EVENT_BOSS_TRIGGER_DEFAULT){
   const deck=EVENT_CARD_DEFS.map(c=>c.id); shuffleInPlace(deck);
   return {
-    v:9,
+    v:10,
     slots:normalizedBossSlots(),
     eventFieldCount:normalizeBossEventFieldCount(eventFieldCount),
     bossEventTrigger:normalizeBossEventBossTrigger(bossEventTrigger),
@@ -378,6 +378,10 @@ function createBossState(eventFieldCount=BOSS_EVENT_FIELD_DEFAULT, bossEventTrig
     deck, discard:[], lastEvent:null, lastAction:null, history:[],
     // V24: persistente Boss-Enthuellung fuer alle Clients.
     lastSpawn:null, spawnHistory:[], spawnSeq:0,
+    // V27: 15er-Bosspool. Jede der 5 Bossarten liegt exakt 3x im Pool.
+    // Der Pool wird komplett gemischt und erst nach 15 Ziehungen neu befuellt.
+    // Persistiert ueber Reconnect/Save-State.
+    bossPool:[], bossPoolCycle:0, bossPoolDraws:0,
     eventSeq:0, actionSeq:0, round:1, turnsInRound:0, sleepRounds:0, sleepActiveRound:null,
     rollModsByColor:{red:0,blue:0,green:0,yellow:0},
     skipTurnsByColor:{red:0,blue:0,green:0,yellow:0},
@@ -723,8 +727,10 @@ function ensureBossState(room){
   b.lastSpawn=(b.lastSpawn&&typeof b.lastSpawn==="object"&&Number(b.lastSpawn.seq)>0)?b.lastSpawn:null;
   if(!Array.isArray(b.spawnHistory)) b.spawnHistory=[];
   b.spawnHistory=b.spawnHistory.filter(x=>x&&Number(x.seq)>0).slice(-8);
+  // V26 Migration: alte Raeume erhalten beim ersten Zugriff einen frischen Boss-Mischbeutel.
+  normalizeBossBag(b);
   ensureBossEventFieldLayout(room,b,false);
-  b.v=10;
+  b.v=11;
   return b;
 }
 
@@ -991,7 +997,6 @@ function moveDoppelgangerEntry(room,entry,steps,{forced=false,actorColor=null}={
   bossAction(room,boss.icon,boss.name,txt);
   return {wheels:[],text:`${boss.icon} ${boss.name}: ${txt}`};
 }
-
 function doppelgangerAfterPlayerMove(room,actorColor,steps){
   const b=ensureBossState(room); if(!b||bossSleepActiveNow(b)) return [];
   const n=Math.max(0,Math.floor(Number(steps||0))); if(!n) return [];
@@ -1134,11 +1139,54 @@ function freeBossSlots(room){
   return (b.slots||[]).filter(slot=>slot&&!slot.boss);
 }
 
+const BOSS_POOL_COPIES_PER_TYPE = 3;
+
+function refillBossPool(b){
+  const all=Object.keys(BOSS_TYPES);
+  const pool=[];
+  for(const type of all){
+    for(let i=0;i<BOSS_POOL_COPIES_PER_TYPE;i++) pool.push(type);
+  }
+  shuffleInPlace(pool);
+  b.bossPool=pool;
+  b.bossPoolCycle=Math.max(0,Math.floor(Number(b.bossPoolCycle||0)))+1;
+  return pool;
+}
+
+function normalizeBossPool(b){
+  const valid=new Set(Object.keys(BOSS_TYPES));
+  if(!Array.isArray(b.bossPool)) b.bossPool=[];
+
+  // Ein Pool besteht aus 15 Eintraegen: 3 Kopien jeder der 5 Bossarten.
+  // Duplikate sind hier absichtlich erlaubt.
+  b.bossPool=b.bossPool.map(String).filter(k=>valid.has(k));
+  b.bossPoolCycle=Math.max(0,Math.floor(Number(b.bossPoolCycle||0)));
+  b.bossPoolDraws=Math.max(0,Math.floor(Number(b.bossPoolDraws||0)));
+
+  // Migration vom alten V26-Mischbeutel: kein halb alter/halb neuer Zyklus.
+  // Sobald ein V27-Server einen Raum sieht, startet er einen frischen 15er-Pool.
+  if(!b.bossPool.length) refillBossPool(b);
+  return b.bossPool;
+}
+
 function pickRandomBossType(room){
-  const used=new Set(activeBossEntries(room).map(x=>String(x.boss?.type||"")));
-  let choices=Object.keys(BOSS_TYPES).filter(k=>!used.has(k));
-  if(!choices.length) choices=Object.keys(BOSS_TYPES);
-  return choices[Math.floor(Math.random()*choices.length)] || Object.keys(BOSS_TYPES)[0];
+  const b=ensureBossState(room);
+  if(!b) return Object.keys(BOSS_TYPES)[0];
+  normalizeBossPool(b);
+
+  const active=new Set(activeBossEntries(room).map(x=>String(x.boss?.type||"")));
+
+  // Der Pool selbst ist bereits zufaellig gemischt. Wenn moeglich wird ein Typ
+  // gezogen, der nicht schon gleichzeitig aktiv ist. Die uebersprungenen Karten
+  // bleiben im Pool und koennen spaeter gezogen werden.
+  let idx=b.bossPool.findIndex(k=>!active.has(String(k)));
+
+  // Falls im Restpool nur noch aktuell aktive Bossarten liegen, darf ausnahmsweise
+  // ein Duplikat erscheinen. So werden keine Poolkarten verworfen.
+  if(idx<0) idx=0;
+  const key=String(b.bossPool.splice(idx,1)[0]||Object.keys(BOSS_TYPES)[0]);
+  b.bossPoolDraws=Math.max(0,Math.floor(Number(b.bossPoolDraws||0)))+1;
+  return BOSS_TYPES[key] ? key : Object.keys(BOSS_TYPES)[0];
 }
 
 function bossSlotSideLabel(b,slot){
@@ -1949,7 +1997,7 @@ function hasAnyLegalMoveForSteps(room,color,steps,{respectEventShields=false}={}
       if([...targets.keys()].some(id=>!shieldBlocks(id))) return true;
     }
   }
-  return false;
+return false;
 }
 
 function rewardBossHit(room,color,bossName="Boss",bossType=""){
@@ -2717,6 +2765,7 @@ function roomUpdatePayload(room, playersOverride) {
 // Firebase is an additional, durable persistence layer.
 const FIREBASE_ENABLED = String(process.env.FIREBASE_ENABLED || "").trim() === "1";
 const FIREBASE_COLLECTION = process.env.FIREBASE_COLLECTION || "rooms";
+const SKYJO_COLLECTION = process.env.SKYJO_COLLECTION || "skyjo_rooms";
 
 
 const STATS_COLLECTION = process.env.STATS_COLLECTION || "stats";
@@ -2949,7 +2998,7 @@ function initFirebaseIfConfigured() {
      const mt=ensureMatchTrack(room); if(!mt) return;
      const started=Number(mt.turnStartedAt||0);
      if(started>0){
-       const c=String(mt.turnColor||room.state?.turnColor||'').toLowerCase();
+const c=String(mt.turnColor||room.state?.turnColor||'').toLowerCase();
        if(c) recordMatchTurnTime(room,c,Date.now()-started);
      }
      mt.turnStartedAt=0;
@@ -3260,6 +3309,71 @@ function savePathForRoom(code){
   return path.join(SAVE_DIR, safe + ".json");
 }
 
+
+// ---------- SKYJO Action: independent Firestore + disk persistence ----------
+// Kept separate from Barikade room.state so both games can use the same backend safely.
+const SKYJO_MAX_STATE_BYTES = Number(process.env.SKYJO_MAX_STATE_BYTES || 350000);
+function skyjoSavePath(code){
+  const safe = docIdForRoom(code);
+  return path.join(SAVE_DIR, `SKYJO_${safe}.json`);
+}
+function normalizeSkyjoCode(code){ return normalizeRoomCode(code); }
+function readSkyjoDisk(code){
+  try{
+    const file=skyjoSavePath(code);
+    if(!fs.existsSync(file)) return null;
+    const data=JSON.parse(fs.readFileSync(file,'utf8'));
+    if(!data || typeof data!=="object" || !data.state || typeof data.state!=="object") return null;
+    return { code:normalizeSkyjoCode(code), rev:Number(data.rev||0)||0, state:data.state, updatedAtMs:Number(data.updatedAtMs||data.ts||0)||0, source:"disk" };
+  }catch(_e){ return null; }
+}
+async function readSkyjoPersisted(code){
+  const rc=normalizeSkyjoCode(code); if(!rc) return null;
+  try{
+    initFirebaseIfConfigured();
+    if(firestore){
+      const snap=await firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc)).get();
+      if(snap.exists){
+        const d=snap.data()||{};
+        if(d.state && typeof d.state==="object") return { code:rc, rev:Number(d.rev||0)||0, state:d.state, updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0, source:"firestore" };
+      }
+    }
+  }catch(e){ console.warn("[skyjo/firebase] read failed:",e?.message||e); }
+  return readSkyjoDisk(rc);
+}
+async function writeSkyjoPersisted(code,state,baseRev){
+  const rc=normalizeSkyjoCode(code); if(!rc) return {ok:false,error:"NO_CODE"};
+  if(!state || typeof state!=="object" || Array.isArray(state)) return {ok:false,error:"BAD_STATE"};
+  let raw=""; try{ raw=JSON.stringify(state); }catch(_e){ return {ok:false,error:"BAD_STATE"}; }
+  if(Buffer.byteLength(raw,"utf8")>SKYJO_MAX_STATE_BYTES) return {ok:false,error:"STATE_TOO_LARGE"};
+  const cur=await readSkyjoPersisted(rc);
+  const curRev=Number(cur?.rev||0)||0;
+  if(baseRev!=null && Number(baseRev)!==curRev){
+    return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
+  }
+  const rev=curRev+1, updatedAtMs=Date.now();
+  const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
+  try{ fs.writeFileSync(skyjoSavePath(rc),JSON.stringify(payload)); }catch(e){ console.warn("[skyjo/disk] persist failed:",e?.message||e); }
+  let firebaseSaved=false;
+  try{
+    initFirebaseIfConfigured();
+    if(firestore){
+      await firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc)).set({
+        code:rc,rev,state,updatedAtMs,ts:updatedAtMs,
+        updatedAt:admin.firestore.FieldValue.serverTimestamp()
+      },{merge:false});
+      firebaseSaved=true;
+    }
+  }catch(e){ console.warn("[skyjo/firebase] persist failed:",e?.message||e); }
+  return {ok:true,code:rc,rev,updatedAtMs,source:firebaseSaved?"firestore+disk":"disk"};
+}
+async function deleteSkyjoPersisted(code){
+  const rc=normalizeSkyjoCode(code); if(!rc) return false;
+  try{ const f=skyjoSavePath(rc); if(fs.existsSync(f))fs.unlinkSync(f); }catch(_e){}
+  try{ initFirebaseIfConfigured(); if(firestore)await firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc)).delete(); }catch(e){ console.warn("[skyjo/firebase] delete failed:",e?.message||e); }
+  return true;
+}
+
 function persistedSeatSnapshot(room){
   try{
     if(!room || !(room.players instanceof Map)) return [];
@@ -3555,11 +3669,45 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
-app.use(express.json({ limit: "200kb" }));
+app.use(express.json({ limit: "500kb" }));
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
   res.status(200).json({ ok: true, build: SERVER_BUILD, ts: Date.now(), rooms: rooms.size, clients: clients.size })
 );
+
+
+// --- SKYJO Action cloud rooms ---
+// GET loads the latest state. POST /state writes with optimistic revision protection.
+app.get("/skyjo/:code", async (req,res)=>{
+  try{
+    const code=normalizeSkyjoCode(req.params.code);
+    if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    const data=await readSkyjoPersisted(code);
+    if(!data) return res.status(200).json({ok:true,found:false,code,rev:0,firebaseEnabled:!!firestore||FIREBASE_ENABLED});
+    return res.status(200).json({ok:true,found:true,code,rev:data.rev,state:data.state,updatedAtMs:data.updatedAtMs,source:data.source});
+  }catch(e){ console.error("[skyjo/get]",e); return res.status(500).json({ok:false,error:"ERR"}); }
+});
+app.post("/skyjo/:code/state", async (req,res)=>{
+  try{
+    const code=normalizeSkyjoCode(req.params.code);
+    if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    const result=await writeSkyjoPersisted(code,req.body?.state,req.body?.baseRev);
+    if(result?.conflict) return res.status(409).json(result);
+    if(!result?.ok){
+      const status=result?.error==="STATE_TOO_LARGE"?413:400;
+      return res.status(status).json(result||{ok:false,error:"ERR"});
+    }
+    return res.status(200).json(result);
+  }catch(e){ console.error("[skyjo/state]",e); return res.status(500).json({ok:false,error:"ERR"}); }
+});
+app.post("/skyjo/:code/reset", async (req,res)=>{
+  try{
+    const code=normalizeSkyjoCode(req.params.code);
+    if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    await deleteSkyjoPersisted(code);
+    return res.status(200).json({ok:true,code});
+  }catch(e){ console.error("[skyjo/reset]",e); return res.status(500).json({ok:false,error:"ERR"}); }
+});
 
 
 
@@ -3948,8 +4096,6 @@ function enforcePauseIfNotReady(room){
 function resumeIfReady(room) {
   enforcePauseIfNotReady(room);
 }
-
-
 function broadcast(room, obj) {
   if (!room) return 0;
   const msg = JSON.stringify(obj);
@@ -4949,7 +5095,7 @@ try{
       if (!key) {
         send(ws, { type:"error", code:"BAD_EMOJI", message:"Ungueltiges Emoji" });
         return;
-      }
+}
 
       const now = Date.now();
       const cooldownKey = String(me.sessionToken || clientId);
@@ -5949,7 +6095,7 @@ if (msg.type === "action_barricade_move") {
         send(ws, { type: "error", code: "NO_EFFECT", message: "Barikade-Effekt ist nicht aktiv" });
         return;
       }
-      if (room.state.phase !== "need_roll") {
+if (room.state.phase !== "need_roll") {
         send(ws, { type: "error", code: "BAD_PHASE", message: "Barikade-Joker nur vor dem Würfeln" });
         return;
       }
