@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v29-skyjo-true-multiplayer-20261003";
+const SERVER_BUILD = "barikade-v30-skyjo-sync-stable-20261004";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -3311,13 +3311,41 @@ function savePathForRoom(code){
 
 
 // ---------- SKYJO Action: independent Firestore + disk persistence ----------
-// Kept separate from Barikade room.state so both games can use the same backend safely.
+// IMPORTANT: SKYJO and Barikade are strictly namespaced.
+// Barikade uses FIREBASE_COLLECTION (default: "rooms") and <ROOM>.json.
+// SKYJO uses SKYJO_COLLECTION (default: "skyjo_rooms") and SKYJO_<ROOM>.json.
+// Same visible room code therefore never overwrites the other game.
 const SKYJO_MAX_STATE_BYTES = Number(process.env.SKYJO_MAX_STATE_BYTES || 350000);
+const SKYJO_CACHE_MAX = Number(process.env.SKYJO_CACHE_MAX || 500);
+const skyjoCache = new Map();               // code -> latest authoritative payload
+const skyjoLoadInFlight = new Map();        // code -> one shared cold-load Promise
+const skyjoMissingUntil = new Map();         // code -> short negative cache after confirmed NOT_FOUND
+const skyjoWriteChains = new Map();         // code -> serialized optimistic writes
+const skyjoFirebaseLatestOp = new Map();    // code -> latest pending set/delete operation
+const skyjoFirebaseWorkers = new Map();     // code -> background Firestore worker
+const skyjoReactionRooms = new Map();       // code -> transient emoji stream, not game state
+
 function skyjoSavePath(code){
   const safe = docIdForRoom(code);
   return path.join(SAVE_DIR, `SKYJO_${safe}.json`);
 }
 function normalizeSkyjoCode(code){ return normalizeRoomCode(code); }
+function trimSkyjoCache(){
+  while(skyjoCache.size > SKYJO_CACHE_MAX){
+    const first=skyjoCache.keys().next().value;
+    if(first==null) break;
+    skyjoCache.delete(first);
+  }
+}
+function cacheSkyjoPayload(payload,source="memory"){
+  if(!payload?.code || !payload?.state) return payload;
+  const value={...payload,source};
+  // refresh insertion order for a simple LRU-like cap
+  skyjoCache.delete(payload.code);
+  skyjoCache.set(payload.code,value);
+  trimSkyjoCache();
+  return value;
+}
 function readSkyjoDisk(code){
   try{
     const file=skyjoSavePath(code);
@@ -3327,51 +3355,154 @@ function readSkyjoDisk(code){
     return { code:normalizeSkyjoCode(code), rev:Number(data.rev||0)||0, state:data.state, updatedAtMs:Number(data.updatedAtMs||data.ts||0)||0, source:"disk" };
   }catch(_e){ return null; }
 }
-async function readSkyjoPersisted(code){
+async function readSkyjoCold(code){
   const rc=normalizeSkyjoCode(code); if(!rc) return null;
+  // Firestore remains the durable source after a Render restart. This slow path
+  // runs at most once per room per process; all normal polling is served from RAM.
   try{
     initFirebaseIfConfigured();
     if(firestore){
       const snap=await firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc)).get();
       if(snap.exists){
         const d=snap.data()||{};
-        if(d.state && typeof d.state==="object") return { code:rc, rev:Number(d.rev||0)||0, state:d.state, updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0, source:"firestore" };
+        if(d.state && typeof d.state==="object"){
+          return { code:rc, rev:Number(d.rev||0)||0, state:d.state, updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0, source:"firestore" };
+        }
       }
     }
-  }catch(e){ console.warn("[skyjo/firebase] read failed:",e?.message||e); }
+  }catch(e){ console.warn("[skyjo/firebase] cold read failed:",e?.message||e); }
   return readSkyjoDisk(rc);
+}
+async function readSkyjoPersisted(code){
+  const rc=normalizeSkyjoCode(code); if(!rc) return null;
+  const cached=skyjoCache.get(rc);
+  if(cached){
+    // refresh insertion order
+    skyjoCache.delete(rc); skyjoCache.set(rc,cached);
+    return {...cached,source:"memory"};
+  }
+  const missingUntil=Number(skyjoMissingUntil.get(rc)||0);
+  if(missingUntil>Date.now()) return null;
+  if(missingUntil) skyjoMissingUntil.delete(rc);
+  if(skyjoLoadInFlight.has(rc)) return skyjoLoadInFlight.get(rc);
+  const load=(async()=>{
+    const data=await readSkyjoCold(rc);
+    if(data){ skyjoMissingUntil.delete(rc); return cacheSkyjoPayload(data,data.source||"cold"); }
+    // A freshly checked, unused room code must not trigger a second Firestore read
+    // immediately when the create POST follows the GET.
+    skyjoMissingUntil.set(rc,Date.now()+15000);
+    return null;
+  })();
+  skyjoLoadInFlight.set(rc,load);
+  try{ return await load; }
+  finally{ if(skyjoLoadInFlight.get(rc)===load)skyjoLoadInFlight.delete(rc); }
+}
+function withSkyjoWriteLock(code,fn){
+  const rc=normalizeSkyjoCode(code);
+  const previous=skyjoWriteChains.get(rc)||Promise.resolve();
+  const run=previous.catch(()=>{}).then(fn);
+  const tracked=run.finally(()=>{ if(skyjoWriteChains.get(rc)===tracked)skyjoWriteChains.delete(rc); });
+  skyjoWriteChains.set(rc,tracked);
+  return run;
+}
+function queueSkyjoFirebaseOp(code,op){
+  const rc=normalizeSkyjoCode(code); if(!rc)return;
+  // Keep only the newest not-yet-started operation. A slow Firestore write can no
+  // longer make every HTTP request wait or build an unbounded queue.
+  skyjoFirebaseLatestOp.set(rc,op);
+  if(skyjoFirebaseWorkers.has(rc)) return;
+  const worker=(async()=>{
+    let consecutiveFailures=0;
+    while(skyjoFirebaseLatestOp.has(rc)){
+      const next=skyjoFirebaseLatestOp.get(rc);
+      skyjoFirebaseLatestOp.delete(rc);
+      try{
+        initFirebaseIfConfigured();
+        if(!firestore) continue;
+        const ref=firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc));
+        if(next?.type==="delete") await ref.delete();
+        else if(next?.type==="set" && next.payload){
+          const p=next.payload;
+          await ref.set({
+            code:rc,rev:p.rev,state:p.state,updatedAtMs:p.updatedAtMs,ts:p.ts,
+            updatedAt:admin.firestore.FieldValue.serverTimestamp()
+          },{merge:false});
+        }
+        consecutiveFailures=0;
+      }catch(e){
+        consecutiveFailures++;
+        console.warn("[skyjo/firebase] background persist failed:",e?.message||e);
+        if(consecutiveFailures<=3){
+          // Retry only when no newer state is already waiting. Exponential backoff
+          // prevents a broken Firebase connection from becoming a new load storm.
+          if(!skyjoFirebaseLatestOp.has(rc)) skyjoFirebaseLatestOp.set(rc,next);
+          await new Promise(r=>setTimeout(r,Math.min(8000,1000*Math.pow(2,consecutiveFailures-1))));
+        }else{
+          console.warn(`[skyjo/firebase] giving up room=${rc} after ${consecutiveFailures} consecutive failures; RAM/disk state stays active`);
+          continue;
+        }
+      }
+    }
+  })().finally(()=>skyjoFirebaseWorkers.delete(rc));
+  skyjoFirebaseWorkers.set(rc,worker);
 }
 async function writeSkyjoPersisted(code,state,baseRev){
   const rc=normalizeSkyjoCode(code); if(!rc) return {ok:false,error:"NO_CODE"};
   if(!state || typeof state!=="object" || Array.isArray(state)) return {ok:false,error:"BAD_STATE"};
   let raw=""; try{ raw=JSON.stringify(state); }catch(_e){ return {ok:false,error:"BAD_STATE"}; }
   if(Buffer.byteLength(raw,"utf8")>SKYJO_MAX_STATE_BYTES) return {ok:false,error:"STATE_TOO_LARGE"};
-  const cur=await readSkyjoPersisted(rc);
-  const curRev=Number(cur?.rev||0)||0;
-  if(baseRev!=null && Number(baseRev)!==curRev){
-    return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
-  }
-  const rev=curRev+1, updatedAtMs=Date.now();
-  const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
-  try{ fs.writeFileSync(skyjoSavePath(rc),JSON.stringify(payload)); }catch(e){ console.warn("[skyjo/disk] persist failed:",e?.message||e); }
-  let firebaseSaved=false;
-  try{
-    initFirebaseIfConfigured();
-    if(firestore){
-      await firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc)).set({
-        code:rc,rev,state,updatedAtMs,ts:updatedAtMs,
-        updatedAt:admin.firestore.FieldValue.serverTimestamp()
-      },{merge:false});
-      firebaseSaved=true;
+  return withSkyjoWriteLock(rc,async()=>{
+    const cur=await readSkyjoPersisted(rc);
+    const curRev=Number(cur?.rev||0)||0;
+    if(baseRev!=null && Number(baseRev)!==curRev){
+      return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
     }
-  }catch(e){ console.warn("[skyjo/firebase] persist failed:",e?.message||e); }
-  return {ok:true,code:rc,rev,updatedAtMs,source:firebaseSaved?"firestore+disk":"disk"};
+    const rev=curRev+1, updatedAtMs=Date.now();
+    const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
+    // RAM is authoritative while the process is alive; disk is an immediate local fallback.
+    skyjoMissingUntil.delete(rc);
+    cacheSkyjoPayload(payload,"memory");
+    try{ fs.writeFileSync(skyjoSavePath(rc),JSON.stringify(payload)); }
+    catch(e){ console.warn("[skyjo/disk] persist failed:",e?.message||e); }
+    // Firestore durability is queued in the background so a 9-50s Firebase stall
+    // cannot freeze SKYJO or the Barikade WebSocket on the same Render instance.
+    queueSkyjoFirebaseOp(rc,{type:"set",payload});
+    return {ok:true,code:rc,rev,updatedAtMs,source:"memory+disk",firebaseQueued:!!FIREBASE_ENABLED};
+  });
 }
 async function deleteSkyjoPersisted(code){
   const rc=normalizeSkyjoCode(code); if(!rc) return false;
-  try{ const f=skyjoSavePath(rc); if(fs.existsSync(f))fs.unlinkSync(f); }catch(_e){}
-  try{ initFirebaseIfConfigured(); if(firestore)await firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc)).delete(); }catch(e){ console.warn("[skyjo/firebase] delete failed:",e?.message||e); }
-  return true;
+  return withSkyjoWriteLock(rc,async()=>{
+    skyjoCache.delete(rc);
+    skyjoMissingUntil.set(rc,Date.now()+15000);
+    skyjoReactionRooms.delete(rc);
+    try{ const f=skyjoSavePath(rc); if(fs.existsSync(f))fs.unlinkSync(f); }catch(_e){}
+    queueSkyjoFirebaseOp(rc,{type:"delete"});
+    return true;
+  });
+}
+function pushSkyjoReaction(code,reaction){
+  const rc=normalizeSkyjoCode(code); if(!rc)return null;
+  let box=skyjoReactionRooms.get(rc);
+  if(!box)box={seq:0,items:[]};
+  const seq=++box.seq;
+  const item={
+    id:String(reaction?.id||`R-${Date.now()}-${Math.random().toString(36).slice(2,8)}`).slice(0,80),
+    seq,
+    actor:Number.isInteger(Number(reaction?.actor))?Number(reaction.actor):null,
+    emoji:String(reaction?.emoji||"").slice(0,8),
+    ts:Number(reaction?.ts||Date.now())||Date.now()
+  };
+  box.items.push(item);
+  if(box.items.length>40)box.items=box.items.slice(-40);
+  skyjoReactionRooms.set(rc,box);
+  return item;
+}
+function getSkyjoReactions(code,afterSeq=0){
+  const rc=normalizeSkyjoCode(code),box=skyjoReactionRooms.get(rc);
+  if(!box)return {reactionSeq:0,reactions:[]};
+  const after=Number(afterSeq||0)||0;
+  return {reactionSeq:box.seq,reactions:box.items.filter(x=>Number(x.seq)>after)};
 }
 
 function persistedSeatSnapshot(room){
@@ -3672,19 +3803,44 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "500kb" }));
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
-  res.status(200).json({ ok: true, build: SERVER_BUILD, ts: Date.now(), rooms: rooms.size, clients: clients.size })
+  res.status(200).json({
+    ok:true,build:SERVER_BUILD,ts:Date.now(),
+    rooms:rooms.size,clients:clients.size,
+    skyjoCacheRooms:skyjoCache.size,
+    skyjoMissingRooms:skyjoMissingUntil.size,
+    skyjoFirebaseWorkers:skyjoFirebaseWorkers.size
+  })
 );
 
 
 // --- SKYJO Action cloud rooms ---
-// GET loads the latest state. POST /state writes with optimistic revision protection.
+// Fast health check: intentionally NO Firestore access. Old SKYJO clients already
+// call /skyjo/PINGCHECK, so keeping this explicit route fixes their slow probe too.
+function skyjoHealthPayload(){
+  try{ initFirebaseIfConfigured(); }catch(_e){}
+  return {
+    ok:true,build:SERVER_BUILD,ts:Date.now(),
+    firebaseEnabled:!!firestore||FIREBASE_ENABLED,
+    cacheRooms:skyjoCache.size,
+    pendingFirebaseRooms:skyjoFirebaseWorkers.size
+  };
+}
+app.get("/skyjo-health", (_req,res)=>res.status(200).json(skyjoHealthPayload()));
+app.get("/skyjo/PINGCHECK", (_req,res)=>res.status(200).json({...skyjoHealthPayload(),found:false,code:"PINGCHECK",rev:0}));
+
+// GET loads the latest state. ?rev=N returns a tiny unchanged response when possible.
 app.get("/skyjo/:code", async (req,res)=>{
   try{
     const code=normalizeSkyjoCode(req.params.code);
     if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
     const data=await readSkyjoPersisted(code);
-    if(!data) return res.status(200).json({ok:true,found:false,code,rev:0,firebaseEnabled:!!firestore||FIREBASE_ENABLED});
-    return res.status(200).json({ok:true,found:true,code,rev:data.rev,state:data.state,updatedAtMs:data.updatedAtMs,source:data.source});
+    const reactionInfo=getSkyjoReactions(code,req.query?.reactionSeq);
+    if(!data) return res.status(200).json({ok:true,found:false,code,rev:0,firebaseEnabled:!!firestore||FIREBASE_ENABLED,...reactionInfo});
+    const knownRev=Number(req.query?.rev);
+    if(Number.isFinite(knownRev) && knownRev===Number(data.rev||0)){
+      return res.status(200).json({ok:true,found:true,unchanged:true,code,rev:data.rev,updatedAtMs:data.updatedAtMs,source:data.source,...reactionInfo});
+    }
+    return res.status(200).json({ok:true,found:true,code,rev:data.rev,state:data.state,updatedAtMs:data.updatedAtMs,source:data.source,...reactionInfo});
   }catch(e){ console.error("[skyjo/get]",e); return res.status(500).json({ok:false,error:"ERR"}); }
 });
 app.post("/skyjo/:code/state", async (req,res)=>{
@@ -3700,6 +3856,16 @@ app.post("/skyjo/:code/state", async (req,res)=>{
     return res.status(200).json(result);
   }catch(e){ console.error("[skyjo/state]",e); return res.status(500).json({ok:false,error:"ERR"}); }
 });
+app.post("/skyjo/:code/reaction", (req,res)=>{
+  try{
+    const code=normalizeSkyjoCode(req.params.code);
+    if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    const emoji=String(req.body?.emoji||"");
+    if(!emoji || emoji.length>8) return res.status(400).json({ok:false,error:"BAD_REACTION"});
+    const item=pushSkyjoReaction(code,req.body||{});
+    return res.status(200).json({ok:true,item,reactionSeq:item?.seq||0});
+  }catch(e){ console.error("[skyjo/reaction]",e); return res.status(500).json({ok:false,error:"ERR"}); }
+});
 app.post("/skyjo/:code/reset", async (req,res)=>{
   try{
     const code=normalizeSkyjoCode(req.params.code);
@@ -3714,77 +3880,55 @@ app.post("/skyjo/:code/reset", async (req,res)=>{
 
 
 // --- Global Statistics (Lobby) ---
-app.get("/stats", async (_req, res) => {
-  try{
+// Stats are expensive Firestore reads. Cache them so several open lobby tabs cannot
+// hammer the same Render process every few seconds.
+const STATS_CACHE_MS = Number(process.env.STATS_CACHE_MS || 30000);
+let statsCacheBody = null;
+let statsCacheAt = 0;
+let statsLoadPromise = null;
+async function loadStatsBody(){
+  const now=Date.now();
+  if(statsCacheBody && (now-statsCacheAt)<STATS_CACHE_MS) return statsCacheBody;
+  if(statsLoadPromise) return statsLoadPromise;
+  statsLoadPromise=(async()=>{
     initFirebaseIfConfigured();
-
     if(!firestore){
-      return res.status(200).json({ ok:true, source:"none", rows: [], firebaseEnabled:FIREBASE_ENABLED, credentialsPresent:!!parseServiceAccountFromEnv() });
+      return { ok:true, source:"none", rows: [], firebaseEnabled:FIREBASE_ENABLED, credentialsPresent:!!parseServiceAccountFromEnv() };
     }
-
-    // Primary: composite sort (needs Firestore composite index)
+    const mapRows=(snap)=>{
+      const rows=[];
+      snap.forEach(doc=>{
+        const d=doc.data()||{};
+        const games=Number(d.games||0)||0,wins=Number(d.wins||0)||0;
+        const rollCount=Number(d.rollCount||0)||0,rollSum=Number(d.rollSum||0)||0,playMs=Number(d.playMs||0)||0;
+        rows.push({
+          name:String(d.name||doc.id),games,wins,forfeits:Number(d.forfeits||0)||0,
+          avgRoll:rollCount?(rollSum/rollCount):0,playMs,avgGameMs:games?(playMs/games):0,
+          updatedAt:Number(d.updatedAt||0)||0
+        });
+      });
+      return rows;
+    };
     try{
-      const snap = await firestore.collection(STATS_COLLECTION)
-        .orderBy("wins","desc")
-        .orderBy("games","desc")
-        .limit(200)
-        .get();
-
-      const rows = [];
-      snap.forEach(doc => {
-        const d = doc.data() || {};
-        const games = Number(d.games||0)||0;
-        const wins = Number(d.wins||0)||0;
-        const rollCount = Number(d.rollCount||0)||0;
-        const rollSum = Number(d.rollSum||0)||0;
-        const playMs = Number(d.playMs||0)||0;
-        rows.push({
-          name: String(d.name||doc.id),
-          games,
-          wins,
-          forfeits: Number(d.forfeits||0)||0,
-          avgRoll: rollCount ? (rollSum/rollCount) : 0,
-          playMs,
-          avgGameMs: games ? (playMs/games) : 0,
-          updatedAt: Number(d.updatedAt||0)||0,
-        });
-      });
-      return res.status(200).json({ ok:true, source:"firestore", rows });
+      const snap=await firestore.collection(STATS_COLLECTION).orderBy("wins","desc").orderBy("games","desc").limit(200).get();
+      return {ok:true,source:"firestore",rows:mapRows(snap)};
     }catch(e){
-      // Fallback: if composite index missing, return a simpler ordering instead of failing.
-      const msg = String(e?.message||e||"");
-      const needsIndex = msg.includes("requires an index") || msg.includes("FAILED_PRECONDITION");
+      const msg=String(e?.message||e||"");
+      const needsIndex=msg.includes("requires an index")||msg.includes("FAILED_PRECONDITION");
       if(!needsIndex) throw e;
-
-      const snap = await firestore.collection(STATS_COLLECTION)
-        .orderBy("wins","desc")
-        .limit(200)
-        .get();
-
-      const rows = [];
-      snap.forEach(doc => {
-        const d = doc.data() || {};
-        const games = Number(d.games||0)||0;
-        const wins = Number(d.wins||0)||0;
-        const rollCount = Number(d.rollCount||0)||0;
-        const rollSum = Number(d.rollSum||0)||0;
-        const playMs = Number(d.playMs||0)||0;
-        rows.push({
-          name: String(d.name||doc.id),
-          games,
-          wins,
-          forfeits: Number(d.forfeits||0)||0,
-          avgRoll: rollCount ? (rollSum/rollCount) : 0,
-          playMs,
-          avgGameMs: games ? (playMs/games) : 0,
-          updatedAt: Number(d.updatedAt||0)||0,
-        });
-      });
-      return res.status(200).json({ ok:true, source:"firestore_fallback", rows, warning:"INDEX_MISSING" });
+      const snap=await firestore.collection(STATS_COLLECTION).orderBy("wins","desc").limit(200).get();
+      return {ok:true,source:"firestore_fallback",rows:mapRows(snap),warning:"INDEX_MISSING"};
     }
-  }catch(e){
-    return res.status(500).json({ ok:false, error:"STATS_ERR", message: e?.message||String(e) });
-  }
+  })();
+  try{
+    const body=await statsLoadPromise;
+    statsCacheBody=body; statsCacheAt=Date.now();
+    return body;
+  }finally{ statsLoadPromise=null; }
+}
+app.get("/stats", async (_req,res)=>{
+  try{ return res.status(200).json(await loadStatsBody()); }
+  catch(e){ return res.status(500).json({ok:false,error:"STATS_ERR",message:e?.message||String(e)}); }
 });
 
 // --- Room presence (Lobby) ---
@@ -4937,7 +5081,7 @@ wss.on("connection", (ws) => {
         // If the old one is truly disconnected, reconnect still works (old ws not in room.clients).
         const existingWs = (room.clients && room.clients.get) ? room.clients.get(existing.id) : null;
         if (existingWs && existingWs.readyState === 1 && existing.id !== clientId) {
-          safeSend(ws, { t: "error", code: "DUPLICATE_SESSION", message: "Diese Sitzung ist bereits verbunden (Session bereits aktiv)." });
+          safeSend(ws, { type: "error", code: "DUPLICATE_SESSION", message: "Diese Sitzung ist bereits in einem anderen Tab/Gerät verbunden." });
           try { ws.close(4000, "DUPLICATE_SESSION"); } catch (_) {}
           return;
         }
