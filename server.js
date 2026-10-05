@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v30-skyjo-sync-stable-20261004";
+const SERVER_BUILD = "barikade-v31-business-online-stable-20261005";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -2766,6 +2766,7 @@ function roomUpdatePayload(room, playersOverride) {
 const FIREBASE_ENABLED = String(process.env.FIREBASE_ENABLED || "").trim() === "1";
 const FIREBASE_COLLECTION = process.env.FIREBASE_COLLECTION || "rooms";
 const SKYJO_COLLECTION = process.env.SKYJO_COLLECTION || "skyjo_rooms";
+const BUSINESS_COLLECTION = process.env.BUSINESS_COLLECTION || "business_rooms";
 
 
 const STATS_COLLECTION = process.env.STATS_COLLECTION || "stats";
@@ -3505,6 +3506,160 @@ function getSkyjoReactions(code,afterSeq=0){
   return {reactionSeq:box.seq,reactions:box.items.filter(x=>Number(x.seq)>after)};
 }
 
+
+// ---------- DAS GROSSE BUSINESS: independent Firestore + disk persistence ----------
+// Kept separate from Barikade and SKYJO: collection business_rooms + BUSINESS_<ROOM>.json.
+const BUSINESS_MAX_STATE_BYTES = Number(process.env.BUSINESS_MAX_STATE_BYTES || 350000);
+const BUSINESS_CACHE_MAX = Number(process.env.BUSINESS_CACHE_MAX || 300);
+const businessCache = new Map();
+const businessLoadInFlight = new Map();
+const businessMissingUntil = new Map();
+const businessWriteChains = new Map();
+const businessFirebaseLatestOp = new Map();
+const businessFirebaseWorkers = new Map();
+const businessPresenceRooms = new Map(); // transient online-presence; never changes room rev
+const BUSINESS_PRESENCE_TTL_MS = Number(process.env.BUSINESS_PRESENCE_TTL_MS || 45000);
+const BUSINESS_LOBBY_RECLAIM_MS = Number(process.env.BUSINESS_LOBBY_RECLAIM_MS || 90000);
+
+function normalizeBusinessCode(code){ return normalizeRoomCode(code).slice(0,10); }
+function businessSavePath(code){
+  const safe=docIdForRoom(code);
+  return path.join(SAVE_DIR, `BUSINESS_${safe}.json`);
+}
+function trimBusinessCache(){
+  while(businessCache.size>BUSINESS_CACHE_MAX){
+    const first=businessCache.keys().next().value;
+    if(first==null)break;
+    businessCache.delete(first);
+  }
+}
+function cacheBusinessPayload(payload,source="memory"){
+  if(!payload?.code || !payload?.state)return payload;
+  const value={...payload,source};
+  businessCache.delete(payload.code);businessCache.set(payload.code,value);trimBusinessCache();
+  return value;
+}
+function readBusinessDisk(code){
+  try{
+    const file=businessSavePath(code);if(!fs.existsSync(file))return null;
+    const data=JSON.parse(fs.readFileSync(file,'utf8'));
+    if(!data || typeof data!=="object" || !data.state || typeof data.state!=="object")return null;
+    return {code:normalizeBusinessCode(code),rev:Number(data.rev||0)||0,state:data.state,updatedAtMs:Number(data.updatedAtMs||data.ts||0)||0,source:"disk"};
+  }catch(_e){return null}
+}
+async function readBusinessCold(code){
+  const rc=normalizeBusinessCode(code);if(!rc)return null;
+  try{
+    initFirebaseIfConfigured();
+    if(firestore){
+      const snap=await firestore.collection(BUSINESS_COLLECTION).doc(docIdForRoom(rc)).get();
+      if(snap.exists){
+        const d=snap.data()||{};
+        if(d.state && typeof d.state==="object")return {code:rc,rev:Number(d.rev||0)||0,state:d.state,updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0,source:"firestore"};
+      }
+    }
+  }catch(e){console.warn("[business/firebase] cold read failed:",e?.message||e)}
+  return readBusinessDisk(rc);
+}
+async function readBusinessPersisted(code){
+  const rc=normalizeBusinessCode(code);if(!rc)return null;
+  const cached=businessCache.get(rc);
+  if(cached){businessCache.delete(rc);businessCache.set(rc,cached);return {...cached,source:"memory"}}
+  const until=Number(businessMissingUntil.get(rc)||0);
+  if(until>Date.now())return null;
+  if(until)businessMissingUntil.delete(rc);
+  if(businessLoadInFlight.has(rc))return businessLoadInFlight.get(rc);
+  const load=(async()=>{
+    const data=await readBusinessCold(rc);
+    if(data){businessMissingUntil.delete(rc);return cacheBusinessPayload(data,data.source||"cold")}
+    businessMissingUntil.set(rc,Date.now()+15000);return null;
+  })();
+  businessLoadInFlight.set(rc,load);
+  try{return await load}finally{if(businessLoadInFlight.get(rc)===load)businessLoadInFlight.delete(rc)}
+}
+function withBusinessWriteLock(code,fn){
+  const rc=normalizeBusinessCode(code),previous=businessWriteChains.get(rc)||Promise.resolve();
+  const run=previous.catch(()=>{}).then(fn);
+  const tracked=run.finally(()=>{if(businessWriteChains.get(rc)===tracked)businessWriteChains.delete(rc)});
+  businessWriteChains.set(rc,tracked);return run;
+}
+function queueBusinessFirebaseOp(code,op){
+  const rc=normalizeBusinessCode(code);if(!rc)return;
+  businessFirebaseLatestOp.set(rc,op);
+  if(businessFirebaseWorkers.has(rc))return;
+  const worker=(async()=>{
+    let failures=0;
+    while(businessFirebaseLatestOp.has(rc)){
+      const next=businessFirebaseLatestOp.get(rc);businessFirebaseLatestOp.delete(rc);
+      try{
+        initFirebaseIfConfigured();if(!firestore)continue;
+        const ref=firestore.collection(BUSINESS_COLLECTION).doc(docIdForRoom(rc));
+        if(next?.type==="delete")await ref.delete();
+        else if(next?.type==="set"&&next.payload){
+          const p=next.payload;
+          await ref.set({code:rc,rev:p.rev,state:p.state,updatedAtMs:p.updatedAtMs,ts:p.ts,updatedAt:admin.firestore.FieldValue.serverTimestamp()},{merge:false});
+        }
+        failures=0;
+      }catch(e){
+        failures++;console.warn("[business/firebase] background persist failed:",e?.message||e);
+        if(failures<=3){if(!businessFirebaseLatestOp.has(rc))businessFirebaseLatestOp.set(rc,next);await new Promise(r=>setTimeout(r,Math.min(8000,1000*Math.pow(2,failures-1))))}
+      }
+    }
+  })().finally(()=>businessFirebaseWorkers.delete(rc));
+  businessFirebaseWorkers.set(rc,worker);
+}
+async function writeBusinessPersisted(code,state,baseRev){
+  const rc=normalizeBusinessCode(code);if(!rc)return {ok:false,error:"NO_CODE"};
+  if(!state || typeof state!=="object" || Array.isArray(state))return {ok:false,error:"BAD_STATE"};
+  let raw="";try{raw=JSON.stringify(state)}catch(_e){return {ok:false,error:"BAD_STATE"}}
+  if(Buffer.byteLength(raw,"utf8")>BUSINESS_MAX_STATE_BYTES)return {ok:false,error:"STATE_TOO_LARGE"};
+  return withBusinessWriteLock(rc,async()=>{
+    const cur=await readBusinessPersisted(rc),curRev=Number(cur?.rev||0)||0;
+    if(baseRev!=null && Number(baseRev)!==curRev)return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
+    const rev=curRev+1,updatedAtMs=Date.now();
+    const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
+    businessMissingUntil.delete(rc);cacheBusinessPayload(payload,"memory");
+    try{fs.writeFileSync(businessSavePath(rc),JSON.stringify(payload))}catch(e){console.warn("[business/disk] persist failed:",e?.message||e)}
+    queueBusinessFirebaseOp(rc,{type:"set",payload});
+    return {ok:true,code:rc,rev,updatedAtMs,source:"memory+disk",firebaseQueued:!!FIREBASE_ENABLED};
+  });
+}
+async function deleteBusinessPersisted(code){
+  const rc=normalizeBusinessCode(code);if(!rc)return false;
+  return withBusinessWriteLock(rc,async()=>{
+    businessCache.delete(rc);businessMissingUntil.set(rc,Date.now()+15000);businessPresenceRooms.delete(rc);
+    try{const f=businessSavePath(rc);if(fs.existsSync(f))fs.unlinkSync(f)}catch(_e){}
+    queueBusinessFirebaseOp(rc,{type:"delete"});return true;
+  });
+}
+function normalizeBusinessName(name){return String(name||"").trim().replace(/\s+/g," ").replace(/[<>\"'&]/g,"").slice(0,18)}
+function normalizeBusinessToken(token){return String(token||"").trim().slice(0,96)}
+function touchBusinessPresence(code,token,name){
+  const rc=normalizeBusinessCode(code),t=normalizeBusinessToken(token);if(!rc||!t)return;
+  let map=businessPresenceRooms.get(rc);if(!map){map=new Map();businessPresenceRooms.set(rc,map)}
+  const now=Date.now();
+  for(const [k,v] of map.entries())if(now-Number(v?.lastSeen||0)>10*60*1000)map.delete(k);
+  map.set(t,{name:normalizeBusinessName(name),lastSeen:now});
+}
+function businessTokenOnline(code,token){
+  const rc=normalizeBusinessCode(code),t=normalizeBusinessToken(token);const item=businessPresenceRooms.get(rc)?.get(t);
+  return !!item && (Date.now()-Number(item.lastSeen||0))<=BUSINESS_PRESENCE_TTL_MS;
+}
+function businessPublicPlayers(code,room){
+  return (Array.isArray(room?.players)?room.players:[]).map(p=>({
+    name:normalizeBusinessName(p?.name),host:normalizeBusinessToken(p?.token)===normalizeBusinessToken(room?.hostToken),online:businessTokenOnline(code,p?.token)
+  }));
+}
+function businessPublicPayload(code,data,includeGame=true){
+  const room=data?.state||{};
+  const players=businessPublicPlayers(code,room);
+  const hostName=players.find(p=>p.host)?.name||"";
+  return {ok:true,found:true,code:normalizeBusinessCode(code),rev:Number(data?.rev||0)||0,updatedAtMs:Number(data?.updatedAtMs||0)||0,phase:String(room.phase||"lobby"),hostName,players,...(includeGame?{game:room.game||null}:{})};
+}
+function businessGameNames(game){return Array.isArray(game?.players)?game.players.map(p=>normalizeBusinessName(p?.name)).filter(Boolean):[]}
+function sameBusinessNames(a,b){return Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((x,i)=>x===b[i])}
+
+
 function persistedSeatSnapshot(room){
   try{
     if(!room || !(room.players instanceof Map)) return [];
@@ -3808,7 +3963,9 @@ app.get("/health", (_req, res) =>
     rooms:rooms.size,clients:clients.size,
     skyjoCacheRooms:skyjoCache.size,
     skyjoMissingRooms:skyjoMissingUntil.size,
-    skyjoFirebaseWorkers:skyjoFirebaseWorkers.size
+    skyjoFirebaseWorkers:skyjoFirebaseWorkers.size,
+    businessCacheRooms:businessCache.size,
+    businessFirebaseWorkers:businessFirebaseWorkers.size
   })
 );
 
@@ -3877,6 +4034,144 @@ app.post("/skyjo/:code/reset", async (req,res)=>{
 
 
 
+
+
+
+// --- DAS GROSSE BUSINESS online rooms ---
+app.get("/business-health", (_req,res)=>{
+  try{ initFirebaseIfConfigured(); }catch(_e){}
+  return res.status(200).json({
+    ok:true,build:SERVER_BUILD,ts:Date.now(),firebaseEnabled:!!firestore||FIREBASE_ENABLED,
+    cacheRooms:businessCache.size,pendingFirebaseRooms:businessFirebaseWorkers.size
+  });
+});
+
+app.get("/business/:code", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code);if(!code)return res.status(400).json({ok:false,error:"NO_CODE"});
+    const data=await readBusinessPersisted(code);
+    if(!data)return res.status(200).json({ok:true,found:false,code,rev:0,players:[]});
+    const known=Number(req.query?.rev),unchanged=Number.isFinite(known)&&known===Number(data.rev||0);
+    const pub=businessPublicPayload(code,data,!unchanged);
+    return res.status(200).json({...pub,unchanged});
+  }catch(e){console.error("[business/get]",e);return res.status(500).json({ok:false,error:"ERR"})}
+});
+
+app.post("/business/:code/create", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code),token=normalizeBusinessToken(req.body?.sessionToken);
+    if(!code)return res.status(400).json({ok:false,error:"NO_CODE"});
+    if(!token)return res.status(400).json({ok:false,error:"NO_TOKEN"});
+    const existing=await readBusinessPersisted(code);
+    if(existing)return res.status(409).json({ok:false,error:"ROOM_EXISTS",rev:existing.rev});
+    const now=Date.now();
+    const room={kind:"business-room-v2",phase:"lobby",hostToken:token,players:[],game:null,createdAt:now,updatedAt:now};
+    const wr=await writeBusinessPersisted(code,room,0);
+    if(wr?.conflict)return res.status(409).json(wr);
+    if(!wr?.ok)return res.status(400).json(wr||{ok:false,error:"ERR"});
+    touchBusinessPresence(code,token,"");
+    return res.status(200).json(businessPublicPayload(code,{...wr,state:room},true));
+  }catch(e){console.error("[business/create]",e);return res.status(500).json({ok:false,error:"ERR"})}
+});
+
+app.post("/business/:code/join", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code),token=normalizeBusinessToken(req.body?.sessionToken),name=normalizeBusinessName(req.body?.name);
+    if(!code)return res.status(400).json({ok:false,error:"NO_CODE"});
+    if(!token)return res.status(400).json({ok:false,error:"NO_TOKEN"});
+    if(!name)return res.status(400).json({ok:false,error:"NO_NAME"});
+    const cur=await readBusinessPersisted(code);if(!cur)return res.status(404).json({ok:false,error:"NO_ROOM"});
+    const room=JSON.parse(JSON.stringify(cur.state||{}));room.players=Array.isArray(room.players)?room.players:[];
+    const byToken=room.players.find(p=>normalizeBusinessToken(p?.token)===token);
+    const byName=room.players.find(p=>normalizeBusinessName(p?.name).toLowerCase()===name.toLowerCase() && normalizeBusinessToken(p?.token)!==token);
+    if((room.phase==="game"||room.phase==="finished")&&!byToken)return res.status(409).json({ok:false,error:room.phase==="finished"?"FINISHED":"STARTED"});
+    if(byName){
+      const canReclaim=room.phase==="lobby" && normalizeBusinessToken(byName.token)!==normalizeBusinessToken(room.hostToken) && !businessTokenOnline(code,byName.token) && (Date.now()-Number(byName.joinedAt||0)>BUSINESS_LOBBY_RECLAIM_MS);
+      if(!canReclaim)return res.status(409).json({ok:false,error:"NAME_TAKEN"});
+      room.players=room.players.filter(p=>p!==byName);
+    }
+    let changed=false,member=room.players.find(p=>normalizeBusinessToken(p?.token)===token);
+    if(member){
+      if(room.phase!=="lobby" && normalizeBusinessName(member.name)!==name)return res.status(409).json({ok:false,error:"NAME_LOCKED"});
+      if(normalizeBusinessName(member.name)!==name){member.name=name;changed=true}
+      member.joinedAt=Number(member.joinedAt||Date.now());
+    }else{
+      if(room.players.length>=5)return res.status(409).json({ok:false,error:"FULL"});
+      member={token,name,joinedAt:Date.now()};room.players.push(member);changed=true;
+    }
+    touchBusinessPresence(code,token,name);
+    room.updatedAt=Date.now();
+    if(!changed)return res.status(200).json(businessPublicPayload(code,cur,true));
+    const wr=await writeBusinessPersisted(code,room,cur.rev);
+    if(wr?.conflict)return res.status(409).json(wr);
+    return res.status(200).json(businessPublicPayload(code,{...wr,state:room},true));
+  }catch(e){console.error("[business/join]",e);return res.status(500).json({ok:false,error:"ERR"})}
+});
+
+app.post("/business/:code/heartbeat", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code),token=normalizeBusinessToken(req.body?.sessionToken);
+    if(!code||!token)return res.status(400).json({ok:false,error:"BAD_REQUEST"});
+    const cur=await readBusinessPersisted(code);if(!cur)return res.status(404).json({ok:false,error:"NO_ROOM"});
+    const member=(cur.state?.players||[]).find(p=>normalizeBusinessToken(p?.token)===token);
+    if(!member)return res.status(403).json({ok:false,error:"NOT_MEMBER"});
+    touchBusinessPresence(code,token,member.name);
+    return res.status(200).json({ok:true,code,ts:Date.now()});
+  }catch(e){return res.status(500).json({ok:false,error:"ERR"})}
+});
+
+app.post("/business/:code/start", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code),token=normalizeBusinessToken(req.body?.sessionToken),game=req.body?.game;
+    if(!code||!token)return res.status(400).json({ok:false,error:"BAD_REQUEST"});
+    const cur=await readBusinessPersisted(code);if(!cur)return res.status(404).json({ok:false,error:"NO_ROOM"});
+    const room=JSON.parse(JSON.stringify(cur.state||{}));room.players=Array.isArray(room.players)?room.players:[];
+    if(normalizeBusinessToken(room.hostToken)!==token)return res.status(403).json({ok:false,error:"NOT_HOST"});
+    if(room.phase!=="lobby")return res.status(409).json({ok:false,error:"ALREADY_STARTED"});
+    const onlinePlayers=room.players.filter(p=>businessTokenOnline(code,p?.token));
+    if(onlinePlayers.length<2||onlinePlayers.length>5)return res.status(409).json({ok:false,error:"PLAYER_COUNT"});
+    if(!onlinePlayers.some(p=>normalizeBusinessToken(p.token)===token))return res.status(409).json({ok:false,error:"HOST_NOT_PLAYER"});
+    const roster=onlinePlayers.map(p=>normalizeBusinessName(p.name));
+    if(!game || !sameBusinessNames(businessGameNames(game),roster))return res.status(400).json({ok:false,error:"BAD_GAME_ROSTER"});
+    room.players=onlinePlayers;
+    room.phase="game";room.game=game;room.startedAt=Date.now();room.updatedAt=Date.now();
+    const wr=await writeBusinessPersisted(code,room,req.body?.baseRev);
+    if(wr?.conflict)return res.status(409).json(wr);
+    return res.status(200).json(businessPublicPayload(code,{...wr,state:room},true));
+  }catch(e){console.error("[business/start]",e);return res.status(500).json({ok:false,error:"ERR"})}
+});
+
+app.post("/business/:code/state", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code),token=normalizeBusinessToken(req.body?.sessionToken),actor=normalizeBusinessName(req.body?.actorName),incoming=req.body?.game;
+    if(!code||!token||!incoming)return res.status(400).json({ok:false,error:"BAD_REQUEST"});
+    const cur=await readBusinessPersisted(code);if(!cur)return res.status(404).json({ok:false,error:"NO_ROOM"});
+    const room=JSON.parse(JSON.stringify(cur.state||{}));
+    if(room.phase!=="game")return res.status(409).json({ok:false,error:"NOT_RUNNING"});
+    const member=(room.players||[]).find(p=>normalizeBusinessToken(p?.token)===token);
+    if(!member)return res.status(403).json({ok:false,error:"NOT_MEMBER"});
+    const activeName=normalizeBusinessName(room.game?.players?.[Number(room.game?.current||0)]?.name);
+    if(!activeName || normalizeBusinessName(member.name)!==activeName || (actor&&actor!==activeName))return res.status(403).json({ok:false,error:"NOT_YOUR_TURN",activeName});
+    const oldNames=businessGameNames(room.game),newNames=businessGameNames(incoming);
+    if(!sameBusinessNames(oldNames,newNames))return res.status(400).json({ok:false,error:"BAD_GAME_ROSTER"});
+    const oldTurn=Number(room.game?.turnNumber||1),newTurn=Number(incoming?.turnNumber||1);
+    if(newTurn<oldTurn)return res.status(409).json({ok:false,error:"OLD_TURN"});
+    room.game=incoming;room.phase=incoming.gameEnded?"finished":"game";room.updatedAt=Date.now();
+    touchBusinessPresence(code,token,member.name);
+    const wr=await writeBusinessPersisted(code,room,req.body?.baseRev);
+    if(wr?.conflict)return res.status(409).json(wr);
+    return res.status(200).json({ok:true,code,rev:wr.rev,updatedAtMs:wr.updatedAtMs,phase:room.phase});
+  }catch(e){console.error("[business/state]",e);return res.status(500).json({ok:false,error:"ERR"})}
+});
+
+app.post("/business/:code/reset", async (req,res)=>{
+  try{
+    const code=normalizeBusinessCode(req.params.code),token=normalizeBusinessToken(req.body?.sessionToken);
+    const cur=await readBusinessPersisted(code);if(!cur)return res.status(200).json({ok:true,code,alreadyMissing:true});
+    if(normalizeBusinessToken(cur.state?.hostToken)!==token)return res.status(403).json({ok:false,error:"NOT_HOST"});
+    await deleteBusinessPersisted(code);return res.status(200).json({ok:true,code});
+  }catch(e){return res.status(500).json({ok:false,error:"ERR"})}
+});
 
 
 // --- Global Statistics (Lobby) ---
