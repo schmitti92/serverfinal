@@ -4,6 +4,7 @@ import express from "express";
 import http from "http";
 import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
+import { createKreuzKunter } from "./kreuzkunter-online.js";
 
 const PORT = process.env.PORT || 10000;
 const SERVER_BUILD = "barikade-v31-business-online-stable-20261005";
@@ -4389,6 +4390,14 @@ app.post("/room/:code/spin-colors", (req, res) => {
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+// KreuzKunter: eigener WS-Pfad und eigene Firestore-Sammlung. Die vorhandenen
+// Spiele und ihre Root-WebSocket-Verbindungen bleiben unverändert.
+const kkOnline = createKreuzKunter({ getFirestore: () => {
+  initFirebaseIfConfigured();
+  return firestore;
+}});
+app.get('/kreuzkunter-health', (_req,res) => res.json(kkOnline.health()));
+app.get('/kreuzkunter', (_req,res) => res.sendFile(path.resolve(process.cwd(), 'kreuzkunter.html')));
 
 /** ---------- Board graph (server authoritative path + legality) ---------- **/
 const boardPath = path.join(process.cwd(), "board.json");
@@ -5316,7 +5325,11 @@ function requireTurn(room, clientId, ws) {
 }
 
 /** ---------- WebSocket ---------- **/
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  if(new URL(req.url || '/', 'http://localhost').pathname === '/kreuzkunter') {
+    kkOnline.handle(ws, req);
+    return;
+  }
   const clientId = uid();
   clients.set(clientId, { ws, room: null, name: null, sessionToken: null });
   send(ws, { type: "hello", clientId });
