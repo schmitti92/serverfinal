@@ -4,7 +4,219 @@ import express from "express";
 import http from "http";
 import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
-import { createKreuzKunter } from "./kreuzkunter-online.js";
+import { randomBytes as kkRandomBytes } from "node:crypto";
+
+/*
+ * KreuzKunter V18: Multiplayer engine is kept WITHIN this server.js.
+ * The playable HTML, local mode and online lobby remain on GitHub Pages
+ * at KreuzKunter/kreuzkunter.html. No additional server module required.
+ */
+const createKreuzKunter = (() => {
+/**
+ * KreuzKunter – isolated WebSocket + Firestore room engine for existing serverfinal.
+ * WS route: /kreuzkunter    Firestore: kreuzkunter_rooms
+ * No changes to Barikade, Skyjo, Business or their collections.
+ * Requires existing `ws` server and already installed `firebase-admin`.
+ * Revision V17: robust room creation with optional Firestore persistence.
+ * Without credentials rooms remain live in RAM; they expire on restart/sleep.
+ * Compatible with KreuzKunter client V16/V17 protocol.
+ */
+const randomBytes = kkRandomBytes;
+const BOARD_ID='KK-2026-V6-STAR-EQUAL';
+const ROWS=['rrryrrbbogggyyy','ggoyyyoooyyoyyy','gggbbyoggoooboo','bbgbrorggoogrro','bbbooorrrgggrrr','roobbbyrrgybygg','rrrbbbyygbbbyyy'];
+const STARS=[68,99,59,37,72,3,16,75,62,55,11,34,28,96,65];
+const TOP=[5,3,3,3,2,2,2,1,2,2,2,3,3,3,5];
+const LOW=[3,2,2,2,1,1,1,0,1,1,1,2,2,2,3];
+const COLORS='gybro';
+const COLOR_FACES=['g','y','b','r','o','*'];
+const NUMBER_FACES=[1,2,3,4,5,'?'];
+const CODE_CHARS='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const TTL_MS=24*3600*1000;
+const MAX_ROOMS=120;
+const COLLECTION=process.env.KREUZKUNTER_FIREBASE_COLLECTION || 'kreuzkunter_rooms';
+const now=()=>Date.now();
+const token=()=>randomBytes(24).toString('base64url');
+const newCode=()=>Array.from({length:5},()=>CODE_CHARS[randomBytes(1)[0]%CODE_CHARS.length]).join('');
+const strip=(s,max)=>String(s??'').trim().replace(/[<>&\x00-\x1f]/g,'').slice(0,max);
+const clone=o=>JSON.parse(JSON.stringify(o));
+const isInt=n=>Number.isInteger(n);
+const colorAt=i=>ROWS[Math.floor(i/15)]?.[i%15];
+const nbr=i=>[i>=15?i-15:null,i<90?i+15:null,i%15>0?i-1:null,i%15<14?i+1:null].filter(n=>n!==null);
+function freshPlayer(name,id){return {name,id,cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[],socket:null};}
+function freshRoom(code,host,players){return {code,host,players,active:0,picker:0,turn:0,phase:'lobby',dice:[],accepted:null,globalColumn:Array(15).fill(false),globalColor:Object.fromEntries([...COLORS].map(c=>[c,false])),finished:false,winnerMessage:'',history:[],revision:0,timestamp:now(),queue:Promise.resolve()};}
+function stored(room){return {boardId:BOARD_ID,code:room.code,host:room.host,players:room.players.map(({socket,...p})=>({...p,recentActions:(p.recentActions||[]).slice(-40)})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,history:room.history.slice(-15),revision:room.revision,timestamp:room.timestamp};}
+function restore(d){
+ if(!d||d.boardId!==BOARD_ID||!(/^[A-Z2-9]{5}$/.test(d.code||''))||!Array.isArray(d.players)||!d.players.length||d.players.length>6||!['lobby','ready','select','over'].includes(d.phase))return null;
+ if(!isInt(d.active)||!isInt(d.picker)||d.active<0||d.picker<0||d.active>=d.players.length||d.picker>=d.players.length||!isInt(d.turn)||d.turn<0||d.turn>1000||!Number.isFinite(d.timestamp)||now()-d.timestamp>TTL_MS)return null;
+ if(!Array.isArray(d.globalColumn)||d.globalColumn.length!==15||!Array.isArray(d.dice)||d.dice.length>6||!d.globalColor||!Array.isArray(d.history))return null;
+ const players=[];
+ for(const p of d.players){
+  if(!p||typeof p.id!=='string'||p.id.length<20||typeof p.name!=='string'||!Array.isArray(p.cells)||p.cells.some(i=>!isInt(i)||i<0||i>=105)||new Set(p.cells).size!==p.cells.length||!isInt(p.jokerUsed)||p.jokerUsed<0||p.jokerUsed>8||!Array.isArray(p.columnAwards)||p.columnAwards.length!==15||!p.colorAwards||typeof p.colorAwards!=='object')return null;
+  players.push({...p,recentActions:Array.isArray(p.recentActions)?p.recentActions.slice(-40):[],socket:null});
+ }
+ if(new Set(players.map(p=>p.id)).size!==players.length||!players.some(p=>p.id===d.host))return null;
+ return {...d,players,queue:Promise.resolve(),writeQueue:Promise.resolve()};
+}
+function score(p){const cells=new Set(p.cells);return Object.values(p.colorAwards).reduce((a,b)=>a+b,0)+p.columnAwards.reduce((a,b)=>a+(b||0),0)+8-p.jokerUsed-2*STARS.filter(i=>!cells.has(i)).length;}
+function legal(p,room,idx,msg){
+ const ci=msg.colorDie,ni=msg.numDie;
+ if(!isInt(ci)||!isInt(ni)||ci<0||ni<0||ci===ni||ci>=room.dice.length||ni>=room.dice.length||room.dice[ci]?.type!=='color'||room.dice[ni]?.type!=='num')return 'Wähle je einen Farb- und einen Zahlenwürfel.';
+ if(room.turn>3&&idx!==room.active&&room.accepted&&(room.accepted.includes(ci)||room.accepted.includes(ni)))return 'Du darfst nur die vier übrigen Würfel benutzen.';
+ const dc=room.dice[ci].val,dn=room.dice[ni].val;
+ const col=dc==='*'?msg.chosenColor:dc, num=dn==='?'?msg.chosenNumber:dn;
+ if(typeof col!=='string'||col.length!==1||!COLORS.includes(col))return 'Ungültige Farbjoker-Auswahl.';
+ if(!isInt(num)||num<1||num>5)return 'Ungültige Zahl (1–5).';
+ const cost=Number(dc==='*')+Number(dn==='?');if(cost>8-p.jokerUsed)return 'Nicht genügend Joker verfügbar.';
+ const next=msg.pending;if(!Array.isArray(next)||next.length!==num||new Set(next).size!==next.length||next.some(i=>!isInt(i)||i<0||i>=105||p.cells.includes(i)||colorAt(i)!==col))return 'Falsche Anzahl, Farbe oder bereits angekreuztes Feld.';
+ const selected=new Set(next),seen=new Set([next[0]]),stack=[next[0]];
+ for(const i of stack)for(const n of nbr(i))if(selected.has(n)&&!seen.has(n)){seen.add(n);stack.push(n);}
+ if(seen.size!==selected.size)return 'Alle neuen Kreuze müssen direkt zusammenhängen.';
+ if(!p.cells.length){if(!next.some(i=>i%15===7))return 'Der erste Zug muss in Spalte H beginnen.';}
+ else if(!next.some(i=>i%15===7||nbr(i).some(n=>p.cells.includes(n))))return 'Neue Kreuze müssen an bereits gesetzte Kreuze anschließen oder Spalte H berühren.';
+ return null;
+}
+function addEvent(room,s){room.history.push(strip(s,120));room.history=room.history.slice(-15);}
+function endRoll(room){
+ const columns=[],bonuses=[];
+ for(const p of room.players){const filled=new Set(p.cells);
+  for(const c of COLORS)if(!Object.hasOwn(p.colorAwards,c)&&ROWS.join('').split('').every((v,i)=>v!==c||filled.has(i)))bonuses.push([p,c]);
+  for(let c=0;c<15;c++)if(p.columnAwards[c]===null&&Array.from({length:7},(_,r)=>r*15+c).every(i=>filled.has(i)))columns.push([p,c]);
+ }
+ for(const [p,c] of bonuses)p.colorAwards[c]=room.globalColor[c]?3:5;
+ for(const [p,c] of columns)p.columnAwards[c]=room.globalColumn[c]?LOW[c]:TOP[c];
+ for(const [,c] of bonuses)room.globalColor[c]=true;
+ for(const [,c] of columns)room.globalColumn[c]=true;
+ if(room.players.some(p=>Object.keys(p.colorAwards).length>=2)){
+  room.phase='over';room.finished=true;
+  const ranked=room.players.map(p=>({name:p.name,score:score(p),jokers:8-p.jokerUsed})).sort((a,b)=>b.score-a.score||b.jokers-a.jokers);
+  const winners=ranked.filter(p=>p.score===ranked[0].score&&p.jokers===ranked[0].jokers);
+  room.winnerMessage=winners.length>1?`${winners.map(p=>p.name).join(', ')} – Unentschieden: ${ranked[0].score} Punkte`:`${ranked[0].name} gewinnt mit ${ranked[0].score} Punkten!`;
+ }else{room.phase='ready';room.active=(room.active+1)%room.players.length;room.picker=room.active;}
+}
+function nextPicker(room){const d=(room.picker-room.active+room.players.length)%room.players.length;if(d<room.players.length-1)room.picker=(room.picker+1)%room.players.length;else endRoll(room);}
+function reset(room){for(const p of room.players)Object.assign(p,{cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[]});Object.assign(room,{active:0,picker:0,turn:0,phase:'ready',dice:[],accepted:null,globalColumn:Array(15).fill(false),globalColor:Object.fromEntries([...COLORS].map(c=>[c,false])),finished:false,winnerMessage:'',history:[]});}
+function snapshot(room){return {v:1,mode:'online',players:room.players.map(p=>({name:p.name,cells:p.cells,jokerUsed:p.jokerUsed,columnAwards:p.columnAwards,colorAwards:p.colorAwards,lastMove:p.lastMove,took:p.took})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,colorDie:null,numDie:null,chosenColor:null,chosenNumber:null,pending:[],globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,history:room.history.slice(-15)};}
+function safeSend(ws,msg){if(ws?.readyState===1)try{ws.send(JSON.stringify(msg));}catch{}}
+function sendError(ws,msg){safeSend(ws,{type:'error',message:msg});}
+function createKreuzKunter({getFirestore,log=console}){
+ const rooms=new Map();const sockets=new WeakMap();const loads=new Map();
+ const db=()=>{try{return getFirestore?.()||null;}catch(e){log.warn('[kreuzkunter] Firebase:',e.message);return null;}};
+ async function load(code){if(rooms.has(code))return rooms.get(code);if(loads.has(code))return loads.get(code);const job=(async()=>{const fs=db();if(!fs)return null;const snap=await fs.collection(COLLECTION).doc(code).get();const room=snap.exists?restore(snap.data()):null;if(room)rooms.set(code,room);return room;})();loads.set(code,job);try{return await job;}finally{loads.delete(code);}}
+ async function save(room){
+   // Firestore is recommended, but an unconfigured server must not prevent
+   // friends from playing online. RAM-only games are temporary and labelled.
+   const fs=db();
+   if(!fs){room.storage='memory';return false;}
+   const payload=stored(room);
+   room.writeQueue=(room.writeQueue||Promise.resolve()).catch(()=>{}).then(()=>fs.collection(COLLECTION).doc(room.code).set(payload));
+   try{await room.writeQueue;room.storage='firestore';return true;}
+   catch(e){room.storage='memory';log.warn('[kreuzkunter] Firestore save failed; room continues temporarily in memory:',e?.message||e);return false;}
+  }
+ async function broadcast(room){room.revision++;room.timestamp=now();await save(room);const s=snapshot(room);const connected=room.players.map(p=>p.socket?.readyState===1);room.players.forEach((p,index)=>safeSend(p.socket,{type:'state',code:room.code,index,host:p.id===room.host,revision:room.revision,connected,storage:room.storage||'memory',game:s}));}
+ function sendState(room,ws,index){safeSend(ws,{type:'state',code:room.code,index,host:room.players[index].id===room.host,revision:room.revision,connected:room.players.map(p=>p.socket?.readyState===1),storage:room.storage||'memory',game:snapshot(room)});}
+ async function performAction(ws,msg,session){
+ const op=msg.action;
+ if(op==='create'||op==='join'){
+  if(msg.boardId!==BOARD_ID)return sendError(ws,'Spielfeldversion stimmt nicht überein.');
+  if(session.room)return sendError(ws,'Du bist bereits in einem Raum.');
+  // When Firestore is missing, rooms are playable but volatile.
+  let room,p,id;const name=strip(msg.name,24)||'Spieler';
+  if(op==='create'){
+   if(rooms.size>=MAX_ROOMS)return sendError(ws,'Alle Spielräume belegt.');
+   let code=newCode();while(rooms.has(code)||(await load(code)))code=newCode();
+   id=token();p=freshPlayer(name,id);room=freshRoom(code,id,[p]);rooms.set(code,room);
+  }else{
+   const code=strip(msg.code,5).toUpperCase();if(!/^[A-Z2-9]{5}$/.test(code))return sendError(ws,'Ungültiger Raumcode.');
+   room=await load(code);if(!room)return sendError(ws,'Raumcode nicht gefunden.');
+   id=typeof msg.token==='string'?msg.token:null;
+   p=id?room.players.find(q=>q.id===id):null;
+   if(!p){if(id)return sendError(ws,'Spielertoken nicht mehr gültig. Bitte mit einem neuen Raum beginnen.');if(room.phase!=='lobby')return sendError(ws,'Partie läuft bereits; Beitritt nur mit Spielertoken.');if(room.players.length>=6)return sendError(ws,'Der Raum ist voll (maximal 6).');id=token();p=freshPlayer(name,id);room.players.push(p);}
+   const prior=p.socket;if(prior&&prior!==ws)try{prior.close(4000,'Andere Verbindung');}catch{}
+  }
+  p.socket=ws;session.room=room;session.id=id;
+  if(!room.players.some(q=>q.id===room.host&&q.socket?.readyState===1))room.host=id;
+  safeSend(ws,{type:'welcome',code:room.code,token:id,host:room.host===id});await broadcast(room);return;
+ }
+ const room=session.room;if(!room||!session.id)return sendError(ws,'Bitte zuerst Raum erstellen oder beitreten.');
+ const index=room.players.findIndex(p=>p.id===session.id);if(index<0||room.players[index].socket!==ws)return sendError(ws,'Diese Verbindung ist nicht mehr gültig.');
+ if(op==='sync')return sendState(room,ws,index);
+ if(op==='ping')return safeSend(ws,{type:'pong'});
+ const changed=['start','roll','pass','move','skip','remove'].includes(op);
+ const aid=msg.actionId;
+ if(changed&&aid!==undefined){if(typeof aid!=='string'||!(/^[A-Za-z0-9_-]{1,80}$/.test(aid)))return sendError(ws,'Ungültige Aktionskennung.');if(room.players[index].recentActions?.includes(aid))return sendState(room,ws,index);}
+ if(['roll','move','pass','skip'].includes(op)){
+  if(msg.expectedTurn!==undefined&&msg.expectedTurn!==room.turn)return sendError(ws,'Veralteter Spielzug.');
+  if(msg.expectedPicker!==undefined&&msg.expectedPicker!==room.picker)return sendError(ws,'Falsche Zugreihenfolge.');
+ }
+ if(op==='start'){
+  if(session.id!==room.host||room.players.filter(p=>p.socket?.readyState===1).length<2||!['lobby','over'].includes(room.phase))return sendError(ws,'Nur Host kann mit zwei verbundenen Spielern starten.');
+  reset(room);addEvent(room,'Neue Partie gestartet');
+ }else if(op==='roll'){
+  if(room.phase!=='ready'||session.id!==room.players[room.active].id)return sendError(ws,'Nur aktive Person kann würfeln.');
+  room.turn++;room.picker=room.active;room.accepted=null;
+  room.dice=[...Array.from({length:3},()=>({type:'color',val:COLOR_FACES[randomBytes(1)[0]%6]})),...Array.from({length:3},()=>({type:'num',val:NUMBER_FACES[randomBytes(1)[0]%6]}))];
+  room.phase='select';addEvent(room,`Wurf ${room.turn}: ${room.players[room.active].name} würfelt`);
+ }else if(op==='move'||op==='pass'){
+  if(room.phase!=='select'||room.picker!==index)return sendError(ws,'Du bist noch nicht an der Reihe.');
+  const p=room.players[index];
+  if(op==='move'){
+   const err=legal(p,room,index,msg);if(err)return sendError(ws,err);
+   p.cells.push(...msg.pending);p.lastMove=[...msg.pending];p.took=true;p.jokerUsed+=Number(room.dice[msg.colorDie].val==='*')+Number(room.dice[msg.numDie].val==='?');
+   if(index===room.active)room.accepted=[msg.colorDie,msg.numDie];
+   addEvent(room,`Wurf ${room.turn}: ${p.name} trägt ${msg.pending.length} Kreuze ein`);
+  }else{p.lastMove=[];p.took=false;if(index===room.active)room.accepted=null;addEvent(room,`Wurf ${room.turn}: ${p.name} passt`);}
+  nextPicker(room);
+ }else if(op==='skip'){
+  if(room.host!==session.id)return sendError(ws,'Nur Host darf überspringen.');
+  if(room.phase==='select'){
+   const p=room.players[room.picker];if(p.socket?.readyState===1)return sendError(ws,'Dieser Spieler ist noch verbunden.');
+   if(room.picker===room.active)room.accepted=null;
+   p.lastMove=[];p.took=false;addEvent(room,`Abwesender Spieler übersprungen`);nextPicker(room);
+  }else if(room.phase==='ready'){
+   if(room.players[room.active].socket?.readyState===1)return sendError(ws,'Aktiver Spieler ist verbunden.');
+   const available=room.players.map((p,i)=>p.socket?.readyState===1?i:null).filter(i=>i!==null);
+   if(!available.length)return sendError(ws,'Kein Spieler verbunden.');
+   const order=Array.from({length:room.players.length},(_,k)=>(room.active+k+1)%room.players.length);room.active=order.find(i=>available.includes(i))??available[0];room.picker=room.active;
+  }else return sendError(ws,'Überspringen ist gerade nicht möglich.');
+ }else if(op==='remove'){
+  const idx=msg.index;if(room.host!==session.id||room.phase!=='lobby')return sendError(ws,'Nur Host kann in Lobby entfernen.');
+  if(!isInt(idx)||idx<0||idx>=room.players.length||room.players[idx].socket?.readyState===1||room.players[idx].id===room.host)return sendError(ws,'Nur abwesende Teilnehmer dürfen entfernt werden.');
+  room.players.splice(idx,1);
+ }else return sendError(ws,'Unbekannte Aktion.');
+ const actor=room.players.find(p=>p.id===session.id);
+ if(actor&&aid!==undefined){actor.recentActions.push(aid);actor.recentActions=actor.recentActions.slice(-40);}
+ await broadcast(room);
+ }
+ // One mutation at a time per room. This prevents competing clients from
+ // validating against the same turn before either change has been persisted.
+ async function handleAction(ws,msg,session){
+  if(msg.action==='create'||msg.action==='join')return performAction(ws,msg,session);
+  const room=session.room;
+  if(!room)return performAction(ws,msg,session);
+  const previous=room.queue||Promise.resolve();
+  const next=previous.catch(()=>{}).then(()=>performAction(ws,msg,session));
+  room.queue=next;
+  return next;
+ }
+ function handle(ws,req={}){
+  const origin=req.headers?.origin;
+  const allow=(process.env.KREUZKUNTER_ALLOWED_ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean);
+  if(allow.length&&(!origin||!allow.includes(origin))){try{ws.close(1008,'Origin nicht erlaubt');}catch{};return;}
+  const session={room:null,id:null,times:[],queue:Promise.resolve()};sockets.set(ws,session);
+  ws.on('message',raw=>{
+   const bytes=Buffer.isBuffer(raw)?raw.byteLength:Buffer.byteLength(String(raw));if(bytes>8192)return sendError(ws,'Nachricht zu groß.');
+   const t=now();session.times=session.times.filter(x=>t-x<10000);session.times.push(t);
+   if(session.times.length>50)return sendError(ws,'Zu viele Anfragen.');
+   let msg;try{msg=JSON.parse(String(raw));if(!msg||typeof msg!=='object'||Array.isArray(msg))throw Error('format');}catch{return sendError(ws,'Ungültiges Nachrichtenformat.');}
+   session.queue=session.queue.then(()=>handleAction(ws,msg,session)).catch(e=>{log.error('[kreuzkunter] action failed',e);sendError(ws,'Serverfehler. Spielstand bitte abgleichen.');});
+  });
+  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;if(room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room);}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
+ }
+ return {handle,rooms,health:()=>({ok:true,game:'KreuzKunter',boardId:BOARD_ID,rooms:rooms.size,firebaseConnected:!!db(),storageMode:db()?'firestore':'memory-only',collection:COLLECTION})};
+}
+
+return createKreuzKunter;
+})();
 
 const PORT = process.env.PORT || 10000;
 const SERVER_BUILD = "barikade-v31-business-online-stable-20261005";
