@@ -975,7 +975,7 @@ function ensureBossState(room){
   if(!Array.isArray(b.spawnHistory)) b.spawnHistory=[];
   b.spawnHistory=b.spawnHistory.filter(x=>x&&Number(x.seq)>0).slice(-8);
   // V26 Migration: alte Raeume erhalten beim ersten Zugriff einen frischen Boss-Mischbeutel.
-  normalizeBossBag(b);
+  normalizeBossPool(b);
   ensureBossEventFieldLayout(room,b,false);
   b.v=11;
   return b;
