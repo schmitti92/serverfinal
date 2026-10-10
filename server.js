@@ -244,7 +244,7 @@ function createKreuzKunter({getFirestore,log=console}){
    let msg;try{msg=JSON.parse(String(raw));if(!msg||typeof msg!=='object'||Array.isArray(msg))throw Error('format');}catch{return sendError(ws,'Ungültiges Nachrichtenformat.');}
    session.queue=session.queue.then(()=>handleAction(ws,msg,session)).catch(e=>{log.error('[kreuzkunter] action failed',e);sendError(ws,'Serverfehler. Spielstand bitte abgleichen.');});
   });
-  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;room.previews={};room.selections={};if(room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room);}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
+  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;delete room.previews?.[room.players.indexOf(p)];delete room.selections?.[room.players.indexOf(p)];if(room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room);}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
  }
  return {handle,rooms,health:()=>({ok:true,game:'KreuzKunter',boardId:BOARD_ID,rooms:rooms.size,firebaseConnected:!!db(),storageMode:db()?'firestore':'memory-only',collection:COLLECTION})};
 }
