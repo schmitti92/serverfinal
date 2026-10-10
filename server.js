@@ -4397,7 +4397,22 @@ const kkOnline = createKreuzKunter({ getFirestore: () => {
   return firestore;
 }});
 app.get('/kreuzkunter-health', (_req,res) => res.json(kkOnline.health()));
-app.get('/kreuzkunter', (_req,res) => res.sendFile(path.resolve(process.cwd(), 'kreuzkunter.html')));
+// Die Spieloberfläche liegt ausschließlich im GitHub-Pages-Client.
+// Render liefert nur Multiplayer, Regelprüfung und Firestore-Speicherung.
+// Optional kann KREUZKUNTER_CLIENT_URL als vollständige HTTPS-Adresse
+// der Client-Seite gesetzt werden, um /kreuzkunter dorthin umzuleiten.
+app.get('/kreuzkunter', (_req,res) => {
+  const clientUrl = String(process.env.KREUZKUNTER_CLIENT_URL || '').trim();
+  if (/^https:\/\/[^\s]+$/i.test(clientUrl)) return res.redirect(302, clientUrl);
+  return res.status(200).json({
+    ok: true,
+    game: 'KreuzKunter',
+    message: 'Spieloberfläche im GitHub-Pages-Client öffnen: KreuzKunter/kreuzkunter.html',
+    websocketPath: '/kreuzkunter',
+    clientPath: 'KreuzKunter/kreuzkunter.html',
+    serverRole: 'Multiplayer und Firestore',
+  });
+});
 
 /** ---------- Board graph (server authoritative path + legality) ---------- **/
 const boardPath = path.join(process.cwd(), "board.json");
