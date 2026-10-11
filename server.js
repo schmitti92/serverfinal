@@ -5,6 +5,7 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
+import { installProfileStats } from "./profile-stats.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -44,9 +45,9 @@ const clone=o=>JSON.parse(JSON.stringify(o));
 const isInt=n=>Number.isInteger(n);
 const colorAt=i=>ROWS[Math.floor(i/15)]?.[i%15];
 const nbr=i=>[i>=15?i-15:null,i<90?i+15:null,i%15>0?i-1:null,i%15<14?i+1:null].filter(n=>n!==null);
-function freshPlayer(name,id){return {name,id,cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[],socket:null};}
+function freshPlayer(name,id){return {name,id,profileUid:null,cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[],socket:null};}
 function freshRoom(code,host,players){return {code,host,players,columnRule:COLUMN_RULE_NEW,parallelRule:'simultaneous-responses',parallel:false,responded:[],selections:{},active:0,picker:0,turn:0,phase:'lobby',dice:[],accepted:null,globalColumn:Array(15).fill(false),globalColor:Object.fromEntries([...COLORS].map(c=>[c,false])),finished:false,winnerMessage:'',history:[],revision:0,timestamp:now(),queue:Promise.resolve()};}
-function stored(room){return {boardId:BOARD_ID,code:room.code,host:room.host,columnRule:room.columnRule||'classic',parallelRule:room.parallelRule||'serial',parallel:!!room.parallel,responded:room.responded||[],players:room.players.map(({socket,...p})=>({...p,recentActions:(p.recentActions||[]).slice(-40)})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,history:room.history.slice(-15),revision:room.revision,timestamp:room.timestamp};}
+function stored(room){return {boardId:BOARD_ID,code:room.code,host:room.host,columnRule:room.columnRule||'classic',parallelRule:room.parallelRule||'serial',parallel:!!room.parallel,responded:room.responded||[],players:room.players.map(({socket,...p})=>({...p,recentActions:(p.recentActions||[]).slice(-40)})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,matchIdV8:room.matchIdV8||null,startedAtV8:room.startedAtV8||null,finishedAtV8:room.finishedAtV8||null,matchSeatsV8:room.matchSeatsV8||[],statsFinalizedV8:!!room.statsFinalizedV8,history:room.history.slice(-15),revision:room.revision,timestamp:room.timestamp};}
 function restore(d){
  if(!d||d.boardId!==BOARD_ID||!(/^[A-Z2-9]{5}$/.test(d.code||''))||!Array.isArray(d.players)||!d.players.length||d.players.length>6||!['lobby','ready','select','over'].includes(d.phase))return null;
  if(!isInt(d.active)||!isInt(d.picker)||d.active<0||d.picker<0||d.active>=d.players.length||d.picker>=d.players.length||!isInt(d.turn)||d.turn<0||d.turn>1000||!Number.isFinite(d.timestamp)||now()-d.timestamp>TTL_MS)return null;
@@ -89,7 +90,7 @@ function endRoll(room){
  for(const [,c] of bonuses)room.globalColor[c]=true;
  for(const [,c] of columns)room.globalColumn[c]=true;
  if(room.players.some(p=>Object.keys(p.colorAwards).length>=2)){
-  room.phase='over';room.finished=true;
+  room.phase='over';room.finished=true;room.finishedAtV8=now();
   const ranked=room.players.map(p=>({name:p.name,score:score(p),jokers:8-p.jokerUsed})).sort((a,b)=>b.score-a.score||b.jokers-a.jokers);
   const winners=ranked.filter(p=>p.score===ranked[0].score&&p.jokers===ranked[0].jokers);
   room.winnerMessage=winners.length>1?`${winners.map(p=>p.name).join(', ')} – Unentschieden: ${ranked[0].score} Punkte`:`${ranked[0].name} gewinnt mit ${ranked[0].score} Punkten!`;
@@ -97,11 +98,11 @@ function endRoll(room){
  room.parallel=false;room.responded=[];room.selections={};
 }
 function nextPicker(room){const d=(room.picker-room.active+room.players.length)%room.players.length;if(d<room.players.length-1)room.picker=(room.picker+1)%room.players.length;else endRoll(room);}
-function reset(room){room.previews={};for(const p of room.players)Object.assign(p,{cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[]});Object.assign(room,{columnRule:COLUMN_RULE_NEW,parallelRule:'simultaneous-responses',parallel:false,responded:Array(room.players.length).fill(false),selections:{},active:0,picker:0,turn:0,phase:'ready',dice:[],accepted:null,globalColumn:Array(15).fill(false),globalColor:Object.fromEntries([...COLORS].map(c=>[c,false])),finished:false,winnerMessage:'',history:[]});}
+function reset(room){room.matchIdV8=randomBytes(20).toString('hex');room.startedAtV8=now();room.finishedAtV8=null;room.statsFinalizedV8=false;room.matchSeatsV8=room.players.map(p=>({uid:p.profileUid||null,name:p.name,seat:p.id}));room.previews={};for(const p of room.players)Object.assign(p,{cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[]});Object.assign(room,{columnRule:COLUMN_RULE_NEW,parallelRule:'simultaneous-responses',parallel:false,responded:Array(room.players.length).fill(false),selections:{},active:0,picker:0,turn:0,phase:'ready',dice:[],accepted:null,globalColumn:Array(15).fill(false),globalColor:Object.fromEntries([...COLORS].map(c=>[c,false])),finished:false,winnerMessage:'',history:[]});}
 function snapshot(room){return {v:1,mode:'online',columnRule:room.columnRule||'classic',parallelRule:room.parallelRule||'serial',parallel:!!room.parallel,responded:(room.responded||[]).slice(),players:room.players.map(p=>({name:p.name,cells:p.cells,jokerUsed:p.jokerUsed,columnAwards:p.columnAwards,colorAwards:p.colorAwards,lastMove:p.lastMove,took:p.took})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,colorDie:null,numDie:null,chosenColor:null,chosenNumber:null,pending:[],globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,history:room.history.slice(-15)};}
 function safeSend(ws,msg){if(ws?.readyState===1)try{ws.send(JSON.stringify(msg));}catch{}}
 function sendError(ws,msg){safeSend(ws,{type:'error',message:msg});}
-function createKreuzKunter({getFirestore,log=console}){
+function createKreuzKunter({getFirestore,verifyProfile,recordStats,log=console}){
  const rooms=new Map();const sockets=new WeakMap();const loads=new Map();
  const db=()=>{try{return getFirestore?.()||null;}catch(e){log.warn('[kreuzkunter] Firebase:',e.message);return null;}};
  async function load(code){if(rooms.has(code))return rooms.get(code);if(loads.has(code))return loads.get(code);const job=(async()=>{const fs=db();if(!fs)return null;const snap=await fs.collection(COLLECTION).doc(code).get();const room=snap.exists?restore(snap.data()):null;if(room)rooms.set(code,room);return room;})();loads.set(code,job);try{return await job;}finally{loads.delete(code);}}
@@ -117,13 +118,28 @@ function createKreuzKunter({getFirestore,log=console}){
   }
  async function broadcast(room){room.revision++;room.timestamp=now();await save(room);const s=snapshot(room);const connected=room.players.map(p=>p.socket?.readyState===1);room.players.forEach((p,index)=>safeSend(p.socket,{type:'state',code:room.code,index,host:p.id===room.host,revision:room.revision,connected,storage:room.storage||'memory',previews:room.previews||{},selections:room.selections||{},game:s}));}
  function sendState(room,ws,index){safeSend(ws,{type:'state',code:room.code,index,host:room.players[index].id===room.host,revision:room.revision,connected:room.players.map(p=>p.socket?.readyState===1),storage:room.storage||'memory',previews:room.previews||{},selections:room.selections||{},game:snapshot(room)});}
+ async function bookFinishedKreuz(room){
+  if(room.finished&&!room.statsFinalizedV8&&room.matchIdV8){
+    try{
+      const seats=room.matchSeatsV8||[];
+      if(seats.length===room.players.length && seats.every(x=>x.uid) && new Set(seats.map(x=>x.uid)).size===seats.length){
+        const points=room.players.map(p=>({id:p.id,score:score(p),jokers:8-p.jokerUsed}));
+        points.sort((a,b)=>b.score-a.score||b.jokers-a.jokers);
+        const winning=points.filter(x=>x.score===points[0].score && x.jokers===points[0].jokers);
+        const winners=winning.map(w=>seats.find(q=>q.seat===w.id)?.uid).filter(Boolean);
+        if(winners.length){await recordStats({game:'kreuz',matchId:room.matchIdV8,players:seats,winnerUids:winners,startedAt:room.startedAtV8,finishedAt:room.finishedAtV8||now(),scores:Object.fromEntries(points.map(x=>[x.id,x.score]))});room.statsFinalizedV8=true;await save(room);}
+      }
+    }catch(e){log.warn('[v8/kreuz] booking delayed:',e?.message||e);}
+  }
+ }
+
  async function performAction(ws,msg,session){
  const op=msg.action;
  if(op==='create'||op==='join'){
   if(msg.boardId!==BOARD_ID)return sendError(ws,'Spielfeldversion stimmt nicht überein.');
   if(session.room)return sendError(ws,'Du bist bereits in einem Raum.');
   // When Firestore is missing, rooms are playable but volatile.
-  let room,p,id;const name=strip(msg.name,24)||'Spieler';
+  let room,p,id;const identity=await verifyProfile?.(msg.profileIdToken)||null;const name=identity?.name||strip(msg.name,24)||'Spieler';
   if(op==='create'){
    if(rooms.size>=MAX_ROOMS)return sendError(ws,'Alle Spielräume belegt.');
    let code=newCode();while(rooms.has(code)||(await load(code)))code=newCode();
@@ -133,16 +149,17 @@ function createKreuzKunter({getFirestore,log=console}){
    room=await load(code);if(!room)return sendError(ws,'Raumcode nicht gefunden.');
    id=typeof msg.token==='string'?msg.token:null;
    p=id?room.players.find(q=>q.id===id):null;
-   if(!p){if(id)return sendError(ws,'Spielertoken nicht mehr gültig. Bitte mit einem neuen Raum beginnen.');if(room.phase!=='lobby')return sendError(ws,'Partie läuft bereits; Beitritt nur mit Spielertoken.');if(room.players.length>=6)return sendError(ws,'Der Raum ist voll (maximal 6).');id=token();p=freshPlayer(name,id);room.players.push(p);}
+   if(p?.profileUid&&p.profileUid!==identity?.uid)return sendError(ws,'Dieses Spielerfeld gehört einem anderen Online-Konto.');if(!p){if(id)return sendError(ws,'Spielertoken nicht mehr gültig. Bitte mit einem neuen Raum beginnen.');if(room.phase!=='lobby')return sendError(ws,'Partie läuft bereits; Beitritt nur mit Spielertoken.');if(room.players.length>=6)return sendError(ws,'Der Raum ist voll (maximal 6).');id=token();p=freshPlayer(name,id);room.players.push(p);}
    const prior=p.socket;if(prior&&prior!==ws)try{prior.close(4000,'Andere Verbindung');}catch{}
   }
-  p.socket=ws;session.room=room;session.id=id;
+  if(p.profileUid&&p.profileUid!==identity?.uid)return sendError(ws,'Für diesen Spielplatz bitte mit dem ursprünglichen Konto anmelden.');
+  p.profileUid=identity?.uid||p.profileUid||null; p.socket=ws;session.room=room;session.id=id;
   if(!room.players.some(q=>q.id===room.host&&q.socket?.readyState===1))room.host=id;
-  safeSend(ws,{type:'welcome',code:room.code,token:id,host:room.host===id});await broadcast(room);return;
+  safeSend(ws,{type:'welcome',code:room.code,token:id,host:room.host===id});await broadcast(room);if(room.finished)await bookFinishedKreuz(room);return;
  }
  const room=session.room;if(!room||!session.id)return sendError(ws,'Bitte zuerst Raum erstellen oder beitreten.');
  const index=room.players.findIndex(p=>p.id===session.id);if(index<0||room.players[index].socket!==ws)return sendError(ws,'Diese Verbindung ist nicht mehr gültig.');
- if(op==='sync')return sendState(room,ws,index);
+ if(op==='sync'){if(room.finished)await bookFinishedKreuz(room);return sendState(room,ws,index);}
  if(op==='ping')return safeSend(ws,{type:'pong'});
  // V23: players who have not responded may transmit draft crosses and selected dice.
  // This never commits a move or changes the game's score.
@@ -221,6 +238,7 @@ function createKreuzKunter({getFirestore,log=console}){
  if(actor&&aid!==undefined){actor.recentActions.push(aid);actor.recentActions=actor.recentActions.slice(-40);}
  if(room.parallelRule!=='simultaneous-responses'){room.previews={};room.selections={};}
  await broadcast(room);
+  await bookFinishedKreuz(room);
  }
  // One mutation at a time per room. This prevents competing clients from
  // validating against the same turn before either change has been persisted.
@@ -254,7 +272,7 @@ return createKreuzKunter;
 })();
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v31-business-online-stable-20261005-profiles-v1.1";
+const SERVER_BUILD = "barikade-v31-business-online-stable-20261005-profiles-v8-stats";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -3317,6 +3335,17 @@ async function finalizeMatchStats(room, winnerColor, opts={}){
    try{
      if(!room?.state) return;
      if(isTestRoom(room)) return;
+     if(!room.state.profileStatsFinalizedV8 && Array.isArray(room.state.profileSeatsV8)){
+       const seats=room.state.profileSeatsV8;
+       const winnerSeat=seats.find(p=>p.seat===String(winnerColor||'').toLowerCase());
+       if(seats.length>=2&&seats.every(p=>p.uid)&&new Set(seats.map(p=>p.uid)).size===seats.length && winnerSeat?.uid){
+         try{
+           await profileStatsV8.book({game:'barikade',matchId:room.state.matchId,players:seats,winnerUids:[winnerSeat.uid],startedAt:room.state.startedAt,finishedAt:room.state.finishedAt||Date.now(),reason:room.state.gameOverReason||'goal'});
+           room.state.profileStatsFinalizedV8=true;
+           await persistRoomState(room);
+         }catch(e){console.warn('[v8/barikade] booking delayed:',e?.message||e);}
+       }
+     }
      if(room.state.statsFinalized) return;
      room.state.statsFinalized = true;
 
@@ -3919,6 +3948,7 @@ function persistedSeatSnapshot(room){
         diceStyle: normalizeDiceStyle(p.diceStyle),
         isHost: !!p.isHost,
         sessionToken: String(p.sessionToken || "").slice(0, 60),
+        profileUid: p.profileUid || null,
         lastSeen: Number(p.lastSeen || Date.now()) || Date.now(),
       }));
   }catch(_e){ return []; }
@@ -3944,6 +3974,7 @@ function restorePersistedSeats(room, seats, hostToken){
         diceStyle: normalizeDiceStyle(seat?.diceStyle),
         isHost: !!seat?.isHost,
         sessionToken: token,
+        profileUid: typeof seat.profileUid === "string" ? seat.profileUid : null,
         lastSeen: Number(seat?.lastSeen || Date.now()) || Date.now(),
       });
     }
@@ -4237,6 +4268,10 @@ installProfileApi(app,{
     initFirebaseIfConfigured();
     return firestore;
   }
+});
+const profileStatsV8=installProfileStats(app,{
+  admin,isReady:()=>profileProjectMatches,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
@@ -4673,7 +4708,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 // KreuzKunter: eigener WS-Pfad und eigene Firestore-Sammlung. Die vorhandenen
 // Spiele und ihre Root-WebSocket-Verbindungen bleiben unverändert.
-const kkOnline = createKreuzKunter({ getFirestore: () => {
+const kkOnline = createKreuzKunter({ verifyProfile:profileStatsV8.identity,recordStats:profileStatsV8.book,getFirestore: () => {
   initFirebaseIfConfigured();
   return firestore;
 }});
@@ -5365,7 +5400,12 @@ function initGameState(room, activeColors, mode = "classic", starterColor = null
     started: true,
     isTest: (room.isTest === true) || isTestRoomCode(room.code),
     
-    matchId: uid(),
+    matchId: kkRandomBytes(20).toString('hex'),
+    profileSeatsV8: active.map(c=>{
+      const p=Array.from(room.players.values()).find(x=>x.color===c&&isConnectedPlayer(x));
+      return {seat:c,uid:p?.profileUid||null,name:p?.name||c};
+    }),
+    profileStatsFinalizedV8:false,
     startedAt: Date.now(),
     statsFinalized: false,
 paused: false,
@@ -5641,11 +5681,13 @@ wss.on("connection", (ws, req) => {
     // ---------- JOIN ----------
     if (msg.type === "join") {
       const roomCode = String(msg.room || "").trim().toUpperCase();
-      const name = String(msg.name || "Spieler").slice(0, 32);
+      let name = String(msg.name || "Spieler").slice(0, 32);
       const asHost = !!msg.asHost;
       const sessionToken = String(msg.sessionToken || "").slice(0, 60);
       const requestedColor = String(msg.requestedColor || "").toLowerCase().trim();
       const requestedDiceStyle = normalizeDiceStyle(msg.requestedDiceStyle || "classic");
+      const verifiedProfile=await profileStatsV8.identity(msg.profileIdToken);
+      if(verifiedProfile)name=verifiedProfile.name;
 
       if (!roomCode) { send(ws, { type: "error", code: "NO_ROOM", message: "Kein Raumcode" }); return; }
 
@@ -5679,6 +5721,9 @@ wss.on("connection", (ws, req) => {
         for (const p of room.players.values()) {
           if (p.sessionToken && p.sessionToken === sessionToken) { existing = p; break; }
         }
+      }
+      if (existing?.profileUid && existing.profileUid !== verifiedProfile?.uid){
+        send(ws,{type:'error',code:'PROFILE_SEAT_MISMATCH',message:'Dieser Spielplatz gehört einem anderen Online-Konto.'});return;
       }
       if (existing) {
         // Prevent a NEW client from kicking a currently-connected player that uses the same sessionToken.
@@ -5784,7 +5829,7 @@ if (!color) {
 }
 
 const diceStyle = msg.requestedDiceStyle ? requestedDiceStyle : normalizeDiceStyle(existing?.diceStyle || requestedDiceStyle);
-room.players.set(clientId, { id: clientId, name, color, diceStyle, isHost, sessionToken, lastSeen: Date.now() });
+room.players.set(clientId, { id: clientId, name, color, diceStyle, isHost, sessionToken, profileUid:verifiedProfile?.uid||null, lastSeen: Date.now() });
 	      // Auto-unpause deaktiviert: Fortsetzen nur per Host (resume)
 	      c.room = roomCode; c.name = name; c.sessionToken = sessionToken;
 	      // keep per-room socket map in sync (host-swap/reconnect depends on it)
@@ -5812,6 +5857,9 @@ try{
       broadcast(room, roomUpdatePayload(room));
 
 
+      if (room.state?.finished&&!room.state?.profileStatsFinalizedV8){
+        await finalizeMatchStats(room,room.state.winnerColor);
+      }
       if (room.state) send(ws, { type: "snapshot", state: room.state });
       // Reconnect: persistente, noch nicht vollständig abgespielte Rad-Aufträge
       // werden ausschließlich für diese Spielerfarbe erneut zugestellt.
