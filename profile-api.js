@@ -1,4 +1,4 @@
-/** Spieleportal Online-Konten V1: authenticated profile preferences only.
+/** Spieleportal Online-Konten V2: authenticated profile preferences and guided onboarding.
  *  Match results / XP are deliberately NOT writable from this API.
  */
 const COLORS = new Set(['#328cff','#ff5268','#20b986','#ffc741','#9261ec','#f281af']);
@@ -12,6 +12,22 @@ function validPrefs(body){
   if(!COLORS.has(body.color) || !GAMES.has(body.favorite))return null;
   if(!Number.isInteger(body.avatar) || body.avatar<0 || body.avatar>7)return null;
   return {name,color:body.color,favorite:body.favorite,avatar:body.avatar,edited:!!body.edited};
+}
+// Tiny profile pictures are JPEG/PNG/WebP data URLs (not HTML/SVG).
+// The client reduces them to <= 96 KiB; never trust the client to enforce this.
+function validAvatarImage(value){
+  if(value===null)return true;
+  if(typeof value!=='string'||value.length>150000)return false;
+  const m=/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if(!m)return false;
+  const raw=m[2];
+  if(raw.length%4!==0)return false;
+  const b=Buffer.from(raw,'base64');
+  if(b.length<32||b.length>98304||b.toString('base64')!==raw)return false;
+  const hex=b.subarray(0,12).toString('hex');
+  if(m[1]==='jpeg')return hex.startsWith('ffd8ff');
+  if(m[1]==='png')return hex.startsWith('89504e470d0a1a0a');
+  return b.toString('ascii',0,4)==='RIFF'&&b.toString('ascii',8,12)==='WEBP';
 }
 function error(res,status,code){return res.status(status).json({ok:false,error:code});}
 export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
@@ -49,7 +65,7 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
     if(!snap.exists){
       const defaultName=nameOf(req.profileUser.name||req.profileUser.email?.split('@')[0]||'Spieler')||'Spieler';
       const now=Date.now();
-      try{await ref.create({uid:req.profileUid,name:defaultName,color:'#328cff',favorite:'skyjo',avatar:0,edited:false,created:now,updated:now,revision:1,importedLocal:false});}
+      try{await ref.create({uid:req.profileUid,name:defaultName,color:'#328cff',favorite:'skyjo',avatar:0,avatarImage:null,setupComplete:false,edited:false,created:now,updated:now,revision:1,importedLocal:false});}
       catch(e){if(e.code!==6 && e.code!=='already-exists' && !/already exists/i.test(e.message||''))throw e;}
       snap=await ref.get();
     }
@@ -57,7 +73,10 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
   }
   function output(profile){
     const {uid,name,color,favorite,avatar,edited,created,updated,revision,importedLocal}=profile;
-    return {uid,name,color,favorite,avatar,edited,created,updated,revision,importedLocal};
+    // Accounts created by V1.1 predate the guided onboarding: preserve them as completed.
+    const setupComplete=profile.setupComplete!==false;
+    return {uid,name,color,favorite,avatar,avatarImage:profile.avatarImage||null,
+      setupComplete,edited,created,updated,revision,importedLocal};
   }
   app.get('/api/profile/me',async(req,res)=>{
     const db=getDb(res);if(!db)return;
@@ -68,42 +87,48 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
     const db=getDb(res);if(!db)return;
     const prefs=validPrefs(req.body);
     const revision=req.body?.expectedRevision;
-    if(!prefs||!Number.isInteger(revision)||revision<1)return error(res,400,'INVALID_PROFILE');
+    if(!prefs||!Number.isInteger(revision)||revision<1||
+      (Object.hasOwn(req.body,'avatarImage')&&!validAvatarImage(req.body.avatarImage)))
+      return error(res,400,'INVALID_PROFILE');
     const ref=db.collection(COLLECTION).doc(req.profileUid);
     try{
       const result=await db.runTransaction(async tx=>{
         const snap=await tx.get(ref);
         if(!snap.exists)return {status:404};
         const old=snap.data();
+        if(old.setupComplete===false)return {status:403};
         if(old.revision!==revision)return {status:409,profile:output(old)};
         const next={...prefs,updated:Date.now(),revision:revision+1};
+        if(Object.hasOwn(req.body,'avatarImage'))next.avatarImage=req.body.avatarImage;
         tx.update(ref,next);
         return {status:200,profile:output({...old,...next})};
       });
       if(result.status===409)return res.status(409).json({ok:false,error:'PROFILE_CONFLICT',profile:result.profile});
       if(result.status===404)return error(res,404,'PROFILE_MISSING');
+      if(result.status===403)return error(res,403,'SETUP_REQUIRED');
       return res.json({ok:true,profile:result.profile});
     }catch(e){console.error('[profile/update]',e);return error(res,500,'PROFILE_WRITE_FAILED');}
   });
-  app.post('/api/profile/import-local',throttle,async(req,res)=>{
+  // Atomic one-time onboarding completion: no intermediate profile is published as finished.
+  app.post('/api/profile/complete',throttle,async(req,res)=>{
     const db=getDb(res);if(!db)return;
     const prefs=validPrefs(req.body);
-    if(!prefs)return error(res,400,'INVALID_PROFILE');
+    if(!prefs||!validAvatarImage(req.body?.avatarImage??null))return error(res,400,'INVALID_PROFILE');
+    const img=req.body.avatarImage??null;
     const ref=db.collection(COLLECTION).doc(req.profileUid);
     try{
       const result=await db.runTransaction(async tx=>{
         const snap=await tx.get(ref);
         if(!snap.exists)return {status:404};
         const old=snap.data();
-        // Import is allowed only before the new account is edited, and only once.
-        if(old.importedLocal||old.revision!==1)return {status:409,profile:output(old)};
-        const next={...prefs,importedLocal:true,revision:old.revision+1,updated:Date.now()};
+        if(old.setupComplete!==false)return {status:409,profile:output(old)};
+        const next={...prefs,avatarImage:img,setupComplete:true,updated:Date.now(),revision:old.revision+1};
         tx.update(ref,next);
         return {status:200,profile:output({...old,...next})};
       });
-      if(result.status===409)return res.status(409).json({ok:false,error:'IMPORT_NOT_AVAILABLE',profile:result.profile});
       if(result.status===404)return error(res,404,'PROFILE_MISSING');
+      if(result.status===409)return res.status(409).json({ok:false,error:'ALREADY_COMPLETE',profile:result.profile});
       return res.json({ok:true,profile:result.profile});
-    }catch(e){console.error('[profile/import]',e);return error(res,500,'IMPORT_FAILED');}
+    }catch(e){console.error('[profile/complete]',e);return error(res,500,'PROFILE_SETUP_FAILED');}
   });
 }
