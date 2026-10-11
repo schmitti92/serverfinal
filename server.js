@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
+import { installProfileSeats } from "./profile-seats.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -272,7 +273,7 @@ return createKreuzKunter;
 })();
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v31-business-online-stable-20261005-profiles-v8-stats";
+const SERVER_BUILD = "barikade-v31-business-online-stable-20261005-profiles-v8c-identity";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -4286,6 +4287,15 @@ app.get("/health", (_req, res) =>
   })
 );
 
+
+// V8C: secure, private Firebase account-to-seat claims for SKYJO and Business.
+// These claims must NEVER award stats: the two engines still accept client-owned game states.
+installProfileSeats(app,{
+  verifyProfile:profileStatsV8.identity,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
+  readBusiness:readBusinessPersisted,
+  readSkyjo:readSkyjoPersisted
+});
 
 // --- SKYJO Action cloud rooms ---
 // Fast health check: intentionally NO Firestore access. Old SKYJO clients already
