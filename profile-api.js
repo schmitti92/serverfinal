@@ -1,134 +1,71 @@
-/** Spieleportal Online-Konten V2: authenticated profile preferences and guided onboarding.
- *  Match results / XP are deliberately NOT writable from this API.
+/** Spielerportal V8: server-confirmed, identity-bound match results.
+ * The browser has READ access only. No endpoint accepts wins or scores.
+ * Matches are booked atomically once per server-owned match ID.
  */
-const COLORS = new Set(['#328cff','#ff5268','#20b986','#ffc741','#9261ec','#f281af']);
-const GAMES = new Set(['skyjo','kreuz','barikade','business']);
-const COLLECTION = 'player_profiles_v1';
-function nameOf(value){return String(value??'').replace(/[<>\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,24);}
-function validPrefs(body){
-  if(!body || typeof body!=='object' || Array.isArray(body))return null;
-  const name=nameOf(body.name);
-  if(!name || name.length<2 || typeof body.name!=='string')return null;
-  if(!COLORS.has(body.color) || !GAMES.has(body.favorite))return null;
-  if(!Number.isInteger(body.avatar) || body.avatar<0 || body.avatar>7)return null;
-  return {name,color:body.color,favorite:body.favorite,avatar:body.avatar,edited:!!body.edited};
-}
-// Tiny profile pictures are JPEG/PNG/WebP data URLs (not HTML/SVG).
-// The client reduces them to <= 96 KiB; never trust the client to enforce this.
-function validAvatarImage(value){
-  if(value===null)return true;
-  if(typeof value!=='string'||value.length>150000)return false;
-  const m=/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
-  if(!m)return false;
-  const raw=m[2];
-  if(raw.length%4!==0)return false;
-  const b=Buffer.from(raw,'base64');
-  if(b.length<32||b.length>98304||b.toString('base64')!==raw)return false;
-  const hex=b.subarray(0,12).toString('hex');
-  if(m[1]==='jpeg')return hex.startsWith('ffd8ff');
-  if(m[1]==='png')return hex.startsWith('89504e470d0a1a0a');
-  return b.toString('ascii',0,4)==='RIFF'&&b.toString('ascii',8,12)==='WEBP';
-}
-function error(res,status,code){return res.status(status).json({ok:false,error:code});}
-export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
-  // In-memory rate limit is a useful supplementary throttle, not a distributed abuse control.
-  const limits=new Map();
-  app.use('/api/profile',async(req,res,next)=>{
+export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
+  const MATCHES='verified_matches_v8', STATS='player_stats_v8', PROFILES='player_profiles_v1';
+  const clean=(s,max=48)=>String(s??'').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,max);
+  const validUid=x=>typeof x==='string' && /^[A-Za-z0-9_-]{8,128}$/.test(x);
+  const db=()=>{if(!isReady())return null;try{return getFirestore()||null;}catch{return null;}};
+  async function identity(idToken){
+    if(typeof idToken!=='string'||idToken.length<80||idToken.length>8000||!admin.apps.length||!isReady())return null;
     try{
-      // Fail closed when Render and the Firebase web app point to different projects.
-      if (!isReady()) return error(res,503,'PROFILE_FIREBASE_PROJECT_MISMATCH');
-      const authHeader=String(req.get('authorization')||'');
-      if(!/^Bearer [\w.\-]+$/.test(authHeader))return error(res,401,'LOGIN_REQUIRED');
-      if(!admin.apps.length)return error(res,503,'FIREBASE_NOT_CONFIGURED');
-      const decoded=await admin.auth().verifyIdToken(authHeader.slice(7),true);
-      if(!decoded?.uid)return error(res,401,'TOKEN_INVALID');
-      req.profileUid=decoded.uid;
-      req.profileUser=decoded;
-      next();
-    }catch(e){return error(res,401,'TOKEN_INVALID');}
-  });
-  const getDb=(res)=>{
-    try{const db=getFirestore();if(db)return db;}catch(e){console.error('[profile/db]',e?.message||e);}
-    error(res,503,'DATABASE_UNAVAILABLE');return null;
-  };
-  const throttle=(req,res,next)=>{
-    const uid=req.profileUid,now=Date.now(),old=limits.get(uid)||[];
-    const active=old.filter(ts=>now-ts<60_000);
-    if(active.length>=15){limits.set(uid,active);return error(res,429,'RATE_LIMIT');}
-    active.push(now);limits.set(uid,active);
-    if(limits.size>3000)for(const [key,arr] of limits)if(!arr.some(ts=>now-ts<60_000))limits.delete(key);
-    next();
-  };
-  async function ensureProfile(db,req){
-    const ref=db.collection(COLLECTION).doc(req.profileUid);
-    let snap=await ref.get();
-    if(!snap.exists){
-      const defaultName=nameOf(req.profileUser.name||req.profileUser.email?.split('@')[0]||'Spieler')||'Spieler';
-      const now=Date.now();
-      try{await ref.create({uid:req.profileUid,name:defaultName,color:'#328cff',favorite:'skyjo',avatar:0,avatarImage:null,setupComplete:false,edited:false,created:now,updated:now,revision:1,importedLocal:false});}
-      catch(e){if(e.code!==6 && e.code!=='already-exists' && !/already exists/i.test(e.message||''))throw e;}
-      snap=await ref.get();
-    }
-    return {ref,profile:snap.data()};
+      const decoded=await admin.auth().verifyIdToken(idToken,true);
+      if(!validUid(decoded.uid))return null;
+      const store=db();if(!store)return null;
+      const p=await store.collection(PROFILES).doc(decoded.uid).get();
+      if(!p.exists||p.data()?.setupComplete===false)return null;
+      return {uid:decoded.uid,name:clean(p.data()?.name,24)||'Spieler'};
+    }catch{return null;}
   }
-  function output(profile){
-    const {uid,name,color,favorite,avatar,edited,created,updated,revision,importedLocal}=profile;
-    // Accounts created by V1.1 predate the guided onboarding: preserve them as completed.
-    const setupComplete=profile.setupComplete!==false;
-    return {uid,name,color,favorite,avatar,avatarImage:profile.avatarImage||null,
-      setupComplete,edited,created,updated,revision,importedLocal};
+  // Only trusted, internal server code calls book(); no public POST route exists.
+  async function book({game,matchId,players,winnerUids=[],startedAt,finishedAt,reason='completed',scores={}}){
+    if(!['barikade','kreuz'].includes(game))throw Error('GAME_NOT_VERIFIED');
+    if(typeof matchId!=='string'||!(/^[A-Za-z0-9_-]{12,120}$/.test(matchId)))throw Error('MATCH_ID_INVALID');
+    if(!Array.isArray(players)||players.length<2||players.length>6)throw Error('PLAYER_COUNT_INVALID');
+    const unique=new Set();
+    const roster=players.map(p=>{
+      if(!validUid(p?.uid)||unique.has(p.uid))throw Error('SEATS_NOT_DISTINCT_AUTHENTICATED');
+      unique.add(p.uid);return {uid:p.uid,name:clean(p.name,24)||'Spieler',seat:clean(p.seat,12)};
+    });
+    if(!Array.isArray(winnerUids)||!winnerUids.length||winnerUids.some(u=>!unique.has(u)))throw Error('WINNER_NOT_IN_MATCH');
+    const winners=[...new Set(winnerUids)];
+    const tEnd=Number(finishedAt)||Date.now(),tStart=Number(startedAt)||tEnd;
+    if(tStart>tEnd||tStart<946684800000||tEnd>Date.now()+60000)throw Error('DATE_INVALID');
+    const store=db();if(!store)throw Error('DATABASE_UNAVAILABLE');
+    const ref=store.collection(MATCHES).doc(`${game}_${matchId}`);
+    const statsRefs=roster.map(p=>store.collection(STATS).doc(p.uid));
+    const histories=roster.map(p=>store.collection('player_match_history_v8').doc(p.uid).collection('matches').doc(`${game}_${matchId}`));
+    const item={game,matchId,players:roster,winnerUids:winners,startedAt:tStart,finishedAt:tEnd,durationMs:Math.max(0,tEnd-tStart),reason:clean(reason,32),scores,createdAt:Date.now()};
+    return store.runTransaction(async tx=>{
+      // Read ALL transaction documents before attempting any write.
+      const old=await tx.get(ref);
+      if(old.exists)return {ok:true,duplicate:true};
+      const existing=[];for(const sr of statsRefs)existing.push(await tx.get(sr));
+      tx.create(ref,item);
+      roster.forEach((p,i)=>{
+        const win=winners.includes(p.uid),draw=winners.length>1;
+        const prev=existing[i].exists?existing[i].data():{};
+        const by=prev?.byGame&&typeof prev.byGame==='object'?{...prev.byGame}:{};
+        const prior=by[game]||{};
+        const delta={games:1,wins:win&&!draw?1:0,losses:!win?1:0,draws:draw&&win?1:0};
+        by[game]={games:(Number(prior.games)||0)+1,wins:(Number(prior.wins)||0)+delta.wins,losses:(Number(prior.losses)||0)+delta.losses,draws:(Number(prior.draws)||0)+delta.draws};
+        tx.set(statsRefs[i],{uid:p.uid,games:(Number(prev.games)||0)+1,wins:(Number(prev.wins)||0)+delta.wins,losses:(Number(prev.losses)||0)+delta.losses,draws:(Number(prev.draws)||0)+delta.draws,byGame:by,updatedAt:tEnd});
+        tx.create(histories[i],{game,matchId,finishedAt:tEnd,durationMs:item.durationMs,place:win?(draw?'draw':'win'):'loss',score:Number.isFinite(scores[p.seat])?scores[p.seat]:null,players:roster.map(({uid,name,seat})=>({uid,name,seat})),winnerUids:winners});
+      });
+      return {ok:true,duplicate:false};
+    });
   }
-  app.get('/api/profile/me',async(req,res)=>{
-    const db=getDb(res);if(!db)return;
-    try{const {profile}=await ensureProfile(db,req);return res.json({ok:true,profile:output(profile)});}
-    catch(e){console.error('[profile/get]',e);return error(res,500,'PROFILE_READ_FAILED');}
-  });
-  app.put('/api/profile/me',throttle,async(req,res)=>{
-    const db=getDb(res);if(!db)return;
-    const prefs=validPrefs(req.body);
-    const revision=req.body?.expectedRevision;
-    if(!prefs||!Number.isInteger(revision)||revision<1||
-      (Object.hasOwn(req.body,'avatarImage')&&!validAvatarImage(req.body.avatarImage)))
-      return error(res,400,'INVALID_PROFILE');
-    const ref=db.collection(COLLECTION).doc(req.profileUid);
+  // This route relies on installProfileApi's /api/profile bearer-token middleware.
+  app.get('/api/profile/stats',async(req,res)=>{
+    if(!validUid(req.profileUid))return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
+    const store=db();if(!store)return res.status(503).json({ok:false,error:'DATABASE_UNAVAILABLE'});
     try{
-      const result=await db.runTransaction(async tx=>{
-        const snap=await tx.get(ref);
-        if(!snap.exists)return {status:404};
-        const old=snap.data();
-        if(old.setupComplete===false)return {status:403};
-        if(old.revision!==revision)return {status:409,profile:output(old)};
-        const next={...prefs,updated:Date.now(),revision:revision+1};
-        if(Object.hasOwn(req.body,'avatarImage'))next.avatarImage=req.body.avatarImage;
-        tx.update(ref,next);
-        return {status:200,profile:output({...old,...next})};
-      });
-      if(result.status===409)return res.status(409).json({ok:false,error:'PROFILE_CONFLICT',profile:result.profile});
-      if(result.status===404)return error(res,404,'PROFILE_MISSING');
-      if(result.status===403)return error(res,403,'SETUP_REQUIRED');
-      return res.json({ok:true,profile:result.profile});
-    }catch(e){console.error('[profile/update]',e);return error(res,500,'PROFILE_WRITE_FAILED');}
+      const ref=store.collection(STATS).doc(req.profileUid);
+      const [snap,history]=await Promise.all([ref.get(),store.collection('player_match_history_v8').doc(req.profileUid).collection('matches').orderBy('finishedAt','desc').limit(12).get()]);
+      const d=snap.exists?snap.data():{};
+      return res.json({ok:true,stats:{games:Number(d.games)||0,wins:Number(d.wins)||0,losses:Number(d.losses)||0,draws:Number(d.draws)||0,byGame:d.byGame||{}},matches:history.docs.map(x=>x.data()),verifiedGames:['barikade','kreuz'],pendingGames:['skyjo','business']});
+    }catch(e){console.error('[profile/stats]',e?.message||e);return res.status(500).json({ok:false,error:'STATS_READ_FAILED'});}
   });
-  // Atomic one-time onboarding completion: no intermediate profile is published as finished.
-  app.post('/api/profile/complete',throttle,async(req,res)=>{
-    const db=getDb(res);if(!db)return;
-    const prefs=validPrefs(req.body);
-    if(!prefs||!validAvatarImage(req.body?.avatarImage??null))return error(res,400,'INVALID_PROFILE');
-    const img=req.body.avatarImage??null;
-    const ref=db.collection(COLLECTION).doc(req.profileUid);
-    try{
-      const result=await db.runTransaction(async tx=>{
-        const snap=await tx.get(ref);
-        if(!snap.exists)return {status:404};
-        const old=snap.data();
-        if(old.setupComplete!==false)return {status:409,profile:output(old)};
-        const next={...prefs,avatarImage:img,setupComplete:true,updated:Date.now(),revision:old.revision+1};
-        tx.update(ref,next);
-        return {status:200,profile:output({...old,...next})};
-      });
-      if(result.status===404)return error(res,404,'PROFILE_MISSING');
-      if(result.status===409)return res.status(409).json({ok:false,error:'ALREADY_COMPLETE',profile:result.profile});
-      return res.json({ok:true,profile:result.profile});
-    }catch(e){console.error('[profile/complete]',e);return error(res,500,'PROFILE_SETUP_FAILED');}
-  });
+  return {identity,book};
 }
