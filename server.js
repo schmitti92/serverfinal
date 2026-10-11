@@ -4,6 +4,7 @@ import express from "express";
 import http from "http";
 import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
+import { installProfileApi } from "./profile-api.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -253,7 +254,7 @@ return createKreuzKunter;
 })();
 
 const PORT = process.env.PORT || 10000;
-const SERVER_BUILD = "barikade-v31-business-online-stable-20261005";
+const SERVER_BUILD = "barikade-v31-business-online-stable-20261005-profiles-v1.1";
 
 // ---------- Player Colors (Lobby Selection) ----------
 // WICHTIG (Christoph-Wunsch): KEINE automatische Farbe mehr beim Join.
@@ -4196,13 +4197,47 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.path.startsWith('/api/profile')) {
+    const origin = String(req.get('origin') || '');
+    const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
+      .split(',').map(v => v.trim()).filter(Boolean);
+    if (origin && allowed.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type');
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  }
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
 app.use(express.json({ limit: "500kb" }));
+// Spielerprofil V1.1: sichere Startdiagnose (nur öffentliche Projekt-ID, keine Secrets).
+// Die Spiele bleiben auch bei einer Abweichung der Profil-Konfiguration nutzbar.
+const PROFILE_EXPECTED_PROJECT = 'spiel-barik';
+const profileServiceAccount = parseServiceAccountFromEnv();
+const profileServerProject = String(profileServiceAccount?.project_id || '').trim();
+const profileProjectMatches = profileServerProject === PROFILE_EXPECTED_PROJECT;
+console.log(`[profile/firebase] Render-Projekt: ${profileServerProject || 'nicht ermittelbar'}`);
+console.log(`[profile/firebase] Client-Projekt erwartet: ${PROFILE_EXPECTED_PROJECT}`);
+if (!profileProjectMatches) {
+  console.warn('[profile/firebase] Projekt abweichend/fehlend: Profil-API deaktiviert. Spiele unverändert.');
+}
+// Schon vor dem ersten Login initialisieren; sonst wäre admin.apps anfangs leer.
+initFirebaseIfConfigured();
+installProfileApi(app,{
+  admin,
+  isReady: () => profileProjectMatches,
+  getFirestore: () => {
+    if (!profileProjectMatches) return null;
+    initFirebaseIfConfigured();
+    return firestore;
+  }
+});
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
   res.status(200).json({
