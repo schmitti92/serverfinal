@@ -4,7 +4,7 @@
 const COLORS = new Set(['#328cff','#ff5268','#20b986','#ffc741','#9261ec','#f281af']);
 const GAMES = new Set(['skyjo','kreuz','barikade','business']);
 const COLLECTION = 'player_profiles_v1';
-const BANNERS = new Set(['classic','ocean','sunset','forest','cosmos']);
+const BANNERS = new Set(['classic','ocean','sunset','forest','cosmos','aurora','golden','royal']);
 const BIO_MAX = 180;
 function nameOf(value){return String(value??'').replace(/[<>\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,24);}
 function validPrefs(body){
@@ -12,7 +12,7 @@ function validPrefs(body){
   const name=nameOf(body.name);
   if(!name || name.length<2 || typeof body.name!=='string')return null;
   if(!COLORS.has(body.color) || !GAMES.has(body.favorite))return null;
-  if(!Number.isInteger(body.avatar) || body.avatar<0 || body.avatar>7)return null;
+  if(!Number.isInteger(body.avatar) || body.avatar<0 || body.avatar>15)return null;
   return {name,color:body.color,favorite:body.favorite,avatar:body.avatar,edited:!!body.edited};
 }
 // Tiny profile pictures are JPEG/PNG/WebP data URLs (not HTML/SVG).
