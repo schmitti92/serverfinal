@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { installSharedLobby } from '../shared-lobby.js';
 
 function harness(){
- let finished=false;
+ let finished=false,skyjoBootstraps=0;
  let adapter;
  const docs=new Map(),routes=[],middles=[],listeners=new Map();
  const store={
@@ -29,7 +29,7 @@ function harness(){
  const app={get(path,fn){routes.push({method:'GET',path,fn});},post(path,fn){routes.push({method:'POST',path,fn});},use(path,fn){middles.push({path,fn});}};
  const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'}};
  let id=0,now=1000;
- adapter=installSharedLobby(app,{verifyProfile:async token=>identities[token]||null,getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished});
+ adapter=installSharedLobby(app,{verifyProfile:async token=>identities[token]||null,getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
  async function api(method,path,user='alice',body){
   const route=routes.find(r=>r.method===method&&matches(r.path,path));if(!route)throw Error('NO_ROUTE '+method+' '+path);
   const params=Object.fromEntries(route.path.split('/').filter(x=>x.startsWith(':')).map((x,i)=>[x.slice(1),path.split('/')[route.path.split('/').indexOf(x)]]));
@@ -40,7 +40,7 @@ function harness(){
   return {status:res.statusCode,...res.jsonBody};
  }
  const matches=(pattern,path)=>pattern.split('/').length===path.split('/').length && pattern.split('/').every((p,i)=>p.startsWith(':')||p===path.split('/')[i]);
- return {api,store,docs,identities,advance:ms=>now+=ms,adapter,setFinished(value){finished=value;}};
+ return {api,store,docs,identities,advance:ms=>now+=ms,adapter,setFinished(value){finished=value;},bootstraps:()=>skyjoBootstraps};
 }
 
 test('Room create, verified membership, host powers and ready reset',async()=>{
@@ -48,8 +48,8 @@ test('Room create, verified membership, host powers and ready reset',async()=>{
  assert.equal(created.status,200);const code=created.room.code;assert.equal(code,'ABC23D');assert.equal(created.room.host,true);
  assert.equal((await h.api('GET',`/api/hub/rooms/${code}`,'bob')).status,403);
  const joined=await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');assert.equal(joined.room.players.length,2);
- assert.equal((await h.api('POST',`/api/hub/rooms/${code}/select`,'bob',{game:'skyjo'})).status,403);
- const selected=await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});assert.equal(selected.room.game,'skyjo');
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/select`,'bob',{game:'business'})).status,403);
+ const selected=await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'business'});assert.equal(selected.room.game,'business');
  await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
  const ready=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
  assert.equal(ready.room.allReady,true);assert.equal(ready.room.canLaunch,false);
@@ -327,4 +327,51 @@ test('KreuzKunter starts automatically under the same hub and cannot be joined b
  assert.notEqual(again.room.match.id,started.room.match.id);
  assert.notEqual(again.room.match.gameCode,started.room.match.gameCode);
  assert.equal(again.room.code,code);
+});
+
+test('SKYJO creates one hub match with settings, seat authentication, and no second room code',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/skyjo-settings`,'bob',{settings:{target:150}})).status,403);
+ const settings={target:150,beginner:false,jokerCount:12,jokerEnabled:true,streetModeEnabled:true};
+ const updated=await h.api('POST',`/api/hub/rooms/${code}/skyjo-settings`,'alice',{settings});
+ assert.equal(updated.room.settings.target,150);
+ const pending=await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ assert.equal(pending.room.phase,'preparing');
+ const {room:active}=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ assert.equal(active.phase,'playing');assert.equal(active.canLaunch,true);
+ assert.match(active.match.gameCode,/^S[A-HJ-NP-Z2-9]{9}$/);
+ assert.equal(active.match.gameCode.slice(1,7),code);
+ const alice=await h.adapter.skyjoSeat(active.match.gameCode,h.identities.alice);
+ assert.equal(alice.host,true);assert.equal(alice.hostUid,h.identities.alice.uid);
+ assert.deepEqual(alice.settings,settings);assert.equal(alice.members.length,2);
+ assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,h.identities.cara)).error,'NOT_A_PARTICIPANT');
+ assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,null)).error,'LOGIN_REQUIRED');
+ const boot=await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'bob',{matchId:active.match.id});
+ assert.equal(boot.status,200);assert.equal(boot.seatId,'hub_'+h.identities.bob.uid);
+ assert.equal(boot.roomState.lobby.hostId,'hub_'+h.identities.alice.uid);
+ assert.equal(h.bootstraps(),1);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'cara',{matchId:active.match.id})).status,403);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'bob',{matchId:'old'})).status,409);
+ h.setFinished(true);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/finish`,'alice')).room.phase,'lobby');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const again=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ assert.notEqual(again.room.match.gameCode,active.match.gameCode);
+ assert.equal(again.room.code,code);
+});
+
+test('SKYJO spectator cannot open or bootstrap a hub match',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'cara');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});
+ const seat=(await h.api('GET',`/api/hub/rooms/${code}`)).room.players[2].seat;
+ await h.api('POST',`/api/hub/rooms/${code}/seats`,'alice',{seat,participating:false});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const start=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ assert.equal((await h.adapter.skyjoSeat(start.room.match.gameCode,h.identities.cara)).error,'NOT_A_PARTICIPANT');
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'cara',{matchId:start.room.match.id})).status,403);
 });
