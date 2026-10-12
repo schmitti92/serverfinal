@@ -4276,9 +4276,18 @@ const profileStatsV8=installProfileStats(app,{
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 // Independent central lobby. The legacy game protocols remain untouched.
-installSharedLobby(app,{
+const sharedLobby=installSharedLobby(app,{
   verifyProfile:profileStatsV8.identity,
-  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
+  isMatchFinished:async match=>{
+    if(match.game!=='barikade')return false;
+    let legacyRoom=rooms.get(match.gameCode);
+    if(!legacyRoom){
+      legacyRoom=makeRoom(match.gameCode);
+      if(await restoreRoomState(legacyRoom))rooms.set(match.gameCode,legacyRoom);
+    }
+    return legacyRoom?.state?.finished===true;
+  }
 });
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
@@ -4559,6 +4568,12 @@ app.get("/stats", async (_req,res)=>{
   catch(e){ return res.status(500).json({ok:false,error:"STATS_ERR",message:e?.message||String(e)}); }
 });
 
+// A hub game-room cannot be claimed, reset or reconfigured through the legacy HTTP lobby.
+app.use('/room/:code',(req,res,next)=>{
+  if(/^B[A-HJ-NP-Z2-9]{9}$/.test(String(req.params.code||'').toUpperCase()) && req.method!=='GET')
+    return res.status(403).json({ok:false,error:'HUB_MATCH_CONTROLLED_BY_SERVER'});
+  next();
+});
 // --- Room presence (Lobby) ---
 // Returns current players list for a room (no join, read-only).
 app.get("/room/:code", (req, res) => {
@@ -5698,14 +5713,29 @@ wss.on("connection", (ws, req) => {
     if (msg.type === "join") {
       const roomCode = String(msg.room || "").trim().toUpperCase();
       let name = String(msg.name || "Spieler").slice(0, 32);
-      const asHost = !!msg.asHost;
-      const sessionToken = String(msg.sessionToken || "").slice(0, 60);
-      const requestedColor = String(msg.requestedColor || "").toLowerCase().trim();
+      let asHost = !!msg.asHost;
+      let sessionToken = String(msg.sessionToken || "").slice(0, 60);
+      let requestedColor = String(msg.requestedColor || "").toLowerCase().trim();
       const requestedDiceStyle = normalizeDiceStyle(msg.requestedDiceStyle || "classic");
       const verifiedProfile=await profileStatsV8.identity(msg.profileIdToken);
       if(verifiedProfile)name=verifiedProfile.name;
 
       if (!roomCode) { send(ws, { type: "error", code: "NO_ROOM", message: "Kein Raumcode" }); return; }
+
+      let hubSeat;
+      try{ hubSeat=await sharedLobby.barikadeSeat(roomCode,verifiedProfile); }
+      catch(e){send(ws,{type:'error',code:'HUB_CHECK_FAILED',message:'Gemeinsamer Raum derzeit nicht erreichbar'});return;}
+      if(hubSeat?.error){
+        send(ws,{type:'error',code:hubSeat.error,message:'Kein Zugriff auf diese Partie'});
+        try{ws.close(4003,'HUB_NOT_AUTHORIZED');}catch(_e){}
+        return;
+      }
+      if(hubSeat&&!hubSeat.legacy){
+        // A browser cannot claim host rights or another player color in a hub match.
+        asHost=hubSeat.host;
+        requestedColor=hubSeat.color;
+        sessionToken='H-'+String(hubSeat.uid).slice(0,35)+'-'+roomCode;
+      }
 
       // leave old room; a running match keeps the colored seat reserved for reconnect
       if (c.room) {
@@ -5730,6 +5760,8 @@ wss.on("connection", (ws, req) => {
           console.log(`[restore] room=${roomCode} restored state (firebase/disk)`);
         }
       }
+
+      if(hubSeat&&!hubSeat.legacy)room.hubExpectedPlayers=hubSeat.expectedPlayers;
 
       // reconnect via sessionToken
       let existing = null;
@@ -5989,6 +6021,9 @@ try{
     // Additive feature: player can request a preferred color BEFORE the game starts.
     // Does NOT remove/replace any existing logic (reconnect, pause/resume, save/restore stay unchanged).
     if (msg.type === "request_color") {
+      if(/^B[A-HJ-NP-Z2-9]{9}$/.test(room.code)){
+        send(ws,{type:'error',code:'HUB_COLOR_LOCKED',message:'Spielerfarben werden im gemeinsamen Raum vergeben'});return;
+      }
       // only in lobby (no running state yet)
       if (room.state) {
         send(ws, { type: "error", code: "GAME_STARTED", message: "Farbe nur vor Spielstart wählbar" });
@@ -6092,6 +6127,11 @@ broadcast(room, roomUpdatePayload(room));
 // ---------- START / RESET ----------
 
     if (msg.type === "start_request") {
+      if(room.hubExpectedPlayers){
+        const count=Array.from(room.players.values()).filter(p=>isConnectedPlayer(p)&&ALLOWED_COLORS.includes(p.color)).length;
+        if(count!==room.hubExpectedPlayers){send(ws,{type:'error',code:'WAITING_FOR_HUB_PLAYERS',message:'Es fehlen noch Mitspieler aus der gemeinsamen Lobby'});return;}
+        if(msg.mode==='action'||msg.bossMode){send(ws,{type:'error',code:'HUB_CLASSIC_ONLY',message:'Action- und Boss-Einstellungen folgen in der gemeinsamen Lobby'});return;}
+      }
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
       if (room.state) { send(ws, { type: "error", code: "GAME_EXISTS", message: "Es existiert bereits eine Partie. Nutze Revanche oder Reset." }); return; }
@@ -6142,6 +6182,10 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "start") {
+      if(room.hubExpectedPlayers){
+        const count=Array.from(room.players.values()).filter(p=>isConnectedPlayer(p)&&ALLOWED_COLORS.includes(p.color)).length;
+        if(count!==room.hubExpectedPlayers){send(ws,{type:'error',code:'WAITING_FOR_HUB_PLAYERS',message:'Es fehlen noch Mitspieler aus der gemeinsamen Lobby'});return;}
+      }
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
       if (room.state) { room._pendingStart = null; send(ws, { type: "error", code: "GAME_EXISTS", message: "Es existiert bereits eine Partie. Nutze Revanche oder Reset." }); return; }
@@ -6209,6 +6253,7 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "rematch") {
+      if(room.hubExpectedPlayers){send(ws,{type:'error',code:'HUB_NEW_MATCH_REQUIRED',message:'Neue Partie bitte in der gemeinsamen Lobby starten'});return;}
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann eine Revanche starten" }); return; }
       if (!room.state || !room.state.finished) { send(ws, { type: "error", code: "NOT_FINISHED", message: "Revanche ist erst nach Spielende möglich" }); return; }
@@ -6266,6 +6311,7 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "reset") {
+      if(room.hubExpectedPlayers){send(ws,{type:'error',code:'HUB_NEW_MATCH_REQUIRED',message:'Partie bitte in der gemeinsamen Lobby abschließen'});return;}
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann resetten" }); return; }
 
