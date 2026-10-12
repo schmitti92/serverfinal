@@ -52,8 +52,12 @@ test('Room create, verified membership, host powers and ready reset',async()=>{
  const selected=await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'business'});assert.equal(selected.room.game,'business');
  await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
  const ready=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
- assert.equal(ready.room.allReady,true);assert.equal(ready.room.canLaunch,false);
+ assert.equal(ready.room.canLaunch,true);
+ assert.equal(ready.room.phase,'playing');
+ assert.equal(ready.room.match.game,'business');
  assert.equal((await h.api('POST',`/api/hub/rooms/${code}/start`,'alice')).status,409);
+ h.setFinished(true);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/finish`,'alice')).status,200);
  const reselection=await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'});
  assert.deepEqual(reselection.room.players.map(p=>p.ready),[false,false]);
  const leave=await h.api('POST',`/api/hub/rooms/${code}/leave`,'alice');assert.equal(leave.left,true);
