@@ -234,5 +234,41 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!member||!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_PARTICIPANT'};
     return {hubCode,color:member.color,host:room.hostUid===profile.uid,uid:profile.uid,gameCode,expectedPlayers:room.match.members.length};
   }
-  return {collection:COLLECTION,games:HUB_GAMES,barikadeSeat};
+  // A Firestore snapshot sends each hub update to every authorized player.
+  // This does not maintain a second authoritative in-memory room state.
+  function attachSocket(ws){
+    let unwatch=null,closed=false,authenticated=false;
+    const send=payload=>{if(ws.readyState===1)try{ws.send(JSON.stringify(payload));}catch(_e){}};
+    const teardown=()=>{closed=true;try{unwatch?.();}catch(_e){}unwatch=null;clearTimeout(authTimeout);clearTimeout(renewTimeout);};
+    const authTimeout=setTimeout(()=>{if(!authenticated)try{ws.close(4003,'HUB_AUTH_TIMEOUT');}catch(_e){}},12000);
+    const renewTimeout=setTimeout(()=>{try{ws.close(4001,'HUB_TOKEN_RENEW');}catch(_e){}},50*60*1000);
+    ws.on('message',async bytes=>{
+      if(closed)return;
+      if(String(bytes).length>9000){try{ws.close(1009,'HUB_MESSAGE_TOO_LARGE');}catch(_e){}return;}
+      let msg;try{msg=JSON.parse(String(bytes));}catch(_e){return;}
+      if(msg?.type==='ping'){send({type:'pong'});return;}
+      if(msg?.type!=='subscribe'||authenticated)return;
+      authenticated=true;
+      const code=validCode(msg.code),token=String(msg.profileIdToken||'');
+      if(!code||token.length>8500){send({type:'error',error:'INVALID_SUBSCRIPTION'});try{ws.close(4003);}catch(_e){}return;}
+      try{
+        const identity=await verifyProfile(token);
+        if(!identity?.uid)throw error(401,'LOGIN_REQUIRED');
+        const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+        const ref=documentFor(store,code),snap=await ref.get();
+        validateRead(snap.exists?snap.data():null,identity);
+        if(closed)return;
+        if(typeof ref.onSnapshot!=='function')throw error(503,'REALTIME_UNAVAILABLE');
+        unwatch=ref.onSnapshot(next=>{
+          try{
+            const room=next.exists?next.data():null;
+            validateRead(room,identity);
+            send({type:'room',room:expose(room,identity)});
+          }catch(_e){send({type:'error',error:'NOT_A_MEMBER'});try{ws.close(4003);}catch(_e){}}
+        },()=>{send({type:'error',error:'STREAM_UNAVAILABLE'});try{ws.close(1011);}catch(_e){}});
+      }catch(e){send({type:'error',error:e?.message||'STREAM_UNAVAILABLE'});try{ws.close(4003);}catch(_e){}}
+    });
+    ws.on('close',teardown);ws.on('error',teardown);
+  }
+  return {collection:COLLECTION,games:HUB_GAMES,barikadeSeat,attachSocket};
 }
