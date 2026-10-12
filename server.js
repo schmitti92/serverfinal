@@ -8,6 +8,7 @@ import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
+import { installHubBusiness } from "./business-hub.js";
 import { validHubSkyjoState } from "./skyjo-hub-policy.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
@@ -4332,6 +4333,7 @@ const profileStatsV8=installProfileStats(app,{
   admin,isReady:()=>profileProjectMatches,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
+let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
   verifyProfile:profileStatsV8.identity,
@@ -4352,6 +4354,7 @@ const sharedLobby=installSharedLobby(app,{
   isMatchFinished:async match=>{
     if(match.game==='kreuz')return kkOnline.isHubMatchFinished(match);
     if(match.game==='skyjo'){const doc=await readSkyjoPersisted(match.gameCode);return doc?.state?.game?.phase==='gameOver';}
+    if(match.game==='business')return hubBusinessApi?.isFinished(match)||false;
     if(match.game!=='barikade')return false;
     let legacyRoom=rooms.get(match.gameCode);
     if(!legacyRoom){
@@ -4360,6 +4363,11 @@ const sharedLobby=installSharedLobby(app,{
     }
     return legacyRoom?.state?.finished===true;
   }
+});
+hubBusinessApi=installHubBusiness(app,{
+  verifyProfile:profileStatsV8.identity,
+  getSeat:sharedLobby.businessSeat,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
