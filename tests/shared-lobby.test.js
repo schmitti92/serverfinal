@@ -5,15 +5,23 @@ import { installSharedLobby } from '../shared-lobby.js';
 function harness(){
  let finished=false;
  let adapter;
- const docs=new Map(),routes=[],middles=[];
+ const docs=new Map(),routes=[],middles=[],listeners=new Map();
  const store={
-  collection:name=>({doc:code=>({path:name+'/'+code,get:async()=>snapshot(docs.get(name+'/'+code))})}),
+  collection:name=>({doc:code=>({path:name+'/'+code,get:async()=>snapshot(docs.get(name+'/'+code)),
+    onSnapshot(cb,_onError){
+     const key=name+'/'+code;const set=listeners.get(key)||new Set();set.add(cb);listeners.set(key,set);
+     queueMicrotask(()=>{if(set.has(cb))cb(snapshot(docs.get(key)));});
+     return ()=>{set.delete(cb);};
+    }
+   })}),
   pending:Promise.resolve(),
   runTransaction(fn){
    const task=this.pending.catch(()=>{}).then(async()=>{
     const ops=[];
     const tx={get:async ref=>snapshot(docs.get(ref.path)),set:(ref,value)=>ops.push(()=>docs.set(ref.path,structuredClone(value))),delete:ref=>ops.push(()=>docs.delete(ref.path))};
-    const result=await fn(tx);ops.forEach(o=>o());return result;
+    const result=await fn(tx);ops.forEach(o=>o());
+   for(const [key,set] of listeners)for(const cb of set)queueMicrotask(()=>cb(snapshot(docs.get(key))));
+   return result;
    });this.pending=task.catch(()=>{});return task;
   },
  };
@@ -169,4 +177,37 @@ test('Up to six members can stay in hub while only four play Barikade',async()=>
  const host=selection.room.players.find(p=>p.host);
  assert.equal((await h.api('POST',`/api/hub/rooms/${code}/seats`,'alice',{seat:host.seat,participating:false})).status,409);
  assert.equal((await h.api('POST',`/api/hub/rooms/${code}/ready`,'eric',{ready:true})).status,403);
+});
+
+
+test('Realtime websocket sends only authorized Firestore room updates',async()=>{
+ const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ const sockets=[];
+ function fakeSocket(){
+  const handlers=new Map(),received=[];
+  const socket={readyState:1,received,on(type,cb){handlers.set(type,cb);},
+   send(data){received.push(JSON.parse(data));},close(){this.readyState=3;handlers.get('close')?.();},
+   sendMessage(msg){return handlers.get('message')(Buffer.from(JSON.stringify(msg)));}};
+  h.adapter.attachSocket(socket);sockets.push(socket);return socket;
+ }
+ const alice=fakeSocket(),bob=fakeSocket(),outsider=fakeSocket();
+ await Promise.all([
+  alice.sendMessage({type:'subscribe',code,profileIdToken:'alice'}),
+  bob.sendMessage({type:'subscribe',code,profileIdToken:'bob'}),
+  outsider.sendMessage({type:'subscribe',code,profileIdToken:'cara'})
+ ]);
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(alice.received.find(x=>x.type==='room').room.host,true);
+ assert.equal(bob.received.find(x=>x.type==='room').room.host,false);
+ assert.equal(outsider.received.some(x=>x.type==='room'),false);
+ assert.equal(outsider.readyState,3);
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(alice.received.filter(x=>x.type==='room').at(-1).room.phase,'playing');
+ assert.equal(bob.received.filter(x=>x.type==='room').at(-1).room.match.myColor,'blue');
+ assert.equal(alice.received.filter(x=>x.type==='room').at(-1).room.match.myColor,'red');
+ alice.close();bob.close();
 });
