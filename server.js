@@ -5693,6 +5693,10 @@ function requireTurn(room, clientId, ws) {
 
 /** ---------- WebSocket ---------- **/
 wss.on("connection", (ws, req) => {
+  if(new URL(req.url || '/', 'http://localhost').pathname === '/hub'){
+    sharedLobby.attachSocket(ws);
+    return;
+  }
   if(new URL(req.url || '/', 'http://localhost').pathname === '/kreuzkunter') {
     kkOnline.handle(ws, req);
     return;
