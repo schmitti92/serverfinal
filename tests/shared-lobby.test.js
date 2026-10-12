@@ -295,3 +295,36 @@ test('Concurrent identical color requests and ready votes cannot double-book/sta
  assert.equal(res.filter(x=>x.room.phase==='playing').length,1);
  assert.equal((await h.api('GET',`/api/hub/rooms/${code}`)).room.phase,'playing');
 });
+
+test('KreuzKunter starts automatically under the same hub and cannot be joined by outsiders',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ const selected=await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'kreuz'});
+ assert.equal(selected.room.canLaunch,true);
+ assert.equal(selected.room.maxPlayers,6);
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const started=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ assert.equal(started.room.phase,'playing');
+ assert.match(started.room.match.gameCode,/^K[A-HJ-NP-Z2-9]{9}$/);
+ assert.equal(started.room.match.gameCode.slice(1,7),code);
+ assert.equal(started.room.match.playerCount,2);
+ const alice=await h.adapter.kreuzSeat(started.room.match.gameCode,h.identities.alice);
+ assert.equal(alice.hubCode,code);
+ assert.equal(alice.hostUid,h.identities.alice.uid);
+ assert.equal(alice.matchId,started.room.match.id);
+ assert.equal(alice.members.length,2);
+ assert.equal((await h.adapter.kreuzSeat(started.room.match.gameCode,h.identities.cara)).error,'NOT_A_MEMBER');
+ assert.equal((await h.adapter.kreuzSeat(started.room.match.gameCode,null)).error,'LOGIN_REQUIRED');
+ assert.equal((await h.adapter.kreuzSeat('K'+code+'ZZZ',h.identities.alice)).error,'MATCH_NOT_FOUND');
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/start`,'alice')).status,409);
+ h.setFinished(true);
+ const done=await h.api('POST',`/api/hub/rooms/${code}/finish`,'alice');
+ assert.equal(done.room.phase,'lobby');
+ assert.equal((await h.adapter.kreuzSeat(started.room.match.gameCode,h.identities.alice)).error,'MATCH_NOT_FOUND');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'kreuz'});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const again=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ assert.notEqual(again.room.match.id,started.room.match.id);
+ assert.notEqual(again.room.match.gameCode,started.room.match.gameCode);
+ assert.equal(again.room.code,code);
+});
