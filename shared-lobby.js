@@ -5,7 +5,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
 export const HUB_GAMES = Object.freeze({
-  barikade: { title:'Barikade', min:2, max:6 },
+  barikade: { title:'Barikade', min:2, max:4 },
   skyjo: { title:'SKYJO Action', min:2, max:3 },
   kreuz: { title:'KreuzKunter', min:2, max:6 },
   business: { title:'Das große Business', min:2, max:5 },
@@ -13,11 +13,13 @@ export const HUB_GAMES = Object.freeze({
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
 const COLLECTION='spielesammlung_hub_v1';
+const HUB_BARIKADE_CODE=/^B[A-HJ-NP-Z2-9]{9}$/;
+const BARIKADE_COLORS=['red','blue','green','yellow'];
 const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>Array.from({length:6},()=>CHARSET[randomInt(CHARSET.length)]).join('');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,gameAdapters={}}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
@@ -32,6 +34,23 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     req.hubIdentity={uid:profile.uid,name:cleanName(profile.name)};
     next();
   }
+  function activeSeats(room){return room.players.filter(p=>p.participating);}
+  function allReady(room){const game=HUB_GAMES[room.game];const seats=activeSeats(room);return !!game&&seats.length>=game.min&&seats.length<=game.max&&seats.every(p=>p.ready);}
+  function startBarikade(room){
+    if(room.game!=='barikade')throw error(409,'GAME_NOT_CONNECTED');
+    if(!room.players.some(p=>p.uid===room.hostUid&&p.participating))throw error(409,'HOST_MUST_PLAY');
+    const seats=activeSeats(room);
+    const next=(Number(room.matchSerial)||0)+1;
+    if(next>CHARSET.length**3)throw error(409,'MATCH_LIMIT_REACHED');
+    room.matchSerial=next;
+    const suffix=CHARSET[Math.floor((next-1)/(CHARSET.length**2))%CHARSET.length]
+      +CHARSET[Math.floor((next-1)/CHARSET.length)%CHARSET.length]
+      +CHARSET[(next-1)%CHARSET.length];
+    // The internal Barikade engine has a 10-character limit on room codes.
+    const gameCode='B'+room.code+suffix;
+    room.match={id:randomUUID(),game:'barikade',gameCode,startedAt:clock(),members:seats.map((p,i)=>({uid:p.uid,seat:p.seat,color:BARIKADE_COLORS[i]}))};
+    room.phase='playing';
+  }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
     const seats=room.players.filter(p=>p.participating);
@@ -39,10 +58,16 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       code:room.code,revision:room.revision,phase:room.phase,game:room.game,
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
-      canLaunch:!!(room.game&&gameAdapters[room.game]?.start),
+      canLaunch:room.game==='barikade',
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
-      allReady:!!game&&seats.length>=game.min&&seats.length<=game.max&&seats.every(p=>p.ready),
+      allReady:allReady(room),
+      match:room.phase==='playing'&&room.match?{
+        id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,
+        playerCount:room.match.members.length,
+        myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
+        participating:room.match.members.some(m=>m.uid===identity.uid)
+      }:null,
       createdAt:room.createdAt,updatedAt:room.updatedAt,
     };
   }
@@ -71,7 +96,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
-  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:Object.keys(gameAdapters).filter(g=>!!gameAdapters[g]?.start)}));
+  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade']}));
   app.use('/api/hub/rooms',authentication);
   app.post('/api/hub/rooms',handler(async req=>{
     const identity=req.hubIdentity,store=db();
@@ -94,8 +119,11 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const room=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref),r=snap.exists?snap.data():null;
       if(!r||r.expiresAt<=clock())throw error(404,'ROOM_NOT_FOUND');
-      if(r.phase==='playing')throw error(409,'ROOM_ALREADY_PLAYING');
       let p=r.players.find(x=>x.uid===identity.uid);
+      if(r.phase==='playing'){
+        if(!p)throw error(409,'ROOM_ALREADY_PLAYING');
+        return r;
+      }
       if(!p){if(r.players.length>=6)throw error(409,'ROOM_FULL');
         // A full game may still have spectators in the central room.
         const seatAvailable=!!r.game&&r.players.filter(x=>x.participating).length<HUB_GAMES[r.game].max;
@@ -135,6 +163,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.phase!=='preparing'||!room.game)throw error(409,'NO_GAME_SELECTED');
       const player=room.players.find(p=>p.seat===seat);
       if(!player)throw error(404,'PLAYER_NOT_FOUND');
+      if(player.uid===room.hostUid&&!participating)throw error(409,'HOST_MUST_PLAY');
       if(player.participating===participating)return {unchanged:true};
       if(participating&&room.players.filter(p=>p.participating).length>=HUB_GAMES[room.game].max)
         throw error(409,'GAME_SEATS_FULL');
@@ -151,6 +180,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
       player.ready=ready;
+      // Automatic and atomic: the very last ready confirmation starts exactly one match.
+      if(allReady(room)&&room.game==='barikade')startBarikade(room);
     })};
   }));
   // No fake game launch: the game adapters must be implemented and tested first.
@@ -163,9 +194,19 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const rule=HUB_GAMES[room.game];
       const active=room.players.filter(p=>p.participating);
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
-      // The adapter must attach an actual shared-room game session, not merely redirect.
-      if(!gameAdapters[room.game]?.start)throw error(409,'GAME_NOT_CONNECTED');
-      throw error(501,'ADAPTER_TRANSACTION_NOT_IMPLEMENTED');
+      // Fallback for the host; normal starts occur automatically after the last ready.
+      startBarikade(room);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/finish',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,async room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='playing'||!room.match)throw error(409,'NO_ACTIVE_MATCH');
+      if(!(await isMatchFinished(room.match)))throw error(409,'MATCH_NOT_FINISHED');
+      room.phase='lobby';room.game=null;room.match=null;
+      room.players.forEach(p=>{p.ready=false;p.participating=false;});
     })};
   }));
   app.post('/api/hub/rooms/:code/leave',handler(async req=>{
@@ -180,5 +221,18 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     });
     return result?.left?result:{left:true,roomDeleted:false};
   }));
-  return {collection:COLLECTION,games:HUB_GAMES};
+  // Called only for codes reserved for HUB matches. Always re-verify Firebase identity.
+  async function barikadeSeat(gameCode,profile){
+    if(!HUB_BARIKADE_CODE.test(String(gameCode||'')))return {legacy:true};
+    if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
+    const hubCode=gameCode.slice(1,7);
+    const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
+    const snap=await documentFor(store,hubCode).get();
+    const room=snap.exists?snap.data():null;
+    if(!room||room.phase!=='playing'||room.match?.gameCode!==gameCode||room.match?.game!=='barikade')return {error:'MATCH_NOT_FOUND'};
+    const member=room.match.members.find(m=>m.uid===profile.uid);
+    if(!member||!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_PARTICIPANT'};
+    return {hubCode,color:member.color,host:room.hostUid===profile.uid,uid:profile.uid,gameCode,expectedPlayers:room.match.members.length};
+  }
+  return {collection:COLLECTION,games:HUB_GAMES,barikadeSeat};
 }
