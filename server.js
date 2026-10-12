@@ -4651,8 +4651,6 @@ app.post("/room/:code/color-mode", (req, res) => {
     if(!code) return res.status(400).json({ ok:false, error:"NO_CODE" });
     const room = rooms.get(code);
     if(!room) return res.status(404).json({ ok:false, error:"NO_ROOM" });
-    const hostToken=String(req.body?.sessionToken||"").trim().slice(0,80);
-    if(!hostToken || !room.hostToken || hostToken!==room.hostToken) return res.status(403).json({ok:false,error:"NOT_HOST"});
     if(room.state || Array.from(room.players?.values?.() || []).some(p => isConnectedPlayer(p))){
       return res.status(409).json({ ok:false, error:"PLAYERS_ALREADY_IN_GAME" });
     }
@@ -4704,8 +4702,6 @@ app.post("/room/:code/spin-colors", (req, res) => {
     if(!code) return res.status(400).json({ ok:false, error:"NO_CODE" });
     const room = rooms.get(code);
     if(!room) return res.status(404).json({ ok:false, error:"NO_ROOM" });
-    const hostToken=String(req.body?.sessionToken||"").trim().slice(0,80);
-    if(!hostToken || !room.hostToken || hostToken!==room.hostToken) return res.status(403).json({ok:false,error:"NOT_HOST"});
     if(room.state || Array.from(room.players?.values?.() || []).some(p => isConnectedPlayer(p))){
       return res.status(409).json({ ok:false, error:"PLAYERS_ALREADY_IN_GAME" });
     }
@@ -4719,7 +4715,7 @@ app.post("/room/:code/spin-colors", (req, res) => {
 
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, maxPayload: 256*1024 });
+const wss = new WebSocketServer({ server });
 // KreuzKunter: eigener WS-Pfad und eigene Firestore-Sammlung. Die vorhandenen
 // Spiele und ihre Root-WebSocket-Verbindungen bleiben unverändert.
 const kkOnline = createKreuzKunter({ verifyProfile:profileStatsV8.identity,recordStats:profileStatsV8.book,getFirestore: () => {
@@ -5676,7 +5672,6 @@ function requireTurn(room, clientId, ws) {
 
 /** ---------- WebSocket ---------- **/
 wss.on("connection", (ws, req) => {
-  ws.on("error", err => console.warn("[games/ws] socket error:",err?.message||err));
   if(new URL(req.url || '/', 'http://localhost').pathname === '/kreuzkunter') {
     kkOnline.handle(ws, req);
     return;
@@ -5685,16 +5680,9 @@ wss.on("connection", (ws, req) => {
   clients.set(clientId, { ws, room: null, name: null, sessionToken: null });
   send(ws, { type: "hello", clientId });
 
-  let incomingQueue = Promise.resolve();
-  let rateStarted=Date.now(), rateCount=0;
-  ws.on("message", (buf) => {
-    const now=Date.now();
-    if(now-rateStarted>10000){rateStarted=now;rateCount=0;}
-    if(++rateCount>300){send(ws,{type:"error",code:"RATE_LIMIT"});return;}
-    incomingQueue=incomingQueue.catch(()=>{}).then(async()=>{
+  ws.on("message", async (buf) => {
     let msg;
-    try { msg = JSON.parse(String(buf)); } catch (_e) { send(ws,{type:"error",code:"INVALID_JSON"});return; }
-    if(!msg || typeof msg!=="object" || Array.isArray(msg) || typeof msg.type!=="string" || msg.type.length>60){send(ws,{type:"error",code:"INVALID_MESSAGE"});return;}
+    try { msg = JSON.parse(String(buf)); } catch (_e) { return; }
     const c = clients.get(clientId);
     if (!c) return;
 
@@ -7722,8 +7710,7 @@ if (msg.type === "place_barricade") {
 
     // fallback: unknown message
     return;
-    }).catch(err=>{console.error("[games/ws] message failed:",err?.stack||err);try{send(ws,{type:"error",code:"SERVER_ACTION_FAILED"});}catch(_e){}});
-  }); // end websocket message handler
+  }); // ✅ Ende ws.on("message")
 
   ws.on("close", async () => {
     const c = clients.get(clientId);
