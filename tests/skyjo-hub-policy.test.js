@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validHubSkyjoState} from '../skyjo-hub-policy.js';
+const members=[{uid:'alice',name:'Alice'},{uid:'bob',name:'Bob'}];
+const settings={target:100,beginner:false,jokerCount:8,jokerEnabled:true,streetModeEnabled:true};
+const seat={members,hostUid:'alice',settings,host:true};
+const lobby={status:'lobby',hostId:'hub_alice',settings,players:[{id:'hub_alice',name:'Alice'},{id:'hub_bob',name:'Bob'}]};
+const started={kind:'skyjo-room-v2',version:2,lobby:{...lobby,status:'playing'},game:{version:1,phase:'initialReveal',players:[{name:'Alice'},{name:'Bob'}]}};
+test('SKYJO hub starts only by assigned host and only with canonical players',()=>{
+ const previous={kind:'skyjo-room-v2',version:2,lobby,game:null};
+ assert.equal(validHubSkyjoState(structuredClone(started),previous,seat),true);
+ assert.equal(validHubSkyjoState(structuredClone(started),previous,{...seat,host:false}),false);
+ const altered=structuredClone(started);altered.lobby.players[0].id='impersonated';
+ assert.equal(validHubSkyjoState(altered,previous,seat),false);
+ const extra=structuredClone(started);extra.lobby.players.push({id:'outsider',name:'Outsider'});
+ assert.equal(validHubSkyjoState(extra,previous,seat),false);
+ const bad=structuredClone(started);bad.lobby.settings.target=500;
+ assert.equal(validHubSkyjoState(bad,previous,seat),false);
+});
+test('SKYJO hub prevents arbitrary lobby reset, removing players or changing host',()=>{
+ const previous=structuredClone(started);
+ const next=structuredClone(started);next.game.phase='play';
+ assert.equal(validHubSkyjoState(next,previous,{...seat,host:false}),true);
+ const reset=structuredClone(next);reset.game=null;
+ assert.equal(validHubSkyjoState(reset,previous,seat),false);
+ const lobbyReturn=structuredClone(next);lobbyReturn.lobby.status='lobby';
+ assert.equal(validHubSkyjoState(lobbyReturn,previous,seat),false);
+ const steal=structuredClone(next);steal.lobby.hostId='hub_bob';
+ assert.equal(validHubSkyjoState(steal,previous,seat),false);
+});
