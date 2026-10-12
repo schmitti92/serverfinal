@@ -15,6 +15,16 @@ const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
 const COLLECTION='spielesammlung_hub_v1';
 const HUB_BARIKADE_CODE=/^B[A-HJ-NP-Z2-9]{9}$/;
 const BARIKADE_COLORS=['red','blue','green','yellow'];
+const BARIKADE_DEFAULTS=Object.freeze({mode:'classic',bossMode:false,boardTheme:'wood',jokerStartCount:3,eventFieldCount:8,bossEventTrigger:2,colorMode:'manual'});
+function gameSettings(raw){
+ const a=Object.fromEntries(Object.keys(BARIKADE_DEFAULTS).map(k=>[k,raw?.[k]??BARIKADE_DEFAULTS[k]]));
+ if(!['classic','action'].includes(a.mode)||typeof a.bossMode!=='boolean'||!['wood','classic','stone'].includes(a.boardTheme)
+   ||!Number.isInteger(a.jokerStartCount)||a.jokerStartCount<1||a.jokerStartCount>5
+   ||!Number.isInteger(a.eventFieldCount)||a.eventFieldCount<5||a.eventFieldCount>20
+   ||!Number.isInteger(a.bossEventTrigger)||a.bossEventTrigger<0||a.bossEventTrigger>10
+   ||!['manual','wheel'].includes(a.colorMode))return null;
+ return a;
+}
 const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>Array.from({length:6},()=>CHARSET[randomInt(CHARSET.length)]).join('');
@@ -40,6 +50,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(room.game!=='barikade')throw error(409,'GAME_NOT_CONNECTED');
     if(!room.players.some(p=>p.uid===room.hostUid&&p.participating))throw error(409,'HOST_MUST_PLAY');
     const seats=activeSeats(room);
+    const settings=gameSettings(room.settings?.barikade);
+    if(!settings)throw error(409,'INVALID_SETTINGS');
     const next=(Number(room.matchSerial)||0)+1;
     if(next>CHARSET.length**3)throw error(409,'MATCH_LIMIT_REACHED');
     room.matchSerial=next;
@@ -48,7 +60,19 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       +CHARSET[(next-1)%CHARSET.length];
     // The internal Barikade engine has a 10-character limit on room codes.
     const gameCode='B'+room.code+suffix;
-    room.match={id:randomUUID(),game:'barikade',gameCode,startedAt:clock(),members:seats.map((p,i)=>({uid:p.uid,seat:p.seat,color:BARIKADE_COLORS[i]}))};
+    const chosen=new Map(),remaining=[...BARIKADE_COLORS];
+    if(settings.colorMode==='wheel'){
+      for(let i=remaining.length-1;i>0;i--){const j=randomInt(i+1);[remaining[i],remaining[j]]=[remaining[j],remaining[i]];}
+    }else{
+      for(const p of seats){
+        const wanted=String(p.colorPref||'');
+        if(BARIKADE_COLORS.includes(wanted)&&remaining.includes(wanted)){
+          chosen.set(p.uid,wanted);remaining.splice(remaining.indexOf(wanted),1);
+        }
+      }
+    }
+    room.match={id:randomUUID(),game:'barikade',gameCode,startedAt:clock(),settings,
+      members:seats.map(p=>({uid:p.uid,seat:p.seat,color:chosen.get(p.uid)||remaining.shift()}))};
     room.phase='playing';
   }
   function expose(room,identity){
@@ -59,11 +83,12 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:room.game==='barikade',
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):null,
       host:room.hostUid===identity.uid,
-      players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
+      players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
-        id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,
+        id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -149,7 +174,37 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase==='playing')throw error(409,'MATCH_IN_PROGRESS');
       room.game=game;room.phase='preparing';
+      if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
+    })};
+  }));
+  // Host changes are stored and validated server-side. Any change invalidates readiness.
+  app.post('/api/hub/rooms/:code/settings',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const settings=gameSettings(req.body?.settings);
+    if(!settings)throw error(400,'INVALID_SETTINGS');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='preparing'||room.game!=='barikade')throw error(409,'NO_BARIKADE_SETUP');
+      room.settings={...room.settings,barikade:settings};
+      room.players.forEach(p=>p.ready=false);
+    })};
+  }));
+  // Players choose only their own color, and no two players can reserve the same color.
+  app.post('/api/hub/rooms/:code/color',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const color=req.body?.color;
+    if(color!==null&&!BARIKADE_COLORS.includes(color))throw error(400,'INVALID_COLOR');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='preparing'||room.game!=='barikade')throw error(409,'NO_BARIKADE_SETUP');
+      if(room.settings?.barikade?.colorMode!=='manual')throw error(409,'COLORS_BY_WHEEL');
+      const me=room.players.find(p=>p.uid===identity.uid);
+      if(!me?.participating)throw error(403,'SPECTATOR_CANNOT_SELECT_COLOR');
+      if(color&&room.players.some(p=>p.uid!==identity.uid&&p.participating&&p.colorPref===color))throw error(409,'COLOR_TAKEN');
+      me.colorPref=color;
+      room.players.forEach(p=>p.ready=false);
     })};
   }));
   // Only the host may change seats. Spectators remain room members.
@@ -168,6 +223,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(participating&&room.players.filter(p=>p.participating).length>=HUB_GAMES[room.game].max)
         throw error(409,'GAME_SEATS_FULL');
       player.participating=participating;
+      if(!participating)player.colorPref=null;
       room.players.forEach(p=>p.ready=false);
     })};
   }));
@@ -232,7 +288,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!room||room.phase!=='playing'||room.match?.gameCode!==gameCode||room.match?.game!=='barikade')return {error:'MATCH_NOT_FOUND'};
     const member=room.match.members.find(m=>m.uid===profile.uid);
     if(!member||!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_PARTICIPANT'};
-    return {hubCode,color:member.color,host:room.hostUid===profile.uid,uid:profile.uid,gameCode,expectedPlayers:room.match.members.length};
+    return {hubCode,color:member.color,host:room.hostUid===profile.uid,uid:profile.uid,gameCode,expectedPlayers:room.match.members.length,settings:room.match.settings};
   }
   // A Firestore snapshot sends each hub update to every authorized player.
   // This does not maintain a second authoritative in-memory room state.
