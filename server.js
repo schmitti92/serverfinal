@@ -8,6 +8,7 @@ import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
+import { validHubSkyjoState } from "./skyjo-hub-policy.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -4335,8 +4336,22 @@ const profileStatsV8=installProfileStats(app,{
 const sharedLobby=installSharedLobby(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
+  bootstrapSkyjo:async seat=>{
+    // Idempotent under a per-code write lock in writeSkyjoPersisted.
+    let found=await readSkyjoPersisted(seat.gameCode);
+    if(!found){
+      const now=Date.now();
+      const doc={kind:'skyjo-room-v2',version:2,lobby:{status:'lobby',hostId:'hub_'+seat.hostUid,
+        createdAt:now,settings:seat.settings,players:seat.members.map(m=>({id:'hub_'+m.uid,name:m.name,joinedAt:now}))},game:null};
+      const saved=await writeSkyjoPersisted(seat.gameCode,doc,0);
+      if(!saved.ok&&!saved.conflict)throw Error(saved.error||'SKYJO_BOOTSTRAP_FAILED');
+      found=await readSkyjoPersisted(seat.gameCode);
+    }
+    return {ok:!!found,state:found?.state,rev:found?.rev};
+  },
   isMatchFinished:async match=>{
     if(match.game==='kreuz')return kkOnline.isHubMatchFinished(match);
+    if(match.game==='skyjo'){const doc=await readSkyjoPersisted(match.gameCode);return doc?.state?.game?.phase==='gameOver';}
     if(match.game!=='barikade')return false;
     let legacyRoom=rooms.get(match.gameCode);
     if(!legacyRoom){
@@ -4384,6 +4399,21 @@ function skyjoHealthPayload(){
 app.get("/skyjo-health", (_req,res)=>res.status(200).json(skyjoHealthPayload()));
 app.get("/skyjo/PINGCHECK", (_req,res)=>res.status(200).json({...skyjoHealthPayload(),found:false,code:"PINGCHECK",rev:0}));
 
+const HUB_SKYJO_ROOM=/^S[A-HJ-NP-Z2-9]{9}$/;
+async function hubSkyjoGuard(req,res,next){
+  if(!HUB_SKYJO_ROOM.test(String(req.params.code||'')))return next();
+  try{
+    const token=/^Bearer (\S+)$/i.exec(String(req.get('authorization')||''))?.[1];
+    if(!token)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
+    const profile=await profileStatsV8.identity(token);
+    const seat=await sharedLobby.skyjoSeat(String(req.params.code),profile);
+    if(seat.error)return res.status(seat.error==='LOGIN_REQUIRED'?401:403).json({ok:false,error:seat.error});
+    req.hubSkyjo=seat;
+    return next();
+  }catch(e){console.warn('[hub/skyjo] authorization failed',e?.message);return res.status(503).json({ok:false,error:'HUB_AUTH_UNAVAILABLE'});}
+}
+app.use('/skyjo/:code',hubSkyjoGuard);
+
 // GET loads the latest state. ?rev=N returns a tiny unchanged response when possible.
 app.get("/skyjo/:code", async (req,res)=>{
   try{
@@ -4403,6 +4433,11 @@ app.post("/skyjo/:code/state", async (req,res)=>{
   try{
     const code=normalizeSkyjoCode(req.params.code);
     if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    if(req.hubSkyjo){
+      const current=await readSkyjoPersisted(code);
+      if(!validHubSkyjoState(req.body?.state,current?.state,req.hubSkyjo))
+        return res.status(403).json({ok:false,error:'HUB_STATE_NOT_ALLOWED'});
+    }
     const result=await writeSkyjoPersisted(code,req.body?.state,req.body?.baseRev);
     if(result?.conflict) return res.status(409).json(result);
     if(!result?.ok){
@@ -4426,6 +4461,7 @@ app.post("/skyjo/:code/reset", async (req,res)=>{
   try{
     const code=normalizeSkyjoCode(req.params.code);
     if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    if(req.hubSkyjo)return res.status(403).json({ok:false,error:'HUB_MATCH_RESET_FORBIDDEN'});
     await deleteSkyjoPersisted(code);
     return res.status(200).json({ok:true,code});
   }catch(e){ console.error("[skyjo/reset]",e); return res.status(500).json({ok:false,error:"ERR"}); }
