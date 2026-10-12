@@ -211,3 +211,87 @@ test('Realtime websocket sends only authorized Firestore room updates',async()=>
  assert.equal(alice.received.filter(x=>x.type==='room').at(-1).room.match.myColor,'red');
  alice.close();bob.close();
 });
+
+test('Only host can choose Action/Boss modes and rules are snapshotted at launch',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'});
+ const settings={mode:'action',bossMode:true,boardTheme:'stone',jokerStartCount:5,eventFieldCount:15,bossEventTrigger:7,colorMode:'manual'};
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/settings`,'bob',{settings})).status,403);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/settings`,'alice',{settings:{...settings, jokerStartCount:12}})).status,400);
+ const selected=await h.api('POST',`/api/hub/rooms/${code}/settings`,'alice',{settings});
+ assert.deepEqual(selected.room.settings,settings);
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const game=await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ assert.equal(game.room.phase,'playing');
+ assert.deepEqual(game.room.match.settings,settings);
+ assert.equal((await h.adapter.barikadeSeat(game.room.match.gameCode,h.identities.alice)).settings.bossMode,true);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/settings`,'alice',{settings})).status,409);
+});
+
+test('Color reservations are exclusive, and spectators cannot pick a color',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'});
+ const red=await h.api('POST',`/api/hub/rooms/${code}/color`,'alice',{color:'red'});
+ assert.equal(red.room.players.find(p=>p.me).colorPref,'red');
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/color`,'bob',{color:'red'})).status,409);
+ const blue=await h.api('POST',`/api/hub/rooms/${code}/color`,'bob',{color:'blue'});
+ assert.equal(blue.room.players.find(p=>p.me).colorPref,'blue');
+ const selected=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true})).room;
+ const running=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true})).room;
+ assert.equal((await h.adapter.barikadeSeat(running.match.gameCode,h.identities.alice)).color,'red');
+ assert.equal((await h.adapter.barikadeSeat(running.match.gameCode,h.identities.bob)).color,'blue');
+ assert.equal(selected.allReady,false);
+});
+
+test('Wheel color mode creates distinct server-assigned colors and disables manual choices',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'cara');
+ let selected=(await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'})).room;
+ const settings={...selected.settings,colorMode:'wheel'};
+ await h.api('POST',`/api/hub/rooms/${code}/settings`,'alice',{settings});
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/color`,'bob',{color:'blue'})).status,409);
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true});
+ const running=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'cara',{ready:true})).room;
+ assert.equal(running.match.playerCount,3);
+ const colors=await Promise.all(['alice','bob','cara'].map(u=>h.adapter.barikadeSeat(running.match.gameCode,h.identities[u])));
+ assert.equal(new Set(colors.map(x=>x.color)).size,3);
+});
+
+test('Changing host settings invalidates previously accepted ready votes',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ const selected=(await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'})).room;
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const settings={...selected.settings,mode:'action',jokerStartCount:4,unknownIgnored:'anything'};
+ const changed=(await h.api('POST',`/api/hub/rooms/${code}/settings`,'alice',{settings})).room;
+ assert.deepEqual(changed.players.map(p=>p.ready),[false,false]);
+ assert.equal(Object.hasOwn(changed.settings,'unknownIgnored'),false);
+ const bob=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true})).room;
+ assert.equal(bob.phase,'preparing');
+ assert.equal(bob.allReady,false);
+ const last=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true})).room;
+ assert.equal(last.phase,'playing');
+ assert.equal(last.match.settings.mode,'action');
+ assert.equal(last.match.settings.jokerStartCount,4);
+});
+
+test('Concurrent identical color requests and ready votes cannot double-book/start',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'});
+ const colors=await Promise.all([
+  h.api('POST',`/api/hub/rooms/${code}/color`,'alice',{color:'red'}),
+  h.api('POST',`/api/hub/rooms/${code}/color`,'bob',{color:'red'})
+ ]);
+ assert.deepEqual(colors.map(x=>x.status).sort((a,b)=>a-b),[200,409]);
+ const res=await Promise.all([
+  h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true}),
+  h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true})
+ ]);
+ assert.equal(res.filter(x=>x.room.phase==='playing').length,1);
+ assert.equal((await h.api('GET',`/api/hub/rooms/${code}`)).room.phase,'playing');
+});
