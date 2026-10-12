@@ -7,6 +7,7 @@ import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installProfileSeats } from "./profile-seats.js";
+import { installSharedLobby } from "./shared-lobby.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -4229,7 +4230,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile')) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub')) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
@@ -4272,6 +4273,11 @@ installProfileApi(app,{
 });
 const profileStatsV8=installProfileStats(app,{
   admin,isReady:()=>profileProjectMatches,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
+// Independent central lobby. The legacy game protocols remain untouched.
+installSharedLobby(app,{
+  verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
