@@ -15,6 +15,15 @@ const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
 const COLLECTION='spielesammlung_hub_v1';
 const HUB_BARIKADE_CODE=/^B[A-HJ-NP-Z2-9]{9}$/;
 const HUB_KREUZ_CODE=/^K[A-HJ-NP-Z2-9]{9}$/;
+const HUB_SKYJO_CODE=/^S[A-HJ-NP-Z2-9]{9}$/;
+const SKYJO_DEFAULTS=Object.freeze({target:100,beginner:false,jokerCount:8,jokerEnabled:true,streetModeEnabled:true});
+function skyjoSettings(raw){
+ const v={...SKYJO_DEFAULTS,...(raw||{})};
+ if(!Number.isInteger(v.target)||v.target<50||v.target>500||v.target%10!==0
+   ||typeof v.beginner!=='boolean'||!Number.isInteger(v.jokerCount)||v.jokerCount<0||v.jokerCount>30
+   ||typeof v.jokerEnabled!=='boolean'||typeof v.streetModeEnabled!=='boolean')return null;
+ return v;
+}
 const BARIKADE_COLORS=['red','blue','green','yellow'];
 const BARIKADE_DEFAULTS=Object.freeze({mode:'classic',bossMode:false,boardTheme:'wood',jokerStartCount:3,eventFieldCount:8,bossEventTrigger:2,colorMode:'manual'});
 function gameSettings(raw){
@@ -30,7 +39,7 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>Array.from({length:6},()=>CHARSET[randomInt(CHARSET.length)]).join('');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
@@ -90,9 +99,22 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       members:seats.map(p=>({uid:p.uid,name:p.name,seat:p.seat}))};
     room.phase='playing';
   }
+  function startSkyjo(room){
+    if(room.game!=='skyjo')throw error(409,'GAME_NOT_CONNECTED');
+    if(!room.players.some(p=>p.uid===room.hostUid&&p.participating))throw error(409,'HOST_MUST_PLAY');
+    const settings=skyjoSettings(room.settings?.skyjo);
+    if(!settings)throw error(409,'INVALID_SETTINGS');
+    const next=(Number(room.matchSerial)||0)+1;
+    if(next>CHARSET.length**3)throw error(409,'MATCH_LIMIT_REACHED');
+    room.matchSerial=next;
+    room.match={id:randomUUID(),game:'skyjo',gameCode:gameCodeFor(room,'S',next),startedAt:clock(),settings,
+      members:activeSeats(room).map(p=>({uid:p.uid,name:p.name,seat:p.seat}))};
+    room.phase='playing';
+  }
   function startGame(room){
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
+    if(room.game==='skyjo')return startSkyjo(room);
     throw error(409,'GAME_NOT_CONNECTED');
   }
   function expose(room,identity){
@@ -102,8 +124,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       code:room.code,revision:room.revision,phase:room.phase,game:room.game,
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
-      canLaunch:room.game==='barikade'||room.game==='kreuz',
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):null,
+      canLaunch:room.game==='barikade'||room.game==='kreuz'||room.game==='skyjo',
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       allReady:allReady(room),
@@ -141,7 +163,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
-  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade']}));
+  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo']}));
   app.use('/api/hub/rooms',authentication);
   app.post('/api/hub/rooms',handler(async req=>{
     const identity=req.hubIdentity,store=db();
@@ -195,6 +217,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.phase==='playing')throw error(409,'MATCH_IN_PROGRESS');
       room.game=game;room.phase='preparing';
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
+      if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
     })};
   }));
@@ -208,6 +231,18 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='barikade')throw error(409,'NO_BARIKADE_SETUP');
       room.settings={...room.settings,barikade:settings};
+      room.players.forEach(p=>p.ready=false);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/skyjo-settings',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const settings=skyjoSettings(req.body?.settings);
+    if(!settings)throw error(400,'INVALID_SETTINGS');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='preparing'||room.game!=='skyjo')throw error(409,'NO_SKYJO_SETUP');
+      room.settings={...room.settings,skyjo:settings};
       room.players.forEach(p=>p.ready=false);
     })};
   }));
@@ -257,7 +292,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
-      if(allReady(room)&&(room.game==='barikade'||room.game==='kreuz'))startGame(room);
+      if(allReady(room)&&(room.game==='barikade'||room.game==='kreuz'||room.game==='skyjo'))startGame(room);
     })};
   }));
   // No fake game launch: the game adapters must be implemented and tested first.
@@ -323,6 +358,36 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     return {gameCode,matchId:room.match.id,hubCode:room.code,hostUid:room.hostUid,
       members:room.match.members.map(({uid,name})=>({uid,name}))};
   }
+  // Separate game match ID and six-character lobby code. Only participating Firebase users get a SKYJO seat.
+  async function skyjoSeat(gameCode,profile){
+    if(!HUB_SKYJO_CODE.test(String(gameCode||'')))return {legacy:true};
+    if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
+    const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
+    const snap=await documentFor(store,gameCode.slice(1,7)).get();
+    const room=snap.exists?snap.data():null;
+    if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.game!=='skyjo'||room.match.gameCode!==gameCode)
+      return {error:'MATCH_NOT_FOUND'};
+    const member=room.match.members.find(m=>m.uid===profile.uid);
+    if(!member||!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_PARTICIPANT'};
+    return {gameCode,hubCode:room.code,matchId:room.match.id,uid:profile.uid,
+      host:profile.uid===room.hostUid,hostUid:room.hostUid,settings:room.match.settings,
+      members:room.match.members.map(m=>({uid:m.uid,name:m.name}))};
+  }
+  app.post('/api/hub/rooms/:code/skyjo-bootstrap',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const snap=await documentFor(db(),code).get();const room=snap.exists?snap.data():null;
+    validateRead(room,identity);
+    if(room.phase!=='playing'||room.match?.game!=='skyjo')throw error(409,'NO_SKYJO_MATCH');
+    const seat=await skyjoSeat(room.match.gameCode,identity);
+    if(seat.error)throw error(403,seat.error);
+    if(req.body?.matchId!==room.match.id)throw error(409,'WRONG_MATCH');
+    if(typeof bootstrapSkyjo!=='function')throw error(503,'SKYJO_UNAVAILABLE');
+    const data=await bootstrapSkyjo(seat);
+    if(!data?.ok)throw error(503,'SKYJO_BOOTSTRAP_FAILED');
+    return {gameCode:seat.gameCode,matchId:seat.matchId,hubCode:code,
+      seatId:'hub_'+seat.uid,host:seat.host,settings:seat.settings,roomState:data.state,rev:data.rev};
+  }));
   // A Firestore snapshot sends each hub update to every authorized player.
   // This does not maintain a second authoritative in-memory room state.
   function attachSocket(ws){
@@ -359,5 +424,5 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     });
     ws.on('close',teardown);ws.on('error',teardown);
   }
-  return {collection:COLLECTION,games:HUB_GAMES,barikadeSeat,kreuzSeat,attachSocket};
+  return {collection:COLLECTION,games:HUB_GAMES,barikadeSeat,kreuzSeat,skyjoSeat,attachSocket};
 }
