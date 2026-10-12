@@ -3,6 +3,7 @@
  */
 const COLORS = new Set(['#328cff','#ff5268','#20b986','#ffc741','#9261ec','#f281af']);
 const GAMES = new Set(['skyjo','kreuz','barikade','business']);
+const SKYJO_BOARDS = new Set(['standard','comic','christlich']);
 const COLLECTION = 'player_profiles_v1';
 const BANNERS = new Set(['classic','ocean','sunset','forest','cosmos','aurora','golden','royal']);
 const BIO_MAX = 180;
@@ -13,7 +14,8 @@ function validPrefs(body){
   if(!name || name.length<2 || typeof body.name!=='string')return null;
   if(!COLORS.has(body.color) || !GAMES.has(body.favorite))return null;
   if(!Number.isInteger(body.avatar) || body.avatar<0 || body.avatar>15)return null;
-  return {name,color:body.color,favorite:body.favorite,avatar:body.avatar,edited:!!body.edited};
+  if(Object.hasOwn(body,'skyjoBoardFavorite')&&!SKYJO_BOARDS.has(body.skyjoBoardFavorite))return null;
+  return {name,color:body.color,favorite:body.favorite,avatar:body.avatar,edited:!!body.edited,...(Object.hasOwn(body,'skyjoBoardFavorite')?{skyjoBoardFavorite:body.skyjoBoardFavorite}:{})};
 }
 // Tiny profile pictures are JPEG/PNG/WebP data URLs (not HTML/SVG).
 // The client reduces them to <= 96 KiB; never trust the client to enforce this.
@@ -67,7 +69,7 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
     if(!snap.exists){
       const defaultName=nameOf(req.profileUser.name||req.profileUser.email?.split('@')[0]||'Spieler')||'Spieler';
       const now=Date.now();
-      try{await ref.create({uid:req.profileUid,name:defaultName,color:'#328cff',favorite:'skyjo',avatar:0,avatarImage:null,setupComplete:false,edited:false,created:now,updated:now,revision:1,importedLocal:false,bio:'',banner:'classic',bannerImage:null,publicStats:false});}
+      try{await ref.create({uid:req.profileUid,name:defaultName,color:'#328cff',favorite:'skyjo',skyjoBoardFavorite:'standard',avatar:0,avatarImage:null,setupComplete:false,edited:false,created:now,updated:now,revision:1,importedLocal:false,bio:'',banner:'classic',bannerImage:null,publicStats:false});}
       catch(e){if(e.code!==6 && e.code!=='already-exists' && !/already exists/i.test(e.message||''))throw e;}
       snap=await ref.get();
     }
@@ -77,7 +79,7 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
     const {uid,name,color,favorite,avatar,edited,created,updated,revision,importedLocal}=profile;
     // Accounts created by V1.1 predate the guided onboarding: preserve them as completed.
     const setupComplete=profile.setupComplete!==false;
-    return {uid,name,color,favorite,avatar,avatarImage:profile.avatarImage||null,
+    return {uid,name,color,favorite,avatar,skyjoBoardFavorite:SKYJO_BOARDS.has(profile.skyjoBoardFavorite)?profile.skyjoBoardFavorite:'standard',avatarImage:profile.avatarImage||null,
       bio:typeof profile.bio==='string'?profile.bio:'',
       banner:BANNERS.has(profile.banner)?profile.banner:'classic',
       bannerImage:profile.bannerImage||null,publicStats:profile.publicStats===true,
