@@ -7828,3 +7828,12 @@ setInterval(() => {
       // only if at least one connected player is present
       const hasConnected = Array.from(room.players.values()).some(p => isConnectedPlayer(p));
       if (!hasConnected) continue;
+
+      broadcast(room, { type: "snapshot", state: room.state, hb: true, ts: Date.now() });
+    }
+  } catch (_e) {
+    // never crash the server because of heartbeat
+  }
+}, SNAPSHOT_HEARTBEAT_MS);
+
+server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
