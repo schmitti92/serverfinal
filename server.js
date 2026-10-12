@@ -5765,7 +5765,11 @@ wss.on("connection", (ws, req) => {
         }
       }
 
-      if(hubSeat&&!hubSeat.legacy)room.hubExpectedPlayers=hubSeat.expectedPlayers;
+      if(hubSeat&&!hubSeat.legacy){
+        room.hubExpectedPlayers=hubSeat.expectedPlayers;
+        room.hubSettings=hubSeat.settings;
+        if(!room.state&&hubSeat.settings?.boardTheme)setLobbyBoardTheme(room,hubSeat.settings.boardTheme);
+      }
 
       // reconnect via sessionToken
       let existing = null;
@@ -6134,7 +6138,8 @@ broadcast(room, roomUpdatePayload(room));
       if(room.hubExpectedPlayers){
         const count=Array.from(room.players.values()).filter(p=>isConnectedPlayer(p)&&ALLOWED_COLORS.includes(p.color)).length;
         if(count!==room.hubExpectedPlayers){send(ws,{type:'error',code:'WAITING_FOR_HUB_PLAYERS',message:'Es fehlen noch Mitspieler aus der gemeinsamen Lobby'});return;}
-        if(msg.mode==='action'||msg.bossMode){send(ws,{type:'error',code:'HUB_CLASSIC_ONLY',message:'Action- und Boss-Einstellungen folgen in der gemeinsamen Lobby'});return;}
+        if(msg.mode!==undefined&&msg.mode!==room.hubSettings?.mode){send(ws,{type:'error',code:'HUB_SETTINGS_MISMATCH',message:'Spielregeln werden in der zentralen Lobby festgelegt'});return;}
+        if(msg.bossMode!==undefined&&!!msg.bossMode!==!!room.hubSettings?.bossMode){send(ws,{type:'error',code:'HUB_SETTINGS_MISMATCH',message:'Bossmodus wird in der zentralen Lobby festgelegt'});return;}
       }
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
@@ -6153,14 +6158,14 @@ broadcast(room, roomUpdatePayload(room));
 
       // Server entscheidet zufällig die Startfarbe (Quelle der Wahrheit)
       const starterColor = uniqueAct[Math.floor(Math.random() * uniqueAct.length)];
-      const requestedMode = String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
-      const requestedBossMode = !!(msg.bossMode ?? msg.actionBossMode ?? false);
+      const requestedMode = room.hubExpectedPlayers ? room.hubSettings.mode : String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      const requestedBossMode = room.hubExpectedPlayers ? !!room.hubSettings.bossMode : !!(msg.bossMode ?? msg.actionBossMode ?? false);
       const requestedBoardTheme = normalizeBoardTheme(room?.lobby?.boardTheme);
       const requestedEventFieldCount = requestedBossMode
-        ? normalizeBossEventFieldCount(msg.eventFieldCount ?? room?.eventFieldCount)
+        ? normalizeBossEventFieldCount(room.hubExpectedPlayers ? room.hubSettings.eventFieldCount : msg.eventFieldCount ?? room?.eventFieldCount)
         : BOSS_EVENT_FIELD_DEFAULT;
       const requestedBossEventTrigger = requestedBossMode
-        ? normalizeBossEventBossTrigger(msg.bossEventTrigger ?? room?.bossEventTrigger)
+        ? normalizeBossEventBossTrigger(room.hubExpectedPlayers ? room.hubSettings.bossEventTrigger : msg.bossEventTrigger ?? room?.bossEventTrigger)
         : 0;
       room.eventFieldCount = requestedEventFieldCount;
       room.bossEventTrigger = requestedBossEventTrigger;
@@ -6169,7 +6174,7 @@ broadcast(room, roomUpdatePayload(room));
       // vorher in einem separaten Request angekommen sein. Classic braucht keine Jokerzahl.
       let jokerStartCount = null;
       if (requestedMode === "action") {
-        const incomingCount = Number(msg.jokerStartCount ?? room.jokerStartCount);
+        const incomingCount = Number(room.hubExpectedPlayers ? room.hubSettings.jokerStartCount : msg.jokerStartCount ?? room.jokerStartCount);
         if (!Number.isInteger(incomingCount) || incomingCount < 1 || incomingCount > 5) {
           send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
           return;
@@ -7823,12 +7828,3 @@ setInterval(() => {
       // only if at least one connected player is present
       const hasConnected = Array.from(room.players.values()).some(p => isConnectedPlayer(p));
       if (!hasConnected) continue;
-
-      broadcast(room, { type: "snapshot", state: room.state, hb: true, ts: Date.now() });
-    }
-  } catch (_e) {
-    // never crash the server because of heartbeat
-  }
-}, SNAPSHOT_HEARTBEAT_MS);
-
-server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
