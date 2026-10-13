@@ -10,11 +10,16 @@ function validRoster(game,seat){
  const names=roster(game),allowed=seat.members.map(m=>m.name);
  return names.length===allowed.length&&names.every((n,i)=>n===allowed[i]);
 }
+// Reject malformed financial snapshots before they can be persisted or broadcast.
+function validPlayerFinances(game){
+ return Array.isArray(game?.players)&&game.players.every(p=>
+   p&&typeof p==='object'&&Number.isSafeInteger(p.cash)&&p.cash>=0);
+}
 function basicGame(game,seat){
  return !!game&&typeof game==='object'&&!Array.isArray(game)&&validRoster(game,seat)&&
    game.targetRounds===seat.settings.rounds&&Number.isInteger(game.current)&&game.current>=0&&game.current<seat.members.length&&
    Number.isInteger(game.turnNumber)&&game.turnNumber>=1&&Number.isFinite(game.bank)&&
-   game.gameEnded===false&&Array.isArray(game.market)&&Array.isArray(game.deck);
+   game.gameEnded===false&&validPlayerFinances(game)&&Array.isArray(game.market)&&Array.isArray(game.deck);
 }
 export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
  const db=()=>{try{return getFirestore()||null;}catch{return null;}};
@@ -77,7 +82,7 @@ export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
      if(!incoming||!validRoster(incoming,seat)||incoming.targetRounds!==seat.settings.rounds||
        !Number.isInteger(incoming.turnNumber)||incoming.turnNumber<current.turnNumber||incoming.turnNumber>current.turnNumber+1||
        !Number.isInteger(incoming.current)||incoming.current<0||incoming.current>=seat.members.length||
-       typeof incoming.gameEnded!=='boolean'||!Number.isFinite(incoming.bank))throw err(400,'INVALID_GAME_STATE');
+       typeof incoming.gameEnded!=='boolean'||!Number.isFinite(incoming.bank)||!validPlayerFinances(incoming))throw err(400,'INVALID_GAME_STATE');
      // Protect the turn order and immutable match parameters before accepting a client snapshot.
      // Same-turn updates (dice, market, purchases) must keep the active seat.
      const advancing=incoming.turnNumber===current.turnNumber+1;
