@@ -78,6 +78,18 @@ export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
        !Number.isInteger(incoming.turnNumber)||incoming.turnNumber<current.turnNumber||incoming.turnNumber>current.turnNumber+1||
        !Number.isInteger(incoming.current)||incoming.current<0||incoming.current>=seat.members.length||
        typeof incoming.gameEnded!=='boolean'||!Number.isFinite(incoming.bank))throw err(400,'INVALID_GAME_STATE');
+     // Protect the turn order and immutable match parameters before accepting a client snapshot.
+     // Same-turn updates (dice, market, purchases) must keep the active seat.
+     const advancing=incoming.turnNumber===current.turnNumber+1;
+     if((!advancing&&incoming.current!==current.current)||
+        (advancing&&incoming.current!==(current.current+1)%seat.members.length))
+       throw err(409,'INVALID_TURN_SEQUENCE');
+     if(incoming.playerCount!==undefined&&incoming.playerCount!==seat.members.length)
+       throw err(400,'INVALID_PLAYER_COUNT');
+     if(current.bankStart!==undefined&&incoming.bankStart!==current.bankStart)
+       throw err(400,'IMMUTABLE_BANK_START');
+     if(current.longGameVersion!==undefined&&incoming.longGameVersion!==current.longGameVersion)
+       throw err(400,'IMMUTABLE_GAME_VERSION');
      // No official rank rewards; the browser is still responsible for game mathematics.
      const next={...old,rev:old.rev+1,phase:incoming.gameEnded?'finished':'game',game:incoming,updatedAtMs:Date.now()};
      tx.set(doc,next);return {code:seat.gameCode,rev:next.rev,phase:next.phase,updatedAtMs:next.updatedAtMs};
