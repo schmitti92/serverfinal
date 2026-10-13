@@ -83,13 +83,6 @@ export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
        !Number.isInteger(incoming.turnNumber)||incoming.turnNumber<current.turnNumber||incoming.turnNumber>current.turnNumber+1||
        !Number.isInteger(incoming.current)||incoming.current<0||incoming.current>=seat.members.length||
        typeof incoming.gameEnded!=='boolean'||!Number.isSafeInteger(incoming.bank)||incoming.bank<0||!validPlayerFinances(incoming))throw err(400,'INVALID_GAME_STATE');
-     // The game can end only after the configured number of full rounds.
-     // This prevents a client from declaring an early winner.
-     if(incoming.gameEnded){
-       const minTurns=seat.settings.rounds*seat.members.length;
-       if(incoming.turnNumber<minTurns)
-         throw err(409,'GAME_END_TOO_EARLY');
-     }
      // A completed turn must not reset the game to an earlier round.
      if(Number.isInteger(current.roundAnchor)&&incoming.roundAnchor!==current.roundAnchor)
        throw err(400,'IMMUTABLE_ROUND_ANCHOR');
