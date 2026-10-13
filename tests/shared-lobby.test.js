@@ -379,3 +379,52 @@ test('SKYJO spectator cannot open or bootstrap a hub match',async()=>{
  assert.equal((await h.adapter.skyjoSeat(start.room.match.gameCode,h.identities.cara)).error,'NOT_A_PARTICIPANT');
  assert.equal((await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'cara',{matchId:start.room.match.id})).status,403);
 });
+
+
+test('Verified hub sync automatically completes one match, preserving room and users',async()=>{
+ const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'business'});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const started=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true})).room;
+ const matchId=started.match.id;
+ const path=`/api/hub/rooms/${code}/sync`;
+ assert.equal((await h.api('POST',path,'cara',{matchId})).status,403);
+ assert.equal((await h.api('POST',path,'alice',{matchId:'forged'})).status,400);
+ const noProof=await h.api('POST',path,'alice',{matchId,gameEnded:true});
+ assert.equal(noProof.status,200);
+ assert.equal(noProof.room.phase,'playing');
+ assert.equal(noProof.room.revision,started.revision);
+ h.setFinished(true);
+ const [first,second]=await Promise.all([h.api('POST',path,'alice',{matchId}),h.api('POST',path,'bob',{matchId})]);
+ assert.equal(first.status,200);
+ assert.equal(second.status,200);
+ const completed=await h.api('GET',`/api/hub/rooms/${code}`,'bob');
+ assert.equal(completed.room.phase,'lobby');
+ assert.equal(completed.room.code,code);
+ assert.equal(completed.room.lastCompleted.id,matchId);
+ assert.equal(completed.room.lastCompleted.game,'business');
+ assert.deepEqual(completed.room.players.map(p=>p.ready),[false,false]);
+ assert.deepEqual(completed.room.players.map(p=>p.participating),[false,false]);
+ assert.equal(completed.room.revision,started.revision+1);
+ assert.equal((await h.api('POST',path,'bob',{matchId})).room.revision,completed.room.revision);
+});
+test('Late completion calls from previous game cannot end a new match in same room',async()=>{
+ const h=harness(),{room}=await h.api('POST','/api/hub/rooms'),code=room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'barikade'});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const first=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true})).room.match;
+ h.setFinished(true);
+ await h.api('POST',`/api/hub/rooms/${code}/sync`,'alice',{matchId:first.id});
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});
+ await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
+ const next=(await h.api('POST',`/api/hub/rooms/${code}/ready`,'bob',{ready:true})).room;
+ assert.equal(next.phase,'playing');
+ assert.notEqual(next.match.id,first.id);
+ const oldTab=await h.api('POST',`/api/hub/rooms/${code}/sync`,'bob',{matchId:first.id});
+ assert.equal(oldTab.room.phase,'playing');
+ assert.equal(oldTab.room.match.id,next.match.id);
+ assert.equal(oldTab.room.revision,next.revision);
+ assert.equal((await h.api('POST',`/api/hub/rooms/${code}/sync`,'alice',{matchId:next.match.id})).room.phase,'lobby');
+});
