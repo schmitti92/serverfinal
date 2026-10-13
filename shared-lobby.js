@@ -150,6 +150,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
+      chatEnabled:true,
+      chat:(Array.isArray(room.chat)?room.chat:[]).slice(-40).map(m=>({id:m.id,name:m.name,text:m.text,at:m.at})),
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
@@ -307,6 +309,24 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     })};
   }));
   // Only the host may change seats. Spectators remain room members.
+  // Authenticated room chat: Firestore retained and distributed by hub snapshots.
+  app.post('/api/hub/rooms/:code/chat',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const raw=req.body?.text;
+    if(typeof raw!=='string'||raw.length>320)throw error(400,'INVALID_CHAT_TEXT');
+    const content=raw.replace(/[\u0000-\u001f\u007f]/g,' ').trim();
+    if(!content||content.length>300)throw error(400,'INVALID_CHAT_TEXT');
+    return {room:await mutate(code,identity,room=>{
+      const member=room.players.find(p=>p.uid===identity.uid);
+      if(!member)throw error(403,'NOT_A_MEMBER');
+      const now=clock();
+      if(Number.isFinite(member.lastChatAt)&&now-member.lastChatAt<800)throw error(429,'CHAT_TOO_FAST');
+      member.lastChatAt=now;
+      if(!Array.isArray(room.chat))room.chat=[];
+      room.chat=[...room.chat.slice(-39),{id:randomUUID(),name:cleanName(member.name),text:content,at:now}];
+    })};
+  }));
   app.post('/api/hub/rooms/:code/seats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     const seat=req.body?.seat,participating=req.body?.participating;
