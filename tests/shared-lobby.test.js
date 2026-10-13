@@ -338,7 +338,7 @@ test('SKYJO creates one hub match with settings, seat authentication, and no sec
  await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
  await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});
  assert.equal((await h.api('POST',`/api/hub/rooms/${code}/skyjo-settings`,'bob',{settings:{target:150}})).status,403);
- const settings={target:150,beginner:false,jokerCount:12,jokerEnabled:true,streetModeEnabled:true};
+ const settings={target:150,beginner:false,jokerCount:12,jokerEnabled:true,streetModeEnabled:true,boardTheme:'classic'};
  const updated=await h.api('POST',`/api/hub/rooms/${code}/skyjo-settings`,'alice',{settings});
  assert.equal(updated.room.settings.target,150);
  const pending=await h.api('POST',`/api/hub/rooms/${code}/ready`,'alice',{ready:true});
