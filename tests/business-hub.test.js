@@ -90,3 +90,21 @@ test('Business can be finished and next match played without losing hub members'
  const second=await h.request('POST',`/api/hub/rooms/${root.code}/ready`,'bob',{ready:true});
  assert.notEqual(second.room.match.gameCode,root.gameCode);
 });
+
+test('Business rejects skipped seats, seat swaps within a turn and tampered match settings',async()=>{
+ const h=suite(),root=await h.start(),url=`/api/hub/business/${root.gameCode}`;
+ const game={...root.game,bankStart:3640,longGameVersion:1,playerCount:2};
+ assert.equal((await h.request('POST',url+'/bootstrap','alice',{matchId:root.matchId,game})).status,200);
+ const cases=[
+  {...game,current:1},
+  {...game,turnNumber:2,current:0},
+  {...game,turnNumber:2,current:1,bankStart:999999},
+  {...game,turnNumber:2,current:1,longGameVersion:99},
+  {...game,turnNumber:2,current:1,playerCount:3}
+ ];
+ for(const invalid of cases){
+  const response=await h.request('POST',url+'/state','alice',{baseRev:1,game:invalid});
+  assert.ok(response.status===400||response.status===409,JSON.stringify(response));
+ }
+ assert.equal((await h.request('POST',url+'/state','alice',{baseRev:1,game:{...game,turnNumber:2,current:1}})).status,200);
+});
