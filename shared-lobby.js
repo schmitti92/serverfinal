@@ -139,6 +139,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const seats=room.players.filter(p=>p.participating);
     return {
       code:room.code,revision:room.revision,phase:room.phase,game:room.game,
+      lastCompleted:room.lastCompleted?{id:room.lastCompleted.id,game:room.lastCompleted.game,finishedAt:room.lastCompleted.finishedAt}:null,
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
