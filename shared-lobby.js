@@ -53,7 +53,11 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const authorization=String(req.get('authorization')||'');
     const token=/^Bearer (\S+)$/i.exec(authorization)?.[1];
     if(!token)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
-    const profile=await verifyProfile(token);
+    // Express 4 does not automatically capture rejected async middleware.
+    // Invalid/expired Firebase tokens must never cause an unhandled rejection.
+    let profile;
+    try{profile=await verifyProfile(token);}
+    catch(_e){return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});}
     if(!profile?.uid)return res.status(401).json({ok:false,error:'PROFILE_REQUIRED'});
     req.hubIdentity={uid:profile.uid,name:cleanName(profile.name)};
     next();
