@@ -7,6 +7,9 @@ import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installProfileSeats } from "./profile-seats.js";
+import { installSharedLobby } from "./shared-lobby.js";
+import { installHubBusiness } from "./business-hub.js";
+import { validHubSkyjoState } from "./skyjo-hub-policy.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -48,9 +51,9 @@ const colorAt=i=>ROWS[Math.floor(i/15)]?.[i%15];
 const nbr=i=>[i>=15?i-15:null,i<90?i+15:null,i%15>0?i-1:null,i%15<14?i+1:null].filter(n=>n!==null);
 function freshPlayer(name,id){return {name,id,profileUid:null,cells:[],jokerUsed:0,columnAwards:Array(15).fill(null),colorAwards:{},lastMove:[],took:false,recentActions:[],socket:null};}
 function freshRoom(code,host,players){return {code,host,players,columnRule:COLUMN_RULE_NEW,parallelRule:'simultaneous-responses',parallel:false,responded:[],selections:{},active:0,picker:0,turn:0,phase:'lobby',dice:[],accepted:null,globalColumn:Array(15).fill(false),globalColor:Object.fromEntries([...COLORS].map(c=>[c,false])),finished:false,winnerMessage:'',history:[],revision:0,timestamp:now(),queue:Promise.resolve()};}
-function stored(room){return {boardId:BOARD_ID,code:room.code,host:room.host,columnRule:room.columnRule||'classic',parallelRule:room.parallelRule||'serial',parallel:!!room.parallel,responded:room.responded||[],players:room.players.map(({socket,...p})=>({...p,recentActions:(p.recentActions||[]).slice(-40)})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,matchIdV8:room.matchIdV8||null,startedAtV8:room.startedAtV8||null,finishedAtV8:room.finishedAtV8||null,matchSeatsV8:room.matchSeatsV8||[],statsFinalizedV8:!!room.statsFinalizedV8,history:room.history.slice(-15),revision:room.revision,timestamp:room.timestamp};}
+function stored(room){return {boardId:BOARD_ID,code:room.code,host:room.host,columnRule:room.columnRule||'classic',parallelRule:room.parallelRule||'serial',parallel:!!room.parallel,responded:room.responded||[],players:room.players.map(({socket,...p})=>({...p,recentActions:(p.recentActions||[]).slice(-40)})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,matchIdV8:room.matchIdV8||null,startedAtV8:room.startedAtV8||null,finishedAtV8:room.finishedAtV8||null,matchSeatsV8:room.matchSeatsV8||[],statsFinalizedV8:!!room.statsFinalizedV8,hubMatchId:room.hubMatchId||null,hubCode:room.hubCode||null,history:room.history.slice(-15),revision:room.revision,timestamp:room.timestamp};}
 function restore(d){
- if(!d||d.boardId!==BOARD_ID||!(/^[A-Z2-9]{5}$/.test(d.code||''))||!Array.isArray(d.players)||!d.players.length||d.players.length>6||!['lobby','ready','select','over'].includes(d.phase))return null;
+ if(!d||d.boardId!==BOARD_ID||!(/^([A-Z2-9]{5}|K[A-HJ-NP-Z2-9]{9})$/.test(d.code||''))||!Array.isArray(d.players)||!d.players.length||d.players.length>6||!['lobby','ready','select','over'].includes(d.phase))return null;
  if(!isInt(d.active)||!isInt(d.picker)||d.active<0||d.picker<0||d.active>=d.players.length||d.picker>=d.players.length||!isInt(d.turn)||d.turn<0||d.turn>1000||!Number.isFinite(d.timestamp)||now()-d.timestamp>TTL_MS)return null;
  if(!Array.isArray(d.globalColumn)||d.globalColumn.length!==15||!Array.isArray(d.dice)||d.dice.length>6||!d.globalColor||!Array.isArray(d.history))return null;
  const players=[];
@@ -59,6 +62,7 @@ function restore(d){
   players.push({...p,recentActions:Array.isArray(p.recentActions)?p.recentActions.slice(-40):[],socket:null});
  }
  if(new Set(players.map(p=>p.id)).size!==players.length||!players.some(p=>p.id===d.host))return null;
+ if(d.hubMatchId&&(typeof d.hubMatchId!=='string'||!/^K[A-HJ-NP-Z2-9]{9}$/.test(d.code)||d.hubCode!==d.code.slice(1,7)||players.some(p=>!p.profileUid)))return null;
  return {...d,columnRule:d.columnRule||'classic',parallelRule:d.parallelRule||'serial',parallel:!!d.parallel,responded:Array.isArray(d.responded)&&d.responded.length===players.length?d.responded.map(Boolean):Array(players.length).fill(false),selections:{},previews:{},players,queue:Promise.resolve(),writeQueue:Promise.resolve()};
 }
 function score(p){const cells=new Set(p.cells);return Object.values(p.colorAwards).reduce((a,b)=>a+b,0)+p.columnAwards.reduce((a,b)=>a+(b||0),0)+8-p.jokerUsed-2*STARS.filter(i=>!cells.has(i)).length;}
@@ -103,8 +107,8 @@ function reset(room){room.matchIdV8=randomBytes(20).toString('hex');room.started
 function snapshot(room){return {v:1,mode:'online',columnRule:room.columnRule||'classic',parallelRule:room.parallelRule||'serial',parallel:!!room.parallel,responded:(room.responded||[]).slice(),players:room.players.map(p=>({name:p.name,cells:p.cells,jokerUsed:p.jokerUsed,columnAwards:p.columnAwards,colorAwards:p.colorAwards,lastMove:p.lastMove,took:p.took})),active:room.active,picker:room.picker,turn:room.turn,phase:room.phase,dice:room.dice,accepted:room.accepted,colorDie:null,numDie:null,chosenColor:null,chosenNumber:null,pending:[],globalColumn:room.globalColumn,globalColor:room.globalColor,finished:room.finished,winnerMessage:room.winnerMessage,history:room.history.slice(-15)};}
 function safeSend(ws,msg){if(ws?.readyState===1)try{ws.send(JSON.stringify(msg));}catch{}}
 function sendError(ws,msg){safeSend(ws,{type:'error',message:msg});}
-function createKreuzKunter({getFirestore,verifyProfile,recordStats,log=console}){
- const rooms=new Map();const sockets=new WeakMap();const loads=new Map();
+function createKreuzKunter({getFirestore,verifyProfile,recordStats,hubSeat,log=console}){
+ const rooms=new Map();const sockets=new WeakMap();const loads=new Map(),hubLoads=new Map();
  const db=()=>{try{return getFirestore?.()||null;}catch(e){log.warn('[kreuzkunter] Firebase:',e.message);return null;}};
  async function load(code){if(rooms.has(code))return rooms.get(code);if(loads.has(code))return loads.get(code);const job=(async()=>{const fs=db();if(!fs)return null;const snap=await fs.collection(COLLECTION).doc(code).get();const room=snap.exists?restore(snap.data()):null;if(room)rooms.set(code,room);return room;})();loads.set(code,job);try{return await job;}finally{loads.delete(code);}}
  async function save(room){
@@ -134,8 +138,61 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,log=console})
   }
  }
 
+ async function joinHubKreuz(ws,msg,session){
+  if(session.room)return sendError(ws,'Du bist bereits in einem Spiel.');
+  const profile=await verifyProfile?.(msg.profileIdToken);
+  if(!profile?.uid)return sendError(ws,'LOGIN_REQUIRED');
+  const code=String(msg.gameCode||'');
+  if(!/^K[A-HJ-NP-Z2-9]{9}$/.test(code)||typeof msg.matchId!=='string')return sendError(ws,'MATCH_NOT_FOUND');
+  const seat=await hubSeat?.(code,profile);
+  if(!seat||seat.error||seat.matchId!==msg.matchId)return sendError(ws,seat?.error||'MATCH_NOT_FOUND');
+  let room=await load(code);
+  if(!room){
+   let job=hubLoads.get(code);
+   if(!job){
+    job=(async()=>{
+     const fs=db();if(!fs)throw Error('DATABASE_UNAVAILABLE');
+     const ref=fs.collection(COLLECTION).doc(code);
+     await fs.runTransaction(async tx=>{
+      const snapshot=await tx.get(ref);
+      if(snapshot.exists)return;
+      const people=seat.members.map(m=>{const p=freshPlayer(strip(m.name,24),token());p.profileUid=m.uid;return p;});
+      const host=people.find(p=>p.profileUid===seat.hostUid);
+      if(!host||people.length<2||people.length>6)throw Error('INVALID_HUB_MEMBERS');
+      const created=freshRoom(code,host.id,people);
+      reset(created);created.matchIdV8=seat.matchId;
+      created.hubMatchId=seat.matchId;created.hubCode=seat.hubCode;
+      tx.set(ref,stored(created));
+     });
+     const result=await ref.get(),data=result.exists?restore(result.data()):null;
+     if(!data)throw Error('MATCH_RESTORE_FAILED');
+     // Preserve an already active instance from a concurrent join.
+     if(!rooms.has(code))rooms.set(code,data);
+     return rooms.get(code);
+    })();hubLoads.set(code,job);
+   }
+   try{room=await job;}finally{if(hubLoads.get(code)===job)hubLoads.delete(code);}
+  }
+  if(room.hubMatchId!==seat.matchId||room.hubCode!==seat.hubCode||
+     room.players.length!==seat.members.length||
+     room.players.some(p=>!seat.members.some(m=>m.uid===p.profileUid)))return sendError(ws,'MATCH_NOT_FOUND');
+  const player=room.players.find(p=>p.profileUid===profile.uid);
+  if(!player)return sendError(ws,'NOT_A_PARTICIPANT');
+  const prior=player.socket;
+  if(prior&&prior!==ws)try{prior.close(4000,'Neue Verbindung');}catch(_e){}
+  player.socket=ws;session.room=room;session.id=player.id;
+  safeSend(ws,{type:'welcome',code:room.code,token:player.id,host:room.host===player.id});
+  await broadcast(room);
+  if(room.finished)await bookFinishedKreuz(room);
+ }
+ async function isHubMatchFinished(match){
+  if(match?.game!=='kreuz')return false;
+  const room=await load(match.gameCode);
+  return !!(room&&room.hubMatchId===match.id&&room.phase==='over'&&room.finished);
+ }
  async function performAction(ws,msg,session){
  const op=msg.action;
+ if(op==='hubJoin')return joinHubKreuz(ws,msg,session);
  if(op==='create'||op==='join'){
   if(msg.boardId!==BOARD_ID)return sendError(ws,'Spielfeldversion stimmt nicht überein.');
   if(session.room)return sendError(ws,'Du bist bereits in einem Raum.');
@@ -185,6 +242,7 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,log=console})
   if(msg.expectedPicker!==undefined&&msg.expectedPicker!==room.picker&&!(room.parallelRule==='simultaneous-responses'&&room.parallel))return sendError(ws,'Falsche Zugreihenfolge.');
  }
  if(op==='start'){
+  if(room.hubMatchId)return sendError(ws,'Im gemeinsamen Raum werden Partien automatisch gestartet.');
   if(session.id!==room.host||room.players.filter(p=>p.socket?.readyState===1).length<2||!['lobby','over'].includes(room.phase))return sendError(ws,'Nur Host kann mit zwei verbundenen Spielern starten.');
   reset(room);addEvent(room,'Neue Partie gestartet');
  }else if(op==='roll'){
@@ -231,6 +289,7 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,log=console})
    const order=Array.from({length:room.players.length},(_,k)=>(room.active+k+1)%room.players.length);room.active=order.find(i=>available.includes(i))??available[0];room.picker=room.active;
   }else return sendError(ws,'Überspringen ist gerade nicht möglich.');
  }else if(op==='remove'){
+  if(room.hubMatchId)return sendError(ws,'Teilnehmerwechsel nur in der gemeinsamen Lobby.');
   const idx=msg.index;if(room.host!==session.id||room.phase!=='lobby')return sendError(ws,'Nur Host kann in Lobby entfernen.');
   if(!isInt(idx)||idx<0||idx>=room.players.length||room.players[idx].socket?.readyState===1||room.players[idx].id===room.host)return sendError(ws,'Nur abwesende Teilnehmer dürfen entfernt werden.');
   room.players.splice(idx,1);
@@ -264,9 +323,9 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,log=console})
    let msg;try{msg=JSON.parse(String(raw));if(!msg||typeof msg!=='object'||Array.isArray(msg))throw Error('format');}catch{return sendError(ws,'Ungültiges Nachrichtenformat.');}
    session.queue=session.queue.then(()=>handleAction(ws,msg,session)).catch(e=>{log.error('[kreuzkunter] action failed',e);sendError(ws,'Serverfehler. Spielstand bitte abgleichen.');});
   });
-  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;delete room.previews?.[room.players.indexOf(p)];delete room.selections?.[room.players.indexOf(p)];if(room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room);}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
+  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;delete room.previews?.[room.players.indexOf(p)];delete room.selections?.[room.players.indexOf(p)];if(!room.hubMatchId&&room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room);}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
  }
- return {handle,rooms,health:()=>({ok:true,game:'KreuzKunter',boardId:BOARD_ID,rooms:rooms.size,firebaseConnected:!!db(),storageMode:db()?'firestore':'memory-only',collection:COLLECTION})};
+ return {handle,rooms,isHubMatchFinished,health:()=>({ok:true,game:'KreuzKunter',boardId:BOARD_ID,rooms:rooms.size,firebaseConnected:!!db(),storageMode:db()?'firestore':'memory-only',collection:COLLECTION})};
 }
 
 return createKreuzKunter;
@@ -4229,7 +4288,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile')) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
@@ -4274,6 +4333,42 @@ const profileStatsV8=installProfileStats(app,{
   admin,isReady:()=>profileProjectMatches,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
+let hubBusinessApi=null;
+// Independent central lobby. The legacy game protocols remain untouched.
+const sharedLobby=installSharedLobby(app,{
+  verifyProfile:profileStatsV8.identity,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
+  bootstrapSkyjo:async seat=>{
+    // Idempotent under a per-code write lock in writeSkyjoPersisted.
+    let found=await readSkyjoPersisted(seat.gameCode);
+    if(!found){
+      const now=Date.now();
+      const doc={kind:'skyjo-room-v2',version:2,lobby:{status:'lobby',hostId:'hub_'+seat.hostUid,
+        createdAt:now,settings:seat.settings,players:seat.members.map(m=>({id:'hub_'+m.uid,name:m.name,joinedAt:now}))},game:null};
+      const saved=await writeSkyjoPersisted(seat.gameCode,doc,0);
+      if(!saved.ok&&!saved.conflict)throw Error(saved.error||'SKYJO_BOOTSTRAP_FAILED');
+      found=await readSkyjoPersisted(seat.gameCode);
+    }
+    return {ok:!!found,state:found?.state,rev:found?.rev};
+  },
+  isMatchFinished:async match=>{
+    if(match.game==='kreuz')return kkOnline.isHubMatchFinished(match);
+    if(match.game==='skyjo'){const doc=await readSkyjoPersisted(match.gameCode);return doc?.state?.game?.phase==='gameOver';}
+    if(match.game==='business')return hubBusinessApi?.isFinished(match)||false;
+    if(match.game!=='barikade')return false;
+    let legacyRoom=rooms.get(match.gameCode);
+    if(!legacyRoom){
+      legacyRoom=makeRoom(match.gameCode);
+      if(await restoreRoomState(legacyRoom))rooms.set(match.gameCode,legacyRoom);
+    }
+    return legacyRoom?.state?.finished===true;
+  }
+});
+hubBusinessApi=installHubBusiness(app,{
+  verifyProfile:profileStatsV8.identity,
+  getSeat:sharedLobby.businessSeat,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
 app.get("/", (_req, res) => res.status(200).send(`barikade-server ok · ${SERVER_BUILD}`));
 app.get("/health", (_req, res) =>
   res.status(200).json({
@@ -4312,6 +4407,21 @@ function skyjoHealthPayload(){
 app.get("/skyjo-health", (_req,res)=>res.status(200).json(skyjoHealthPayload()));
 app.get("/skyjo/PINGCHECK", (_req,res)=>res.status(200).json({...skyjoHealthPayload(),found:false,code:"PINGCHECK",rev:0}));
 
+const HUB_SKYJO_ROOM=/^S[A-HJ-NP-Z2-9]{9}$/;
+async function hubSkyjoGuard(req,res,next){
+  if(!HUB_SKYJO_ROOM.test(String(req.params.code||'')))return next();
+  try{
+    const token=/^Bearer (\S+)$/i.exec(String(req.get('authorization')||''))?.[1];
+    if(!token)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
+    const profile=await profileStatsV8.identity(token);
+    const seat=await sharedLobby.skyjoSeat(String(req.params.code),profile);
+    if(seat.error)return res.status(seat.error==='LOGIN_REQUIRED'?401:403).json({ok:false,error:seat.error});
+    req.hubSkyjo=seat;
+    return next();
+  }catch(e){console.warn('[hub/skyjo] authorization failed',e?.message);return res.status(503).json({ok:false,error:'HUB_AUTH_UNAVAILABLE'});}
+}
+app.use('/skyjo/:code',hubSkyjoGuard);
+
 // GET loads the latest state. ?rev=N returns a tiny unchanged response when possible.
 app.get("/skyjo/:code", async (req,res)=>{
   try{
@@ -4331,6 +4441,11 @@ app.post("/skyjo/:code/state", async (req,res)=>{
   try{
     const code=normalizeSkyjoCode(req.params.code);
     if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    if(req.hubSkyjo){
+      const current=await readSkyjoPersisted(code);
+      if(!validHubSkyjoState(req.body?.state,current?.state,req.hubSkyjo))
+        return res.status(403).json({ok:false,error:'HUB_STATE_NOT_ALLOWED'});
+    }
     const result=await writeSkyjoPersisted(code,req.body?.state,req.body?.baseRev);
     if(result?.conflict) return res.status(409).json(result);
     if(!result?.ok){
@@ -4354,6 +4469,7 @@ app.post("/skyjo/:code/reset", async (req,res)=>{
   try{
     const code=normalizeSkyjoCode(req.params.code);
     if(!code) return res.status(400).json({ok:false,error:"NO_CODE"});
+    if(req.hubSkyjo)return res.status(403).json({ok:false,error:'HUB_MATCH_RESET_FORBIDDEN'});
     await deleteSkyjoPersisted(code);
     return res.status(200).json({ok:true,code});
   }catch(e){ console.error("[skyjo/reset]",e); return res.status(500).json({ok:false,error:"ERR"}); }
@@ -4553,6 +4669,12 @@ app.get("/stats", async (_req,res)=>{
   catch(e){ return res.status(500).json({ok:false,error:"STATS_ERR",message:e?.message||String(e)}); }
 });
 
+// A hub game-room cannot be claimed, reset or reconfigured through the legacy HTTP lobby.
+app.use('/room/:code',(req,res,next)=>{
+  if(/^B[A-HJ-NP-Z2-9]{9}$/.test(String(req.params.code||'').toUpperCase()) && req.method!=='GET')
+    return res.status(403).json({ok:false,error:'HUB_MATCH_CONTROLLED_BY_SERVER'});
+  next();
+});
 // --- Room presence (Lobby) ---
 // Returns current players list for a room (no join, read-only).
 app.get("/room/:code", (req, res) => {
@@ -4718,7 +4840,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 // KreuzKunter: eigener WS-Pfad und eigene Firestore-Sammlung. Die vorhandenen
 // Spiele und ihre Root-WebSocket-Verbindungen bleiben unverändert.
-const kkOnline = createKreuzKunter({ verifyProfile:profileStatsV8.identity,recordStats:profileStatsV8.book,getFirestore: () => {
+const kkOnline = createKreuzKunter({ verifyProfile:profileStatsV8.identity,recordStats:profileStatsV8.book,hubSeat:sharedLobby.kreuzSeat,getFirestore: () => {
   initFirebaseIfConfigured();
   return firestore;
 }});
@@ -5672,6 +5794,10 @@ function requireTurn(room, clientId, ws) {
 
 /** ---------- WebSocket ---------- **/
 wss.on("connection", (ws, req) => {
+  if(new URL(req.url || '/', 'http://localhost').pathname === '/hub'){
+    sharedLobby.attachSocket(ws);
+    return;
+  }
   if(new URL(req.url || '/', 'http://localhost').pathname === '/kreuzkunter') {
     kkOnline.handle(ws, req);
     return;
@@ -5692,14 +5818,29 @@ wss.on("connection", (ws, req) => {
     if (msg.type === "join") {
       const roomCode = String(msg.room || "").trim().toUpperCase();
       let name = String(msg.name || "Spieler").slice(0, 32);
-      const asHost = !!msg.asHost;
-      const sessionToken = String(msg.sessionToken || "").slice(0, 60);
-      const requestedColor = String(msg.requestedColor || "").toLowerCase().trim();
+      let asHost = !!msg.asHost;
+      let sessionToken = String(msg.sessionToken || "").slice(0, 60);
+      let requestedColor = String(msg.requestedColor || "").toLowerCase().trim();
       const requestedDiceStyle = normalizeDiceStyle(msg.requestedDiceStyle || "classic");
       const verifiedProfile=await profileStatsV8.identity(msg.profileIdToken);
       if(verifiedProfile)name=verifiedProfile.name;
 
       if (!roomCode) { send(ws, { type: "error", code: "NO_ROOM", message: "Kein Raumcode" }); return; }
+
+      let hubSeat;
+      try{ hubSeat=await sharedLobby.barikadeSeat(roomCode,verifiedProfile); }
+      catch(e){send(ws,{type:'error',code:'HUB_CHECK_FAILED',message:'Gemeinsamer Raum derzeit nicht erreichbar'});return;}
+      if(hubSeat?.error){
+        send(ws,{type:'error',code:hubSeat.error,message:'Kein Zugriff auf diese Partie'});
+        try{ws.close(4003,'HUB_NOT_AUTHORIZED');}catch(_e){}
+        return;
+      }
+      if(hubSeat&&!hubSeat.legacy){
+        // A browser cannot claim host rights or another player color in a hub match.
+        asHost=hubSeat.host;
+        requestedColor=hubSeat.color;
+        sessionToken='H-'+String(hubSeat.uid).slice(0,35)+'-'+roomCode;
+      }
 
       // leave old room; a running match keeps the colored seat reserved for reconnect
       if (c.room) {
@@ -5723,6 +5864,12 @@ wss.on("connection", (ws, req) => {
         if (restored) {
           console.log(`[restore] room=${roomCode} restored state (firebase/disk)`);
         }
+      }
+
+      if(hubSeat&&!hubSeat.legacy){
+        room.hubExpectedPlayers=hubSeat.expectedPlayers;
+        room.hubSettings=hubSeat.settings;
+        if(!room.state&&hubSeat.settings?.boardTheme)setLobbyBoardTheme(room,hubSeat.settings.boardTheme);
       }
 
       // reconnect via sessionToken
@@ -5983,6 +6130,9 @@ try{
     // Additive feature: player can request a preferred color BEFORE the game starts.
     // Does NOT remove/replace any existing logic (reconnect, pause/resume, save/restore stay unchanged).
     if (msg.type === "request_color") {
+      if(/^B[A-HJ-NP-Z2-9]{9}$/.test(room.code)){
+        send(ws,{type:'error',code:'HUB_COLOR_LOCKED',message:'Spielerfarben werden im gemeinsamen Raum vergeben'});return;
+      }
       // only in lobby (no running state yet)
       if (room.state) {
         send(ws, { type: "error", code: "GAME_STARTED", message: "Farbe nur vor Spielstart wählbar" });
@@ -6086,6 +6236,12 @@ broadcast(room, roomUpdatePayload(room));
 // ---------- START / RESET ----------
 
     if (msg.type === "start_request") {
+      if(room.hubExpectedPlayers){
+        const count=Array.from(room.players.values()).filter(p=>isConnectedPlayer(p)&&ALLOWED_COLORS.includes(p.color)).length;
+        if(count!==room.hubExpectedPlayers){send(ws,{type:'error',code:'WAITING_FOR_HUB_PLAYERS',message:'Es fehlen noch Mitspieler aus der gemeinsamen Lobby'});return;}
+        if(msg.mode!==undefined&&msg.mode!==room.hubSettings?.mode){send(ws,{type:'error',code:'HUB_SETTINGS_MISMATCH',message:'Spielregeln werden in der zentralen Lobby festgelegt'});return;}
+        if(msg.bossMode!==undefined&&!!msg.bossMode!==!!room.hubSettings?.bossMode){send(ws,{type:'error',code:'HUB_SETTINGS_MISMATCH',message:'Bossmodus wird in der zentralen Lobby festgelegt'});return;}
+      }
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
       if (room.state) { send(ws, { type: "error", code: "GAME_EXISTS", message: "Es existiert bereits eine Partie. Nutze Revanche oder Reset." }); return; }
@@ -6103,14 +6259,14 @@ broadcast(room, roomUpdatePayload(room));
 
       // Server entscheidet zufällig die Startfarbe (Quelle der Wahrheit)
       const starterColor = uniqueAct[Math.floor(Math.random() * uniqueAct.length)];
-      const requestedMode = String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
-      const requestedBossMode = !!(msg.bossMode ?? msg.actionBossMode ?? false);
+      const requestedMode = room.hubExpectedPlayers ? room.hubSettings.mode : String(msg.mode || "classic").toLowerCase() === "action" ? "action" : "classic";
+      const requestedBossMode = room.hubExpectedPlayers ? !!room.hubSettings.bossMode : !!(msg.bossMode ?? msg.actionBossMode ?? false);
       const requestedBoardTheme = normalizeBoardTheme(room?.lobby?.boardTheme);
       const requestedEventFieldCount = requestedBossMode
-        ? normalizeBossEventFieldCount(msg.eventFieldCount ?? room?.eventFieldCount)
+        ? normalizeBossEventFieldCount(room.hubExpectedPlayers ? room.hubSettings.eventFieldCount : msg.eventFieldCount ?? room?.eventFieldCount)
         : BOSS_EVENT_FIELD_DEFAULT;
       const requestedBossEventTrigger = requestedBossMode
-        ? normalizeBossEventBossTrigger(msg.bossEventTrigger ?? room?.bossEventTrigger)
+        ? normalizeBossEventBossTrigger(room.hubExpectedPlayers ? room.hubSettings.bossEventTrigger : msg.bossEventTrigger ?? room?.bossEventTrigger)
         : 0;
       room.eventFieldCount = requestedEventFieldCount;
       room.bossEventTrigger = requestedBossEventTrigger;
@@ -6119,7 +6275,7 @@ broadcast(room, roomUpdatePayload(room));
       // vorher in einem separaten Request angekommen sein. Classic braucht keine Jokerzahl.
       let jokerStartCount = null;
       if (requestedMode === "action") {
-        const incomingCount = Number(msg.jokerStartCount ?? room.jokerStartCount);
+        const incomingCount = Number(room.hubExpectedPlayers ? room.hubSettings.jokerStartCount : msg.jokerStartCount ?? room.jokerStartCount);
         if (!Number.isInteger(incomingCount) || incomingCount < 1 || incomingCount > 5) {
           send(ws, { type: "error", code: "NEED_JOKER_COUNT", message: "Host muss zuerst die Joker-Anzahl 1 bis 5 wählen" });
           return;
@@ -6136,6 +6292,10 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "start") {
+      if(room.hubExpectedPlayers){
+        const count=Array.from(room.players.values()).filter(p=>isConnectedPlayer(p)&&ALLOWED_COLORS.includes(p.color)).length;
+        if(count!==room.hubExpectedPlayers){send(ws,{type:'error',code:'WAITING_FOR_HUB_PLAYERS',message:'Es fehlen noch Mitspieler aus der gemeinsamen Lobby'});return;}
+      }
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann starten" }); return; }
       if (room.state) { room._pendingStart = null; send(ws, { type: "error", code: "GAME_EXISTS", message: "Es existiert bereits eine Partie. Nutze Revanche oder Reset." }); return; }
@@ -6203,6 +6363,7 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "rematch") {
+      if(room.hubExpectedPlayers){send(ws,{type:'error',code:'HUB_NEW_MATCH_REQUIRED',message:'Neue Partie bitte in der gemeinsamen Lobby starten'});return;}
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann eine Revanche starten" }); return; }
       if (!room.state || !room.state.finished) { send(ws, { type: "error", code: "NOT_FINISHED", message: "Revanche ist erst nach Spielende möglich" }); return; }
@@ -6260,6 +6421,7 @@ broadcast(room, roomUpdatePayload(room));
     }
 
     if (msg.type === "reset") {
+      if(room.hubExpectedPlayers){send(ws,{type:'error',code:'HUB_NEW_MATCH_REQUIRED',message:'Partie bitte in der gemeinsamen Lobby abschließen'});return;}
       const me = room.players.get(clientId);
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann resetten" }); return; }
 
