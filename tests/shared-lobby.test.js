@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installSharedLobby } from '../shared-lobby.js';
 
-function harness(){
+function harness(options={}){
  let finished=false,skyjoBootstraps=0;
  let adapter;
  const docs=new Map(),routes=[],middles=[],listeners=new Map();
@@ -29,7 +29,7 @@ function harness(){
  const app={get(path,fn){routes.push({method:'GET',path,fn});},post(path,fn){routes.push({method:'POST',path,fn});},use(path,fn){middles.push({path,fn});}};
  const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'}};
  let id=0,now=1000;
- adapter=installSharedLobby(app,{verifyProfile:async token=>identities[token]||null,getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
+ adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
  async function api(method,path,user='alice',body){
   const route=routes.find(r=>r.method===method&&matches(r.path,path));if(!route)throw Error('NO_ROUTE '+method+' '+path);
   const params=Object.fromEntries(route.path.split('/').filter(x=>x.startsWith(':')).map((x,i)=>[x.slice(1),path.split('/')[route.path.split('/').indexOf(x)]]));
@@ -427,4 +427,11 @@ test('Late completion calls from previous game cannot end a new match in same ro
  assert.equal(oldTab.room.match.id,next.match.id);
  assert.equal(oldTab.room.revision,next.revision);
  assert.equal((await h.api('POST',`/api/hub/rooms/${code}/sync`,'alice',{matchId:next.match.id})).room.phase,'lobby');
+});
+
+test('Rejected Firebase token is a controlled 401, not an unhandled middleware error',async()=>{
+ const h=harness({verifyProfile:async()=>{throw Error('TOKEN_EXPIRED');}});
+ const response=await h.api('POST','/api/hub/rooms','alice');
+ assert.equal(response.status,401);
+ assert.equal(response.error,'LOGIN_REQUIRED');
 });
