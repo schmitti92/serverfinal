@@ -388,6 +388,21 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       archiveCompletedMatch(room);
     })};
   }));
+  // Host-controlled cancellation: no winner and no statistical result.
+  app.post('/api/hub/rooms/:code/cancel',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='playing'||!room.match)throw error(409,'NO_ACTIVE_MATCH');
+      const match=room.match;
+      room.lastCompleted={id:match.id,game:match.game,finishedAt:clock(),status:'aborted',statsEligible:false};
+      room.phase='lobby';
+      room.game=null;
+      room.match=null;
+      room.players.forEach(p=>{p.ready=false;p.participating=false;p.colorPref=null;});
+    })};
+  }));
   app.post('/api/hub/rooms/:code/finish',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
