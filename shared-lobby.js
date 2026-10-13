@@ -315,7 +315,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     const raw=req.body?.text;
     if(typeof raw!=='string'||raw.length>320)throw error(400,'INVALID_CHAT_TEXT');
-    const content=raw.replace(/[\\u0000-\\u001f\\u007f]/g,' ').trim();
+    const content=raw.replace(/[\u0000-\u001f\u007f]/g,' ').trim();
     if(!content||content.length>300)throw error(400,'INVALID_CHAT_TEXT');
     return {room:await mutate(code,identity,room=>{
       const member=room.players.find(p=>p.uid===identity.uid);
