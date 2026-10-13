@@ -124,3 +124,21 @@ test('Business refuses corrupted or impossible player balances without changing 
  assert.equal(unchanged.rev,1);
  assert.equal(unchanged.game.players[0].cash,0);
 });
+
+test('Business rejects invalid bank, dice and roll counters without changing the persisted match',async()=>{
+ const h=suite(),root=await h.start(),url=`/api/hub/business/${root.gameCode}`;
+ const initial={...root.game,dice:[1,2,3,4,5],rolls:0,roundAnchor:0,finalRound:false};
+ assert.equal((await h.request('POST',url+'/bootstrap','alice',{matchId:root.matchId,game:initial})).status,200);
+ const changes=[
+  {bank:-1},{bank:1.25},{bank:'1000'},
+  {dice:[1,2,3,4,7]},{dice:[1,2,3]},
+  {rolls:-1},{rolls:4},{rolls:1.5},
+  {roundAnchor:1}
+ ];
+ for(const change of changes){
+  const response=await h.request('POST',url+'/state','alice',{baseRev:1,game:{...initial,...change}});
+  assert.equal(response.status,400,JSON.stringify(change));
+ }
+ assert.equal((await h.request('GET',url,'alice')).rev,1);
+ assert.equal((await h.request('POST',url+'/state','alice',{baseRev:1,game:{...initial,rolls:1,dice:[6,6,6,6,6]}})).status,200);
+});
