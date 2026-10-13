@@ -155,6 +155,15 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       createdAt:room.createdAt,updatedAt:room.updatedAt,
     };
   }
+  // A finished match returns to the same central room; no second room is created.
+  function archiveCompletedMatch(room){
+    const match=room.match;
+    room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
+    room.phase='lobby';
+    room.game=null;
+    room.match=null;
+    room.players.forEach(p=>{p.ready=false;p.participating=false;p.colorPref=null;});
+  }
   function validateRead(room,identity){
     if(!room||room.expiresAt<=clock())throw error(404,'ROOM_NOT_FOUND');
     if(!room.players.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_MEMBER');
@@ -339,6 +348,21 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       startGame(room);
     })};
   }));
+  // Any authenticated room member can request a completion check. The backend
+  // alone decides whether the active game really ended; no client-supplied score
+  // or gameOver boolean can finish a match. A match ID prevents stale tabs from
+  // finishing a newer game in the same hub. Firestore transactions serialize calls.
+  app.post('/api/hub/rooms/:code/sync',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const matchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(typeof matchId!=='string'||!/^[0-9a-f-]{36}$/i.test(matchId))throw error(400,'INVALID_MATCH_ID');
+    return {room:await mutate(code,identity,async room=>{
+      if(room.phase!=='playing'||!room.match||room.match.id!==matchId)return {unchanged:true};
+      if(!(await isMatchFinished(room.match)))return {unchanged:true};
+      archiveCompletedMatch(room);
+    })};
+  }));
   app.post('/api/hub/rooms/:code/finish',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
@@ -346,8 +370,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='playing'||!room.match)throw error(409,'NO_ACTIVE_MATCH');
       if(!(await isMatchFinished(room.match)))throw error(409,'MATCH_NOT_FINISHED');
-      room.phase='lobby';room.game=null;room.match=null;
-      room.players.forEach(p=>{p.ready=false;p.participating=false;});
+      archiveCompletedMatch(room);
     })};
   }));
   app.post('/api/hub/rooms/:code/leave',handler(async req=>{
