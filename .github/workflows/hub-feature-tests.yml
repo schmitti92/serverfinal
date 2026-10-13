@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/gemeinsame-lobby-v1
+      - feature/barikade-chat-v10
   workflow_dispatch:
 
 permissions:
