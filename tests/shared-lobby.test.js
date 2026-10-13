@@ -435,3 +435,40 @@ test('Rejected Firebase token is a controlled 401, not an unhandled middleware e
  assert.equal(response.status,401);
  assert.equal(response.error,'LOGIN_REQUIRED');
 });
+
+
+test('Room chat persists across verified players and rejects outsiders/invalid content',async()=>{
+ const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
+ const addr='/api/hub/rooms/'+code+'/chat';
+ assert.equal((await h.api('POST',addr,'bob',{text:'Hallo'})).status,403);
+ assert.equal((await h.api('POST',addr,'alice',{text:''})).status,400);
+ assert.equal((await h.api('POST',addr,'alice',{text:'a'.repeat(301)})).status,400);
+ const first=await h.api('POST',addr,'alice',{text:'  Hallo 👋  '});
+ assert.equal(first.status,200);
+ assert.equal(first.room.chatEnabled,true);
+ assert.equal(first.room.chat.length,1);
+ assert.equal(first.room.chat[0].text,'Hallo 👋');
+ assert.equal(first.room.chat[0].name,'Alice');
+ assert.equal((await h.api('POST',addr,'alice',{text:'Zu schnell'})).status,429);
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ const seen=await h.api('GET','/api/hub/rooms/'+code,'bob');
+ assert.equal(seen.room.chat[0].text,'Hallo 👋');
+ h.advance(1000);
+ const second=await h.api('POST',addr,'bob',{text:'Hey\nBob'});
+ assert.equal(second.room.chat[1].name,'Bob');
+ assert.equal(second.room.chat[1].text,'Hey Bob');
+});
+test('Room chat retains 40 recent messages without exposing internal player state',async()=>{
+ const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
+ for(let i=0;i<45;i++){
+  const posted=await h.api('POST','/api/hub/rooms/'+code+'/chat','alice',{text:'Nachricht '+i});
+  assert.equal(posted.status,200);
+  h.advance(900);
+ }
+ const read=(await h.api('GET','/api/hub/rooms/'+code)).room;
+ assert.equal(read.chat.length,40);
+ assert.equal(read.chat[0].text,'Nachricht 5');
+ assert.equal(read.chat[39].text,'Nachricht 44');
+ assert.equal(Object.hasOwn(read.players[0],'lastChatAt'),false);
+ assert.equal(Object.hasOwn(read.chat[0],'uid'),false);
+});
