@@ -18,7 +18,7 @@ function validPlayerFinances(game){
 function basicGame(game,seat){
  return !!game&&typeof game==='object'&&!Array.isArray(game)&&validRoster(game,seat)&&
    game.targetRounds===seat.settings.rounds&&Number.isInteger(game.current)&&game.current>=0&&game.current<seat.members.length&&
-   Number.isInteger(game.turnNumber)&&game.turnNumber>=1&&Number.isFinite(game.bank)&&
+   Number.isInteger(game.turnNumber)&&game.turnNumber>=1&&Number.isSafeInteger(game.bank)&&game.bank>=0&&
    game.gameEnded===false&&validPlayerFinances(game)&&Array.isArray(game.market)&&Array.isArray(game.deck);
 }
 export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
@@ -82,7 +82,18 @@ export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
      if(!incoming||!validRoster(incoming,seat)||incoming.targetRounds!==seat.settings.rounds||
        !Number.isInteger(incoming.turnNumber)||incoming.turnNumber<current.turnNumber||incoming.turnNumber>current.turnNumber+1||
        !Number.isInteger(incoming.current)||incoming.current<0||incoming.current>=seat.members.length||
-       typeof incoming.gameEnded!=='boolean'||!Number.isFinite(incoming.bank)||!validPlayerFinances(incoming))throw err(400,'INVALID_GAME_STATE');
+       typeof incoming.gameEnded!=='boolean'||!Number.isSafeInteger(incoming.bank)||incoming.bank<0||!validPlayerFinances(incoming))throw err(400,'INVALID_GAME_STATE');
+     // A completed turn must not reset the game to an earlier round.
+     if(Number.isInteger(current.roundAnchor)&&incoming.roundAnchor!==current.roundAnchor)
+       throw err(400,'IMMUTABLE_ROUND_ANCHOR');
+     if(current.finalRound===true&&incoming.finalRound!==true)
+       throw err(409,'FINAL_ROUND_CANNOT_RESET');
+     if(Array.isArray(current.dice)&&Array.isArray(incoming.dice)&&
+        (incoming.dice.length!==5||incoming.dice.some(d=>!Number.isInteger(d)||d<1||d>6)))
+       throw err(400,'INVALID_DICE');
+     if(Number.isInteger(current.rolls)&&
+        (!Number.isInteger(incoming.rolls)||incoming.rolls<0||incoming.rolls>3))
+       throw err(400,'INVALID_ROLL_COUNT');
      // Protect the turn order and immutable match parameters before accepting a client snapshot.
      // Same-turn updates (dice, market, purchases) must keep the active seat.
      const advancing=incoming.turnNumber===current.turnNumber+1;
