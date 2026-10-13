@@ -472,3 +472,30 @@ test('Room chat retains 40 recent messages without exposing internal player stat
  assert.equal(Object.hasOwn(read.players[0],'lastChatAt'),false);
  assert.equal(Object.hasOwn(read.chat[0],'uid'),false);
 });
+
+test('Host cancellation is reflected for every player and old match cannot be revived',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'skyjo'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const active=(await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true})).room;
+ assert.equal(active.phase,'playing');
+ const matchId=active.match.id;
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/cancel','bob')).status,403);
+ const stopped=await h.api('POST','/api/hub/rooms/'+code+'/cancel','alice');
+ assert.equal(stopped.status,200);
+ assert.equal(stopped.room.phase,'lobby');
+ assert.equal(stopped.room.match,null);
+ assert.equal(stopped.room.lastCompleted.id,matchId);
+ assert.equal(stopped.room.lastCompleted.status,'aborted');
+ assert.equal(stopped.room.lastCompleted.statsEligible,false);
+ const other=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ assert.equal(other.lastCompleted.status,'aborted');
+ assert.equal(other.lastCompleted.statsEligible,false);
+ h.setFinished(true);
+ const stale=await h.api('POST','/api/hub/rooms/'+code+'/sync','bob',{matchId});
+ assert.equal(stale.room.phase,'lobby');
+ assert.equal(stale.room.lastCompleted.status,'aborted');
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/finish','alice')).status,409);
+});
