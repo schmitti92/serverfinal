@@ -108,3 +108,19 @@ test('Business rejects skipped seats, seat swaps within a turn and tampered matc
  }
  assert.equal((await h.request('POST',url+'/state','alice',{baseRev:1,game:{...game,turnNumber:2,current:1}})).status,200);
 });
+
+test('Business refuses corrupted or impossible player balances without changing saved revision',async()=>{
+ const h=suite(),root=await h.start(),url=`/api/hub/business/${root.gameCode}`;
+ const corrupt=structuredClone(root.game);
+ corrupt.players[0].cash=-1;
+ assert.equal((await h.request('POST',url+'/bootstrap','alice',{matchId:root.matchId,game:corrupt})).status,400);
+ assert.equal((await h.request('POST',url+'/bootstrap','alice',{matchId:root.matchId,game:root.game})).status,200);
+ for(const cash of [-1,1.5,Number.MAX_SAFE_INTEGER+1,'1000',null]){
+  const next=structuredClone(root.game);
+  next.players[0].cash=cash;
+  assert.equal((await h.request('POST',url+'/state','alice',{baseRev:1,game:next})).status,400);
+ }
+ const unchanged=await h.request('GET',url,'alice');
+ assert.equal(unchanged.rev,1);
+ assert.equal(unchanged.game.players[0].cash,0);
+});
