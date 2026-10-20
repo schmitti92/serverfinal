@@ -20,12 +20,12 @@ const HUB_BUSINESS_CODE=/^D[A-HJ-NP-Z2-9]{9}$/;
 const BUSINESS_DEFAULTS=Object.freeze({rounds:20});
 function businessSettings(raw){const rounds=Number(raw?.rounds??20);return [10,20,30].includes(rounds)?{rounds}:null;}
 function uniqueBusinessNames(players){const used=new Set();return players.map((p,i)=>{const stem=cleanName(p.name).slice(0,18)||`Spieler ${i+1}`;let name=stem,serial=2;while(used.has(name.toLowerCase())){const suffix=` ${serial++}`;name=stem.slice(0,18-suffix.length)+suffix;}used.add(name.toLowerCase());return {...p,name};});}
-const SKYJO_DEFAULTS=Object.freeze({target:100,beginner:false,jokerCount:8,jokerEnabled:true,streetModeEnabled:true,boardTheme:'classic'});
+const SKYJO_DEFAULTS=Object.freeze({target:100,beginner:false,jokerCount:8,jokerEnabled:true,streetModeEnabled:true,boardTheme:'classic',layoutMode:'classic'});
 function skyjoSettings(raw){
  const v={...SKYJO_DEFAULTS,...(raw||{})};
  if(!Number.isInteger(v.target)||v.target<50||v.target>500||v.target%10!==0
    ||typeof v.beginner!=='boolean'||!Number.isInteger(v.jokerCount)||v.jokerCount<0||v.jokerCount>30
-   ||typeof v.jokerEnabled!=='boolean'||typeof v.streetModeEnabled!=='boolean'||!['classic','illustrated'].includes(v.boardTheme))return null;
+   ||typeof v.jokerEnabled!=='boolean'||typeof v.streetModeEnabled!=='boolean'||!['classic','illustrated'].includes(v.boardTheme)||!['classic','xl'].includes(v.layoutMode))return null;
  return v;
 }
 const BARIKADE_COLORS=['red','blue','green','yellow'];
