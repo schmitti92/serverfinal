@@ -417,6 +417,21 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       archiveCompletedMatch(room);
     })};
   }));
+  // A result is accepted only through an independently verified game adapter.
+  // This endpoint intentionally does not accept client-provided scores.
+  app.post('/api/hub/rooms/:code/challenge-result',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const {challengeId,gameId}=req.body||{};
+    if(typeof challengeId!=='string'||typeof gameId!=='string')throw error(400,'INVALID_RESULT_REFERENCE');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+      if(ch.order[ch.index]!==gameId)throw error(409,'STALE_GAME_RESULT');
+      // Game-specific authoritative validation is required before enabling this route.
+      throw error(409,'GAME_RESULT_ADAPTER_REQUIRED');
+    })};
+  }));
   // The host can advance only after an authoritative minigame adapter has
   // committed a result. No client may skip an active game or fabricate points.
   app.post('/api/hub/rooms/:code/challenge-next',handler(async req=>{
