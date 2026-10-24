@@ -160,7 +160,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
     // Legacy rooms may still carry a saved 5/9-game setting from before those modes were disabled.
-    // Use the playable two-game format rather than blocking an otherwise ready room.
+    // Use the currently playable game count rather than blocking an otherwise ready room.
     const count=CHALLENGE_READY_GAMES.length;
     const order=[...CHALLENGE_READY_GAMES];
     for(let i=order.length-1;i>0;i--){const j=challengeRandomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
