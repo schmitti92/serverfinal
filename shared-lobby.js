@@ -721,7 +721,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     })};
   }));
   app.post('/api/hub/rooms/:code/challenge-snake-state',handler(async req=>{
-  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,score,survived,alive,finished}=req.body||{};
+  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,score,survived,alive,finished,points,food,dir}=req.body||{};
   if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Number.isSafeInteger(score)||score<0||score>50000||!Number.isSafeInteger(survived)||survived<0||survived>2000||typeof alive!=='boolean')throw error(400,'INVALID_SNAKE_STATE');
   return {room:await mutate(code,identity,room=>{
    const ch=room.match?.challenge,game=ch?.snake;
@@ -732,7 +732,14 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
    const maxSteps=Math.floor((now-ch.startAt)/90)+5;
    if(survived>maxSteps||score>survived*50)throw error(409,'SNAKE_SCORE_LIMIT');
    if(score<p.score||survived<p.survived)throw error(409,'SNAKE_NON_MONOTONIC');
+   if(points!==undefined){
+    if(!Array.isArray(points)||points.length<1||points.length>200||!points.every(v=>v&&Number.isInteger(v.x)&&v.x>=0&&v.x<24&&Number.isInteger(v.y)&&v.y>=0&&v.y<20))throw error(400,'INVALID_SNAKE_BODY');
+    if(p.points&&Math.abs(points.length-p.points.length)>Math.max(3,survived-p.survived+1))throw error(409,'SNAKE_BODY_LIMIT');
+   }
+   if(food!==undefined&&food!==null&&(!Number.isInteger(food.x)||food.x<0||food.x>=24||!Number.isInteger(food.y)||food.y<0||food.y>=20))throw error(400,'INVALID_SNAKE_FOOD');
+   if(dir!==undefined&&!['up','down','left','right'].includes(dir))throw error(400,'INVALID_SNAKE_DIRECTION');
    p.seq=seq;p.score=score;p.survived=survived;p.alive=alive;p.updatedAt=now;p.finished=!!finished||!alive;
+   if(points)p.points=points;if(food!==undefined)p.food=food;if(dir)p.dir=dir;
    if(Object.values(game.players).every(v=>v.finished))finishSnake(ch,room.match.members);
   })};
  }));
