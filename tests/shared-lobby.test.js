@@ -501,7 +501,7 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge rejects unavailable lengths and starts the three-game format',async()=>{
+test('Party Challenge rejects unavailable lengths and starts the four-game format',async()=>{
  for(const count of [5,9]){
   const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
   await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
@@ -513,14 +513,14 @@ test('Party Challenge rejects unavailable lengths and starts the three-game form
   const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
   assert.equal(blocked.status,400);
   assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:3})).status,200);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:4})).status,200);
   for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
   const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
   assert.equal(started.status,200);
   assert.equal(started.room.phase,'playing');
-  assert.equal(started.room.match.challenge.order.length,3);
-  assert.equal(new Set(started.room.match.challenge.order).size,3);
+  assert.equal(started.room.match.challenge.order.length,4);
+  assert.equal(new Set(started.room.match.challenge.order).size,4);
   assert.equal(started.room.match.challenge.phase,'countdown');
   assert.equal(started.room.match.challenge.startAt,4000);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
@@ -705,17 +705,17 @@ test('Complete three-game Challenge with three participants and final podium',as
 });
 
 
-test('New Party Challenge defaults to supported three-game setup and starts with bots without saving settings',async()=>{
+test('New Party Challenge defaults to supported four-game setup and starts with bots without saving settings',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.equal(selected.room.settings.count,3);
+ assert.equal(selected.room.settings.count,4);
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
- assert.equal(started.room.match.challenge.order.length,3);
+ assert.equal(started.room.match.challenge.order.length,4);
  assert.equal(started.room.match.playerCount,3);
 });
 
@@ -771,12 +771,12 @@ test('Recheninsel has exactly three progressively harder timed rounds',async()=>
  assert.equal(state.results[0].rounds.length,3);
 });
 
-test('Maulwurf cannot be launched before its original online adapter is released',async()=>{
+test('Maulwurf endpoints reject calls without an active challenge',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.deepEqual(selected.room.settings.availableGames.sort(),['huetchen-challenge','recheninsel','zeitgefuehl'].sort());
+ assert.deepEqual(selected.room.settings.availableGames.sort(),['huetchen-challenge','maulwurf-arena','recheninsel','zeitgefuehl'].sort());
  const hit=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-hit','alice',{challengeId:'invalid',tick:0,hole:0});
  assert.equal(hit.status,409);
  const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:'invalid'});
