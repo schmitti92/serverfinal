@@ -711,13 +711,14 @@ test('New Party Challenge defaults to supported three-game setup and starts with
 });
 
 test('Hütchen rejects answers before shuffle and after deadline',async()=>{
- const h=harness({challengeRandomInt:()=>0});
+ const h=harness({challengeRandomInt:max=>max===3?1:0});
  const {room}=await h.api('POST','/api/hub/rooms');
  const code=room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
- const started=await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
  const ch=started.room.match.challenge;
  assert.equal(ch.order[0],'huetchen-challenge');
