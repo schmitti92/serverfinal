@@ -532,6 +532,24 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }));
   // Server-measured Zeitgefuehl: a stop request contains no client time or score.
   // Each authenticated seat may stop once after the shared start timestamp.
+  function resolveZeitgefuehl(ch,members){
+    if(members.every(p=>Object.hasOwn(ch.timeStops,p.uid))){
+      const target=ch.timeTargets?.[String(ch.index)];
+      if(!Number.isInteger(target)||target<10||target>20)throw error(409,'TIME_TARGET_MISSING');
+      const standings=members.map(p=>({seat:p.seat,name:p.name,elapsedMs:ch.timeStops[p.uid]-ch.startAt}));
+      standings.forEach(p=>{p.deltaMs=Math.abs(p.elapsedMs-target*1000);});
+      standings.sort((a,b)=>a.deltaMs-b.deltaMs||a.seat-b.seat);
+      const pointsBySeat=new Map();
+      for(let i=0;i<standings.length;){let j=i+1;while(j<standings.length&&standings[j].deltaMs===standings[i].deltaMs)j++;
+        const awards=[10,7,4,2];const average=awards.slice(i,j).reduce((a,b)=>a+b,0)/(j-i);
+        for(let k=i;k<j;k++)pointsBySeat.set(standings[k].seat,average);
+        i=j;
+      }
+      members.forEach((p,i)=>{ch.points[i]+=pointsBySeat.get(p.seat)||0;});
+      ch.results.push({game:'zeitgefuehl',index:ch.index,targetSeconds:target,standings:standings.map(p=>({...p,challengePoints:pointsBySeat.get(p.seat)})),finishedAt:clock()});
+      ch.phase=ch.index===ch.order.length-1?'finished':'results';
+    }
+  }
   app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
@@ -556,22 +574,23 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
           ch.timeStops[bot.uid]=ch.startAt+Math.max(1000,Math.min(30000,(target*1000)+(challengeRandomInt(7001)-3500)));
         }
       }
-      if(members.every(p=>Object.hasOwn(ch.timeStops,p.uid))){
-        const target=ch.timeTargets?.[String(ch.index)];
-        if(!Number.isInteger(target)||target<10||target>20)throw error(409,'TIME_TARGET_MISSING');
-        const standings=members.map(p=>({seat:p.seat,name:p.name,elapsedMs:ch.timeStops[p.uid]-ch.startAt}));
-        standings.forEach(p=>{p.deltaMs=Math.abs(p.elapsedMs-target*1000);});
-        standings.sort((a,b)=>a.deltaMs-b.deltaMs||a.seat-b.seat);
-        const pointsBySeat=new Map();
-        for(let i=0;i<standings.length;){let j=i+1;while(j<standings.length&&standings[j].deltaMs===standings[i].deltaMs)j++;
-          const awards=[10,7,4,2];const average=awards.slice(i,j).reduce((a,b)=>a+b,0)/(j-i);
-          for(let k=i;k<j;k++)pointsBySeat.set(standings[k].seat,average);
-          i=j;
-        }
-        members.forEach((p,i)=>{ch.points[i]+=pointsBySeat.get(p.seat)||0;});
-        ch.results.push({game:'zeitgefuehl',index:ch.index,targetSeconds:target,standings:standings.map(p=>({...p,challengePoints:pointsBySeat.get(p.seat)})),finishedAt:clock()});
-        ch.phase=ch.index===ch.order.length-1?'finished':'results';
-      }
+      resolveZeitgefuehl(ch,members);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/challenge-time-timeout',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const {challengeId}=req.body||{};
+    if(typeof challengeId!=='string')throw error(400,'INVALID_CHALLENGE_ID');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+      if(ch.order[ch.index]!=='zeitgefuehl'||ch.phase!=='countdown')return {unchanged:true};
+      if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+      if(clock()<ch.startAt+30000)return {unchanged:true};
+      ch.timeStops=ch.timeStops||{};
+      for(const p of room.match.members)if(!Object.hasOwn(ch.timeStops,p.uid))ch.timeStops[p.uid]=ch.startAt+30000;
+      resolveZeitgefuehl(ch,room.match.members);
     })};
   }));
   // A result is accepted only through an independently verified game adapter.
