@@ -501,8 +501,8 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge rejects unavailable lengths and starts the four-game format',async()=>{
- for(const count of [5,9]){
+test('Party Challenge rejects unavailable lengths and starts the five-game format',async()=>{
+ for(const count of [4,9]){
   const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
   await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
   await h.api('POST','/api/hub/rooms/'+code+'/join','cara');
@@ -513,14 +513,14 @@ test('Party Challenge rejects unavailable lengths and starts the four-game forma
   const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
   assert.equal(blocked.status,400);
   assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:4})).status,200);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:5})).status,200);
   for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
   const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
   assert.equal(started.status,200);
   assert.equal(started.room.phase,'playing');
-  assert.equal(started.room.match.challenge.order.length,4);
-  assert.equal(new Set(started.room.match.challenge.order).size,4);
+  assert.equal(started.room.match.challenge.order.length,5);
+  assert.equal(new Set(started.room.match.challenge.order).size,5);
   assert.equal(started.room.match.challenge.phase,'countdown');
   assert.equal(started.room.match.challenge.startAt,4000);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
@@ -657,17 +657,17 @@ test('Recheninsel online validates answers and awards points with two test playe
 });
 
 
-test('Complete four-game Challenge with three participants and final podium',async()=>{
+test('Complete five-game Challenge with three participants and final podium',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
- await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:4});
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:5});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
  const ch=started.room.match.challenge;
- assert.deepEqual(ch.order,['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena']);
+ assert.deepEqual(ch.order,['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung']);
  h.advance(3000+ch.targetSeconds*1000);
  const first=await h.api('POST','/api/hub/rooms/'+code+'/challenge-time-stop','alice',{challengeId:ch.id});
  assert.equal(first.status,200);
@@ -703,26 +703,33 @@ test('Complete four-game Challenge with three participants and final podium',asy
  h.advance(33000);
  roundState=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:ch.id});
  assert.equal(roundState.status,200);
+ assert.equal(roundState.room.match.challenge.phase,'results');
+ const toF=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
+ assert.equal(toF.status,200);
+ assert.equal(toF.room.match.challenge.order[4],'flusssprung');
+ h.advance(63000);
+ roundState=await h.api('POST','/api/hub/rooms/'+code+'/challenge-flusssprung-timeout','alice',{challengeId:ch.id});
+ assert.equal(roundState.status,200);
  const final=roundState.room.match.challenge;
  assert.equal(final.phase,'finished');
- assert.equal(final.results.length,4);
+ assert.equal(final.results.length,5);
  assert.equal(final.totals.length,3);
  assert.equal(final.totals.reduce((sum,p)=>sum+p.points,0),final.points.reduce((a,b)=>a+b,0));
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id})).status,409);
 });
 
 
-test('New Party Challenge defaults to supported four-game setup and starts with bots without saving settings',async()=>{
+test('New Party Challenge defaults to supported five-game setup and starts with bots without saving settings',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.equal(selected.room.settings.count,4);
+ assert.equal(selected.room.settings.count,5);
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
- assert.equal(started.room.match.challenge.order.length,4);
+ assert.equal(started.room.match.challenge.order.length,5);
  assert.equal(started.room.match.playerCount,3);
 });
 
@@ -783,7 +790,7 @@ test('Maulwurf endpoints reject calls without an active challenge',async()=>{
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.deepEqual(selected.room.settings.availableGames.sort(),['huetchen-challenge','maulwurf-arena','recheninsel','zeitgefuehl'].sort());
+ assert.deepEqual(selected.room.settings.availableGames.sort(),['flusssprung','huetchen-challenge','maulwurf-arena','recheninsel','zeitgefuehl'].sort());
  const hit=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-hit','alice',{challengeId:'invalid',tick:0,hole:0});
  assert.equal(hit.status,409);
  const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:'invalid'});
