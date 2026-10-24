@@ -789,8 +789,13 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const now=clock();if(now<ch.startAt||now>ch.startAt+120000)throw error(409,'BOMBER_NOT_RUNNING');
       tickBomber(ch,room.match.members,now);
       if(ch.phase!=='countdown'||seq<=(p.bombSeq||0))return {unchanged:true};
-      if(p.x===null||Math.hypot(p.x-(x+.5),p.y-(y+.5))>2)throw error(409,'BOMBER_BOMB_DISTANCE');
-      p.bombSeq=seq;
+      if(p.x===null||Math.hypot(p.x-(x+.5),p.y-(y+.5))>1.1)throw error(409,'BOMBER_BOMB_DISTANCE');
+      const tileIndex=y*10+x;
+      if(game.crates.includes(tileIndex)&&!game.destroyed.includes(tileIndex))throw error(409,'BOMBER_BLOCKED_TILE');
+      if(game.bombs.some(b=>b.x===x&&b.y===y))throw error(409,'BOMBER_TILE_OCCUPIED');
+      if((p.lastBombAt||0)&&now-p.lastBombAt<180)throw error(429,'BOMBER_BOMB_COOLDOWN');
+      if(game.bombs.filter(b=>b.seat===p.seat).length>=16)throw error(409,'BOMBER_BOMB_LIMIT');
+      p.bombSeq=seq;p.lastBombAt=now;
       game.bombs.push({id:identity.uid+':'+seq,seat:p.seat,x,y,range,placedAt:now});
       if(game.bombs.length>80)game.bombs=game.bombs.slice(-80);
     })};
