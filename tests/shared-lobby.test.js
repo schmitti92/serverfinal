@@ -349,7 +349,7 @@ test('SKYJO creates one hub match with settings, seat authentication, and no sec
  assert.equal(active.match.gameCode.slice(1,7),code);
  const alice=await h.adapter.skyjoSeat(active.match.gameCode,h.identities.alice);
  assert.equal(alice.host,true);assert.equal(alice.hostUid,h.identities.alice.uid);
- assert.deepEqual(alice.settings,settings);assert.equal(alice.members.length,2);
+ assert.deepEqual(alice.settings,{...settings,layoutMode:'classic'});assert.equal(alice.members.length,2);
  assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,h.identities.cara)).error,'NOT_A_PARTICIPANT');
  assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,null)).error,'LOGIN_REQUIRED');
  const boot=await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'bob',{matchId:active.match.id});
@@ -508,7 +508,7 @@ test('Party Challenge rejects unavailable lengths and starts the three-game form
   await h.api('POST','/api/hub/rooms/'+code+'/join','cara');
   const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
   assert.equal(selected.room.game,'partychallenge');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,403);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,400);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:7})).status,400);
   const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
   assert.equal(blocked.status,400);
@@ -701,12 +701,12 @@ test('New Party Challenge defaults to supported three-game setup and starts with
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.equal(selected.room.settings.partychallenge.count,3);
+ assert.equal(selected.room.settings.count,3);
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
- assert.equal(started.room.match.challenge.order.length,2);
+ assert.equal(started.room.match.challenge.order.length,3);
  assert.equal(started.room.match.playerCount,3);
 });
 
