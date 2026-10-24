@@ -134,30 +134,6 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       members:uniqueBusinessNames(activeSeats(room).map(p=>({uid:p.uid,name:p.name,seat:p.seat})))};
     room.phase='playing';
   }
-  function setupHuetchen(ch,round=1){
-    const counts=[3,4,5],swapCounts=[5,7,9],n=counts[round-1];
-    const secret=challengeRandomInt(n),swaps=[];
-    for(let i=0;i<swapCounts[round-1];i++){
-      const a=challengeRandomInt(n),b=(a+1+challengeRandomInt(n-1))%n;
-      swaps.push([a,b]);
-    }
-    const positions=Array.from({length:n},(_,i)=>i);
-    for(const [a,b] of swaps)[positions[a],positions[b]]=[positions[b],positions[a]];
-    ch.huetchen={round,secret,swaps,correctSlot:positions.indexOf(secret),answers:{}};
-  }
-  function resolveHuetchen(ch,members){
-    const h=ch.huetchen;
-    if(!members.every(p=>Object.hasOwn(h.answers,p.uid)))return;
-    const standings=members.map(p=>({seat:p.seat,name:p.name,correct:h.answers[p.uid]===h.correctSlot,challengePoints:h.answers[p.uid]===h.correctSlot?10:0}));
-    members.forEach((p,i)=>ch.points[i]+=standings[i].challengePoints);
-    ch.huetchenHistory=ch.huetchenHistory||[];
-    ch.huetchenHistory.push({round:h.round,correctSlot:h.correctSlot,standings});
-    if(h.round<3){setupHuetchen(ch,h.round+1);ch.startAt=clock()+3000;}
-    else{
-      ch.results.push({game:'huetchen-challenge',index:ch.index,rounds:ch.huetchenHistory,standings:members.map(p=>({seat:p.seat,name:p.name,challengePoints:ch.huetchenHistory.reduce((a,r)=>a+(r.standings.find(x=>x.seat===p.seat)?.challengePoints||0),0)})),finishedAt:clock()});
-      ch.phase=ch.index===ch.order.length-1?'finished':'results';
-    }
-  }
   function setupRecheninsel(ch,round=1){
     let a,b,operator,answer;
     if(round===1){a=3+challengeRandomInt(28);b=2+challengeRandomInt(24);operator=challengeRandomInt(2)?'−':'+';answer=operator==='+'?a+b:a-b;if(answer<0){operator='+';answer=a+b;}}
