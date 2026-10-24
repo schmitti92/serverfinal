@@ -590,3 +590,40 @@ test('Zeitgefuehl server stop rejects early actions and records bot scores',asyn
  assert.equal(stopped.room.match.challenge.points.length,3);
  assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id})).status,409);
 });
+
+
+test('Zeitgefuehl waits for all real players, ignores duplicate stops, and lets host advance',async()=>{
+ const h=harness({challengeRandomInt:max=>max===5?0:max-1});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).room;
+ const ch=started.match.challenge;
+ assert.equal(ch.order[0],'zeitgefuehl');
+ const stop='/api/hub/rooms/'+code+'/challenge-time-stop';
+ const next='/api/hub/rooms/'+code+'/challenge-next';
+ h.advance(3000+11000);
+ const first=await h.api('POST',stop,'alice',{challengeId:ch.id});
+ assert.equal(first.status,200);
+ assert.equal(first.room.match.challenge.phase,'countdown');
+ assert.equal(first.room.match.challenge.stopped.length,1);
+ assert.equal((await h.api('POST',next,'alice',{challengeId:ch.id})).status,409);
+ const repeat=await h.api('POST',stop,'alice',{challengeId:ch.id});
+ assert.equal(repeat.status,200);
+ assert.equal(repeat.room.match.challenge.stopped.length,1);
+ h.advance(1200);
+ const second=await h.api('POST',stop,'bob',{challengeId:ch.id});
+ assert.equal(second.status,200);
+ assert.equal(second.room.match.challenge.phase,'results');
+ assert.equal(second.room.match.challenge.results.length,1);
+ assert.equal(second.room.match.challenge.results[0].standings.length,2);
+ assert.equal((await h.api('POST',next,'bob',{challengeId:ch.id})).status,403);
+ const advanced=await h.api('POST',next,'alice',{challengeId:ch.id});
+ assert.equal(advanced.status,200);
+ assert.equal(advanced.room.match.challenge.index,1);
+ assert.equal(advanced.room.match.challenge.phase,'countdown');
+ assert.equal(advanced.room.match.challenge.results.length,1);
+ assert.equal((await h.api('POST',next,'alice',{challengeId:ch.id})).status,409);
+});
