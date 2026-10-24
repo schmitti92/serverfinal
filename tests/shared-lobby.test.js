@@ -499,3 +499,32 @@ test('Host cancellation is reflected for every player and old match cannot be re
  assert.equal(stale.room.lastCompleted.status,'aborted');
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/finish','alice')).status,409);
 });
+
+
+test('Party Challenge starts only by host, supports five or nine unique games and shares server countdown',async()=>{
+ for(const count of [5,9]){
+  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+  await h.api('POST','/api/hub/rooms/'+code+'/join','cara');
+  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+  assert.equal(selected.room.game,'partychallenge');
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,403);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:7})).status,400);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count})).status,200);
+  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+  await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+  const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready','cara',{ready:true});
+  assert.equal(ready.room.phase,'preparing');
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
+  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+  assert.equal(started.status,200);
+  assert.equal(started.room.phase,'playing');
+  assert.equal(started.room.match.challenge.order.length,count);
+  assert.equal(new Set(started.room.match.challenge.order).size,count);
+  assert.equal(started.room.match.challenge.phase,'countdown');
+  assert.equal(started.room.match.challenge.startAt,4500);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
+  const peer=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+  assert.deepEqual(peer.match.challenge,started.room.match.challenge);
+ }
+});
