@@ -579,6 +579,23 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  h.answers[identity.uid]={slot,at:clock()};resolveHuetchen(ch,room.match.members);
  })};
  }));
+ app.post('/api/hub/rooms/:code/challenge-huetchen-timeout',handler(async req=>{
+  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,round}=req.body||{};
+  if(!code)throw error(400,'INVALID_ROOM_CODE');
+  if(typeof challengeId!=='string'||!Number.isInteger(round)||round<1||round>3)throw error(400,'INVALID_HUETCHEN_ROUND');
+  return {room:await mutate(code,identity,room=>{
+   const ch=room.match?.challenge,h=ch?.huetchen;
+   if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+   if(ch.order[ch.index]!=='huetchen-challenge'||ch.phase!=='countdown'||!h||h.index!==ch.index||h.round!==round)return {unchanged:true};
+   if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+   const deadline=ch.startAt+[7160,7390,7140][round-1]+12000;
+   if(clock()<deadline)return {unchanged:true};
+   for(const member of room.match.members){
+    if(!Object.hasOwn(h.answers,member.uid))h.answers[member.uid]={slot:-1,at:deadline,timedOut:true};
+   }
+   resolveHuetchen(ch,room.match.members);
+  })};
+ }));
  app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
