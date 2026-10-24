@@ -640,25 +640,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       resolveZeitgefuehl(ch,room.match.members);
     })};
   }));
-  app.post('/api/hub/rooms/:code/challenge-huetchen-answer',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity;
-    const {challengeId,round,slot}=req.body||{};
-    if(!code)throw error(400,'INVALID_ROOM_CODE');
-    if(typeof challengeId!=='string'||!Number.isInteger(round)||!Number.isInteger(slot))throw error(400,'INVALID_HUETCHEN_ANSWER');
-    return {room:await mutate(code,identity,room=>{
-      const ch=room.match?.challenge,h=ch?.huetchen;
-      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
-      if(ch.order[ch.index]!=='huetchen-challenge'||ch.phase!=='countdown'||!h||h.round!==round)throw error(409,'WRONG_HUETCHEN_ROUND');
-      if(clock()<ch.startAt)throw error(409,'GAME_NOT_STARTED');
-      if(slot<0||slot>=[3,4,5][round-1])throw error(400,'INVALID_HUETCHEN_SLOT');
-      const member=room.match.members.find(p=>p.uid===identity.uid);
-      if(!member)throw error(403,'NOT_A_PARTICIPANT');
-      if(Object.hasOwn(h.answers,identity.uid))return {unchanged:true};
-      h.answers[identity.uid]=slot;
-      resolveHuetchen(ch,room.match.members);
-    })};
-  }));
-  // A result is accepted only through an independently verified game adapter.
+    // A result is accepted only through an independently verified game adapter.
   // This endpoint intentionally does not accept client-provided scores.
   app.post('/api/hub/rooms/:code/challenge-result',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
