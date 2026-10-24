@@ -412,8 +412,27 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(typeof matchId!=='string'||!/^[0-9a-f-]{36}$/i.test(matchId))throw error(400,'INVALID_MATCH_ID');
     return {room:await mutate(code,identity,async room=>{
       if(room.phase!=='playing'||!room.match||room.match.id!==matchId)return {unchanged:true};
+      if(room.match.game==='partychallenge')return {unchanged:true};
       if(!(await isMatchFinished(room.match)))return {unchanged:true};
       archiveCompletedMatch(room);
+    })};
+  }));
+  // The host can advance only after an authoritative minigame adapter has
+  // committed a result. No client may skip an active game or fabricate points.
+  app.post('/api/hub/rooms/:code/challenge-next',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const challengeId=req.body?.challengeId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(typeof challengeId!=='string'||!/^[0-9a-f-]{36}$/i.test(challengeId))throw error(400,'INVALID_CHALLENGE_ID');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+      if(ch.phase!=='results'||ch.results.length!==ch.index+1)throw error(409,'RESULTS_NOT_READY');
+      if(ch.index>=ch.order.length-1)throw error(409,'CHALLENGE_ALREADY_COMPLETE');
+      ch.index++;
+      ch.phase='countdown';
+      ch.startAt=clock()+3000;
     })};
   }));
   // Host-controlled cancellation: no winner and no statistical result.
@@ -437,6 +456,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     return {room:await mutate(code,identity,async room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='playing'||!room.match)throw error(409,'NO_ACTIVE_MATCH');
+      if(room.match.game==='partychallenge')throw error(409,'CHALLENGE_RESULTS_REQUIRED');
       if(!(await isMatchFinished(room.match)))throw error(409,'MATCH_NOT_FINISHED');
       archiveCompletedMatch(room);
     })};
