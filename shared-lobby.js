@@ -9,7 +9,9 @@ export const HUB_GAMES = Object.freeze({
   skyjo: { title:'SKYJO Action', min:2, max:5 },
   kreuz: { title:'KreuzKunter', min:2, max:6 },
   business: { title:'Das große Business', min:2, max:5 },
+  partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
+const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
 const COLLECTION='spielesammlung_hub_v1';
@@ -131,7 +133,20 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       members:uniqueBusinessNames(activeSeats(room).map(p=>({uid:p.uid,name:p.name,seat:p.seat})))};
     room.phase='playing';
   }
+  function startChallenge(room){
+    const seats=activeSeats(room);
+    if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
+    const count=room.settings?.partychallenge?.count===9?9:5;
+    const order=[...CHALLENGE_GAMES];
+    for(let i=order.length-1;i>0;i--){const j=randomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
+    room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
+      settings:{count},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
+      challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3500,
+        points:seats.map(()=>0),results:[]}};
+    room.phase='playing';
+  }
   function startGame(room){
+    if(room.game==='partychallenge')return startChallenge(room);
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
     if(room.game==='skyjo')return startSkyjo(room);
@@ -147,7 +162,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:room.settings?.partychallenge?.count===9?9:5}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -155,6 +170,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
+        challenge:room.match.game==='partychallenge'?room.match.challenge:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -196,7 +212,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
-  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business']}));
+  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business'],challengeFoundation:true}));
   app.use('/api/hub/rooms',authentication);
   app.post('/api/hub/rooms',handler(async req=>{
     const identity=req.hubIdentity,store=db();
@@ -252,7 +268,19 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       if(game==='business')room.settings={...room.settings,business:businessSettings(room.settings?.business)||{...BUSINESS_DEFAULTS}};
+      if(game==='partychallenge')room.settings={...room.settings,partychallenge:{count:5}};
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/challenge-settings',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,count=req.body?.count;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(count!==5&&count!==9)throw error(400,'INVALID_CHALLENGE_LENGTH');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'NO_CHALLENGE_SETUP');
+      room.settings={...room.settings,partychallenge:{count}};
+      room.players.forEach(p=>p.ready=false);
     })};
   }));
   // Host changes are stored and validated server-side. Any change invalidates readiness.
@@ -356,7 +384,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
-      if(allReady(room)&&HUB_GAMES[room.game])startGame(room);
+      if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge')startGame(room);
     })};
   }));
   // No fake game launch: the game adapters must be implemented and tested first.
