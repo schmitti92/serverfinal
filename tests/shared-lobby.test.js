@@ -701,7 +701,7 @@ test('New Party Challenge defaults to supported two-game setup and starts with b
 });
 
 test('Hütchen rejects answers before shuffle and after deadline',async()=>{
- const h=harness({challengeRandomInt:()=>0});
+ const h=harness({challengeRandomInt:n=>n===3?1:0});
  const {room}=await h.api('POST','/api/hub/rooms');
  const code=room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
