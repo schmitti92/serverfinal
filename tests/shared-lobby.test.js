@@ -642,11 +642,16 @@ test('Recheninsel online validates answers and awards points with two test playe
  const path='/api/hub/rooms/'+code+'/challenge-math-answer';
  assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,answer:4})).status,409);
  h.advance(3000);
- const answer=ch.math.operator==='×'?ch.math.a*ch.math.b:ch.math.a+ch.math.b;
- const result=await h.api('POST',path,'alice',{challengeId:ch.id,answer});
- assert.equal(result.status,200);
+ let result;
+ for(let round=1;round<=3;round++){
+  const q=round===1?ch.math:result.room.match.challenge.math;
+  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
+  result=await h.api('POST',path,'alice',{challengeId:ch.id,answer});
+  assert.equal(result.status,200);
+  if(round<3){assert.equal(result.room.match.challenge.math.round,round+1);h.advance(3000);}
+ }
  assert.equal(result.room.match.challenge.phase,'results');
- assert.equal(result.room.match.challenge.results[0].answer,answer);
+ assert.equal(result.room.match.challenge.results[0].rounds.length,3);
  assert.equal(result.room.match.challenge.results[0].standings.length,3);
  assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,answer:999})).status,409);
 });
@@ -673,10 +678,14 @@ test('Complete three-game Challenge with three participants and final podium',as
  assert.equal(next.room.match.challenge.index,1);
  assert.equal(next.room.match.challenge.math.answer,undefined);
  h.advance(3000);
- const q=next.room.match.challenge.math;
- const answer=q.operator==='×'?q.a*q.b:q.a+q.b;
- const last=await h.api('POST','/api/hub/rooms/'+code+'/challenge-math-answer','alice',{challengeId:ch.id,answer});
- assert.equal(last.status,200);
+ let last;
+ for(let round=1;round<=3;round++){
+  const q=round===1?next.room.match.challenge.math:last.room.match.challenge.math;
+  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
+  last=await h.api('POST','/api/hub/rooms/'+code+'/challenge-math-answer','alice',{challengeId:ch.id,answer});
+  assert.equal(last.status,200);
+  if(round<3)h.advance(3000);
+ }
  assert.equal(last.room.match.challenge.phase,'results');
  const toH=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
  assert.equal(toH.status,200);
