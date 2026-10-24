@@ -216,7 +216,12 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function setupPreisjaeger(ch){
     const pool=PREISJAEGER_PRODUCTS.map((_,i)=>i);
     for(let i=pool.length-1;i>0;i--){const j=challengeRandomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}
-    ch.preisjaeger={index:ch.index,round:1,productIds:pool.slice(0,3),answers:{},history:[],roundStartedAt:ch.startAt};
+    // Guarantee at least one genuine curated photo in each three-question match.
+    const photographed=pool.filter(i=>PREISJAEGER_VERIFIED_PHOTOS[PREISJAEGER_PRODUCTS[i].name]);
+    const selected=photographed.length?[photographed[challengeRandomInt(photographed.length)]]:[];
+    for(const i of pool)if(selected.length<3&&!selected.includes(i))selected.push(i);
+    for(let i=selected.length-1;i>0;i--){const j=challengeRandomInt(i+1);[selected[i],selected[j]]=[selected[j],selected[i]];}
+    ch.preisjaeger={index:ch.index,round:1,productIds:selected,answers:{},history:[],roundStartedAt:ch.startAt};
   }
   function preisjaegerScore(guess,price){
     const d=Math.abs(guess-price)/price;
