@@ -196,7 +196,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(Object.values(game.players).filter(p=>p.alive).length<=1||now>=ch.startAt+120000)finishBomber(ch,members);
   }
   function setupBomber(ch,members){
-    ch.bomber={index:ch.index,players:Object.fromEntries(members.map(m=>[m.uid,{seat:m.seat,x:null,y:null,alive:true,seq:0,eliminatedAt:null,updatedAt:0,bombsPlaced:0}])),bombs:[],blasts:[],crates:[],destroyed:[],startedAt:ch.startAt};
+    ch.bomber={index:ch.index,players:Object.fromEntries(members.map(m=>[m.uid,{seat:m.seat,x:null,y:null,alive:true,seq:0,eliminatedAt:null,updatedAt:0,bombsPlaced:0}])),bombs:[],blasts:[],crates:[2,3,4,5,6,7,11,12,13,14,15,16,17,18,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,81,82,83,84,85,86,87,88,92,93,94,95,96,97],destroyed:[],startedAt:ch.startAt};
   }
   function finishBomber(ch,members){
     if(ch.phase!=='countdown')return;
