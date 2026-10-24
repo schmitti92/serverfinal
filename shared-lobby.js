@@ -141,7 +141,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     for(let i=order.length-1;i>0;i--){const j=randomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
     room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
       settings:{count},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
-      challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3500,
+      challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
         points:seats.map(()=>0),results:[]}};
     room.phase='playing';
   }
