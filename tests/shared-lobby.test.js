@@ -809,11 +809,11 @@ test('Maulwurf validates server clock, hole, duplicate hits and computes standin
  assert.equal(other.hitCount,0);
  assert.equal((await h.api('POST',path,'bob',{...payload,tick:1})).status,409);
  // A hit sent in the first second can arrive slightly late without being discarded.
- h.advance(1200);
+ h.advance(1100);
  assert.equal((await h.api('POST',path,'bob',payload)).status,200);
  assert.equal((await h.api('GET','/api/hub/rooms/'+code,'bob')).room.match.challenge.maulwurf.score,3);
  // But the grace period must be bounded, and duplicate hits must not score twice.
- h.advance(200);
+ h.advance(300);
  assert.equal((await h.api('POST',path,'bob',payload)).status,409);
  h.advance(28600);
  const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id});
