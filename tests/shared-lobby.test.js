@@ -940,3 +940,24 @@ test('Maulwurf penalty never subtracts challenge points below zero',async()=>{
  assert.deepEqual(done.room.match.challenge.results[0].standings.map(p=>p.score),[-2,0]);
  assert.deepEqual(done.room.match.challenge.points,[0,0]);
 });
+
+test('Maulwurf records different hits for players at the same tick',async()=>{
+ const h=harness({challengeRandomInt:()=>0});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ for(const uid of ['alice','bob'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,200);
+ const key='spielesammlung_hub_v1/'+code,doc=h.docs.get(key),ch=doc.match.challenge;
+ ch.order=['maulwurf-arena'];ch.index=0;ch.points=[0,0];ch.results=[];
+ ch.maulwurf={index:0,events:Array.from({length:30},(_,tick)=>({tick,hole:2,kind:'normal'})),hits:{}};
+ h.docs.set(key,doc);h.advance(3000);
+ const path='/api/hub/rooms/'+code+'/challenge-maulwurf-hit',payload={challengeId:ch.id,tick:0,hole:2};
+ const results=await Promise.all(['alice','bob'].map(uid=>h.api('POST',path,uid,payload)));
+ assert.deepEqual(results.map(x=>x.status),[200,200]);
+ for(const uid of ['alice','bob']){
+  const view=(await h.api('GET','/api/hub/rooms/'+code,uid)).room.match.challenge.maulwurf;
+  assert.equal(view.score,1);
+  assert.equal(view.hitCount,1);
+ }
+});
