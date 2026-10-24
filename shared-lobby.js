@@ -11,7 +11,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
-const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung']);
+const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena']);
 const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
@@ -156,6 +156,16 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  }
   function setupMaulwurf(ch){ch.maulwurf={index:ch.index,events:Array.from({length:30},(_,tick)=>({tick,hole:challengeRandomInt(9),kind:['bad','gold','normal','normal','normal','normal'][challengeRandomInt(6)]})),hits:{}};}
   function finishMaulwurf(ch,members){const standings=members.map(p=>{const hits=ch.maulwurf.hits[p.uid]||{};const score=Object.values(hits).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0);return {seat:p.seat,name:p.name,score,challengePoints:Math.max(0,score)*10};});standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);ch.results.push({game:'maulwurf-arena',index:ch.index,standings,finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
+  function setupLava(ch,members){
+    ch.lava={index:ch.index,tiles:Array.from({length:100},()=>({state:0,damage:0})),
+      players:Object.fromEntries(members.map((m,i)=>[m.uid,{seat:m.seat,x:[90,510,510,90][i],y:[90,510,90,510][i],alive:true,jump:0,seq:0,lastAt:0,deathAt:null}]))};
+  }
+  function finishLava(ch,members){
+    const standings=members.map(m=>{const p=ch.lava.players[m.uid];return {seat:m.seat,name:m.name,alive:p.alive,survivedMs:p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000,challengePoints:Math.max(0,Math.round((p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000)/1000))};});
+    standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
+    ch.results.push({game:'lava-arena',index:ch.index,standings,finishedAt:clock()});
+    ch.phase=ch.index===ch.order.length-1?'finished':'results';
+  }
   function setupFlusssprung(ch,members){
     ch.flusssprung={index:ch.index,path:Array.from({length:5},()=>challengeRandomInt(6)),players:Object.fromEntries(members.map(p=>[p.uid,{row:-1,falls:0,finishedAt:null,lastMoveAt:0}])),moves:[]};
   }
@@ -182,6 +192,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(room.match.challenge.order[0]==='huetchen-challenge')setupHuetchen(room.match.challenge);
     if(room.match.challenge.order[0]==='maulwurf-arena')setupMaulwurf(room.match.challenge);
     if(room.match.challenge.order[0]==='flusssprung')setupFlusssprung(room.match.challenge,room.match.members);
+    if(room.match.challenge.order[0]==='lava-arena')setupLava(room.match.challenge,room.match.members);
     room.phase='playing';
   }
   function startGame(room){
@@ -194,7 +205,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function publicChallenge(ch,members,identity){
     const {id,order,index,phase,startAt,points,results}=ch;
-    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,flusssprung:order[index]==='flusssprung'&&ch.flusssprung?{path:ch.flusssprung.path,players:members.map(p=>({seat:p.seat,name:p.name,...ch.flusssprung.players[p.uid]})),moves:ch.flusssprung.moves.slice(-40),moveCount:ch.flusssprung.moves.length}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length,score:Object.values(ch.maulwurf.hits[identity.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hitTicks:Object.keys(ch.maulwurf.hits[identity.uid]||{}).map(Number),opponents:members.map(p=>({seat:p.seat,name:p.name,score:Object.values(ch.maulwurf.hits[p.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hits:Object.keys(ch.maulwurf.hits[p.uid]||{}).length}))}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
+    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,lava:order[index]==='lava-arena'&&ch.lava?{players:members.map(m=>({...ch.lava.players[m.uid],name:m.name})),tiles:ch.lava.tiles}:null,flusssprung:order[index]==='flusssprung'&&ch.flusssprung?{path:ch.flusssprung.path,players:members.map(p=>({seat:p.seat,name:p.name,...ch.flusssprung.players[p.uid]})),moves:ch.flusssprung.moves.slice(-40),moveCount:ch.flusssprung.moves.length}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length,score:Object.values(ch.maulwurf.hits[identity.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hitTicks:Object.keys(ch.maulwurf.hits[identity.uid]||{}).map(Number),opponents:members.map(p=>({seat:p.seat,name:p.name,score:Object.values(ch.maulwurf.hits[p.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hits:Object.keys(ch.maulwurf.hits[p.uid]||{}).length}))}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
@@ -694,9 +705,42 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(ch.order[ch.index]==='huetchen-challenge')setupHuetchen(ch);
       if(ch.order[ch.index]==='maulwurf-arena')setupMaulwurf(ch);
       if(ch.order[ch.index]==='flusssprung')setupFlusssprung(ch,room.match.members);
+      if(ch.order[ch.index]==='lava-arena')setupLava(ch,room.match.members);
     })};
   }));
-  app.post('/api/hub/rooms/:code/challenge-flusssprung-jump',handler(async req=>{
+  app.post('/api/hub/rooms/:code/challenge-lava-state',handler(async req=>{
+   const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,x,y,jump}=req.body||{};
+   if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||![x,y,jump].every(Number.isFinite))throw error(400,'INVALID_LAVA_STATE');
+   return {room:await mutate(code,identity,room=>{
+     const ch=room.match?.challenge,l=ch?.lava;
+     if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='lava-arena'||!l||l.index!==ch.index)throw error(409,'WRONG_CHALLENGE_GAME');
+     if(clock()<ch.startAt||clock()>ch.startAt+92000)throw error(409,'LAVA_NOT_RUNNING');
+     const p=l.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
+     if(seq<=p.seq||!p.alive)return {unchanged:true};
+     const now=clock(),dt=p.lastAt?Math.min(1,(now-p.lastAt)/1000):.25;
+     if(p.lastAt&&now-p.lastAt<65)return {unchanged:true};
+     const nx=Math.max(13,Math.min(587,x)),ny=Math.max(13,Math.min(587,y));
+     if(p.lastAt&&Math.hypot(nx-p.x,ny-p.y)>190*Math.max(dt,.1)+65)throw error(409,'LAVA_SPEED_LIMIT');
+     p.x=nx;p.y=ny;p.jump=Math.max(0,Math.min(1.3,jump));p.seq=seq;p.lastAt=now;
+     const index=Math.floor(ny/60)*10+Math.floor(nx/60),tile=l.tiles[index];
+     if(tile&&tile.state===2&&p.jump===0){p.alive=false;p.deathAt=now;}
+     if(tile&&tile.state===0&&p.jump===0){tile.state=1;tile.damage=0;tile.touchedAt=now;}
+     for(const t of l.tiles)if(t.state===1){t.damage=Math.min(1,(now-t.touchedAt)/(Math.max(.78,1.85-(now-ch.startAt)/1000*.011)*1000));if(t.damage>=1)t.state=2;}
+     if(l.players&&Object.values(l.players).filter(v=>v.alive).length<=1)finishLava(ch,room.match.members);
+   })};
+ }));
+ app.post('/api/hub/rooms/:code/challenge-lava-timeout',handler(async req=>{
+   const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};
+   if(!code||typeof challengeId!=='string')throw error(400,'INVALID_LAVA_TIMEOUT');
+   return {room:await mutate(code,identity,room=>{
+     const ch=room.match?.challenge;
+     if(ch?.id!==challengeId||ch.order[ch.index]!=='lava-arena'||ch.phase!=='countdown')return {unchanged:true};
+     if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+     if(clock()<ch.startAt+90000)return {unchanged:true};
+     finishLava(ch,room.match.members);
+   })};
+ }));
+ app.post('/api/hub/rooms/:code/challenge-flusssprung-jump',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,row,col}=req.body||{};
     if(!code||typeof challengeId!=='string'||!Number.isInteger(row)||!Number.isInteger(col)||row<0||row>=5||col<0||col>=6)throw error(400,'INVALID_FLUSSSPRUNG_JUMP');
     return {room:await mutate(code,identity,room=>{
