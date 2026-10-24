@@ -182,7 +182,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(room.game==='business')return startBusiness(room);
     throw error(409,'GAME_NOT_CONNECTED');
   }
-  function publicChallenge(ch,members){
+  function publicChallenge(ch,members,identity){
     const {id,order,index,phase,startAt,points,results}=ch;
     return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
@@ -203,7 +203,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
-        challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members):null,
+        challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
