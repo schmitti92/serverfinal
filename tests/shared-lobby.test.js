@@ -827,6 +827,7 @@ test('Maulwurf validates server clock, hole, duplicate hits and computes standin
  const again=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:ch.id});
  assert.equal(again.status,200);
  assert.equal(again.room.match.challenge.results.length,1);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','cara',{challengeId:ch.id})).status,403);
 });
 
 test('Maulwurf scores three players independently and resolves one shared winner',async()=>{
