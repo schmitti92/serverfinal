@@ -630,7 +630,7 @@ test('Zeitgefuehl waits for all real players, ignores duplicate stops, and lets 
 
 
 test('Recheninsel online validates answers and awards points with two test players',async()=>{
- const h=harness({challengeRandomInt:max=>max===4?1:max-1});
+ const h=harness({challengeRandomInt:max=>max===3?0:max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
