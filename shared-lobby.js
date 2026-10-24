@@ -161,7 +161,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       players:Object.fromEntries(members.map((m,i)=>[m.uid,{seat:m.seat,x:[90,510,510,90][i],y:[90,510,90,510][i],alive:true,jump:0,seq:0,lastAt:0,deathAt:null}]))};
   }
   function finishLava(ch,members){
-    const standings=members.map(m=>{const p=ch.lava.players[m.uid];return {seat:m.seat,name:m.name,alive:p.alive,survivedMs:p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000,challengePoints:Math.max(0,Math.round((p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000)/1000))};});
+    const standings=members.map(m=>{const p=ch.lava.players[m.uid];return {seat:m.seat,name:m.name,alive:p.alive,survivedMs:p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000,challengePoints:Math.max(0,Math.round((p.deathAt?Math.max(0,p.deathAt-ch.startAt):Math.min(90000,Math.max(0,clock()-ch.startAt)))/1000))};});
     standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
     ch.results.push({game:'lava-arena',index:ch.index,standings,finishedAt:clock()});
     ch.phase=ch.index===ch.order.length-1?'finished':'results';
@@ -725,7 +725,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      const index=Math.floor(ny/60)*10+Math.floor(nx/60),tile=l.tiles[index];
      if(tile&&tile.state===2&&p.jump===0){p.alive=false;p.deathAt=now;}
      if(tile&&tile.state===0&&p.jump===0){tile.state=1;tile.damage=0;tile.touchedAt=now;}
-     for(const t of l.tiles)if(t.state===1){t.damage=Math.min(1,(now-t.touchedAt)/(Math.max(.78,1.85-(now-ch.startAt)/1000*.011)*1000));if(t.damage>=1)t.state=2;}
+     for(const t of l.tiles)if(t.state===1){t.damage=Math.min(1,Math.max(0,(now-t.touchedAt)/(Math.max(.78,1.85-(now-ch.startAt)/1000*.011)*1000)));if(t.damage>=1)t.state=2;}
      if(l.players&&Object.values(l.players).filter(v=>v.alive).length<=1)finishLava(ch,room.match.members);
    })};
  }));
