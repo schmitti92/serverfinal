@@ -560,6 +560,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
       if(ch.order[ch.index]!=='zeitgefuehl'||ch.phase!=='countdown')throw error(409,'WRONG_CHALLENGE_GAME');
       if(clock()<ch.startAt)throw error(409,'GAME_NOT_STARTED');
+      if(clock()>=ch.startAt+30000)throw error(409,'TIME_ROUND_EXPIRED');
       const member=room.match.members.find(p=>p.uid===identity.uid);
       if(!member)throw error(403,'NOT_A_PARTICIPANT');
       ch.timeStops=ch.timeStops||{};
