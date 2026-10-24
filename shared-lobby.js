@@ -497,6 +497,38 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       }
     })};
   }));
+  // Server-authoritative timeout: clients may request resolution, but cannot choose results.
+  app.post('/api/hub/rooms/:code/challenge-math-timeout',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const {challengeId,round}=req.body||{};
+    if(typeof challengeId!=='string'||!Number.isInteger(round)||round<1||round>3)throw error(400,'INVALID_MATH_ROUND');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+      if(ch.order[ch.index]!=='recheninsel'||ch.phase!=='countdown'||!ch.math||ch.math.round!==round)return {unchanged:true};
+      if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+      const duration=[18000,16000,15000][round-1];
+      if(clock()<ch.startAt+duration)return {unchanged:true};
+      for(const member of room.match.members){
+        if(!Object.hasOwn(ch.math.answers,member.uid))ch.math.answers[member.uid]={answer:null,at:ch.startAt+duration,timeout:true};
+      }
+      const standings=room.match.members.map(p=>{
+        const submission=ch.math.answers[p.uid],correct=submission.answer===ch.math.answer;
+        const elapsedMs=Math.max(0,submission.at-ch.startAt);
+        return {seat:p.seat,name:p.name,correct,elapsedMs,challengePoints:correct?100+Math.max(0,Math.round((duration-elapsedMs)/100)):0};
+      });
+      room.match.members.forEach((p,i)=>ch.points[i]+=standings[i].challengePoints);
+      ch.mathHistory=ch.mathHistory||[];
+      ch.mathHistory.push({round:ch.math.round,question:ch.math.a+' '+ch.math.operator+' '+ch.math.b,answer:ch.math.answer,standings});
+      if(round<3){setupRecheninsel(ch,round+1);ch.startAt=clock()+3000;}
+      else{
+        const totals=room.match.members.map(p=>({seat:p.seat,name:p.name,correct:ch.mathHistory.every(h=>h.standings.some(x=>x.seat===p.seat&&x.correct)),challengePoints:ch.mathHistory.reduce((sum,h)=>sum+(h.standings.find(x=>x.seat===p.seat)?.challengePoints||0),0)}));
+        ch.results.push({game:'recheninsel',index:ch.index,rounds:ch.mathHistory,standings:totals,finishedAt:clock()});
+        ch.phase=ch.index===ch.order.length-1?'finished':'results';
+      }
+    })};
+  }));
   // Server-measured Zeitgefuehl: a stop request contains no client time or score.
   // Each authenticated seat may stop once after the shared start timestamp.
   app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
