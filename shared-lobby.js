@@ -45,7 +45,7 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>Array.from({length:6},()=>CHARSET[randomInt(CHARSET.length)]).join('');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
@@ -138,12 +138,12 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
     const count=room.settings?.partychallenge?.count===9?9:5;
     const order=[...CHALLENGE_GAMES];
-    for(let i=order.length-1;i>0;i--){const j=randomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
+    for(let i=order.length-1;i>0;i--){const j=challengeRandomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
     room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
       settings:{count},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
       challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
         points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
-    if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+randomInt(11);
+    if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+challengeRandomInt(11);
     room.phase='playing';
   }
   function startGame(room){
@@ -465,7 +465,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       for(const bot of bots){
         if(!Object.hasOwn(ch.timeStops,bot.uid)){
           const target=ch.timeTargets?.[String(ch.index)]||15;
-          ch.timeStops[bot.uid]=ch.startAt+Math.max(1000,Math.min(30000,(target*1000)+(randomInt(7001)-3500)));
+          ch.timeStops[bot.uid]=ch.startAt+Math.max(1000,Math.min(30000,(target*1000)+(challengeRandomInt(7001)-3500)));
         }
       }
       if(members.every(p=>Object.hasOwn(ch.timeStops,p.uid))){
