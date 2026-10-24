@@ -553,3 +553,18 @@ test('Challenge result endpoint never trusts client scores',async()=>{
  assert.deepEqual(read.match.challenge.points,[0,0]);
  assert.equal(read.match.challenge.results.length,0);
 });
+
+
+test('Host can add and remove two Challenge test players without real accounts',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','bob',{enabled:true})).status,403);
+ const added=await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
+ assert.equal(added.status,200);
+ assert.equal(added.room.players.filter(p=>p.testBot).length,2);
+ assert.equal(added.room.players.filter(p=>p.testBot&&p.ready).length,2);
+ const removed=await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:false});
+ assert.equal(removed.status,200);
+ assert.equal(removed.room.players.some(p=>p.testBot),false);
+});
