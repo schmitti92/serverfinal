@@ -535,3 +535,21 @@ test('Challenge progression rejects invalid room codes',async()=>{
  const response=await h.api('POST','/api/hub/rooms/BAD/challenge-next','alice',{challengeId:'00000000-0000-0000-0000-000000000000'});
  assert.equal(response.status,400);
 });
+
+
+test('Challenge result endpoint never trusts client scores',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).room;
+ const ch=started.match.challenge;
+ const attempt=await h.api('POST','/api/hub/rooms/'+code+'/challenge-result','alice',{challengeId:ch.id,gameId:ch.order[0],scores:[999999,0]});
+ assert.equal(attempt.status,409);
+ assert.equal(attempt.error,'GAME_RESULT_ADAPTER_REQUIRED');
+ const read=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ assert.deepEqual(read.match.challenge.points,[0,0]);
+ assert.equal(read.match.challenge.results.length,0);
+});
