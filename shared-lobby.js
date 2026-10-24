@@ -134,10 +134,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       members:uniqueBusinessNames(activeSeats(room).map(p=>({uid:p.uid,name:p.name,seat:p.seat})))};
     room.phase='playing';
   }
-  function setupRecheninsel(ch){
+  function setupRecheninsel(ch,round=1){
     const a=2+challengeRandomInt(19),b=2+challengeRandomInt(19);
     const multiply=challengeRandomInt(2)===0;
-    ch.math={index:ch.index,a,b,operator:multiply?'×':'+',answer:multiply?a*b:a+b,answers:{}};
+    ch.math={index:ch.index,round,a,b,operator:multiply?'×':'+',answer:multiply?a*b:a+b,answers:{}};
   }
   function startChallenge(room){
     const seats=activeSeats(room);
@@ -165,7 +165,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function publicChallenge(ch,members){
     const {id,order,index,phase,startAt,points,results}=ch;
-    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),math:order[index]==='recheninsel'&&ch.math?{a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
+    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
@@ -476,8 +476,16 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
         const standings=room.match.members.map(p=>({seat:p.seat,name:p.name,correct:ch.math.answers[p.uid].answer===ch.math.answer}));
         standings.forEach(p=>p.challengePoints=p.correct?10:0);
         room.match.members.forEach((p,i)=>ch.points[i]+=standings.find(x=>x.seat===p.seat).challengePoints);
-        ch.results.push({game:'recheninsel',index:ch.index,question:ch.math.a+' '+ch.math.operator+' '+ch.math.b,answer:ch.math.answer,standings,finishedAt:clock()});
-        ch.phase=ch.index===ch.order.length-1?'finished':'results';
+        ch.mathHistory=ch.mathHistory||[];
+        ch.mathHistory.push({round:ch.math.round||1,question:ch.math.a+' '+ch.math.operator+' '+ch.math.b,answer:ch.math.answer,standings});
+        if((ch.math.round||1)<3){
+          setupRecheninsel(ch,(ch.math.round||1)+1);
+          ch.startAt=clock()+3000;
+        }else{
+          const totals=room.match.members.map(p=>({seat:p.seat,name:p.name,correct:ch.mathHistory.every(h=>h.standings.some(x=>x.seat===p.seat&&x.correct)),challengePoints:ch.mathHistory.reduce((sum,h)=>sum+(h.standings.find(x=>x.seat===p.seat)?.challengePoints||0),0)}));
+          ch.results.push({game:'recheninsel',index:ch.index,rounds:ch.mathHistory,standings:totals,finishedAt:clock()});
+          ch.phase=ch.index===ch.order.length-1?'finished':'results';
+        }
       }
     })};
   }));
@@ -558,7 +566,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       ch.startAt=clock()+3000;
       ch.timeStops={};
       if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+challengeRandomInt(11);
-      if(ch.order[ch.index]==='recheninsel')setupRecheninsel(ch);
+      if(ch.order[ch.index]==='recheninsel'){ch.mathHistory=[];setupRecheninsel(ch);}
     })};
   }));
   // Host-controlled cancellation: no winner and no statistical result.
