@@ -133,6 +133,11 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       members:uniqueBusinessNames(activeSeats(room).map(p=>({uid:p.uid,name:p.name,seat:p.seat})))};
     room.phase='playing';
   }
+  function setupRecheninsel(ch){
+    const a=2+challengeRandomInt(19),b=2+challengeRandomInt(19);
+    const multiply=challengeRandomInt(2)===0;
+    ch.math={index:ch.index,a,b,operator:multiply?'×':'+',answer:multiply?a*b:a+b,answers:{}};
+  }
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -144,6 +149,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
         points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
     if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+challengeRandomInt(11);
+    if(room.match.challenge.order[0]==='recheninsel')setupRecheninsel(room.match.challenge);
     room.phase='playing';
   }
   function startGame(room){
@@ -156,7 +162,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function publicChallenge(ch,members){
     const {id,order,index,phase,startAt,points,results}=ch;
-    return {id,order,index,phase,startAt,points,results,targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat)};
+    return {id,order,index,phase,startAt,points,results,targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),math:order[index]==='recheninsel'&&ch.math?{a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
@@ -440,6 +446,36 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.match.game==='partychallenge')return {unchanged:true};
       if(!(await isMatchFinished(room.match)))return {unchanged:true};
       archiveCompletedMatch(room);
+    })};
+  }));
+  // A single server-generated arithmetic question. Never accept a client score.
+  app.post('/api/hub/rooms/:code/challenge-math-answer',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const {challengeId,answer}=req.body||{};
+    if(typeof challengeId!=='string'||!Number.isInteger(answer)||answer<0||answer>1000)throw error(400,'INVALID_MATH_ANSWER');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+      if(ch.order[ch.index]!=='recheninsel'||ch.phase!=='countdown'||!ch.math||ch.math.index!==ch.index)throw error(409,'WRONG_CHALLENGE_GAME');
+      if(clock()<ch.startAt)throw error(409,'GAME_NOT_STARTED');
+      const member=room.match.members.find(p=>p.uid===identity.uid);
+      if(!member)throw error(403,'NOT_A_PARTICIPANT');
+      if(Object.hasOwn(ch.math.answers,identity.uid))return {unchanged:true};
+      ch.math.answers[identity.uid]={answer,at:clock()};
+      for(const bot of room.players.filter(p=>p.testBot&&p.participating)){
+        if(!Object.hasOwn(ch.math.answers,bot.uid)){
+          const correct=challengeRandomInt(5)!==0;
+          ch.math.answers[bot.uid]={answer:correct?ch.math.answer:ch.math.answer+1,at:clock(),bot:true};
+        }
+      }
+      if(room.match.members.every(p=>Object.hasOwn(ch.math.answers,p.uid))){
+        const standings=room.match.members.map(p=>({seat:p.seat,name:p.name,correct:ch.math.answers[p.uid].answer===ch.math.answer}));
+        standings.forEach(p=>p.challengePoints=p.correct?10:0);
+        room.match.members.forEach((p,i)=>ch.points[i]+=standings.find(x=>x.seat===p.seat).challengePoints);
+        ch.results.push({game:'recheninsel',index:ch.index,question:ch.math.a+' '+ch.math.operator+' '+ch.math.b,answer:ch.math.answer,standings,finishedAt:clock()});
+        ch.phase=ch.index===ch.order.length-1?'finished':'results';
+      }
     })};
   }));
   // Server-measured Zeitgefuehl: a stop request contains no client time or score.
