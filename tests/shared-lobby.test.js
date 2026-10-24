@@ -501,7 +501,7 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge blocks unfinished modes and supports two-game online test',async()=>{
+test('Party Challenge rejects unavailable lengths and starts the two-game format',async()=>{
  for(const count of [5,9]){
   const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
   await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
@@ -510,17 +510,12 @@ test('Party Challenge blocks unfinished modes and supports two-game online test'
   assert.equal(selected.room.game,'partychallenge');
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,403);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:7})).status,400);
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count})).status,200);
-  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
-  await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
-  const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready','cara',{ready:true});
-  assert.equal(ready.room.phase,'preparing');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
-  const blocked=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
-  assert.equal(blocked.status,409);
+  const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
+  assert.equal(blocked.status,400);
   assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
-  await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:2});
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:2})).status,200);
   for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
   const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
   assert.equal(started.status,200);
   assert.equal(started.room.phase,'playing');
