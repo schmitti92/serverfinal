@@ -14,3 +14,9 @@ test('Hütchen answer validation requires shuffle completion and one answer per 
  assert.match(source,/Object\.hasOwn\(h\.answers,identity\.uid\)/);
  assert.match(source,/h\.answers\[identity\.uid\]=\{slot,at:clock\(\)\}/);
 });
+
+test('Hütchen submissions are bounded by server deadline',async()=>{
+ const source=await readFile(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ assert.match(source,/HUETCHEN_ROUND_TIME_EXPIRED/);
+ assert.match(source,/ch\.startAt\+shuffleMs\+12000/);
+});
