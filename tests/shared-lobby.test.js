@@ -349,7 +349,7 @@ test('SKYJO creates one hub match with settings, seat authentication, and no sec
  assert.equal(active.match.gameCode.slice(1,7),code);
  const alice=await h.adapter.skyjoSeat(active.match.gameCode,h.identities.alice);
  assert.equal(alice.host,true);assert.equal(alice.hostUid,h.identities.alice.uid);
- assert.deepEqual(alice.settings,settings);assert.equal(alice.members.length,2);
+ assert.deepEqual(alice.settings,{...settings,layoutMode:'classic'});assert.equal(alice.members.length,2);
  assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,h.identities.cara)).error,'NOT_A_PARTICIPANT');
  assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,null)).error,'LOGIN_REQUIRED');
  const boot=await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'bob',{matchId:active.match.id});
@@ -501,26 +501,26 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge rejects unavailable lengths and starts the two-game format',async()=>{
+test('Party Challenge rejects unavailable lengths and starts the three-game format',async()=>{
  for(const count of [5,9]){
   const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
   await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
   await h.api('POST','/api/hub/rooms/'+code+'/join','cara');
   const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
   assert.equal(selected.room.game,'partychallenge');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,403);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,400);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:7})).status,400);
   const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
   assert.equal(blocked.status,400);
   assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:2})).status,200);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:3})).status,200);
   for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
   const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
   assert.equal(started.status,200);
   assert.equal(started.room.phase,'playing');
-  assert.equal(started.room.match.challenge.order.length,2);
-  assert.equal(new Set(started.room.match.challenge.order).size,2);
+  assert.equal(started.room.match.challenge.order.length,3);
+  assert.equal(new Set(started.room.match.challenge.order).size,3);
   assert.equal(started.room.match.challenge.phase,'countdown');
   assert.equal(started.room.match.challenge.startAt,4000);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
@@ -642,27 +642,32 @@ test('Recheninsel online validates answers and awards points with two test playe
  const path='/api/hub/rooms/'+code+'/challenge-math-answer';
  assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,answer:4})).status,409);
  h.advance(3000);
- const answer=ch.math.operator==='×'?ch.math.a*ch.math.b:ch.math.a+ch.math.b;
- const result=await h.api('POST',path,'alice',{challengeId:ch.id,answer});
- assert.equal(result.status,200);
+ let result;
+ for(let round=1;round<=3;round++){
+  const q=round===1?ch.math:result.room.match.challenge.math;
+  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
+  result=await h.api('POST',path,'alice',{challengeId:ch.id,answer});
+  assert.equal(result.status,200);
+  if(round<3){assert.equal(result.room.match.challenge.math.round,round+1);h.advance(3000);}
+ }
  assert.equal(result.room.match.challenge.phase,'results');
- assert.equal(result.room.match.challenge.results[0].answer,answer);
+ assert.equal(result.room.match.challenge.results[0].rounds.length,3);
  assert.equal(result.room.match.challenge.results[0].standings.length,3);
  assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,answer:999})).status,409);
 });
 
 
-test('Complete two-game Challenge with three participants and final podium',async()=>{
+test('Complete three-game Challenge with three participants and final podium',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
- await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:2});
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:3});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
  const ch=started.room.match.challenge;
- assert.deepEqual(ch.order,['zeitgefuehl','recheninsel']);
+ assert.deepEqual(ch.order,['zeitgefuehl','recheninsel','huetchen-challenge']);
  h.advance(3000+ch.targetSeconds*1000);
  const first=await h.api('POST','/api/hub/rooms/'+code+'/challenge-time-stop','alice',{challengeId:ch.id});
  assert.equal(first.status,200);
@@ -673,29 +678,95 @@ test('Complete two-game Challenge with three participants and final podium',asyn
  assert.equal(next.room.match.challenge.index,1);
  assert.equal(next.room.match.challenge.math.answer,undefined);
  h.advance(3000);
- const q=next.room.match.challenge.math;
- const answer=q.operator==='×'?q.a*q.b:q.a+q.b;
- const last=await h.api('POST','/api/hub/rooms/'+code+'/challenge-math-answer','alice',{challengeId:ch.id,answer});
- assert.equal(last.status,200);
- const final=last.room.match.challenge;
+ let last;
+ for(let round=1;round<=3;round++){
+  const q=round===1?next.room.match.challenge.math:last.room.match.challenge.math;
+  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
+  last=await h.api('POST','/api/hub/rooms/'+code+'/challenge-math-answer','alice',{challengeId:ch.id,answer});
+  assert.equal(last.status,200);
+  if(round<3)h.advance(3000);
+ }
+ assert.equal(last.room.match.challenge.phase,'results');
+ const toH=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
+ assert.equal(toH.status,200);
+ assert.equal(toH.room.match.challenge.index,2);
+ let roundState=toH;
+ for(const [i,shuffle] of [7160,7390,7140].entries()){
+  h.advance(3000+shuffle+12000);
+  roundState=await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-timeout','alice',{challengeId:ch.id,round:i+1});
+  assert.equal(roundState.status,200);
+ }
+ const final=roundState.room.match.challenge;
  assert.equal(final.phase,'finished');
- assert.equal(final.results.length,2);
+ assert.equal(final.results.length,3);
  assert.equal(final.totals.length,3);
  assert.equal(final.totals.reduce((sum,p)=>sum+p.points,0),final.points.reduce((a,b)=>a+b,0));
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id})).status,409);
 });
 
 
-test('New Party Challenge defaults to supported two-game setup and starts with bots without saving settings',async()=>{
+test('New Party Challenge defaults to supported three-game setup and starts with bots without saving settings',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.equal(selected.room.settings.partychallenge.count,2);
+ assert.equal(selected.room.settings.count,3);
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
- assert.equal(started.room.match.challenge.order.length,2);
+ assert.equal(started.room.match.challenge.order.length,3);
  assert.equal(started.room.match.playerCount,3);
+});
+
+test('Hütchen rejects answers before shuffle and after deadline',async()=>{
+ const h=harness({challengeRandomInt:max=>max===3?1:0});
+ const {room}=await h.api('POST','/api/hub/rooms');
+ const code=room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+ assert.equal(started.status,200);
+ const ch=started.room.match.challenge;
+ assert.equal(ch.order[0],'huetchen-challenge');
+ const body={challengeId:ch.id,round:1,slot:0};
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','alice',body)).status,409);
+ h.advance(3000+7160);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','alice',body)).status,200);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','alice',body)).status,200);
+ h.advance(12000);
+ const expired=await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','bob',body);
+ assert.equal(expired.status,409);
+ assert.equal(expired.error,'HUETCHEN_ROUND_TIME_EXPIRED');
+});
+
+test('Recheninsel has exactly three progressively harder timed rounds',async()=>{
+ const h=harness({challengeRandomInt:max=>max===2?0:max-1});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+ const id=started.room.match.challenge.id;
+ assert.equal(started.room.match.challenge.order[0],'recheninsel');
+ const endpoint='/api/hub/rooms/'+code+'/challenge-math-answer';
+ let state=started.room.match.challenge;
+ for(let round=1;round<=3;round++){
+  assert.equal(state.math.round,round);
+  assert.equal(state.math.totalRounds,3);
+  if(round===1){assert.ok(['+','−'].includes(state.math.operator));assert.ok(state.math.a<=30);}
+  if(round===2){assert.ok(['+','−','×'].includes(state.math.operator));}
+  if(round===3){assert.ok(['+','−','×','÷'].includes(state.math.operator));}
+  h.advance(3000);
+  const q=state.math;
+  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
+  const response=await h.api('POST',endpoint,'alice',{challengeId:id,answer});
+  assert.equal(response.status,200);
+  state=response.room.match.challenge;
+  if(round<3)assert.equal(state.math.round,round+1);
+ }
+ assert.equal(state.phase,'results');
+ assert.equal(state.results[0].rounds.length,3);
 });

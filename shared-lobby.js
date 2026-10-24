@@ -192,7 +192,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:[2,5,9].includes(room.settings?.partychallenge?.count)?room.settings.partychallenge.count:2,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:CHALLENGE_READY_GAMES.length,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -572,7 +572,9 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  const ch=room.match?.challenge,h=ch?.huetchen;
  if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
  if(ch.order[ch.index]!=='huetchen-challenge'||ch.phase!=='countdown'||!h||h.index!==ch.index||h.round!==round)throw error(409,'WRONG_HUETCHEN_ROUND');
- if(clock()<ch.startAt+[7160,7390,7140][round-1])throw error(409,'HUETCHEN_STILL_SHUFFLING');
+ const shuffleMs=[7160,7390,7140][round-1];
+ if(clock()<ch.startAt+shuffleMs)throw error(409,'HUETCHEN_STILL_SHUFFLING');
+ if(clock()>=ch.startAt+shuffleMs+12000)throw error(409,'HUETCHEN_ROUND_TIME_EXPIRED');
  if(slot<0||slot>=round+2)throw error(400,'INVALID_HUETCHEN_SLOT');
  const member=room.match.members.find(p=>p.uid===identity.uid);if(!member)throw error(403,'NOT_A_PARTICIPANT');
  if(Object.hasOwn(h.answers,identity.uid))return {unchanged:true};
@@ -640,25 +642,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       resolveZeitgefuehl(ch,room.match.members);
     })};
   }));
-  app.post('/api/hub/rooms/:code/challenge-huetchen-answer',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity;
-    const {challengeId,round,slot}=req.body||{};
-    if(!code)throw error(400,'INVALID_ROOM_CODE');
-    if(typeof challengeId!=='string'||!Number.isInteger(round)||!Number.isInteger(slot))throw error(400,'INVALID_HUETCHEN_ANSWER');
-    return {room:await mutate(code,identity,room=>{
-      const ch=room.match?.challenge,h=ch?.huetchen;
-      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
-      if(ch.order[ch.index]!=='huetchen-challenge'||ch.phase!=='countdown'||!h||h.round!==round)throw error(409,'WRONG_HUETCHEN_ROUND');
-      if(clock()<ch.startAt)throw error(409,'GAME_NOT_STARTED');
-      if(slot<0||slot>=[3,4,5][round-1])throw error(400,'INVALID_HUETCHEN_SLOT');
-      const member=room.match.members.find(p=>p.uid===identity.uid);
-      if(!member)throw error(403,'NOT_A_PARTICIPANT');
-      if(Object.hasOwn(h.answers,identity.uid))return {unchanged:true};
-      h.answers[identity.uid]=slot;
-      resolveHuetchen(ch,room.match.members);
-    })};
-  }));
-  // A result is accepted only through an independently verified game adapter.
+    // A result is accepted only through an independently verified game adapter.
   // This endpoint intentionally does not accept client-provided scores.
   app.post('/api/hub/rooms/:code/challenge-result',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
