@@ -459,6 +459,14 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(Object.hasOwn(ch.timeStops,identity.uid))return {unchanged:true};
       ch.timeStops[identity.uid]=clock();
       const members=room.match.members;
+      // Simulated opponents stop independently; no client may set their score.
+      const bots=room.players.filter(p=>p.testBot&&p.participating);
+      for(const bot of bots){
+        if(!Object.hasOwn(ch.timeStops,bot.uid)){
+          const target=ch.timeTargets?.[String(ch.index)]||15;
+          ch.timeStops[bot.uid]=ch.startAt+Math.max(1000,(target*1000)+(randomInt(7001)-3500));
+        }
+      }
       if(members.every(p=>Object.hasOwn(ch.timeStops,p.uid))){
         const target=ch.timeTargets?.[String(ch.index)];
         if(!Number.isInteger(target)||target<10||target>20)throw error(409,'TIME_TARGET_MISSING');
