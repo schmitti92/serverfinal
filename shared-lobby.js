@@ -154,6 +154,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(room.game==='business')return startBusiness(room);
     throw error(409,'GAME_NOT_CONNECTED');
   }
+  function publicChallenge(ch,members){
+    const {id,order,index,phase,startAt,points,results}=ch;
+    return {id,order,index,phase,startAt,points,results,targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat)};
+  }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
     const seats=room.players.filter(p=>p.participating);
@@ -171,7 +175,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
-        challenge:room.match.game==='partychallenge'?room.match.challenge:null,
+        challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
