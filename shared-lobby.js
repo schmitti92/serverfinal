@@ -142,8 +142,9 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
-    const count=room.settings?.partychallenge?.count===9?9:room.settings?.partychallenge?.count===5?5:2;
-    if(count!==2)throw error(409,'CHALLENGE_GAMES_NOT_READY');
+    // Legacy rooms may still carry a saved 5/9-game setting from before those modes were disabled.
+    // Use the playable two-game format rather than blocking an otherwise ready room.
+    const count=CHALLENGE_READY_GAMES.length;
     const order=[...CHALLENGE_READY_GAMES];
     for(let i=order.length-1;i>0;i--){const j=challengeRandomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
     room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
@@ -307,7 +308,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   app.post('/api/hub/rooms/:code/challenge-settings',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,count=req.body?.count;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    if(count!==2&&count!==5&&count!==9)throw error(400,'INVALID_CHALLENGE_LENGTH');
+    if(count!==CHALLENGE_READY_GAMES.length)throw error(400,'CHALLENGE_GAMES_NOT_READY');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'NO_CHALLENGE_SETUP');
