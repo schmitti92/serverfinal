@@ -283,7 +283,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       if(game==='business')room.settings={...room.settings,business:businessSettings(room.settings?.business)||{...BUSINESS_DEFAULTS}};
-      if(game==='partychallenge')room.settings={...room.settings,partychallenge:{count:5}};
+      if(game==='partychallenge')room.settings={...room.settings,partychallenge:{count:CHALLENGE_READY_GAMES.length}};
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
     })};
   }));
