@@ -749,6 +749,21 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(Object.values(game.players).filter(q=>q.alive).length<=1)finishBomber(ch,room.match.members);
     })};
   }));
+  app.post('/api/hub/rooms/:code/challenge-bomber-bomb',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,x,y,range}=req.body||{};
+    if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(range)||range<1||range>9||x<0||x>20||y<0||y>20)throw error(400,'INVALID_BOMBER_BOMB');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge,game=ch?.bomber;
+      if(ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='bomber-strand-arena'||!game)throw error(409,'WRONG_CHALLENGE_GAME');
+      const p=game.players[identity.uid];if(!p||!p.alive)throw error(403,'NOT_ACTIVE_PLAYER');
+      const now=clock();if(now<ch.startAt||now>ch.startAt+120000)throw error(409,'BOMBER_NOT_RUNNING');
+      if(seq<=p.bombSeq)return {unchanged:true};
+      if(p.x===null||Math.hypot(p.x-(x+.5),p.y-(y+.5))>2)throw error(409,'BOMBER_BOMB_DISTANCE');
+      p.bombSeq=seq;
+      game.bombs.push({id:identity.uid+':'+seq,seat:p.seat,x,y,range,placedAt:now});
+      if(game.bombs.length>80)game.bombs=game.bombs.slice(-80);
+    })};
+  }));
   app.post('/api/hub/rooms/:code/challenge-bomber-timeout',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};
     if(!code||typeof challengeId!=='string')throw error(400,'INVALID_BOMBER_TIMEOUT');
