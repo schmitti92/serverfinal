@@ -11,7 +11,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
-const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel']);
+const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge']);
 const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
@@ -165,6 +165,19 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     else{const op=challengeRandomInt(4);if(op===0){a=12+challengeRandomInt(18);b=4+challengeRandomInt(9);operator='×';answer=a*b;}else if(op===1){b=4+challengeRandomInt(12);answer=6+challengeRandomInt(14);a=b*answer;operator='÷';}else if(op===2){a=40+challengeRandomInt(141);b=20+challengeRandomInt(81);operator='+';answer=a+b;}else{a=100+challengeRandomInt(181);b=30+challengeRandomInt(a-30);operator='−';answer=a-b;}}
     ch.math={index:ch.index,round,a,b,operator,answer,answers:{}};
   }
+  function setupHuetchen(ch,round=1){
+ const n=round+2,moves=[],secret=challengeRandomInt(n);let slot=secret;
+ for(let i=0;i<[8,13,19][round-1];i++){const a=challengeRandomInt(n);let b=challengeRandomInt(n-1);if(b>=a)b++;moves.push([a,b]);if(slot===a)slot=b;else if(slot===b)slot=a;}
+ ch.huetchen={index:ch.index,round,secret,swaps:moves,correctSlot:slot,answers:{},history:[]};
+ }
+ function resolveHuetchen(ch,members){
+ const h=ch.huetchen;if(ch.phase!=='countdown'||!members.every(p=>Object.hasOwn(h.answers,p.uid)))return;
+ const entries=members.map((p,i)=>({seat:p.seat,name:p.name,correct:h.answers[p.uid].slot===h.correctSlot,challengePoints:h.answers[p.uid].slot===h.correctSlot?10:0}));
+ members.forEach((p,i)=>ch.points[i]+=entries[i].challengePoints);
+ h.history.push({round:h.round,entries});
+ if(h.round<3){const history=h.history;setupHuetchen(ch,h.round+1);ch.huetchen.history=history;ch.startAt=clock()+3000;}
+ else{ch.results.push({game:'huetchen-challenge',index:ch.index,rounds:h.history,standings:members.map((p,i)=>({seat:p.seat,name:p.name,challengePoints:h.history.reduce((sum,r)=>sum+r.entries[i].challengePoints,0)})),finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
+ }
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -179,6 +192,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
         points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
     if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+challengeRandomInt(11);
     if(room.match.challenge.order[0]==='recheninsel')setupRecheninsel(room.match.challenge);
+    if(room.match.challenge.order[0]==='huetchen-challenge')setupHuetchen(room.match.challenge);
     room.phase='playing';
   }
   function startGame(room){
@@ -191,7 +205,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function publicChallenge(ch,members){
     const {id,order,index,phase,startAt,points,results}=ch;
-    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
+    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
@@ -574,7 +588,22 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       ch.phase=ch.index===ch.order.length-1?'finished':'results';
     }
   }
-  app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
+  app.post('/api/hub/rooms/:code/challenge-huetchen-answer',handler(async req=>{
+ const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,round,slot}=req.body||{};
+ if(!code)throw error(400,'INVALID_ROOM_CODE');
+ if(typeof challengeId!=='string'||!Number.isInteger(round)||!Number.isInteger(slot))throw error(400,'INVALID_HUETCHEN_ANSWER');
+ return {room:await mutate(code,identity,room=>{
+ const ch=room.match?.challenge,h=ch?.huetchen;
+ if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+ if(ch.order[ch.index]!=='huetchen-challenge'||ch.phase!=='countdown'||!h||h.index!==ch.index||h.round!==round)throw error(409,'WRONG_HUETCHEN_ROUND');
+ if(clock()<ch.startAt+[7160,7390,7140][round-1])throw error(409,'HUETCHEN_STILL_SHUFFLING');
+ if(slot<0||slot>=round+2)throw error(400,'INVALID_HUETCHEN_SLOT');
+ const member=room.match.members.find(p=>p.uid===identity.uid);if(!member)throw error(403,'NOT_A_PARTICIPANT');
+ if(Object.hasOwn(h.answers,identity.uid))return {unchanged:true};
+ h.answers[identity.uid]={slot,at:clock()};resolveHuetchen(ch,room.match.members);
+ })};
+ }));
+ app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     const challengeId=req.body?.challengeId;
@@ -670,6 +699,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       ch.timeStops={};
       if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+challengeRandomInt(11);
       if(ch.order[ch.index]==='recheninsel'){ch.mathHistory=[];setupRecheninsel(ch);}
+      if(ch.order[ch.index]==='huetchen-challenge')setupHuetchen(ch);
     })};
   }));
   // Host-controlled cancellation: no winner and no statistical result.
