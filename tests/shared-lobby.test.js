@@ -29,7 +29,7 @@ function harness(options={}){
  const app={get(path,fn){routes.push({method:'GET',path,fn});},post(path,fn){routes.push({method:'POST',path,fn});},use(path,fn){middles.push({path,fn});}};
  const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'}};
  let id=0,now=1000;
- adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
+ adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,challengeRandomInt:options.challengeRandomInt,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
  async function api(method,path,user='alice',body){
   const route=routes.find(r=>r.method===method&&matches(r.path,path));if(!route)throw Error('NO_ROUTE '+method+' '+path);
   const params=Object.fromEntries(route.path.split('/').filter(x=>x.startsWith(':')).map((x,i)=>[x.slice(1),path.split('/')[route.path.split('/').indexOf(x)]]));
@@ -571,7 +571,7 @@ test('Host can add and remove two Challenge test players without real accounts',
 
 
 test('Zeitgefuehl server stop rejects early actions and records bot scores',async()=>{
- const h=harness();
+ const h=harness({challengeRandomInt:max=>max===5?0:max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
@@ -579,7 +579,7 @@ test('Zeitgefuehl server stop rejects early actions and records bot scores',asyn
  const started=(await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).room;
  const ch=started.match.challenge;
  assert.equal(started.match.playerCount,3);
- if(ch.order[0]!=='zeitgefuehl')return;
+ assert.equal(ch.order[0],'zeitgefuehl');
  const path='/api/hub/rooms/'+code+'/challenge-time-stop';
  assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id})).status,409);
  h.advance(3000+ch.targetSeconds*1000);
