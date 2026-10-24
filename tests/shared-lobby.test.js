@@ -810,15 +810,15 @@ test('Maulwurf validates server clock, hole, duplicate hits and computes standin
  assert.equal(other.score,0);
  assert.equal(other.hitCount,0);
  assert.equal((await h.api('POST',path,'bob',{...payload,tick:1})).status,409);
- // At startAt+4100ms tick 3 is 100ms late but within the 350ms grace.
- h.advance(3100);
+ // The round starts after a 3000ms countdown; at startAt+4100ms tick 3 is 100ms late.
+ h.advance(4100);
  const delayed={...payload,tick:3};
  assert.equal((await h.api('POST',path,'bob',delayed)).status,200);
  assert.equal((await h.api('GET','/api/hub/rooms/'+code,'bob')).room.match.challenge.maulwurf.score,1);
  // After the grace window, the same hit cannot score again.
  h.advance(300);
  assert.equal((await h.api('POST',path,'bob',delayed)).status,409);
- h.advance(26600);
+ h.advance(25600);
  const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id});
  assert.equal(timeout.status,200);
  assert.equal(timeout.room.match.challenge.phase,'finished');
