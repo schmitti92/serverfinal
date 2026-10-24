@@ -917,3 +917,26 @@ test('Maulwurf tied scores and late hits',async()=>{
  assert.equal((await h.api('POST',path,'bob',payload)).status,409);
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id})).room.match.challenge.results.length,1);
 });
+
+test('Maulwurf penalty never subtracts challenge points below zero',async()=>{
+ const h=harness({challengeRandomInt:()=>0});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ for(const uid of ['alice','bob'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,200);
+ const key='spielesammlung_hub_v1/'+code,doc=h.docs.get(key),ch=doc.match.challenge;
+ ch.order=['maulwurf-arena'];ch.index=0;ch.points=[0,0];ch.results=[];
+ ch.maulwurf={index:0,events:Array.from({length:30},(_,tick)=>({tick,hole:2,kind:tick===0?'bad':'normal'})),hits:{}};
+ h.docs.set(key,doc);h.advance(3000);
+ const path='/api/hub/rooms/'+code+'/challenge-maulwurf-hit';
+ assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,tick:0,hole:2})).status,200);
+ const live=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room.match.challenge.maulwurf;
+ assert.equal(live.score,-2);
+ assert.equal(live.hitCount,1);
+ h.advance(30000);
+ const done=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id});
+ assert.equal(done.status,200);
+ assert.deepEqual(done.room.match.challenge.results[0].standings.map(p=>p.score),[-2,0]);
+ assert.deepEqual(done.room.match.challenge.points,[0,0]);
+});
