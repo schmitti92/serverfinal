@@ -770,3 +770,15 @@ test('Recheninsel has exactly three progressively harder timed rounds',async()=>
  assert.equal(state.phase,'results');
  assert.equal(state.results[0].rounds.length,3);
 });
+
+test('Maulwurf cannot be launched before its original online adapter is released',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ assert.equal(selected.status,200);
+ assert.deepEqual(selected.room.settings.availableGames.sort(),['huetchen-challenge','recheninsel','zeitgefuehl'].sort());
+ const hit=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-hit','alice',{challengeId:'invalid',tick:0,hole:0});
+ assert.equal(hit.status,409);
+ const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:'invalid'});
+ assert.equal(timeout.status,409);
+});
