@@ -142,7 +142,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
-    const count=room.settings?.partychallenge?.count===2?2:room.settings?.partychallenge?.count===9?9:5;
+    const count=room.settings?.partychallenge?.count===9?9:room.settings?.partychallenge?.count===5?5:2;
     if(count!==2)throw error(409,'CHALLENGE_GAMES_NOT_READY');
     const order=[...CHALLENGE_READY_GAMES];
     for(let i=order.length-1;i>0;i--){const j=challengeRandomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
@@ -175,7 +175,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:[2,5,9].includes(room.settings?.partychallenge?.count)?room.settings.partychallenge.count:5,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:[2,5,9].includes(room.settings?.partychallenge?.count)?room.settings.partychallenge.count:2,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
