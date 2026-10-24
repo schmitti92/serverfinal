@@ -699,3 +699,25 @@ test('New Party Challenge defaults to supported two-game setup and starts with b
  assert.equal(started.room.match.challenge.order.length,2);
  assert.equal(started.room.match.playerCount,3);
 });
+
+test('Hütchen rejects answers before shuffle and after deadline',async()=>{
+ const h=harness({challengeRandomInt:()=>0});
+ const {room}=await h.api('POST','/api/hub/rooms');
+ const code=room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ assert.equal(started.status,200);
+ const ch=started.room.match.challenge;
+ assert.equal(ch.order[0],'huetchen-challenge');
+ const body={challengeId:ch.id,round:1,slot:0};
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','alice',body)).status,409);
+ h.advance(3000+7160);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','alice',body)).status,200);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','alice',body)).status,200);
+ h.advance(12000);
+ const expired=await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-answer','bob',body);
+ assert.equal(expired.status,409);
+ assert.equal(expired.error,'HUETCHEN_ROUND_TIME_EXPIRED');
+});
