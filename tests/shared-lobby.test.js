@@ -684,3 +684,18 @@ test('Complete two-game Challenge with three participants and final podium',asyn
  assert.equal(final.totals.reduce((sum,p)=>sum+p.points,0),final.points.reduce((a,b)=>a+b,0));
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id})).status,409);
 });
+
+
+test('New Party Challenge defaults to supported two-game setup and starts with bots without saving settings',async()=>{
+ const h=harness({challengeRandomInt:max=>max-1});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ assert.equal(selected.status,200);
+ assert.equal(selected.room.settings.partychallenge.count,2);
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+ assert.equal(started.status,200);
+ assert.equal(started.room.match.challenge.order.length,2);
+ assert.equal(started.room.match.playerCount,3);
+});
