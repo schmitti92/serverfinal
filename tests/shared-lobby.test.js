@@ -501,7 +501,7 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge starts only by host, supports five or nine unique games and shares server countdown',async()=>{
+test('Party Challenge blocks unfinished modes and supports two-game online test',async()=>{
  for(const count of [5,9]){
   const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
   await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
@@ -516,11 +516,16 @@ test('Party Challenge starts only by host, supports five or nine unique games an
   const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready','cara',{ready:true});
   assert.equal(ready.room.phase,'preparing');
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
+  const blocked=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+  assert.equal(blocked.status,409);
+  assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
+  await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:2});
+  for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
   const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
   assert.equal(started.status,200);
   assert.equal(started.room.phase,'playing');
-  assert.equal(started.room.match.challenge.order.length,count);
-  assert.equal(new Set(started.room.match.challenge.order).size,count);
+  assert.equal(started.room.match.challenge.order.length,2);
+  assert.equal(new Set(started.room.match.challenge.order).size,2);
   assert.equal(started.room.match.challenge.phase,'countdown');
   assert.equal(started.room.match.challenge.startAt,4000);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
@@ -571,7 +576,7 @@ test('Host can add and remove two Challenge test players without real accounts',
 
 
 test('Zeitgefuehl server stop rejects early actions and records bot scores',async()=>{
- const h=harness({challengeRandomInt:max=>max===5?0:max-1});
+ const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
@@ -593,7 +598,7 @@ test('Zeitgefuehl server stop rejects early actions and records bot scores',asyn
 
 
 test('Zeitgefuehl waits for all real players, ignores duplicate stops, and lets host advance',async()=>{
- const h=harness({challengeRandomInt:max=>max===5?0:max-1});
+ const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
@@ -630,7 +635,7 @@ test('Zeitgefuehl waits for all real players, ignores duplicate stops, and lets 
 
 
 test('Recheninsel online validates answers and awards points with two test players',async()=>{
- const h=harness({challengeRandomInt:max=>max===3?0:max-1});
+ const h=harness({challengeRandomInt:max=>max===2?0:max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
