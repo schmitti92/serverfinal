@@ -627,3 +627,26 @@ test('Zeitgefuehl waits for all real players, ignores duplicate stops, and lets 
  assert.equal(advanced.room.match.challenge.results.length,1);
  assert.equal((await h.api('POST',next,'alice',{challengeId:ch.id})).status,409);
 });
+
+
+test('Recheninsel online validates answers and awards points with two test players',async()=>{
+ const h=harness({challengeRandomInt:max=>max===4?1:max-1});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).room;
+ const ch=started.match.challenge;
+ assert.equal(ch.order[0],'recheninsel');
+ assert.equal(ch.math.answer,undefined);
+ const path='/api/hub/rooms/'+code+'/challenge-math-answer';
+ assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,answer:4})).status,409);
+ h.advance(3000);
+ const answer=ch.math.operator==='×'?ch.math.a*ch.math.b:ch.math.a+ch.math.b;
+ const result=await h.api('POST',path,'alice',{challengeId:ch.id,answer});
+ assert.equal(result.status,200);
+ assert.equal(result.room.match.challenge.phase,'results');
+ assert.equal(result.room.match.challenge.results[0].answer,answer);
+ assert.equal(result.room.match.challenge.results[0].standings.length,3);
+ assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id,answer:999})).status,409);
+});
