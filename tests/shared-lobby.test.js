@@ -741,3 +741,32 @@ test('Hütchen rejects answers before shuffle and after deadline',async()=>{
  assert.equal(expired.status,409);
  assert.equal(expired.error,'HUETCHEN_ROUND_TIME_EXPIRED');
 });
+
+test('Recheninsel has exactly three progressively harder timed rounds',async()=>{
+ const h=harness({challengeRandomInt:max=>max===2?0:max-1});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+ const id=started.room.match.challenge.id;
+ assert.equal(started.room.match.challenge.order[0],'recheninsel');
+ const endpoint='/api/hub/rooms/'+code+'/challenge-math-answer';
+ let state=started.room.match.challenge;
+ for(let round=1;round<=3;round++){
+  assert.equal(state.math.round,round);
+  assert.equal(state.math.totalRounds,3);
+  if(round===1){assert.ok(['+','−'].includes(state.math.operator));assert.ok(state.math.a<=30);}
+  if(round===2){assert.ok(['+','−','×'].includes(state.math.operator));}
+  if(round===3){assert.ok(['+','−','×','÷'].includes(state.math.operator));}
+  h.advance(3000);
+  const q=state.math;
+  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
+  const response=await h.api('POST',endpoint,'alice',{challengeId:id,answer});
+  assert.equal(response.status,200);
+  state=response.room.match.challenge;
+  if(round<3)assert.equal(state.math.round,round+1);
+ }
+ assert.equal(state.phase,'results');
+ assert.equal(state.results[0].rounds.length,3);
+});
