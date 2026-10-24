@@ -27,7 +27,7 @@ function harness(options={}){
  };
  function snapshot(value){return {exists:!!value,data:()=>structuredClone(value)};}
  const app={get(path,fn){routes.push({method:'GET',path,fn});},post(path,fn){routes.push({method:'POST',path,fn});},use(path,fn){middles.push({path,fn});}};
- const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'}};
+ const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'},dana:{uid:'user_dana123',name:'Dana'}};
  let id=0,now=1000;
  adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,challengeRandomInt:options.challengeRandomInt,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
  async function api(method,path,user='alice',body){
@@ -864,4 +864,33 @@ test('Maulwurf scores three players independently and resolves one shared winner
  assert.deepEqual(finished.room.match.challenge.results[0].standings.map(p=>p.score),[3,1,1]);
  assert.deepEqual(finished.room.match.challenge.points,[30,10,10]);
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id})).room.match.challenge.results.length,1);
+});
+
+test('Maulwurf supports four human players without leaking personal hit ticks',async()=>{
+ const h=harness({challengeRandomInt:()=>0});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const uid of ['bob','cara','dana'])assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/join',uid)).status,200);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ for(const uid of ['alice','bob','cara','dana'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,200);
+ const key='spielesammlung_hub_v1/'+code,doc=h.docs.get(key),ch=doc.match.challenge;
+ ch.order=['maulwurf-arena'];ch.index=0;ch.points=[0,0,0,0];ch.results=[];
+ ch.maulwurf={index:0,events:Array.from({length:30},(_,tick)=>({tick,hole:5,kind:'normal'})),hits:{}};
+ h.docs.set(key,doc);
+ h.advance(3000);
+ const path='/api/hub/rooms/'+code+'/challenge-maulwurf-hit';
+ assert.equal((await h.api('POST',path,'dana',{challengeId:ch.id,tick:0,hole:5})).status,200);
+ for(const uid of ['alice','bob','cara','dana']){
+  const r=await h.api('GET','/api/hub/rooms/'+code,uid);
+  assert.equal(r.status,200);
+  const view=r.room.match.challenge.maulwurf;
+  assert.equal(view.opponents.length,4);
+  assert.equal(view.score,uid==='dana'?1:0);
+  assert.deepEqual(view.hitTicks,uid==='dana'?[0]:[]);
+ }
+ h.advance(30000);
+ const finished=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:ch.id});
+ assert.equal(finished.status,200);
+ assert.deepEqual(finished.room.match.challenge.points,[0,0,0,10]);
+ assert.deepEqual(finished.room.match.challenge.results[0].standings.map(x=>x.score),[0,0,0,1]);
 });
