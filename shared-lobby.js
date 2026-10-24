@@ -169,7 +169,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       canLaunch:!!HUB_GAMES[room.game],
       settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:room.settings?.partychallenge?.count===9?9:5}:null,
       host:room.hostUid===identity.uid,
-      players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
+      players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
       chat:(Array.isArray(room.chat)?room.chat:[]).slice(-40).map(m=>({id:m.id,name:m.name,text:m.text,at:m.at})),
       allReady:allReady(room),
@@ -303,7 +303,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'NO_CHALLENGE_SETUP');
       room.settings={...room.settings,partychallenge:{count}};
-      room.players.forEach(p=>p.ready=false);
+      room.players.forEach(p=>p.ready=!!p.testBot);
     })};
   }));
   // Host changes are stored and validated server-side. Any change invalidates readiness.
