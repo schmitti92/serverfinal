@@ -223,7 +223,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const entries=members.map(m=>({seat:m.seat,name:m.name,guess:pj.answers[m.uid],challengePoints:preisjaegerScore(pj.answers[m.uid],product.price)}));
     entries.forEach((entry,i)=>ch.points[i]+=entry.challengePoints);
     pj.history.push({round:pj.round,product:{...product},entries});
-    if(pj.round<3){pj.round++;pj.answers={};ch.startAt=clock()+3000;pj.roundStartedAt=ch.startAt;}
+    if(pj.round<3){pj.round++;pj.answers={};ch.startAt=clock()+9000;pj.roundStartedAt=ch.startAt;}
     else{ch.results.push({game:'preisjaeger',index:ch.index,rounds:pj.history,standings:members.map((m,i)=>({seat:m.seat,name:m.name,challengePoints:pj.history.reduce((sum,h)=>sum+h.entries[i].challengePoints,0)})),finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
   }
   function setupSnake(ch,members){
@@ -782,6 +782,18 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(ch.order[ch.index]==='preisjaeger')setupPreisjaeger(ch);
     if(ch.order[ch.index]==='bomber-strand-arena')setupBomber(ch,room.match.members);
       if(ch.order[ch.index]==='lava-arena')setupLava(ch,room.match.members);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/challenge-preisjaeger-timeout',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,round}=req.body||{};
+    if(!code||typeof challengeId!=='string'||!Number.isInteger(round))throw error(400,'INVALID_PREISJAEGER_TIMEOUT');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge,pj=ch?.preisjaeger;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='preisjaeger'||!pj||pj.index!==ch.index||pj.round!==round)throw error(409,'WRONG_PREISJAEGER_ROUND');
+      if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+      if(clock()<ch.startAt+45000)throw error(409,'PREISJAEGER_TIME_REMAINING');
+      for(const m of room.match.members)if(!Object.hasOwn(pj.answers,m.uid))pj.answers[m.uid]=0;
+      resolvePreisjaeger(ch,room.match.members);
     })};
   }));
   app.post('/api/hub/rooms/:code/challenge-preisjaeger-answer',handler(async req=>{
