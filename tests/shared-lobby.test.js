@@ -799,6 +799,8 @@ test('Maulwurf validates server clock, hole, duplicate hits and computes standin
  assert.equal((await h.api('POST',path,'alice',payload)).status,409);
  h.advance(3000);
  assert.equal((await h.api('POST',path,'alice',{...payload,hole:1})).status,409);
+ assert.equal((await h.api('POST',path,'alice',{...payload,tick:30})).status,400);
+ assert.equal((await h.api('POST',path,'alice',{...payload,hole:9})).status,400);
  assert.equal((await h.api('POST',path,'alice',payload)).status,200);
  assert.equal((await h.api('POST',path,'alice',payload)).status,200);
  const own=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room.match.challenge.maulwurf;
