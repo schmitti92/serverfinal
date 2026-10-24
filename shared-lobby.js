@@ -465,7 +465,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       for(const bot of bots){
         if(!Object.hasOwn(ch.timeStops,bot.uid)){
           const target=ch.timeTargets?.[String(ch.index)]||15;
-          ch.timeStops[bot.uid]=ch.startAt+Math.max(1000,(target*1000)+(randomInt(7001)-3500));
+          ch.timeStops[bot.uid]=ch.startAt+Math.max(1000,Math.min(30000,(target*1000)+(randomInt(7001)-3500)));
         }
       }
       if(members.every(p=>Object.hasOwn(ch.timeStops,p.uid))){
