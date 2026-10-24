@@ -522,7 +522,7 @@ test('Party Challenge starts only by host, supports five or nine unique games an
   assert.equal(started.room.match.challenge.order.length,count);
   assert.equal(new Set(started.room.match.challenge.order).size,count);
   assert.equal(started.room.match.challenge.phase,'countdown');
-  assert.equal(started.room.match.challenge.startAt,4500);
+  assert.equal(started.room.match.challenge.startAt,4000);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
   const peer=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
   assert.deepEqual(peer.match.challenge,started.room.match.challenge);
