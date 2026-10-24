@@ -458,7 +458,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(!member)throw error(403,'NOT_A_PARTICIPANT');
       ch.timeStops=ch.timeStops||{};
       if(Object.hasOwn(ch.timeStops,identity.uid))return {unchanged:true};
-      ch.timeStops[identity.uid]=clock();
+      ch.timeStops[identity.uid]=Math.min(clock(),ch.startAt+30000);
       const members=room.match.members;
       // Simulated opponents stop independently; no client may set their score.
       const bots=room.players.filter(p=>p.testBot&&p.participating);
