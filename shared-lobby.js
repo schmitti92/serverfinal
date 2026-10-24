@@ -11,7 +11,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
-const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel']);
+const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge']);
 const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
@@ -142,7 +142,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     ch.math={index:ch.index,round,a,b,operator,answer,answers:{}};
   }
   function setupHuetchen(ch,round=1){
- const n=round+2,moves=[],secret=challengeRandomInt(n);let slot=secret;
+ const n=round+2,moves=[],secret=0;let slot=secret;
  for(let i=0;i<[8,13,19][round-1];i++){const a=challengeRandomInt(n);let b=challengeRandomInt(n-1);if(b>=a)b++;moves.push([a,b]);if(slot===a)slot=b;else if(slot===b)slot=a;}
  ch.huetchen={index:ch.index,round,secret,swaps:moves,correctSlot:slot,answers:{},history:[]};
  }
