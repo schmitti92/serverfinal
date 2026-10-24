@@ -742,7 +742,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const p=game.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
       const now=clock();if(now<ch.startAt||now>ch.startAt+122000)throw error(409,'BOMBER_NOT_RUNNING');
       if(seq<=p.seq||!p.alive)return {unchanged:true};
-      if(x<0||x>20||y<0||y>20)throw error(400,'INVALID_BOMBER_POSITION');
+      if(x<0||x>10||y<0||y>10)throw error(400,'INVALID_BOMBER_POSITION');
       if(p.updatedAt&&Math.hypot(x-p.x,y-p.y)>Math.max(.6,(now-p.updatedAt)/1000*7+.6))throw error(409,'BOMBER_SPEED_LIMIT');
       p.x=x;p.y=y;p.seq=seq;p.updatedAt=now;p.bombsPlaced=bombsPlaced;
       if(!alive){p.alive=false;p.eliminatedAt=now;}
@@ -751,13 +751,13 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }));
   app.post('/api/hub/rooms/:code/challenge-bomber-bomb',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,x,y,range}=req.body||{};
-    if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(range)||range<1||range>9||x<0||x>20||y<0||y>20)throw error(400,'INVALID_BOMBER_BOMB');
+    if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(range)||range<1||range>9||x<0||x>=10||y<0||y>=10)throw error(400,'INVALID_BOMBER_BOMB');
     return {room:await mutate(code,identity,room=>{
       const ch=room.match?.challenge,game=ch?.bomber;
       if(ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='bomber-strand-arena'||!game)throw error(409,'WRONG_CHALLENGE_GAME');
       const p=game.players[identity.uid];if(!p||!p.alive)throw error(403,'NOT_ACTIVE_PLAYER');
       const now=clock();if(now<ch.startAt||now>ch.startAt+120000)throw error(409,'BOMBER_NOT_RUNNING');
-      if(seq<=p.bombSeq)return {unchanged:true};
+      if(seq<=(p.bombSeq||0))return {unchanged:true};
       if(p.x===null||Math.hypot(p.x-(x+.5),p.y-(y+.5))>2)throw error(409,'BOMBER_BOMB_DISTANCE');
       p.bombSeq=seq;
       game.bombs.push({id:identity.uid+':'+seq,seat:p.seat,x,y,range,placedAt:now});
