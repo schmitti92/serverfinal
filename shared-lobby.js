@@ -142,7 +142,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
       settings:{count},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
       challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
-        points:seats.map(()=>0),results:[]}};
+        points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
+    if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+randomInt(11);
     room.phase='playing';
   }
   function startGame(room){
@@ -417,6 +418,42 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       archiveCompletedMatch(room);
     })};
   }));
+  // Server-measured Zeitgefuehl: a stop request contains no client time or score.
+  // Each authenticated seat may stop once after the shared start timestamp.
+  app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const challengeId=req.body?.challengeId;
+    if(typeof challengeId!=='string')throw error(400,'INVALID_CHALLENGE_ID');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
+      if(ch.order[ch.index]!=='zeitgefuehl'||ch.phase!=='countdown')throw error(409,'WRONG_CHALLENGE_GAME');
+      if(clock()<ch.startAt)throw error(409,'GAME_NOT_STARTED');
+      const member=room.match.members.find(p=>p.uid===identity.uid);
+      if(!member)throw error(403,'NOT_A_PARTICIPANT');
+      ch.timeStops=ch.timeStops||{};
+      if(Object.hasOwn(ch.timeStops,identity.uid))return {unchanged:true};
+      ch.timeStops[identity.uid]=clock();
+      const members=room.match.members;
+      if(members.every(p=>Object.hasOwn(ch.timeStops,p.uid))){
+        const target=ch.timeTargets?.[String(ch.index)];
+        if(!Number.isInteger(target)||target<10||target>20)throw error(409,'TIME_TARGET_MISSING');
+        const standings=members.map(p=>({seat:p.seat,name:p.name,elapsedMs:ch.timeStops[p.uid]-ch.startAt}));
+        standings.forEach(p=>{p.deltaMs=Math.abs(p.elapsedMs-target*1000);});
+        standings.sort((a,b)=>a.deltaMs-b.deltaMs||a.seat-b.seat);
+        const pointsBySeat=new Map();
+        for(let i=0;i<standings.length;){let j=i+1;while(j<standings.length&&standings[j].deltaMs===standings[i].deltaMs)j++;
+          const awards=[10,7,4,2];const average=awards.slice(i,j).reduce((a,b)=>a+b,0)/(j-i);
+          for(let k=i;k<j;k++)pointsBySeat.set(standings[k].seat,average);
+          i=j;
+        }
+        members.forEach((p,i)=>{ch.points[i]+=pointsBySeat.get(p.seat)||0;});
+        ch.results.push({game:'zeitgefuehl',index:ch.index,targetSeconds:target,standings:standings.map(p=>({...p,challengePoints:pointsBySeat.get(p.seat)})),finishedAt:clock()});
+        ch.phase=ch.index===ch.order.length-1?'finished':'results';
+      }
+    })};
+  }));
   // A result is accepted only through an independently verified game adapter.
   // This endpoint intentionally does not accept client-provided scores.
   app.post('/api/hub/rooms/:code/challenge-result',handler(async req=>{
@@ -448,6 +485,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       ch.index++;
       ch.phase='countdown';
       ch.startAt=clock()+3000;
+      ch.timeStops={};
+      if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+randomInt(11);
     })};
   }));
   // Host-controlled cancellation: no winner and no statistical result.
