@@ -568,3 +568,25 @@ test('Host can add and remove two Challenge test players without real accounts',
  assert.equal(removed.status,200);
  assert.equal(removed.room.players.some(p=>p.testBot),false);
 });
+
+
+test('Zeitgefuehl server stop rejects early actions and records bot scores',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).room;
+ const ch=started.match.challenge;
+ assert.equal(started.match.playerCount,3);
+ if(ch.order[0]!=='zeitgefuehl')return;
+ const path='/api/hub/rooms/'+code+'/challenge-time-stop';
+ assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id})).status,409);
+ h.advance(3000+ch.targetSeconds*1000);
+ const stopped=await h.api('POST',path,'alice',{challengeId:ch.id,elapsedMs:0,score:999});
+ assert.equal(stopped.status,200);
+ assert.equal(stopped.room.match.challenge.phase,'results');
+ assert.equal(stopped.room.match.challenge.results[0].standings.length,3);
+ assert.equal(stopped.room.match.challenge.points.length,3);
+ assert.equal((await h.api('POST',path,'alice',{challengeId:ch.id})).status,409);
+});
