@@ -501,7 +501,7 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge rejects unavailable lengths and starts the two-game format',async()=>{
+test('Party Challenge rejects unavailable lengths and starts the three-game format',async()=>{
  for(const count of [5,9]){
   const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
   await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
@@ -513,14 +513,14 @@ test('Party Challenge rejects unavailable lengths and starts the two-game format
   const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
   assert.equal(blocked.status,400);
   assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:2})).status,200);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:3})).status,200);
   for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
   const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
   assert.equal(started.status,200);
   assert.equal(started.room.phase,'playing');
-  assert.equal(started.room.match.challenge.order.length,2);
-  assert.equal(new Set(started.room.match.challenge.order).size,2);
+  assert.equal(started.room.match.challenge.order.length,3);
+  assert.equal(new Set(started.room.match.challenge.order).size,3);
   assert.equal(started.room.match.challenge.phase,'countdown');
   assert.equal(started.room.match.challenge.startAt,4000);
   assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
@@ -686,12 +686,12 @@ test('Complete two-game Challenge with three participants and final podium',asyn
 });
 
 
-test('New Party Challenge defaults to supported two-game setup and starts with bots without saving settings',async()=>{
+test('New Party Challenge defaults to supported three-game setup and starts with bots without saving settings',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.equal(selected.room.settings.partychallenge.count,2);
+ assert.equal(selected.room.settings.partychallenge.count,3);
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
