@@ -770,3 +770,58 @@ test('Recheninsel has exactly three progressively harder timed rounds',async()=>
  assert.equal(state.phase,'results');
  assert.equal(state.results[0].rounds.length,3);
 });
+
+test('Maulwurf cannot be launched before its original online adapter is released',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ assert.equal(selected.status,200);
+ assert.deepEqual(selected.room.settings.availableGames.sort(),['huetchen-challenge','recheninsel','zeitgefuehl'].sort());
+ const hit=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-hit','alice',{challengeId:'invalid',tick:0,hole:0});
+ assert.equal(hit.status,409);
+ const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:'invalid'});
+ assert.equal(timeout.status,409);
+});
+
+test('Maulwurf validates server clock, hole, duplicate hits and computes standings',async()=>{
+ const h=harness({challengeRandomInt:()=>0});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ for(const uid of ['alice','bob'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).room;
+ const key='spielesammlung_hub_v1/'+code,doc=h.docs.get(key);
+ const ch=doc.match.challenge;
+ ch.order=['maulwurf-arena'];ch.index=0;ch.points=[0,0];ch.results=[];
+ ch.maulwurf={index:0,events:Array.from({length:30},(_,tick)=>({tick,hole:2,kind:tick===0?'gold':'normal'})),hits:{}};
+ h.docs.set(key,doc);
+ const path='/api/hub/rooms/'+code+'/challenge-maulwurf-hit',payload={challengeId:ch.id,tick:0,hole:2};
+ assert.equal((await h.api('POST',path,'alice',payload)).status,409);
+ h.advance(3000);
+ assert.equal((await h.api('POST',path,'alice',{...payload,hole:1})).status,409);
+ assert.equal((await h.api('POST',path,'alice',payload)).status,200);
+ assert.equal((await h.api('POST',path,'alice',payload)).status,200);
+ const own=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room.match.challenge.maulwurf;
+ const other=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room.match.challenge.maulwurf;
+ assert.equal(own.score,3);
+ assert.equal(own.hitCount,1);
+ assert.equal(other.score,0);
+ assert.equal(other.hitCount,0);
+ assert.equal((await h.api('POST',path,'bob',{...payload,tick:1})).status,409);
+ // A hit sent in the first second can arrive slightly late without being discarded.
+ h.advance(1200);
+ assert.equal((await h.api('POST',path,'bob',payload)).status,200);
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code,'bob')).room.match.challenge.maulwurf.score,3);
+ // But the grace period must be bounded, and duplicate hits must not score twice.
+ h.advance(200);
+ assert.equal((await h.api('POST',path,'bob',payload)).status,409);
+ h.advance(28600);
+ const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id});
+ assert.equal(timeout.status,200);
+ assert.equal(timeout.room.match.challenge.phase,'finished');
+ assert.equal(timeout.room.match.challenge.results[0].standings[0].score,3);
+ assert.equal(timeout.room.match.challenge.results[0].standings[1].score,3);
+ const again=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:ch.id});
+ assert.equal(again.status,200);
+ assert.equal(again.room.match.challenge.results.length,1);
+});
