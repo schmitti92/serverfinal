@@ -156,6 +156,15 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  }
   function setupMaulwurf(ch){ch.maulwurf={index:ch.index,events:Array.from({length:30},(_,tick)=>({tick,hole:challengeRandomInt(9),kind:['bad','gold','normal','normal','normal','normal'][challengeRandomInt(6)]})),hits:{}};}
   function finishMaulwurf(ch,members){const standings=members.map(p=>{const hits=ch.maulwurf.hits[p.uid]||{};const score=Object.values(hits).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0);return {seat:p.seat,name:p.name,score,challengePoints:Math.max(0,score)*10};});standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);ch.results.push({game:'maulwurf-arena',index:ch.index,standings,finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
+  function setupFlusssprung(ch,members){
+    ch.flusssprung={index:ch.index,path:Array.from({length:5},()=>challengeRandomInt(6)),players:Object.fromEntries(members.map(p=>[p.uid,{row:-1,falls:0,finishedAt:null,lastMoveAt:0}])),moves:[]};
+  }
+  function finishFlusssprung(ch,members){
+    const standings=members.map(p=>{const state=ch.flusssprung.players[p.uid];const progress=state.row+1;return {seat:p.seat,name:p.name,progress,falls:state.falls,finishedAt:state.finishedAt,challengePoints:state.finishedAt?Math.max(10,100-state.falls*10):progress*10};});
+    standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
+    ch.results.push({game:'flusssprung',index:ch.index,standings,finishedAt:clock()});
+    ch.phase=ch.index===ch.order.length-1?'finished':'results';
+  }
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -172,6 +181,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(room.match.challenge.order[0]==='recheninsel')setupRecheninsel(room.match.challenge);
     if(room.match.challenge.order[0]==='huetchen-challenge')setupHuetchen(room.match.challenge);
     if(room.match.challenge.order[0]==='maulwurf-arena')setupMaulwurf(room.match.challenge);
+    if(room.match.challenge.order[0]==='flusssprung')setupFlusssprung(room.match.challenge,room.match.members);
     room.phase='playing';
   }
   function startGame(room){
@@ -184,7 +194,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function publicChallenge(ch,members,identity){
     const {id,order,index,phase,startAt,points,results}=ch;
-    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length,score:Object.values(ch.maulwurf.hits[identity.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hitTicks:Object.keys(ch.maulwurf.hits[identity.uid]||{}).map(Number),opponents:members.map(p=>({seat:p.seat,name:p.name,score:Object.values(ch.maulwurf.hits[p.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hits:Object.keys(ch.maulwurf.hits[p.uid]||{}).length}))}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
+    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,flusssprung:order[index]==='flusssprung'&&ch.flusssprung?{path:ch.flusssprung.path,players:members.map(p=>({seat:p.seat,name:p.name,...ch.flusssprung.players[p.uid]})),moves:ch.flusssprung.moves.slice(-40)}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length,score:Object.values(ch.maulwurf.hits[identity.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hitTicks:Object.keys(ch.maulwurf.hits[identity.uid]||{}).map(Number),opponents:members.map(p=>({seat:p.seat,name:p.name,score:Object.values(ch.maulwurf.hits[p.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hits:Object.keys(ch.maulwurf.hits[p.uid]||{}).length}))}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
@@ -683,6 +693,39 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(ch.order[ch.index]==='recheninsel'){ch.mathHistory=[];setupRecheninsel(ch);}
       if(ch.order[ch.index]==='huetchen-challenge')setupHuetchen(ch);
       if(ch.order[ch.index]==='maulwurf-arena')setupMaulwurf(ch);
+      if(ch.order[ch.index]==='flusssprung')setupFlusssprung(ch,room.match.members);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/challenge-flusssprung-jump',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,row,col}=req.body||{};
+    if(!code||typeof challengeId!=='string'||!Number.isInteger(row)||!Number.isInteger(col)||row<0||row>=5||col<0||col>=6)throw error(400,'INVALID_FLUSSSPRUNG_JUMP');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge,f=ch?.flusssprung;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='flusssprung'||!f||f.index!==ch.index)throw error(409,'WRONG_CHALLENGE_GAME');
+      const member=room.match.members.find(p=>p.uid===identity.uid);
+      if(!member)throw error(403,'NOT_A_PARTICIPANT');
+      if(clock()<ch.startAt||clock()>=ch.startAt+60000)throw error(409,'FLUSSSPRUNG_NOT_RUNNING');
+      const player=f.players[identity.uid];
+      if(player.finishedAt||row!==player.row+1)throw error(409,'FLUSSSPRUNG_INVALID_ROW');
+      if(clock()-player.lastMoveAt<550)throw error(409,'FLUSSSPRUNG_TOO_FAST');
+      player.lastMoveAt=clock();
+      const safe=f.path[row]===col;
+      if(safe){player.row=row;if(row===4)player.finishedAt=clock();}
+      else{player.row=-1;player.falls++;}
+      f.moves.push({seat:member.seat,row,col,safe,at:clock()});
+      if(f.moves.length>100)f.moves.splice(0,f.moves.length-100);
+      if(room.match.members.every(p=>f.players[p.uid].finishedAt))finishFlusssprung(ch,room.match.members);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/challenge-flusssprung-timeout',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};
+    if(!code||typeof challengeId!=='string')throw error(400,'INVALID_FLUSSSPRUNG_TIMEOUT');
+    return {room:await mutate(code,identity,room=>{
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||ch?.id!==challengeId||ch.order[ch.index]!=='flusssprung'||ch.phase!=='countdown'||!ch.flusssprung)throw error(409,'WRONG_CHALLENGE_GAME');
+      if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+      if(clock()<ch.startAt+60000)throw error(409,'FLUSSSPRUNG_STILL_RUNNING');
+      finishFlusssprung(ch,room.match.members);
     })};
   }));
   // Host-controlled cancellation: no winner and no statistical result.
