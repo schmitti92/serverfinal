@@ -808,19 +808,20 @@ test('Maulwurf validates server clock, hole, duplicate hits and computes standin
  assert.equal(other.score,0);
  assert.equal(other.hitCount,0);
  assert.equal((await h.api('POST',path,'bob',{...payload,tick:1})).status,409);
- // A hit sent in the first second can arrive slightly late without being discarded.
+ // At startAt+4100ms tick 3 is 100ms late but within the 350ms grace.
  h.advance(1100);
- assert.equal((await h.api('POST',path,'bob',payload)).status,200);
- assert.equal((await h.api('GET','/api/hub/rooms/'+code,'bob')).room.match.challenge.maulwurf.score,3);
- // But the grace period must be bounded, and duplicate hits must not score twice.
+ const delayed={...payload,tick:3};
+ assert.equal((await h.api('POST',path,'bob',delayed)).status,200);
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code,'bob')).room.match.challenge.maulwurf.score,1);
+ // After the grace window, the same hit cannot score again.
  h.advance(300);
- assert.equal((await h.api('POST',path,'bob',payload)).status,409);
+ assert.equal((await h.api('POST',path,'bob',delayed)).status,409);
  h.advance(28600);
  const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id});
  assert.equal(timeout.status,200);
  assert.equal(timeout.room.match.challenge.phase,'finished');
  assert.equal(timeout.room.match.challenge.results[0].standings[0].score,3);
- assert.equal(timeout.room.match.challenge.results[0].standings[1].score,3);
+ assert.equal(timeout.room.match.challenge.results[0].standings[1].score,1);
  const again=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:ch.id});
  assert.equal(again.status,200);
  assert.equal(again.room.match.challenge.results.length,1);
