@@ -528,3 +528,10 @@ test('Party Challenge starts only by host, supports five or nine unique games an
   assert.deepEqual(peer.match.challenge,started.room.match.challenge);
  }
 });
+
+
+test('Challenge progression rejects invalid room codes',async()=>{
+ const h=harness();
+ const response=await h.api('POST','/api/hub/rooms/BAD/challenge-next','alice',{challengeId:'00000000-0000-0000-0000-000000000000'});
+ assert.equal(response.status,400);
+});
