@@ -11,7 +11,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
-const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena']);
+const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
@@ -803,6 +803,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const ch=room.match?.challenge,pj=ch?.preisjaeger;
       if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='preisjaeger'||!pj||pj.index!==ch.index||pj.round!==round)throw error(409,'WRONG_PREISJAEGER_ROUND');
       if(clock()<ch.startAt)throw error(409,'GAME_NOT_STARTED');
+      if(clock()>=ch.startAt+45000)throw error(409,'PREISJAEGER_ROUND_TIME_EXPIRED');
       if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
       if(Object.hasOwn(pj.answers,identity.uid))return {unchanged:true};
       pj.answers[identity.uid]=guess/100;
