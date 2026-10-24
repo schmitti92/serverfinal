@@ -135,9 +135,11 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     room.phase='playing';
   }
   function setupRecheninsel(ch,round=1){
-    const a=2+challengeRandomInt(19),b=2+challengeRandomInt(19);
-    const multiply=challengeRandomInt(2)===0;
-    ch.math={index:ch.index,round,a,b,operator:multiply?'×':'+',answer:multiply?a*b:a+b,answers:{}};
+    let a,b,operator,answer;
+    if(round===1){a=3+challengeRandomInt(28);b=2+challengeRandomInt(24);operator=challengeRandomInt(2)?'−':'+';answer=operator==='+'?a+b:a-b;if(answer<0){operator='+';answer=a+b;}}
+    else if(round===2){const op=challengeRandomInt(3);if(op===0){a=14+challengeRandomInt(86);b=12+challengeRandomInt(74);operator='+';answer=a+b;}else if(op===1){a=35+challengeRandomInt(96);b=11+challengeRandomInt(a-11);operator='−';answer=a-b;}else{a=3+challengeRandomInt(10);b=3+challengeRandomInt(10);operator='×';answer=a*b;}}
+    else{const op=challengeRandomInt(4);if(op===0){a=12+challengeRandomInt(18);b=4+challengeRandomInt(9);operator='×';answer=a*b;}else if(op===1){b=4+challengeRandomInt(12);answer=6+challengeRandomInt(14);a=b*answer;operator='÷';}else if(op===2){a=40+challengeRandomInt(141);b=20+challengeRandomInt(81);operator='+';answer=a+b;}else{a=100+challengeRandomInt(181);b=30+challengeRandomInt(a-30);operator='−';answer=a-b;}}
+    ch.math={index:ch.index,round,a,b,operator,answer,answers:{}};
   }
   function startChallenge(room){
     const seats=activeSeats(room);
@@ -474,7 +476,13 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       }
       if(room.match.members.every(p=>Object.hasOwn(ch.math.answers,p.uid))){
         const standings=room.match.members.map(p=>({seat:p.seat,name:p.name,correct:ch.math.answers[p.uid].answer===ch.math.answer}));
-        standings.forEach(p=>p.challengePoints=p.correct?10:0);
+        standings.forEach(p=>{
+          const submission=ch.math.answers[room.match.members.find(m=>m.seat===p.seat).uid];
+          const elapsedMs=Math.max(0,submission.at-ch.startAt);
+          const limitSeconds=[18,16,15][Math.min(2,(ch.math.round||1)-1)];
+          p.elapsedMs=elapsedMs;
+          p.challengePoints=p.correct?100+Math.max(0,Math.round((limitSeconds-elapsedMs/1000)*10)):0;
+        });
         room.match.members.forEach((p,i)=>ch.points[i]+=standings.find(x=>x.seat===p.seat).challengePoints);
         ch.mathHistory=ch.mathHistory||[];
         ch.mathHistory.push({round:ch.math.round||1,question:ch.math.a+' '+ch.math.operator+' '+ch.math.b,answer:ch.math.answer,standings});
