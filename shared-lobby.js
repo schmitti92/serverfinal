@@ -556,7 +556,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       ch.phase='countdown';
       ch.startAt=clock()+3000;
       ch.timeStops={};
-      if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+randomInt(11);
+      if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+challengeRandomInt(11);
+      if(ch.order[ch.index]==='recheninsel')setupRecheninsel(ch);
     })};
   }));
   // Host-controlled cancellation: no winner and no statistical result.
