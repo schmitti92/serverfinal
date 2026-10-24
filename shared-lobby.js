@@ -218,7 +218,16 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     return d<1e-10?150:d<=.05+1e-10?100:d<=.10+1e-10?80:d<=.20+1e-10?60:d<=.30+1e-10?40:d<=.50+1e-10?20:0;
   }
   function resolvePreisjaeger(ch,members){
-    const pj=ch.preisjaeger;if(!pj||ch.phase!=='countdown'||!members.every(m=>Object.hasOwn(pj.answers,m.uid)))return;
+    const pj=ch.preisjaeger;if(!pj||ch.phase!=='countdown')return;
+    // Test players guess from broad product categories, not from the hidden actual price.
+    const productForBot=PREISJAEGER_PRODUCTS[pj.productIds[pj.round-1]];
+    for(const member of members){
+      if(!member.uid.startsWith('testbot:')||Object.hasOwn(pj.answers,member.uid))continue;
+      const text=(productForBot.name+' '+productForBot.category).toLowerCase();
+      const band=/airtag|tracker/.test(text)?[15,90]:/lego|technic|baustein/.test(text)?[10,180]:/sup|paddle|board/.test(text)?[180,900]:/stoff|plüsch|kuschel/.test(text)?[8,75]:/tisch|regal|lochplatte|wohnen/.test(text)?[7,110]:[10,120];
+      pj.answers[member.uid]=Math.round((band[0]+Math.random()*(band[1]-band[0]))*100)/100;
+    }
+    if(!members.every(m=>Object.hasOwn(pj.answers,m.uid)))return;
     const product=PREISJAEGER_PRODUCTS[pj.productIds[pj.round-1]];
     const entries=members.map(m=>({seat:m.seat,name:m.name,guess:pj.answers[m.uid],challengePoints:preisjaegerScore(pj.answers[m.uid],product.price)}));
     entries.forEach((entry,i)=>ch.points[i]+=entry.challengePoints);
