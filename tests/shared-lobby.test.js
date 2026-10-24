@@ -828,3 +828,40 @@ test('Maulwurf validates server clock, hole, duplicate hits and computes standin
  assert.equal(again.status,200);
  assert.equal(again.room.match.challenge.results.length,1);
 });
+
+test('Maulwurf scores three players independently and resolves one shared winner',async()=>{
+ const h=harness({challengeRandomInt:()=>0});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const uid of ['bob','cara'])assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/join',uid)).status,200);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,200);
+ const key='spielesammlung_hub_v1/'+code,doc=h.docs.get(key),ch=doc.match.challenge;
+ ch.order=['maulwurf-arena'];ch.index=0;ch.points=[0,0,0];ch.results=[];
+ ch.maulwurf={index:0,events:Array.from({length:30},(_,tick)=>({tick,hole:4,kind:tick===0?'gold':tick===1?'bad':'normal'})),hits:{}};
+ h.docs.set(key,doc);
+ h.advance(3000);
+ const path='/api/hub/rooms/'+code+'/challenge-maulwurf-hit';
+ const hit=(uid,tick)=>h.api('POST',path,uid,{challengeId:ch.id,tick,hole:4});
+ assert.equal((await hit('alice',0)).status,200);
+ assert.equal((await hit('bob',0)).status,200);
+ assert.equal((await hit('cara',0)).status,200);
+ h.advance(1000);
+ assert.equal((await hit('bob',1)).status,200);
+ assert.equal((await hit('cara',1)).status,200);
+ const scores=[];
+ for(const uid of ['alice','bob','cara']){
+  const result=await h.api('GET','/api/hub/rooms/'+code,uid);
+  assert.equal(result.status,200);
+  scores.push(result.room.match.challenge.maulwurf.score);
+  assert.equal(result.room.match.challenge.maulwurf.opponents.length,3);
+ }
+ assert.deepEqual(scores,[3,1,1]);
+ h.advance(29000);
+ const finished=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','cara',{challengeId:ch.id});
+ assert.equal(finished.status,200);
+ assert.equal(finished.room.match.challenge.phase,'finished');
+ assert.deepEqual(finished.room.match.challenge.results[0].standings.map(p=>p.score),[3,1,1]);
+ assert.deepEqual(finished.room.match.challenge.points,[30,10,10]);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','bob',{challengeId:ch.id})).room.match.challenge.results.length,1);
+});
