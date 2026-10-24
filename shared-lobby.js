@@ -269,6 +269,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase==='playing')throw error(409,'MATCH_IN_PROGRESS');
+      if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
       room.game=game;room.phase='preparing';
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
@@ -286,10 +287,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'CHALLENGE_NOT_PREPARING');
+      const active=room.players.filter(p=>p.participating&&!p.testBot).length;
+      if(enabled&&active+2>4)throw error(409,'GAME_SEATS_FULL');
       room.players=room.players.filter(p=>!p.testBot);
       if(enabled){
-        const active=room.players.filter(p=>p.participating).length;
-        if(active+2>4)throw error(409,'GAME_SEATS_FULL');
         for(let i=1;i<=2;i++)room.players.push({uid:'testbot:'+room.code+':'+i,seat:randomUUID(),name:'🤖 Testspieler '+i,ready:true,participating:true,testBot:true,joinedAt:clock()});
       }
       room.players.forEach(p=>{p.ready=!!p.testBot;});
