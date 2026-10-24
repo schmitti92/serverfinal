@@ -801,7 +801,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='preisjaeger'||!pj||pj.index!==ch.index||pj.round!==round)throw error(409,'WRONG_PREISJAEGER_ROUND');
       if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
       if(clock()<ch.startAt+45000)throw error(409,'PREISJAEGER_TIME_REMAINING');
-      for(const m of room.match.members)if(!Object.hasOwn(pj.answers,m.uid))pj.answers[m.uid]=0;
+      for(const m of room.match.members)if(!m.uid.startsWith('testbot:')&&!Object.hasOwn(pj.answers,m.uid))pj.answers[m.uid]=0;
       resolvePreisjaeger(ch,room.match.members);
     })};
   }));
