@@ -11,6 +11,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
+const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel']);
 const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^[A-HJ-NP-Z2-9]{6}$/;
@@ -141,8 +142,9 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
-    const count=room.settings?.partychallenge?.count===9?9:5;
-    const order=[...CHALLENGE_GAMES];
+    const count=room.settings?.partychallenge?.count===2?2:room.settings?.partychallenge?.count===9?9:5;
+    if(count!==2)throw error(409,'CHALLENGE_GAMES_NOT_READY');
+    const order=[...CHALLENGE_READY_GAMES];
     for(let i=order.length-1;i>0;i--){const j=challengeRandomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
     room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
       settings:{count},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
@@ -173,7 +175,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:room.settings?.partychallenge?.count===9?9:5}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:[2,5,9].includes(room.settings?.partychallenge?.count)?room.settings.partychallenge.count:5,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -305,7 +307,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   app.post('/api/hub/rooms/:code/challenge-settings',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,count=req.body?.count;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    if(count!==5&&count!==9)throw error(400,'INVALID_CHALLENGE_LENGTH');
+    if(count!==2&&count!==5&&count!==9)throw error(400,'INVALID_CHALLENGE_LENGTH');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'NO_CHALLENGE_SETUP');
