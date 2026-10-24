@@ -572,7 +572,9 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  const ch=room.match?.challenge,h=ch?.huetchen;
  if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');
  if(ch.order[ch.index]!=='huetchen-challenge'||ch.phase!=='countdown'||!h||h.index!==ch.index||h.round!==round)throw error(409,'WRONG_HUETCHEN_ROUND');
- if(clock()<ch.startAt+[7160,7390,7140][round-1])throw error(409,'HUETCHEN_STILL_SHUFFLING');
+ const shuffleMs=[7160,7390,7140][round-1];
+ if(clock()<ch.startAt+shuffleMs)throw error(409,'HUETCHEN_STILL_SHUFFLING');
+ if(clock()>=ch.startAt+shuffleMs+12000)throw error(409,'HUETCHEN_ROUND_TIME_EXPIRED');
  if(slot<0||slot>=round+2)throw error(400,'INVALID_HUETCHEN_SLOT');
  const member=room.match.members.find(p=>p.uid===identity.uid);if(!member)throw error(403,'NOT_A_PARTICIPANT');
  if(Object.hasOwn(h.answers,identity.uid))return {unchanged:true};
