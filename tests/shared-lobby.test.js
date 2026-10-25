@@ -975,3 +975,28 @@ test('Maulwurf records different hits for players at the same tick',async()=>{
   assert.equal(view.hitCount,1);
  }
 });
+
+
+test('Recheninsel uses progressive, bounded and exact arithmetic',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const source=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ const start=source.indexOf('  function setupRecheninsel(ch,round=1){');
+ const end=source.indexOf('  function setupHuetchen(ch,round=1){',start);
+ assert.ok(start>=0&&end>start);
+ const body=source.slice(start,end);
+ const build=new Function('challengeRandomInt','return '+body.trim().replace(/^function setupRecheninsel/,'function setupRecheninsel')+';')(max=>Math.floor(Math.random()*max));
+ for(let round=1;round<=3;round++){
+  const operators=new Set();
+  for(let i=0;i<1000;i++){
+   const ch={index:0};
+   build(ch,round);
+   const m=ch.math;
+   const expected=m.operator==='+'?m.a+m.b:m.operator==='−'?m.a-m.b:m.operator==='×'?m.a*m.b:m.a/m.b;
+   assert.equal(m.answer,expected);
+   assert.ok(Number.isInteger(m.answer)&&m.answer>=0&&m.answer<=1000);
+   assert.equal(m.round,round);
+   operators.add(m.operator);
+  }
+  assert.ok(operators.size>=3);
+ }
+});
