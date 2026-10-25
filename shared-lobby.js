@@ -1014,6 +1014,12 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      p.x=nx;p.y=ny;p.jump=Math.max(0,Math.min(1.3,jump));p.seq=seq;p.lastAt=now;
      for(const t of l.tiles)if(t.state===1){const age=Math.max(0,(now-t.touchedAt)/1000);const startElapsed=Math.max(0,(t.touchedAt-ch.startAt)/1000);const duration=Math.max(.78,1.85-startElapsed*.011);t.damage=Math.min(1,age/duration);if(t.damage>=1)t.state=2;}
      tickLavaBots(ch,room.match.members,now);
+     // A platform may collapse beneath any player, even without a fresh packet from that player.
+     for(const other of Object.values(l.players)){
+       if(!other.alive||other.jump>0)continue;
+       const under=l.tiles[Math.floor(other.y/60)*10+Math.floor(other.x/60)];
+       if(under?.state===2){other.alive=false;other.deathAt=now;}
+     }
      const index=Math.floor(ny/60)*10+Math.floor(nx/60),tile=l.tiles[index];
      if(tile&&tile.state===2&&p.jump===0){p.alive=false;p.deathAt=now;}
      if(tile&&tile.state===0&&p.jump===0){tile.state=1;tile.damage=0;tile.touchedAt=now;}
