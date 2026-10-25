@@ -177,6 +177,23 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     ch.lava={index:ch.index,tiles:Array.from({length:100},()=>({state:0,damage:0})),
       players:Object.fromEntries(members.map((m,i)=>[m.uid,{seat:m.seat,x:[90,510,510,90][i],y:[90,510,90,510][i],alive:true,jump:0,seq:0,lastAt:0,deathAt:null}]))};
   }
+  function tickLavaBots(ch,members,now){
+    const lava=ch.lava;if(!lava||ch.phase!=='countdown')return;
+    for(const member of members){
+      if(!member.uid.startsWith('testbot:'))continue;
+      const p=lava.players[member.uid];if(!p||!p.alive)continue;
+      const previous=p.lastAt||ch.startAt,dt=Math.min(.5,Math.max(0,(now-previous)/1000));
+      if(dt<=0)continue;
+      const elapsed=(now-ch.startAt)/1000,angle=elapsed*.95+(member.seat||0)*2.399;
+      const tx=300+Math.cos(angle)*190,ty=300+Math.sin(angle)*190;
+      const dx=tx-p.x,dy=ty-p.y,len=Math.hypot(dx,dy),step=Math.min(len,155*dt);
+      if(len>1){p.x=Math.max(13,Math.min(587,p.x+dx/len*step));p.y=Math.max(13,Math.min(587,p.y+dy/len*step));}
+      p.seq=(p.seq||0)+1;p.lastAt=now;
+      const tile=lava.tiles[Math.floor(p.y/60)*10+Math.floor(p.x/60)];
+      if(tile?.state===2){p.alive=false;p.deathAt=now;continue;}
+      if(tile?.state===0){tile.state=1;tile.damage=0;tile.touchedAt=now;}
+    }
+  }
   function finishLava(ch,members){
     const standings=members.map(m=>{const p=ch.lava.players[m.uid];return {seat:m.seat,name:m.name,alive:p.alive,survivedMs:p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000,challengePoints:Math.max(0,Math.round((p.deathAt?Math.max(0,p.deathAt-ch.startAt):Math.min(90000,Math.max(0,clock()-ch.startAt)))/1000))};});
     standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
@@ -1013,6 +1030,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      if(p.lastAt&&Math.hypot(nx-p.x,ny-p.y)>190*Math.max(dt,.1)+65)throw error(409,'LAVA_SPEED_LIMIT');
      p.x=nx;p.y=ny;p.jump=Math.max(0,Math.min(1.3,jump));p.seq=seq;p.lastAt=now;
      for(const t of l.tiles)if(t.state===1){const age=Math.max(0,(now-t.touchedAt)/1000);const startElapsed=Math.max(0,(t.touchedAt-ch.startAt)/1000);const duration=Math.max(.78,1.85-startElapsed*.011);t.damage=Math.min(1,age/duration);if(t.damage>=1)t.state=2;}
+     tickLavaBots(ch,room.match.members,now);
      const index=Math.floor(ny/60)*10+Math.floor(nx/60),tile=l.tiles[index];
      if(tile&&tile.state===2&&p.jump===0){p.alive=false;p.deathAt=now;}
      if(tile&&tile.state===0&&p.jump===0){tile.state=1;tile.damage=0;tile.touchedAt=now;}
