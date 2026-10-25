@@ -329,6 +329,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function advanceSnake(ch,members){
     const g=ch.snake;if(!g||ch.phase!=='countdown')return;
     const limit=Math.min(clock(),ch.startAt+180000);
+    if(limit<ch.startAt)return;
     let steps=0;
     while(g.lastTickAt+g.stepMs<=limit&&steps++<1200){
       g.lastTickAt+=g.stepMs;g.tick++;
