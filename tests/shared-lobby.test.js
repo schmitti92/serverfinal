@@ -1000,3 +1000,12 @@ test('Recheninsel uses progressive, bounded and exact arithmetic',async()=>{
   assert.ok(operators.size>=3);
  }
 });
+
+test('Lava Arena test players receive authoritative movement and elimination',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const source=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ assert.match(source,/function tickLavaBots\(ch,members,now\)/);
+ assert.match(source,/member\.uid\.startsWith\('testbot:'\)/);
+ assert.match(source,/tickLavaBots\(ch,room\.match\.members,now\)/);
+ assert.match(source,/tile\?\.state===2\)\{p\.alive=false;p\.deathAt=now/);
+});
