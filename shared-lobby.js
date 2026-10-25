@@ -999,7 +999,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  }));
  app.post('/api/hub/rooms/:code/challenge-lava-state',handler(async req=>{
    const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,x,y,jump}=req.body||{};
-   if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||![x,y,jump].every(Number.isFinite))throw error(400,'INVALID_LAVA_STATE');
+   if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||![x,y,jump].every(Number.isFinite)||x<0||x>600||y<0||y>600||jump<0||jump>1.3)throw error(400,'INVALID_LAVA_STATE');
    return {room:await mutate(code,identity,room=>{
      const ch=room.match?.challenge,l=ch?.lava;
      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='lava-arena'||!l||l.index!==ch.index)throw error(409,'WRONG_CHALLENGE_GAME');
