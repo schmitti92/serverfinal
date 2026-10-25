@@ -315,6 +315,17 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     ch.snake={index:ch.index,players,food:null,tick:0,lastTickAt:ch.startAt,stepMs:180};
     ch.snake.food=snakeFood(ch.snake);
   }
+  function snakeBotDirection(p,g){
+    const dirs=Object.keys(SNAKE_DIR).filter(d=>d!==SNAKE_OPP[p.dir]);
+    const occupied=new Set(Object.values(g.players).filter(v=>v.alive).flatMap(v=>v.points.map(c=>c.x+','+c.y)));
+    const score=d=>{const [dx,dy]=SNAKE_DIR[d],h=p.points[0],x=(h.x+dx+24)%24,y=(h.y+dy+20)%20;
+      if(occupied.has(x+','+y))return -10000;
+      const food=g.food,dist=food?Math.min(Math.abs(x-food.x),24-Math.abs(x-food.x))+Math.min(Math.abs(y-food.y),20-Math.abs(y-food.y)):0;
+      let freedom=0;for(const [ax,ay] of Object.values(SNAKE_DIR)){const nx=(x+ax+24)%24,ny=(y+ay+20)%20;if(!occupied.has(nx+','+ny))freedom++;}
+      return freedom*20-dist*3+(d===p.dir?2:0);
+    };
+    return dirs.sort((a,b)=>score(b)-score(a))[0]||p.dir;
+  }
   function advanceSnake(ch,members){
     const g=ch.snake;if(!g||ch.phase!=='countdown')return;
     const limit=Math.min(clock(),ch.startAt+180000);
@@ -323,6 +334,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       g.lastTickAt+=g.stepMs;g.tick++;
       const alive=Object.values(g.players).filter(p=>p.alive);
       if(!alive.length)break;
+      for(const [uid,p] of Object.entries(g.players))if(p.alive&&uid.startsWith('testbot:'))p.nextDir=snakeBotDirection(p,g);
       const proposals=new Map(),eaters=new Set();
       for(const p of alive){
         if(p.nextDir!==SNAKE_OPP[p.dir])p.dir=p.nextDir;
