@@ -1016,7 +1016,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      tickLavaBots(ch,room.match.members,now);
      // A platform may collapse beneath any player, even without a fresh packet from that player.
      for(const other of Object.values(l.players)){
-       if(!other.alive||other.jump>0)continue;
+       if(!other.alive)continue;
+       // Jump height is a temporary animation value, not a permanent immunity flag.
+       if(other.jump>0&&now-(other.lastAt||0)>600)other.jump=0;
+       if(other.jump>0)continue;
        const under=l.tiles[Math.floor(other.y/60)*10+Math.floor(other.x/60)];
        if(under?.state===2){other.alive=false;other.deathAt=now;}
      }
