@@ -62,7 +62,7 @@ function restore(d){
   players.push({...p,recentActions:Array.isArray(p.recentActions)?p.recentActions.slice(-40):[],socket:null});
  }
  if(new Set(players.map(p=>p.id)).size!==players.length||!players.some(p=>p.id===d.host))return null;
- if(d.hubMatchId&&(typeof d.hubMatchId!=='string'||!/^K[A-HJ-NP-Z2-9]{9}$/.test(d.code)||d.hubCode!==(d.code.slice(1,4).match(/^[0-9]{3}$/)?d.code.slice(1,4):d.code.slice(1,7))||players.some(p=>!p.profileUid)))return null;
+ if(d.hubMatchId&&(typeof d.hubMatchId!=='string'||!/^K[A-HJ-NP-Z2-9]{9}$/.test(d.code)||d.hubCode!==(d.code.slice(4,7)==='AAA'&&/^[AB2-9]{3}$/.test(d.code.slice(1,4))?d.code.slice(1,4).replace(/A/g,'0').replace(/B/g,'1'):d.code.slice(4,7)==='AAA'&&/^[0-9]{3}$/.test(d.code.slice(1,4))?d.code.slice(1,4):d.code.slice(1,7))||players.some(p=>!p.profileUid)))return null;
  return {...d,columnRule:d.columnRule||'classic',parallelRule:d.parallelRule||'serial',parallel:!!d.parallel,responded:Array.isArray(d.responded)&&d.responded.length===players.length?d.responded.map(Boolean):Array(players.length).fill(false),selections:{},previews:{},players,queue:Promise.resolve(),writeQueue:Promise.resolve()};
 }
 function score(p){const cells=new Set(p.cells);return Object.values(p.colorAwards).reduce((a,b)=>a+b,0)+p.columnAwards.reduce((a,b)=>a+(b||0),0)+8-p.jokerUsed-2*STARS.filter(i=>!cells.has(i)).length;}
