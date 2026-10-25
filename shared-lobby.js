@@ -178,7 +178,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       players:Object.fromEntries(members.map((m,i)=>[m.uid,{seat:m.seat,x:[90,510,510,90][i],y:[90,510,90,510][i],alive:true,jump:0,seq:0,lastAt:0,deathAt:null}]))};
   }
   function tickLavaBots(ch,members,now){
-    const lava=ch.lava;if(!lava||ch.phase!=='countdown')return;
+    const lava=ch.lava;if(!lava||ch.phase!=='countdown'||now<ch.startAt)return;
     for(const member of members){
       if(!member.uid.startsWith('testbot:'))continue;
       const p=lava.players[member.uid];if(!p||!p.alive)continue;
