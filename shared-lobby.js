@@ -349,7 +349,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function finishSnake(ch,members){
     if(ch.phase!=='countdown')return;
     const standings=members.map(m=>{const p=ch.snake.players[m.uid];return {seat:m.seat,name:m.name,score:p.score,survived:p.survived,alive:p.alive,challengePoints:Math.max(0,Math.floor(p.score/10))};});
-    standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
+    standings.forEach(p=>{const i=members.findIndex(m=>m.seat===p.seat);if(i>=0)ch.points[i]+=p.challengePoints;});
+    standings.sort((a,b)=>b.score-a.score||b.survived-a.survived||a.seat-b.seat);
     ch.results.push({game:'snake-arena',index:ch.index,standings,finishedAt:clock()});
     ch.phase=ch.index===ch.order.length-1?'finished':'results';
   }
