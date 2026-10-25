@@ -347,9 +347,11 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       for(const p of alive)for(const cell of (eaters.has(p)?p.points:p.points.slice(0,-1)))blocked.add(cell.x+','+cell.y);
       const heads=new Map();
       for(const [p,next] of proposals){const key=next.x+','+next.y;heads.set(key,(heads.get(key)||0)+1);}
+      const headSwaps=new Set();
+      for(const [a,nextA] of proposals)for(const [b,nextB] of proposals){if(a===b)continue;const ah=a.points[0],bh=b.points[0];if(nextA.x===bh.x&&nextA.y===bh.y&&nextB.x===ah.x&&nextB.y===ah.y){headSwaps.add(a);headSwaps.add(b);}}
       for(const [p,next] of proposals){
         const key=next.x+','+next.y;
-        if(blocked.has(key)||heads.get(key)>1){p.alive=false;p.finished=true;continue;}
+        if(blocked.has(key)||heads.get(key)>1||headSwaps.has(p)){p.alive=false;p.finished=true;continue;}
         p.points.unshift(next);p.survived++;
         if(eaters.has(p)){p.score+=10;}else p.points.pop();
       }
