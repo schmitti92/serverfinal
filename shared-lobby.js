@@ -83,6 +83,15 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(/^[0-9]{3}$/.test(first)&&gameCode.slice(4,7)==='AAA')return first;
     return gameCode.slice(1,7);
   }
+  async function roomByGameCode(store,gameCode){
+    const preferred=hubCodeFromGame(gameCode),original=gameCode.slice(1,7);
+    for(const code of (preferred===original?[preferred]:[preferred,original])){
+      const snap=await documentFor(store,code).get();
+      const candidate=snap.exists?snap.data():null;
+      if(candidate?.match?.gameCode===gameCode)return candidate;
+    }
+    return null;
+  }
   function startBarikade(room){
     if(room.game!=='barikade')throw error(409,'GAME_NOT_CONNECTED');
     if(!room.players.some(p=>p.uid===room.hostUid&&p.participating))throw error(409,'HOST_MUST_PLAY');
@@ -1211,10 +1220,9 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   async function barikadeSeat(gameCode,profile){
     if(!HUB_BARIKADE_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
-    const hubCode=hubCodeFromGame(gameCode);
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,hubCode).get();
-    const room=snap.exists?snap.data():null;
+    const room=await roomByGameCode(store,gameCode);
+    const hubCode=room?.code||hubCodeFromGame(gameCode);
     if(!room||room.phase!=='playing'||room.match?.gameCode!==gameCode||room.match?.game!=='barikade')return {error:'MATCH_NOT_FOUND'};
     const member=room.match.members.find(m=>m.uid===profile.uid);
     if(!member||!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_PARTICIPANT'};
@@ -1225,8 +1233,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!HUB_KREUZ_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,hubCodeFromGame(gameCode)).get();
-    const room=snap.exists?snap.data():null;
+    const room=await roomByGameCode(store,gameCode);
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.gameCode!==gameCode||room.match?.game!=='kreuz')return {error:'MATCH_NOT_FOUND'};
     if(!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_MEMBER'};
     if(!room.match.members.some(p=>p.uid===profile.uid))return {error:'NOT_A_PARTICIPANT'};
@@ -1238,8 +1245,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!HUB_SKYJO_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,hubCodeFromGame(gameCode)).get();
-    const room=snap.exists?snap.data():null;
+    const room=await roomByGameCode(store,gameCode);
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.game!=='skyjo'||room.match.gameCode!==gameCode)
       return {error:'MATCH_NOT_FOUND'};
     const member=room.match.members.find(m=>m.uid===profile.uid);
@@ -1252,8 +1258,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!HUB_BUSINESS_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,hubCodeFromGame(gameCode)).get();
-    const room=snap.exists?snap.data():null;
+    const room=await roomByGameCode(store,gameCode);
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.game!=='business'||room.match.gameCode!==gameCode)
       return {error:'MATCH_NOT_FOUND'};
     const member=room.match.members.find(m=>m.uid===profile.uid);
