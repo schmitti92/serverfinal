@@ -172,7 +172,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  else{ch.results.push({game:'huetchen-challenge',index:ch.index,rounds:h.history,standings:members.map((p,i)=>({seat:p.seat,name:p.name,challengePoints:h.history.reduce((sum,r)=>sum+r.entries[i].challengePoints,0)})),finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
  }
   function setupMaulwurf(ch){ch.maulwurf={index:ch.index,events:Array.from({length:30},(_,tick)=>({tick,hole:challengeRandomInt(9),kind:['bad','gold','normal','normal','normal','normal'][challengeRandomInt(6)]})),hits:{}};}
-  function finishMaulwurf(ch,members){const standings=members.map(p=>{const hits=ch.maulwurf.hits[p.uid]||{};const score=Object.values(hits).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0);return {seat:p.seat,name:p.name,score,challengePoints:Math.max(0,score)*10};});standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);ch.results.push({game:'maulwurf-arena',index:ch.index,standings,finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
+  function finishMaulwurf(ch,members){const standings=members.map(p=>{const hits=ch.maulwurf.hits[p.uid]||{};const score=Object.values(hits).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0);return {seat:p.seat,name:p.name,score,challengePoints:Math.max(0,score)*10};});standings.forEach(p=>{const i=members.findIndex(m=>m.seat===p.seat);if(i>=0)ch.points[i]+=p.challengePoints;});ch.results.push({game:'maulwurf-arena',index:ch.index,standings,finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
   function setupLava(ch,members){
     ch.lava={index:ch.index,tiles:Array.from({length:100},()=>({state:0,damage:0})),
       players:Object.fromEntries(members.map((m,i)=>[m.uid,{seat:m.seat,x:[90,510,510,90][i],y:[90,510,90,510][i],alive:true,jump:0,seq:0,lastAt:0,deathAt:null}]))};
@@ -195,7 +195,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     }
   }
   function finishLava(ch,members){
-    const standings=members.map(m=>{const p=ch.lava.players[m.uid];return {seat:m.seat,name:m.name,alive:p.alive,survivedMs:p.deathAt?Math.max(0,p.deathAt-ch.startAt):90000,challengePoints:Math.max(0,Math.round((p.deathAt?Math.max(0,p.deathAt-ch.startAt):Math.min(90000,Math.max(0,clock()-ch.startAt)))/1000))};});
+    const finishedAt=clock();const standings=members.map(m=>{const p=ch.lava.players[m.uid];const survivedMs=Math.max(0,Math.min(90000,(p.deathAt??finishedAt)-ch.startAt));return {seat:m.seat,name:m.name,alive:p.alive,survivedMs,challengePoints:Math.round(survivedMs/1000)};}).sort((a,b)=>b.survivedMs-a.survivedMs||a.seat-b.seat);
     standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
     ch.results.push({game:'lava-arena',index:ch.index,standings,finishedAt:clock()});
     ch.phase=ch.index===ch.order.length-1?'finished':'results';
