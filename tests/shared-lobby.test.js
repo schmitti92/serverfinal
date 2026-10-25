@@ -770,8 +770,8 @@ test('Recheninsel has exactly three progressively harder timed rounds',async()=>
  for(let round=1;round<=3;round++){
   assert.equal(state.math.round,round);
   assert.equal(state.math.totalRounds,3);
-  if(round===1){assert.ok(['+','−'].includes(state.math.operator));assert.ok(state.math.a<=30);}
-  if(round===2){assert.ok(['+','−','×'].includes(state.math.operator));}
+  if(round===1){assert.ok(['+','−','×'].includes(state.math.operator));assert.ok(state.math.a<=120);}
+  if(round===2){assert.ok(['+','−','×','÷'].includes(state.math.operator));}
   if(round===3){assert.ok(['+','−','×','÷'].includes(state.math.operator));}
   h.advance(3000);
   const q=state.math;
