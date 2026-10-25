@@ -987,6 +987,24 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      const ch=room.match?.challenge,l=ch?.lava;
      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='lava-arena'||!l||l.index!==ch.index)throw error(409,'WRONG_CHALLENGE_GAME');
      if(clock()<ch.startAt||clock()>ch.startAt+92000)throw error(409,'LAVA_NOT_RUNNING');
+     // Advance simulated test players on the authoritative server.
+     // They must move and be eliminated by lava, not remain invincible statues.
+     const botNow=clock();
+     for(const member of room.match.members){
+       if(!member.uid.startsWith('testbot:'))continue;
+       const bot=l.players[member.uid];if(!bot||!bot.alive)continue;
+       const elapsed=bot.lastAt?Math.min(.45,(botNow-bot.lastAt)/1000):.15;
+       if(elapsed<.12)continue;
+       const seed=member.seat*2.399+Math.floor((botNow-ch.startAt)/2100)*1.37;
+       const tx=300+Math.sin(seed)*185,ty=300+Math.cos(seed*.81)*185;
+       const dx=tx-bot.x,dy=ty-bot.y,distance=Math.hypot(dx,dy);
+       const step=Math.min(distance,elapsed*165);
+       if(distance>1){bot.x=Math.max(13,Math.min(587,bot.x+dx/distance*step));bot.y=Math.max(13,Math.min(587,bot.y+dy/distance*step));}
+       bot.seq++;bot.lastAt=botNow;bot.jump=0;
+       const tile=l.tiles[Math.floor(bot.y/60)*10+Math.floor(bot.x/60)];
+       if(tile?.state===2){bot.alive=false;bot.deathAt=botNow;}
+       else if(tile?.state===0){tile.state=1;tile.damage=0;tile.touchedAt=botNow;}
+     }
      const p=l.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
      if(seq<=p.seq||!p.alive)return {unchanged:true};
      const now=clock(),dt=p.lastAt?Math.min(1,(now-p.lastAt)/1000):.25;
