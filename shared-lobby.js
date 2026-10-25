@@ -1052,6 +1052,30 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      if(l.players&&Object.values(l.players).filter(v=>v.alive).length<=1)finishLava(ch,room.match.members);
    })};
  }));
+ app.post('/api/hub/rooms/:code/challenge-lava-tick',handler(async req=>{
+   const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};
+   if(!code||typeof challengeId!=='string')throw error(400,'INVALID_LAVA_TICK');
+   return {room:await mutate(code,identity,room=>{
+     const ch=room.match?.challenge,l=ch?.lava;
+     if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='lava-arena'||!l)return {unchanged:true};
+     if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+     const now=clock();
+     if(now<ch.startAt)return {unchanged:true};
+     if(now>=ch.startAt+90000){advanceLavaTiles(ch,now);finishLava(ch,room.match.members);return;}
+     if(l.lastTickAt&&now-l.lastTickAt<200)return {unchanged:true};
+     l.lastTickAt=now;
+     advanceLavaTiles(ch,now);
+     tickLavaBots(ch,room.match.members,now);
+     for(const p of Object.values(l.players)){
+       if(!p.alive)continue;
+       if(p.jump>0&&now-(p.lastAt||0)>600)p.jump=0;
+       if(p.jump>0)continue;
+       const tile=l.tiles[Math.floor(p.y/60)*10+Math.floor(p.x/60)];
+       if(tile?.state===2){p.alive=false;p.deathAt=now;}
+     }
+     if(Object.values(l.players).filter(p=>p.alive).length<=1)finishLava(ch,room.match.members);
+   })};
+ }));
  app.post('/api/hub/rooms/:code/challenge-lava-timeout',handler(async req=>{
    const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};
    if(!code||typeof challengeId!=='string')throw error(400,'INVALID_LAVA_TIMEOUT');
