@@ -177,6 +177,17 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     ch.lava={index:ch.index,tiles:Array.from({length:100},()=>({state:0,damage:0})),
       players:Object.fromEntries(members.map((m,i)=>[m.uid,{seat:m.seat,x:[90,510,510,90][i],y:[90,510,90,510][i],alive:true,jump:0,seq:0,lastAt:0,deathAt:null}]))};
   }
+  function advanceLavaTiles(ch,now){
+    const lava=ch.lava;if(!lava)return;
+    for(const tile of lava.tiles){
+      if(tile.state!==1||!Number.isFinite(tile.touchedAt))continue;
+      const age=Math.max(0,(now-tile.touchedAt)/1000);
+      const elapsed=Math.max(0,(tile.touchedAt-ch.startAt)/1000);
+      const duration=Math.max(.78,1.85-elapsed*.011);
+      tile.damage=Math.min(1,age/duration);
+      if(tile.damage>=1)tile.state=2;
+    }
+  }
   function tickLavaBots(ch,members,now){
     const lava=ch.lava;if(!lava||ch.phase!=='countdown'||now<ch.startAt)return;
     for(const member of members){
@@ -1012,7 +1023,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      const nx=Math.max(13,Math.min(587,x)),ny=Math.max(13,Math.min(587,y));
      if(p.lastAt&&Math.hypot(nx-p.x,ny-p.y)>190*Math.max(dt,.1)+65)throw error(409,'LAVA_SPEED_LIMIT');
      p.x=nx;p.y=ny;p.jump=Math.max(0,Math.min(1.3,jump));p.seq=seq;p.lastAt=now;
-     for(const t of l.tiles)if(t.state===1){const age=Math.max(0,(now-t.touchedAt)/1000);const startElapsed=Math.max(0,(t.touchedAt-ch.startAt)/1000);const duration=Math.max(.78,1.85-startElapsed*.011);t.damage=Math.min(1,age/duration);if(t.damage>=1)t.state=2;}
+     advanceLavaTiles(ch,now);
      tickLavaBots(ch,room.match.members,now);
      // A platform may collapse beneath any player, even without a fresh packet from that player.
      for(const other of Object.values(l.players)){
@@ -1039,6 +1050,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
      if(clock()<ch.startAt+90000)return {unchanged:true};
      const now=clock(),l=ch.lava;
+     advanceLavaTiles(ch,now);
      if(l){for(const p of Object.values(l.players)){if(!p.alive)continue;const tile=l.tiles[Math.floor(p.y/60)*10+Math.floor(p.x/60)];if(tile?.state===2){p.alive=false;p.deathAt=now;}}}
      finishLava(ch,room.match.members);
    })};
