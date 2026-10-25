@@ -300,8 +300,50 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(pj.round<3){pj.round++;pj.answers={};ch.startAt=clock()+9000;pj.roundStartedAt=ch.startAt;fillPreisjaegerBotAnswers(ch,members);}
     else{ch.results.push({game:'preisjaeger',index:ch.index,rounds:pj.history,standings:members.map((m,i)=>({seat:m.seat,name:m.name,challengePoints:pj.history.reduce((sum,h)=>sum+h.entries[i].challengePoints,0)})),finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
   }
+  // Server-authoritative shared Snake arena. Clients submit directions only.
+  const SNAKE_DIR={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
+  const SNAKE_OPP={up:'down',down:'up',left:'right',right:'left'};
+  function snakeFood(game){
+    const occupied=new Set(Object.values(game.players).flatMap(p=>p.points.map(v=>v.x+','+v.y)));
+    const free=[];for(let y=0;y<20;y++)for(let x=0;x<24;x++)if(!occupied.has(x+','+y))free.push({x,y});
+    return free.length?free[challengeRandomInt(free.length)]:null;
+  }
   function setupSnake(ch,members){
-    ch.snake={index:ch.index,players:Object.fromEntries(members.map(m=>[m.uid,{seat:m.seat,score:0,survived:0,alive:true,seq:0,updatedAt:0,finished:false}]))};
+    const starts=[[5,5,'right'],[18,14,'left'],[18,5,'left'],[5,14,'right']];
+    const players={};
+    members.forEach((m,i)=>{const [x,y,dir]=starts[i%4];const [dx,dy]=SNAKE_DIR[dir];players[m.uid]={seat:m.seat,score:0,survived:0,alive:true,seq:0,updatedAt:0,finished:false,dir,nextDir:dir,points:Array.from({length:4},(_,j)=>({x:(x-dx*j+24)%24,y:(y-dy*j+20)%20}))};});
+    ch.snake={index:ch.index,players,food:null,tick:0,lastTickAt:ch.startAt,stepMs:180};
+    ch.snake.food=snakeFood(ch.snake);
+  }
+  function advanceSnake(ch,members){
+    const g=ch.snake;if(!g||ch.phase!=='countdown')return;
+    const limit=Math.min(clock(),ch.startAt+180000);
+    let steps=0;
+    while(g.lastTickAt+g.stepMs<=limit&&steps++<1200){
+      g.lastTickAt+=g.stepMs;g.tick++;
+      const alive=Object.values(g.players).filter(p=>p.alive);
+      if(!alive.length)break;
+      const proposals=new Map(),eaters=new Set();
+      for(const p of alive){
+        if(p.nextDir!==SNAKE_OPP[p.dir])p.dir=p.nextDir;
+        const [dx,dy]=SNAKE_DIR[p.dir],head=p.points[0];
+        const next={x:(head.x+dx+24)%24,y:(head.y+dy+20)%20};
+        proposals.set(p,next);
+        if(g.food&&next.x===g.food.x&&next.y===g.food.y)eaters.add(p);
+      }
+      const blocked=new Set();
+      for(const p of alive)for(const cell of (eaters.has(p)?p.points:p.points.slice(0,-1)))blocked.add(cell.x+','+cell.y);
+      const heads=new Map();
+      for(const [p,next] of proposals){const key=next.x+','+next.y;heads.set(key,(heads.get(key)||0)+1);}
+      for(const [p,next] of proposals){
+        const key=next.x+','+next.y;
+        if(blocked.has(key)||heads.get(key)>1){p.alive=false;p.finished=true;continue;}
+        p.points.unshift(next);p.survived++;
+        if(eaters.has(p)){p.score+=10;}else p.points.pop();
+      }
+      if([...eaters].some(p=>p.alive))g.food=snakeFood(g);
+    }
+    if(limit>=ch.startAt+180000||Object.values(g.players).every(p=>!p.alive))finishSnake(ch,members);
   }
   function finishSnake(ch,members){
     if(ch.phase!=='countdown')return;
@@ -354,7 +396,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function publicChallenge(ch,members,identity){
     const {id,order,index,phase,startAt,points,results}=ch;
-    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,bomber:order[index]==='bomber-strand-arena'&&ch.bomber?{players:members.map(m=>({...ch.bomber.players[m.uid],name:m.name})),bombs:ch.bomber.bombs,blasts:ch.bomber.blasts,destroyed:ch.bomber.destroyed}:null,snake:order[index]==='snake-arena'&&ch.snake?{players:members.map(m=>({name:m.name,...ch.snake.players[m.uid]}))}:null,lava:order[index]==='lava-arena'&&ch.lava?{players:members.map(m=>({...ch.lava.players[m.uid],name:m.name,testBot:m.uid.startsWith('testbot:')})),tiles:ch.lava.tiles}:null,flusssprung:order[index]==='flusssprung'&&ch.flusssprung?{path:ch.flusssprung.path,players:members.map(p=>({seat:p.seat,name:p.name,...ch.flusssprung.players[p.uid]})),moves:ch.flusssprung.moves.slice(-40),moveCount:ch.flusssprung.moves.length}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length,score:Object.values(ch.maulwurf.hits[identity.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hitTicks:Object.keys(ch.maulwurf.hits[identity.uid]||{}).map(Number),opponents:members.map(p=>({seat:p.seat,name:p.name,score:Object.values(ch.maulwurf.hits[p.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hits:Object.keys(ch.maulwurf.hits[p.uid]||{}).length}))}:null,preisjaeger:order[index]==='preisjaeger'&&ch.preisjaeger?{round:ch.preisjaeger.round,totalRounds:3,product:(()=>{const p=PREISJAEGER_PRODUCTS[ch.preisjaeger.productIds[ch.preisjaeger.round-1]];return {name:p.name,category:p.category,icon:p.icon,shop:p.shop,description:p.checkedAt?'Historischer Preisstand: '+p.checkedAt+' · Kein aktuelles Händlerangebot.':'',image:PREISJAEGER_VERIFIED_PHOTOS[p.name]||null};})(),answered:members.filter(m=>Object.hasOwn(ch.preisjaeger.answers,m.uid)).map(m=>m.seat),myGuess:Object.hasOwn(ch.preisjaeger.answers,identity.uid)?ch.preisjaeger.answers[identity.uid]:null,history:ch.preisjaeger.history}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
+    return {id,order,index,phase,startAt,points,results,totals:members.map((m,i)=>({seat:m.seat,name:m.name,points:points[i]||0})),targetSeconds:order[index]==='zeitgefuehl'?ch.timeTargets?.[String(index)]:null,stopped:members.filter(p=>Object.hasOwn(ch.timeStops||{},p.uid)).map(p=>p.seat),huetchen:order[index]==='huetchen-challenge'&&ch.huetchen?{round:ch.huetchen.round,secret:ch.huetchen.secret,swaps:ch.huetchen.swaps,answered:members.filter(p=>Object.hasOwn(ch.huetchen.answers,p.uid)).map(p=>p.seat)}:null,bomber:order[index]==='bomber-strand-arena'&&ch.bomber?{players:members.map(m=>({...ch.bomber.players[m.uid],name:m.name})),bombs:ch.bomber.bombs,blasts:ch.bomber.blasts,destroyed:ch.bomber.destroyed}:null,snake:order[index]==='snake-arena'&&ch.snake?{players:members.map(m=>({name:m.name,...ch.snake.players[m.uid]})),food:ch.snake.food,tick:ch.snake.tick,stepMs:ch.snake.stepMs}:null,lava:order[index]==='lava-arena'&&ch.lava?{players:members.map(m=>({...ch.lava.players[m.uid],name:m.name,testBot:m.uid.startsWith('testbot:')})),tiles:ch.lava.tiles}:null,flusssprung:order[index]==='flusssprung'&&ch.flusssprung?{path:ch.flusssprung.path,players:members.map(p=>({seat:p.seat,name:p.name,...ch.flusssprung.players[p.uid]})),moves:ch.flusssprung.moves.slice(-40),moveCount:ch.flusssprung.moves.length}:null,maulwurf:order[index]==='maulwurf-arena'&&ch.maulwurf?{events:ch.maulwurf.events,roundSeconds:30,hitCount:Object.keys(ch.maulwurf.hits[identity.uid]||{}).length,score:Object.values(ch.maulwurf.hits[identity.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hitTicks:Object.keys(ch.maulwurf.hits[identity.uid]||{}).map(Number),opponents:members.map(p=>({seat:p.seat,name:p.name,score:Object.values(ch.maulwurf.hits[p.uid]||{}).reduce((sum,kind)=>sum+(kind==='gold'?3:kind==='bad'?-2:1),0),hits:Object.keys(ch.maulwurf.hits[p.uid]||{}).length}))}:null,preisjaeger:order[index]==='preisjaeger'&&ch.preisjaeger?{round:ch.preisjaeger.round,totalRounds:3,product:(()=>{const p=PREISJAEGER_PRODUCTS[ch.preisjaeger.productIds[ch.preisjaeger.round-1]];return {name:p.name,category:p.category,icon:p.icon,shop:p.shop,description:p.checkedAt?'Historischer Preisstand: '+p.checkedAt+' · Kein aktuelles Händlerangebot.':'',image:PREISJAEGER_VERIFIED_PHOTOS[p.name]||null};})(),answered:members.filter(m=>Object.hasOwn(ch.preisjaeger.answers,m.uid)).map(m=>m.seat),myGuess:Object.hasOwn(ch.preisjaeger.answers,identity.uid)?ch.preisjaeger.answers[identity.uid]:null,history:ch.preisjaeger.history}:null,math:order[index]==='recheninsel'&&ch.math?{round:ch.math.round||1,totalRounds:3,a:ch.math.a,b:ch.math.b,operator:ch.math.operator,answered:members.filter(p=>Object.hasOwn(ch.math.answers,p.uid)).map(p=>p.seat)}:null};
   }
   function expose(room,identity){
     const game=HUB_GAMES[room.game]||null;
@@ -975,26 +1017,18 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     })};
   }));
   app.post('/api/hub/rooms/:code/challenge-snake-state',handler(async req=>{
-  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,score,survived,alive,finished,points,food,dir}=req.body||{};
-  if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Number.isSafeInteger(score)||score<0||score>50000||!Number.isSafeInteger(survived)||survived<0||survived>2000||typeof alive!=='boolean')throw error(400,'INVALID_SNAKE_STATE');
+  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,dir}=req.body||{};
+  if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Object.hasOwn(SNAKE_DIR,dir))throw error(400,'INVALID_SNAKE_INPUT');
   return {room:await mutate(code,identity,room=>{
-   const ch=room.match?.challenge,game=ch?.snake;
-   if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='snake-arena'||!game||game.index!==ch.index)throw error(409,'WRONG_CHALLENGE_GAME');
-   const now=clock();if(now<ch.startAt||now>ch.startAt+182000)throw error(409,'SNAKE_NOT_RUNNING');
-   const p=game.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
-   if(seq<=p.seq||p.finished)return {unchanged:true};
-   const maxSteps=Math.floor((now-ch.startAt)/90)+5;
-   if(survived>maxSteps||score>survived*50)throw error(409,'SNAKE_SCORE_LIMIT');
-   if(score<p.score||survived<p.survived)throw error(409,'SNAKE_NON_MONOTONIC');
-   if(points!==undefined){
-    if(!Array.isArray(points)||points.length<1||points.length>200||!points.every(v=>v&&Number.isInteger(v.x)&&v.x>=0&&v.x<24&&Number.isInteger(v.y)&&v.y>=0&&v.y<20))throw error(400,'INVALID_SNAKE_BODY');
-    if(p.points&&Math.abs(points.length-p.points.length)>Math.max(3,survived-p.survived+1))throw error(409,'SNAKE_BODY_LIMIT');
-   }
-   if(food!==undefined&&food!==null&&(!Number.isInteger(food.x)||food.x<0||food.x>=24||!Number.isInteger(food.y)||food.y<0||food.y>=20))throw error(400,'INVALID_SNAKE_FOOD');
-   if(dir!==undefined&&!['up','down','left','right'].includes(dir))throw error(400,'INVALID_SNAKE_DIRECTION');
-   p.seq=seq;p.score=score;p.survived=survived;p.alive=alive;p.updatedAt=now;p.finished=!!finished||!alive;
-   if(points)p.points=points;if(food!==undefined)p.food=food;if(dir)p.dir=dir;
-   if(Object.values(game.players).every(v=>v.finished))finishSnake(ch,room.match.members);
+   const ch=room.match?.challenge,g=ch?.snake;
+   if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='snake-arena'||!g)throw error(409,'WRONG_CHALLENGE_GAME');
+   if(clock()<ch.startAt)throw error(409,'SNAKE_NOT_RUNNING');
+   advanceSnake(ch,room.match.members);
+   if(ch.phase!=='countdown')return;
+   const p=g.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
+   if(seq<=p.seq||!p.alive)return {unchanged:true};
+   p.seq=seq;p.updatedAt=clock();
+   if(dir!==SNAKE_OPP[p.dir])p.nextDir=dir;
   })};
  }));
  app.post('/api/hub/rooms/:code/challenge-snake-timeout',handler(async req=>{
@@ -1004,8 +1038,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
    const ch=room.match?.challenge;
    if(ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='snake-arena')return {unchanged:true};
    if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
-   if(clock()<ch.startAt+180000)return {unchanged:true};
-   finishSnake(ch,room.match.members);
+   advanceSnake(ch,room.match.members);
   })};
  }));
  app.post('/api/hub/rooms/:code/challenge-lava-state',handler(async req=>{
