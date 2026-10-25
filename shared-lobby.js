@@ -306,7 +306,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   function snakeFood(game){
     const occupied=new Set(Object.values(game.players).flatMap(p=>p.points.map(v=>v.x+','+v.y)));
     const free=[];for(let y=0;y<20;y++)for(let x=0;x<24;x++)if(!occupied.has(x+','+y))free.push({x,y});
-    return free.length?free[challengeRandomInt(0,free.length-1)]:null;
+    return free.length?free[Math.floor(Math.random()*free.length)]:null;
   }
   function setupSnake(ch,members){
     const starts=[[5,5,'right'],[18,14,'left'],[18,5,'left'],[5,14,'right']];
