@@ -71,7 +71,17 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const suffix=CHARSET[Math.floor((next-1)/(CHARSET.length**2))%CHARSET.length]
       +CHARSET[Math.floor((next-1)/CHARSET.length)%CHARSET.length]
       +CHARSET[(next-1)%CHARSET.length];
-    return prefix+(room.code.length===3?room.code+'AAA':room.code)+suffix;
+    // Convert 0/1 to valid internal alphabet characters while preserving the three-digit hub code.
+    const roomPart=room.code.length===3?room.code.replace(/0/g,'A').replace(/1/g,'B')+'AAA':room.code;
+    return prefix+roomPart+suffix;
+  }
+  function hubCodeFromGame(gameCode){
+    const first=gameCode.slice(1,4);
+    // The AAA marker distinguishes three-digit hub codes from original six-character codes.
+    if(gameCode.slice(4,7)==='AAA'&&/^[AB2-9]{3}$/.test(first))return first.replace(/A/g,'0').replace(/B/g,'1');
+    // Backward compatibility for matches created before the 0/1 encoding fix.
+    if(/^[0-9]{3}$/.test(first)&&gameCode.slice(4,7)==='AAA')return first;
+    return gameCode.slice(1,7);
   }
   function startBarikade(room){
     if(room.game!=='barikade')throw error(409,'GAME_NOT_CONNECTED');
@@ -1201,7 +1211,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   async function barikadeSeat(gameCode,profile){
     if(!HUB_BARIKADE_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
-    const hubCode=(gameCode.slice(1,4).match(/^[0-9]{3}$/)?gameCode.slice(1,4):gameCode.slice(1,7));
+    const hubCode=hubCodeFromGame(gameCode);
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
     const snap=await documentFor(store,hubCode).get();
     const room=snap.exists?snap.data():null;
@@ -1215,7 +1225,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!HUB_KREUZ_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,(gameCode.slice(1,4).match(/^[0-9]{3}$/)?gameCode.slice(1,4):gameCode.slice(1,7))).get();
+    const snap=await documentFor(store,hubCodeFromGame(gameCode)).get();
     const room=snap.exists?snap.data():null;
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.gameCode!==gameCode||room.match?.game!=='kreuz')return {error:'MATCH_NOT_FOUND'};
     if(!room.players.some(p=>p.uid===profile.uid))return {error:'NOT_A_MEMBER'};
@@ -1228,7 +1238,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!HUB_SKYJO_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,(gameCode.slice(1,4).match(/^[0-9]{3}$/)?gameCode.slice(1,4):gameCode.slice(1,7))).get();
+    const snap=await documentFor(store,hubCodeFromGame(gameCode)).get();
     const room=snap.exists?snap.data():null;
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.game!=='skyjo'||room.match.gameCode!==gameCode)
       return {error:'MATCH_NOT_FOUND'};
@@ -1242,7 +1252,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!HUB_BUSINESS_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const snap=await documentFor(store,(gameCode.slice(1,4).match(/^[0-9]{3}$/)?gameCode.slice(1,4):gameCode.slice(1,7))).get();
+    const snap=await documentFor(store,hubCodeFromGame(gameCode)).get();
     const room=snap.exists?snap.data():null;
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.game!=='business'||room.match.gameCode!==gameCode)
       return {error:'MATCH_NOT_FOUND'};
