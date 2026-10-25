@@ -452,6 +452,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'NO_CHALLENGE_SETUP');
+      if(room.settings?.partychallenge?.selectedGame===selectedGame&&room.settings?.partychallenge?.count===count)return {unchanged:true};
       room.settings={...room.settings,partychallenge:{count,selectedGame}};
       room.players.forEach(p=>p.ready=!!p.testBot);
     })};
