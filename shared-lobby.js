@@ -1017,7 +1017,18 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      if(clock()<ch.startAt||clock()>ch.startAt+92000)throw error(409,'LAVA_NOT_RUNNING');
      // One authoritative bot update per accepted state; never simulate bots twice.
      const p=l.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
-     if(seq<=p.seq||!p.alive)return {unchanged:true};
+     if(seq<=p.seq||!p.alive){
+       const now=clock();advanceLavaTiles(ch,now);tickLavaBots(ch,room.match.members,now);
+       for(const other of Object.values(l.players)){
+         if(!other.alive)continue;
+         if(other.jump>0&&now-(other.lastAt||0)>600)other.jump=0;
+         if(other.jump>0)continue;
+         const under=l.tiles[Math.floor(other.y/60)*10+Math.floor(other.x/60)];
+         if(under?.state===2){other.alive=false;other.deathAt=now;}
+       }
+       if(Object.values(l.players).filter(v=>v.alive).length<=1)finishLava(ch,room.match.members);
+       return;
+     }
      const now=clock(),dt=p.lastAt?Math.min(1,(now-p.lastAt)/1000):.25;
      if(p.lastAt&&now-p.lastAt<65)return {unchanged:true};
      const nx=Math.max(13,Math.min(587,x)),ny=Math.max(13,Math.min(587,y));
