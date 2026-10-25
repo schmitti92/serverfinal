@@ -195,7 +195,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const p=lava.players[member.uid];if(!p||!p.alive)continue;
       const previous=p.lastAt||ch.startAt,dt=Math.min(.5,Math.max(0,(now-previous)/1000));
       if(dt<=0)continue;
-      const elapsed=(now-ch.startAt)/1000,angle=elapsed*.95+(member.seat||0)*2.399;
+      const elapsed=(now-ch.startAt)/1000,botIndex=members.findIndex(m=>m.uid===member.uid),angle=elapsed*.95+Math.max(0,botIndex)*2.399;
       const tx=300+Math.cos(angle)*190,ty=300+Math.sin(angle)*190;
       const dx=tx-p.x,dy=ty-p.y,len=Math.hypot(dx,dy),step=Math.min(len,155*dt);
       if(len>1){p.x=Math.max(13,Math.min(587,p.x+dx/len*step));p.y=Math.max(13,Math.min(587,p.y+dy/len*step));}
