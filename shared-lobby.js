@@ -1038,6 +1038,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
      if(ch?.id!==challengeId||ch.order[ch.index]!=='lava-arena'||ch.phase!=='countdown')return {unchanged:true};
      if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
      if(clock()<ch.startAt+90000)return {unchanged:true};
+     const now=clock(),l=ch.lava;
+     if(l){for(const p of Object.values(l.players)){if(!p.alive)continue;const tile=l.tiles[Math.floor(p.y/60)*10+Math.floor(p.x/60)];if(tile?.state===2){p.alive=false;p.deathAt=now;}}}
      finishLava(ch,room.match.members);
    })};
  }));
