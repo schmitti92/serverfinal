@@ -1151,9 +1151,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
         const identity=await verifyProfile(token);
         if(!identity?.uid)throw error(401,'LOGIN_REQUIRED');
         const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-        const ref=documentFor(store,code),snap=await ref.get();
-        validateRead(snap.exists?snap.data():null,identity);
+        const ref=documentFor(store,code);
         if(closed)return;
+        // The initial onSnapshot event already reads the document and checks membership.
+        // Avoid a redundant get() on every WebSocket (re)subscription.
         if(typeof ref.onSnapshot!=='function')throw error(503,'REALTIME_UNAVAILABLE');
         unwatch=ref.onSnapshot(next=>{
           try{
