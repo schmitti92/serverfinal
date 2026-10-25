@@ -886,7 +886,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(x<0||x>10||y<0||y>10)throw error(400,'INVALID_BOMBER_POSITION');
       if(p.updatedAt&&Math.hypot(x-p.x,y-p.y)>Math.max(.6,(now-p.updatedAt)/1000*7+.6))throw error(409,'BOMBER_SPEED_LIMIT');
       p.x=x;p.y=y;p.seq=seq;p.updatedAt=now;p.bombsPlaced=bombsPlaced;
-      if(!alive){p.alive=false;p.eliminatedAt=now;}
+      tickBomber(ch,room.match.members,now);
+      // Clientseitige Todesmeldungen sind nicht vertrauenswürdig: nur tickBomber entscheidet über Treffer.
       if(Object.values(game.players).filter(q=>q.alive).length<=1)finishBomber(ch,room.match.members);
     })};
   }));
