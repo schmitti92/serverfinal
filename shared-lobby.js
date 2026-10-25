@@ -274,11 +274,13 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
     // Legacy rooms may still carry a saved 5/9-game setting from before those modes were disabled.
     // Use the currently playable game count rather than blocking an otherwise ready room.
-    const count=CHALLENGE_READY_GAMES.length;
-    const order=[...CHALLENGE_READY_GAMES];
+    const selected=room.settings?.partychallenge?.selectedGame;
+    const single=CHALLENGE_READY_GAMES.includes(selected);
+    const count=single?1:CHALLENGE_READY_GAMES.length;
+    const order=single?[selected]:[...CHALLENGE_READY_GAMES];
     for(let i=order.length-1;i>0;i--){const j=challengeRandomInt(i+1);[order[i],order[j]]=[order[j],order[i]];}
     room.match={id:randomUUID(),game:'partychallenge',startedAt:clock(),gameCode:null,
-      settings:{count},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
+      settings:{count,selectedGame:single?selected:null},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
       challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
         points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
     if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+challengeRandomInt(11);
@@ -313,7 +315,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:CHALLENGE_READY_GAMES.length,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -420,7 +422,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       if(game==='business')room.settings={...room.settings,business:businessSettings(room.settings?.business)||{...BUSINESS_DEFAULTS}};
-      if(game==='partychallenge')room.settings={...room.settings,partychallenge:{count:CHALLENGE_READY_GAMES.length}};
+      if(game==='partychallenge')room.settings={...room.settings,partychallenge:{count:CHALLENGE_READY_GAMES.length,selectedGame:null}};
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
     })};
   }));
@@ -443,13 +445,14 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     })};
   }));
   app.post('/api/hub/rooms/:code/challenge-settings',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity,count=req.body?.count;
+    const code=validCode(req.params.code),identity=req.hubIdentity,count=req.body?.count,selectedGame=req.body?.selectedGame??null;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    if(count!==CHALLENGE_READY_GAMES.length)throw error(400,'CHALLENGE_GAMES_NOT_READY');
+    if(selectedGame!==null&&!CHALLENGE_READY_GAMES.includes(selectedGame))throw error(400,'INVALID_MINIGAME');
+    if(count!==(selectedGame?1:CHALLENGE_READY_GAMES.length))throw error(400,'CHALLENGE_GAMES_NOT_READY');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||room.game!=='partychallenge')throw error(409,'NO_CHALLENGE_SETUP');
-      room.settings={...room.settings,partychallenge:{count}};
+      room.settings={...room.settings,partychallenge:{count,selectedGame}};
       room.players.forEach(p=>p.ready=!!p.testBot);
     })};
   }));
@@ -806,6 +809,41 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(ch.order[ch.index]==='preisjaeger')setupPreisjaeger(ch,room.match.members);
     if(ch.order[ch.index]==='bomber-strand-arena')setupBomber(ch,room.match.members);
       if(ch.order[ch.index]==='lava-arena')setupLava(ch,room.match.members);
+    })};
+  }));
+  // Host can replay a completed single minigame without changing room or player seats.
+  app.post('/api/hub/rooms/:code/challenge-replay',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,challengeId=req.body?.challengeId;
+    if(!code||typeof challengeId!=='string')throw error(400,'INVALID_REPLAY');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId||ch.phase!=='finished'||ch.order.length!==1)throw error(409,'REPLAY_NOT_READY');
+      const game=ch.order[0],members=room.match.members;
+      room.match.challenge={id:randomUUID(),order:[game],index:0,phase:'countdown',startAt:clock()+3500,points:members.map(()=>0),results:[],timeTargets:{},timeStops:{}};
+      const next=room.match.challenge;
+      if(game==='zeitgefuehl')next.timeTargets['0']=10+challengeRandomInt(11);
+      if(game==='recheninsel')setupRecheninsel(next);
+      if(game==='huetchen-challenge')setupHuetchen(next);
+      if(game==='maulwurf-arena')setupMaulwurf(next);
+      if(game==='flusssprung')setupFlusssprung(next,members);
+      if(game==='snake-arena')setupSnake(next,members);
+      if(game==='preisjaeger')setupPreisjaeger(next,members);
+      if(game==='bomber-strand-arena')setupBomber(next,members);
+      if(game==='lava-arena')setupLava(next,members);
+    })};
+  }));
+  // Return to the same room's minigame selection; preserve every seat and test player.
+  app.post('/api/hub/rooms/:code/challenge-select',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,challengeId=req.body?.challengeId;
+    if(!code||typeof challengeId!=='string')throw error(400,'INVALID_SELECTION_RETURN');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      const ch=room.match?.challenge;
+      if(room.phase!=='playing'||room.match?.game!=='partychallenge'||!ch||ch.id!==challengeId||ch.phase!=='finished'||ch.order.length!==1)throw error(409,'SELECTION_NOT_READY');
+      room.phase='preparing';room.match=null;room.game='partychallenge';
+      room.settings={...room.settings,partychallenge:{count:1,selectedGame:ch.order[0]}};
+      room.players.forEach(p=>{p.ready=!!p.testBot;});
     })};
   }));
   app.post('/api/hub/rooms/:code/challenge-preisjaeger-timeout',handler(async req=>{
