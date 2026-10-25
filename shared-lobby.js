@@ -135,10 +135,27 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     room.phase='playing';
   }
   function setupRecheninsel(ch,round=1){
+    // Three progressively harder rounds. Division is always exact and every
+    // answer remains in the 0–1000 range accepted by the online bridge.
     let a,b,operator,answer;
-    if(round===1){a=3+challengeRandomInt(28);b=2+challengeRandomInt(24);operator=challengeRandomInt(2)?'−':'+';answer=operator==='+'?a+b:a-b;if(answer<0){operator='+';answer=a+b;}}
-    else if(round===2){const op=challengeRandomInt(3);if(op===0){a=14+challengeRandomInt(86);b=12+challengeRandomInt(74);operator='+';answer=a+b;}else if(op===1){a=35+challengeRandomInt(96);b=11+challengeRandomInt(a-11);operator='−';answer=a-b;}else{a=3+challengeRandomInt(10);b=3+challengeRandomInt(10);operator='×';answer=a*b;}}
-    else{const op=challengeRandomInt(4);if(op===0){a=12+challengeRandomInt(18);b=4+challengeRandomInt(9);operator='×';answer=a*b;}else if(op===1){b=4+challengeRandomInt(12);answer=6+challengeRandomInt(14);a=b*answer;operator='÷';}else if(op===2){a=40+challengeRandomInt(141);b=20+challengeRandomInt(81);operator='+';answer=a+b;}else{a=100+challengeRandomInt(181);b=30+challengeRandomInt(a-30);operator='−';answer=a-b;}}
+    if(round===1){
+      const op=challengeRandomInt(3);
+      if(op===0){a=15+challengeRandomInt(66);b=8+challengeRandomInt(55);operator='+';answer=a+b;}
+      else if(op===1){a=35+challengeRandomInt(86);b=9+challengeRandomInt(a-8);operator='−';answer=a-b;}
+      else{a=3+challengeRandomInt(10);b=3+challengeRandomInt(10);operator='×';answer=a*b;}
+    }else if(round===2){
+      const op=challengeRandomInt(4);
+      if(op===0){a=75+challengeRandomInt(226);b=45+challengeRandomInt(206);operator='+';answer=a+b;}
+      else if(op===1){a=160+challengeRandomInt(341);b=35+challengeRandomInt(a-34);operator='−';answer=a-b;}
+      else if(op===2){a=7+challengeRandomInt(14);b=6+challengeRandomInt(15);operator='×';answer=a*b;}
+      else{b=4+challengeRandomInt(13);answer=8+challengeRandomInt(23);a=b*answer;operator='÷';}
+    }else{
+      const op=challengeRandomInt(4);
+      if(op===0){a=180+challengeRandomInt(321);b=110+challengeRandomInt(391);operator='+';answer=a+b;}
+      else if(op===1){a=400+challengeRandomInt(551);b=100+challengeRandomInt(a-99);operator='−';answer=a-b;}
+      else if(op===2){a=12+challengeRandomInt(19);b=11+challengeRandomInt(20);operator='×';answer=a*b;}
+      else{b=12+challengeRandomInt(19);answer=12+challengeRandomInt(19);a=b*answer;operator='÷';}
+    }
     ch.math={index:ch.index,round,a,b,operator,answer,answers:{}};
   }
   function setupHuetchen(ch,round=1){
