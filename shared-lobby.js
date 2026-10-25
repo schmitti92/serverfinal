@@ -213,22 +213,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     'IKEA BLÅHAJ Stoffhai (100 cm)':'https://www.ikea.com/us/en/images/products/blahaj-soft-toy-shark__0710175_pe727378_s5.jpg',
     'LEGO Rosen (40460, 120 Teile)':'https://images.thalia.media/-/BF2000-2000/5f928c901cd94af68958230238e05043/lego-botanicals-40460-rosen-set-spielzeug-fuer-maedchen-und-jungen.jpeg'
   });
-  function setupPreisjaeger(ch){
-    const pool=PREISJAEGER_PRODUCTS.map((_,i)=>i);
-    for(let i=pool.length-1;i>0;i--){const j=challengeRandomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}
-    // Guarantee at least one genuine curated photo in each three-question match.
-    const photographed=pool.filter(i=>PREISJAEGER_VERIFIED_PHOTOS[PREISJAEGER_PRODUCTS[i].name]);
-    const selected=photographed.length?[photographed[challengeRandomInt(photographed.length)]]:[];
-    for(const i of pool)if(selected.length<3&&!selected.includes(i))selected.push(i);
-    for(let i=selected.length-1;i>0;i--){const j=challengeRandomInt(i+1);[selected[i],selected[j]]=[selected[j],selected[i]];}
-    ch.preisjaeger={index:ch.index,round:1,productIds:selected,answers:{},history:[],roundStartedAt:ch.startAt};
-  }
-  function preisjaegerScore(guess,price){
-    const d=Math.abs(guess-price)/price;
-    return d<1e-10?150:d<=.05+1e-10?100:d<=.10+1e-10?80:d<=.20+1e-10?60:d<=.30+1e-10?40:d<=.50+1e-10?20:0;
-  }
-  function resolvePreisjaeger(ch,members){
-    const pj=ch.preisjaeger;if(!pj||ch.phase!=='countdown')return;
+  function fillPreisjaegerBotAnswers(ch,members){
+    const pj=ch.preisjaeger;if(!pj)return;
     // Test players guess from broad product categories, not from the hidden actual price.
     const productForBot=PREISJAEGER_PRODUCTS[pj.productIds[pj.round-1]];
     for(const member of members){
@@ -237,12 +223,31 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       const band=/airtag|tracker/.test(text)?[15,90]:/lego|technic|baustein/.test(text)?[10,180]:/sup|paddle|board/.test(text)?[180,900]:/stoff|plüsch|kuschel/.test(text)?[8,75]:/tisch|regal|lochplatte|wohnen/.test(text)?[7,110]:[10,120];
       pj.answers[member.uid]=Math.round((band[0]+Math.random()*(band[1]-band[0]))*100)/100;
     }
+  }
+  function setupPreisjaeger(ch,members){
+    const pool=PREISJAEGER_PRODUCTS.map((_,i)=>i);
+    for(let i=pool.length-1;i>0;i--){const j=challengeRandomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}
+    // Guarantee at least one genuine curated photo in each three-question match.
+    const photographed=pool.filter(i=>PREISJAEGER_VERIFIED_PHOTOS[PREISJAEGER_PRODUCTS[i].name]);
+    const selected=photographed.length?[photographed[challengeRandomInt(photographed.length)]]:[];
+    for(const i of pool)if(selected.length<3&&!selected.includes(i))selected.push(i);
+    for(let i=selected.length-1;i>0;i--){const j=challengeRandomInt(i+1);[selected[i],selected[j]]=[selected[j],selected[i]];}
+    ch.preisjaeger={index:ch.index,round:1,productIds:selected,answers:{},history:[],roundStartedAt:ch.startAt};
+    fillPreisjaegerBotAnswers(ch,members);
+  }
+  function preisjaegerScore(guess,price){
+    const d=Math.abs(guess-price)/price;
+    return d<1e-10?150:d<=.05+1e-10?100:d<=.10+1e-10?80:d<=.20+1e-10?60:d<=.30+1e-10?40:d<=.50+1e-10?20:0;
+  }
+  function resolvePreisjaeger(ch,members){
+    const pj=ch.preisjaeger;if(!pj||ch.phase!=='countdown')return;
+    fillPreisjaegerBotAnswers(ch,members);
     if(!members.every(m=>Object.hasOwn(pj.answers,m.uid)))return;
     const product=PREISJAEGER_PRODUCTS[pj.productIds[pj.round-1]];
     const entries=members.map(m=>({seat:m.seat,name:m.name,guess:pj.answers[m.uid],challengePoints:preisjaegerScore(pj.answers[m.uid],product.price)}));
     entries.forEach((entry,i)=>ch.points[i]+=entry.challengePoints);
     pj.history.push({round:pj.round,product:{...product},entries});
-    if(pj.round<3){pj.round++;pj.answers={};ch.startAt=clock()+9000;pj.roundStartedAt=ch.startAt;}
+    if(pj.round<3){pj.round++;pj.answers={};ch.startAt=clock()+9000;pj.roundStartedAt=ch.startAt;fillPreisjaegerBotAnswers(ch,members);}
     else{ch.results.push({game:'preisjaeger',index:ch.index,rounds:pj.history,standings:members.map((m,i)=>({seat:m.seat,name:m.name,challengePoints:pj.history.reduce((sum,h)=>sum+h.entries[i].challengePoints,0)})),finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
   }
   function setupSnake(ch,members){
@@ -282,7 +287,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(room.match.challenge.order[0]==='maulwurf-arena')setupMaulwurf(room.match.challenge);
     if(room.match.challenge.order[0]==='flusssprung')setupFlusssprung(room.match.challenge,room.match.members);
     if(room.match.challenge.order[0]==='snake-arena')setupSnake(room.match.challenge,room.match.members);
-    if(room.match.challenge.order[0]==='preisjaeger')setupPreisjaeger(room.match.challenge);
+    if(room.match.challenge.order[0]==='preisjaeger')setupPreisjaeger(room.match.challenge,room.match.members);
     if(room.match.challenge.order[0]==='bomber-strand-arena')setupBomber(room.match.challenge,room.match.members);
     if(room.match.challenge.order[0]==='lava-arena')setupLava(room.match.challenge,room.match.members);
     room.phase='playing';
@@ -798,7 +803,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(ch.order[ch.index]==='maulwurf-arena')setupMaulwurf(ch);
       if(ch.order[ch.index]==='flusssprung')setupFlusssprung(ch,room.match.members);
       if(ch.order[ch.index]==='snake-arena')setupSnake(ch,room.match.members);
-    if(ch.order[ch.index]==='preisjaeger')setupPreisjaeger(ch);
+    if(ch.order[ch.index]==='preisjaeger')setupPreisjaeger(ch,room.match.members);
     if(ch.order[ch.index]==='bomber-strand-arena')setupBomber(ch,room.match.members);
       if(ch.order[ch.index]==='lava-arena')setupLava(ch,room.match.members);
     })};
