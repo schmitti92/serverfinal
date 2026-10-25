@@ -303,60 +303,46 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   // Server-authoritative shared Snake arena. Clients submit directions only.
   const SNAKE_DIR={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
   const SNAKE_OPP={up:'down',down:'up',left:'right',right:'left'};
-  function snakeFood(game){
-    const occupied=new Set(Object.values(game.players).flatMap(p=>p.points.map(v=>v.x+','+v.y)));
+  // Independent, server-authoritative board for each participant.
+  function snakeFood(p){
+    const occupied=new Set(p.points.map(v=>v.x+','+v.y));
     const free=[];for(let y=0;y<20;y++)for(let x=0;x<24;x++)if(!occupied.has(x+','+y))free.push({x,y});
     return free.length?free[Math.floor(Math.random()*free.length)]:null;
   }
   function setupSnake(ch,members){
-    const starts=[[5,5,'right'],[18,14,'left'],[18,5,'left'],[5,14,'right']];
     const players={};
-    members.forEach((m,i)=>{const [x,y,dir]=starts[i%4];const [dx,dy]=SNAKE_DIR[dir];players[m.uid]={seat:m.seat,score:0,survived:0,alive:true,seq:0,updatedAt:0,finished:false,dir,nextDir:dir,points:Array.from({length:4},(_,j)=>({x:(x-dx*j+24)%24,y:(y-dy*j+20)%20}))};});
-    ch.snake={index:ch.index,players,food:null,tick:0,lastTickAt:ch.startAt,stepMs:180};
-    ch.snake.food=snakeFood(ch.snake);
+    members.forEach(m=>{const x=5,y=10,dir='right';const p={seat:m.seat,score:0,survived:0,alive:true,seq:0,updatedAt:0,finished:false,dir,nextDir:dir,points:Array.from({length:4},(_,j)=>({x:x-j,y}))};p.food=snakeFood(p);players[m.uid]=p;});
+    ch.snake={index:ch.index,players,tick:0,lastTickAt:ch.startAt,stepMs:180};
   }
-  function snakeBotDirection(p,g){
-    const dirs=Object.keys(SNAKE_DIR).filter(d=>d!==SNAKE_OPP[p.dir]);
-    const occupied=new Set(Object.values(g.players).filter(v=>v.alive).flatMap(v=>v.points.map(c=>c.x+','+c.y)));
+  function snakeBotDirection(p){
+    const occupied=new Set(p.points.slice(0,-1).map(c=>c.x+','+c.y));
+    const options=Object.keys(SNAKE_DIR).filter(d=>d!==SNAKE_OPP[p.dir]);
     const score=d=>{const [dx,dy]=SNAKE_DIR[d],h=p.points[0],x=(h.x+dx+24)%24,y=(h.y+dy+20)%20;
       if(occupied.has(x+','+y))return -10000;
-      const food=g.food,dist=food?Math.min(Math.abs(x-food.x),24-Math.abs(x-food.x))+Math.min(Math.abs(y-food.y),20-Math.abs(y-food.y)):0;
+      const food=p.food,dist=food?Math.min(Math.abs(x-food.x),24-Math.abs(x-food.x))+Math.min(Math.abs(y-food.y),20-Math.abs(y-food.y)):0;
       let freedom=0;for(const [ax,ay] of Object.values(SNAKE_DIR)){const nx=(x+ax+24)%24,ny=(y+ay+20)%20;if(!occupied.has(nx+','+ny))freedom++;}
       return freedom*20-dist*3+(d===p.dir?2:0);
     };
-    return dirs.sort((a,b)=>score(b)-score(a))[0]||p.dir;
+    return options.sort((a,b)=>score(b)-score(a))[0]||p.dir;
   }
   function advanceSnake(ch,members){
     const g=ch.snake;if(!g||ch.phase!=='countdown')return;
-    const limit=Math.min(clock(),ch.startAt+180000);
-    if(limit<ch.startAt)return;
+    const limit=Math.min(clock(),ch.startAt+180000);if(limit<ch.startAt)return;
     let steps=0;
     while(g.lastTickAt+g.stepMs<=limit&&steps++<1200){
       g.lastTickAt+=g.stepMs;g.tick++;
-      const alive=Object.values(g.players).filter(p=>p.alive);
-      if(!alive.length)break;
-      for(const [uid,p] of Object.entries(g.players))if(p.alive&&uid.startsWith('testbot:'))p.nextDir=snakeBotDirection(p,g);
-      const proposals=new Map(),eaters=new Set();
-      for(const p of alive){
+      for(const [uid,p] of Object.entries(g.players)){
+        if(!p.alive)continue;
+        if(uid.startsWith('testbot:'))p.nextDir=snakeBotDirection(p);
         if(p.nextDir!==SNAKE_OPP[p.dir])p.dir=p.nextDir;
-        const [dx,dy]=SNAKE_DIR[p.dir],head=p.points[0];
-        const next={x:(head.x+dx+24)%24,y:(head.y+dy+20)%20};
-        proposals.set(p,next);
-        if(g.food&&next.x===g.food.x&&next.y===g.food.y)eaters.add(p);
-      }
-      const blocked=new Set();
-      for(const p of alive)for(const cell of (eaters.has(p)?p.points:p.points.slice(0,-1)))blocked.add(cell.x+','+cell.y);
-      const heads=new Map();
-      for(const [p,next] of proposals){const key=next.x+','+next.y;heads.set(key,(heads.get(key)||0)+1);}
-      const headSwaps=new Set();
-      for(const [a,nextA] of proposals)for(const [b,nextB] of proposals){if(a===b)continue;const ah=a.points[0],bh=b.points[0];if(nextA.x===bh.x&&nextA.y===bh.y&&nextB.x===ah.x&&nextB.y===ah.y){headSwaps.add(a);headSwaps.add(b);}}
-      for(const [p,next] of proposals){
-        const key=next.x+','+next.y;
-        if(blocked.has(key)||heads.get(key)>1||headSwaps.has(p)){p.alive=false;p.finished=true;continue;}
+        const [dx,dy]=SNAKE_DIR[p.dir],h=p.points[0],next={x:(h.x+dx+24)%24,y:(h.y+dy+20)%20};
+        const eats=!!(p.food&&next.x===p.food.x&&next.y===p.food.y);
+        const body=eats?p.points:p.points.slice(0,-1);
+        if(body.some(c=>c.x===next.x&&c.y===next.y)){p.alive=false;p.finished=true;continue;}
         p.points.unshift(next);p.survived++;
-        if(eaters.has(p)){p.score+=10;}else p.points.pop();
+        if(eats){p.score+=10;p.food=snakeFood(p);}else p.points.pop();
       }
-      if([...eaters].some(p=>p.alive))g.food=snakeFood(g);
+      if(Object.values(g.players).every(p=>!p.alive))break;
     }
     if(limit>=ch.startAt+180000||Object.values(g.players).every(p=>!p.alive))finishSnake(ch,members);
   }
