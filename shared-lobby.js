@@ -196,7 +196,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }
   function finishLava(ch,members){
     const finishedAt=clock();const standings=members.map(m=>{const p=ch.lava.players[m.uid];const survivedMs=Math.max(0,Math.min(90000,(p.deathAt??finishedAt)-ch.startAt));return {seat:m.seat,name:m.name,alive:p.alive,survivedMs,challengePoints:Math.round(survivedMs/1000)};}).sort((a,b)=>b.survivedMs-a.survivedMs||a.seat-b.seat);
-    standings.forEach((p,i)=>ch.points[i]+=p.challengePoints);
+    standings.forEach(p=>{const i=members.findIndex(m=>m.seat===p.seat);if(i>=0)ch.points[i]+=p.challengePoints;});
     ch.results.push({game:'lava-arena',index:ch.index,standings,finishedAt:clock()});
     ch.phase=ch.index===ch.order.length-1?'finished':'results';
   }
