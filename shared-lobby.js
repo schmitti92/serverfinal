@@ -1015,9 +1015,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
    if(ch.phase!=='countdown')return {unchanged:true};
    if(clock()<ch.startAt)throw error(409,'SNAKE_NOT_RUNNING');
    const p=g.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
-   if(seq<=p.seq||!p.alive)return {unchanged:true};
+   if(!p.alive)return {unchanged:true};
+   if(seq<=p.seq&&!(finished&&!p.finished))return {unchanged:true};
    const elapsed=Math.max(0,clock()-ch.startAt);
-   if(survived>Math.floor(elapsed/90)+3||score>Math.floor(elapsed/90)*50+500)throw error(400,'INVALID_SNAKE_PROGRESS');
+   if(survived>Math.floor(elapsed/90)+10||score>Math.floor(elapsed/90)*50+500)throw error(400,'INVALID_SNAKE_PROGRESS');
    if(score<p.score||survived<p.survived)return {unchanged:true};
    p.seq=seq;p.score=score;p.survived=survived;p.updatedAt=clock();
    if(finished){p.alive=false;p.finished=true;}
