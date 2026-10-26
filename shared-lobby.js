@@ -319,59 +319,28 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(pj.round<3){pj.round++;pj.answers={};ch.startAt=clock()+9000;pj.roundStartedAt=ch.startAt;fillPreisjaegerBotAnswers(ch,members);}
     else{ch.results.push({game:'preisjaeger',index:ch.index,rounds:pj.history,standings:members.map((m,i)=>({seat:m.seat,name:m.name,challengePoints:pj.history.reduce((sum,h)=>sum+h.entries[i].challengePoints,0)})),finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';}
   }
-  // Server-authoritative shared Snake arena. Clients submit directions only.
-  const SNAKE_DIR={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
-  const SNAKE_OPP={up:'down',down:'up',left:'right',right:'left'};
-  // Independent, server-authoritative board for each participant.
-  function snakeFood(p){
-    const occupied=new Set(p.points.map(v=>v.x+','+v.y));
-    const free=[];for(let y=0;y<20;y++)for(let x=0;x<24;x++)if(!occupied.has(x+','+y))free.push({x,y});
-    return free.length?free[Math.floor(Math.random()*free.length)]:null;
-  }
+  // Snake V30: local gameplay, authoritative membership and shared results.
   function setupSnake(ch,members){
-    const players={};
-    members.forEach(m=>{const x=5,y=10,dir='right';const p={seat:m.seat,score:0,survived:0,alive:true,seq:0,updatedAt:0,finished:false,dir,nextDir:dir,points:Array.from({length:4},(_,j)=>({x:x-j,y}))};p.food=snakeFood(p);players[m.uid]=p;});
-    ch.snake={index:ch.index,players,tick:0,lastTickAt:ch.startAt,stepMs:180};
-  }
-  function snakeBotDirection(p){
-    const occupied=new Set(p.points.slice(0,-1).map(c=>c.x+','+c.y));
-    const options=Object.keys(SNAKE_DIR).filter(d=>d!==SNAKE_OPP[p.dir]);
-    const score=d=>{const [dx,dy]=SNAKE_DIR[d],h=p.points[0],x=(h.x+dx+24)%24,y=(h.y+dy+20)%20;
-      if(occupied.has(x+','+y))return -10000;
-      const food=p.food,dist=food?Math.min(Math.abs(x-food.x),24-Math.abs(x-food.x))+Math.min(Math.abs(y-food.y),20-Math.abs(y-food.y)):0;
-      let freedom=0;for(const [ax,ay] of Object.values(SNAKE_DIR)){const nx=(x+ax+24)%24,ny=(y+ay+20)%20;if(!occupied.has(nx+','+ny))freedom++;}
-      return freedom*20-dist*3+(d===p.dir?2:0);
-    };
-    return options.sort((a,b)=>score(b)-score(a))[0]||p.dir;
-  }
-  function advanceSnake(ch,members){
-    const g=ch.snake;if(!g||ch.phase!=='countdown')return;
-    const limit=Math.min(clock(),ch.startAt+180000);if(limit<ch.startAt)return;
-    let steps=0;
-    while(g.lastTickAt+g.stepMs<=limit&&steps++<1200){
-      g.lastTickAt+=g.stepMs;g.tick++;
-      for(const [uid,p] of Object.entries(g.players)){
-        if(!p.alive)continue;
-        if(uid.startsWith('testbot:'))p.nextDir=snakeBotDirection(p);
-        if(p.nextDir!==SNAKE_OPP[p.dir])p.dir=p.nextDir;
-        const [dx,dy]=SNAKE_DIR[p.dir],h=p.points[0],next={x:(h.x+dx+24)%24,y:(h.y+dy+20)%20};
-        const eats=!!(p.food&&next.x===p.food.x&&next.y===p.food.y);
-        const body=eats?p.points:p.points.slice(0,-1);
-        if(body.some(c=>c.x===next.x&&c.y===next.y)){p.alive=false;p.finished=true;continue;}
-        p.points.unshift(next);p.survived++;
-        if(eats){p.score+=10;p.food=snakeFood(p);}else p.points.pop();
-      }
-      if(Object.values(g.players).every(p=>!p.alive))break;
-    }
-    if(limit>=ch.startAt+180000||Object.values(g.players).every(p=>!p.alive))finishSnake(ch,members);
+    ch.snake={index:ch.index,players:Object.fromEntries(members.map(m=>[m.uid,{seat:m.seat,score:0,survived:0,alive:true,seq:0,updatedAt:0,finished:false}])),lastTickAt:ch.startAt,stepMs:180,localMode:true};
   }
   function finishSnake(ch,members){
     if(ch.phase!=='countdown')return;
     const standings=members.map(m=>{const p=ch.snake.players[m.uid];return {seat:m.seat,name:m.name,score:p.score,survived:p.survived,alive:p.alive,challengePoints:Math.max(0,Math.floor(p.score/10))};});
     standings.forEach(p=>{const i=members.findIndex(m=>m.seat===p.seat);if(i>=0)ch.points[i]+=p.challengePoints;});
-    standings.sort((a,b)=>b.score-a.score||b.survived-a.survived||a.seat-b.seat);
+    standings.sort((a,b)=>b.score-a.score||a.seat-b.seat);
     ch.results.push({game:'snake-arena',index:ch.index,standings,finishedAt:clock()});
     ch.phase=ch.index===ch.order.length-1?'finished':'results';
+  }
+  function advanceSnake(ch,members){
+    const g=ch.snake;if(!g||ch.phase!=='countdown')return;
+    const now=clock(),players=Object.values(g.players);
+    if(now>=ch.startAt+180000){for(const p of players){p.alive=false;p.finished=true;}finishSnake(ch,members);return;}
+    const alive=players.filter(p=>p.alive);
+    if(!alive.length){finishSnake(ch,members);return;}
+    if(alive.length===1&&players.length>1){
+      const leader=alive[0],best=Math.max(0,...players.filter(p=>!p.alive).map(p=>p.score));
+      if(leader.score>best){leader.alive=false;leader.finished=true;finishSnake(ch,members);}
+    }
   }
   function setupFlusssprung(ch,members){
     ch.flusssprung={index:ch.index,path:Array.from({length:5},()=>challengeRandomInt(6)),players:Object.fromEntries(members.map(p=>[p.uid,{row:-1,falls:0,finishedAt:null,lastMoveAt:0}])),moves:[]};
@@ -1038,18 +1007,21 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     })};
   }));
   app.post('/api/hub/rooms/:code/challenge-snake-state',handler(async req=>{
-  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,dir}=req.body||{};
-  if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Object.hasOwn(SNAKE_DIR,dir))throw error(400,'INVALID_SNAKE_INPUT');
+  const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,seq,score,survived,finished}=req.body||{};
+  if(!code||typeof challengeId!=='string'||!Number.isSafeInteger(seq)||seq<1||!Number.isSafeInteger(score)||score<0||score>100000||score%10!==0||!Number.isSafeInteger(survived)||survived<0||survived>100000||typeof finished!=='boolean')throw error(400,'INVALID_SNAKE_INPUT');
   return {room:await mutate(code,identity,room=>{
    const ch=room.match?.challenge,g=ch?.snake;
-   if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='snake-arena'||!g)throw error(409,'WRONG_CHALLENGE_GAME');
+   if(room.phase!=='playing'||room.match?.game!=='partychallenge'||ch?.id!==challengeId||ch.order[ch.index]!=='snake-arena'||!g)throw error(409,'WRONG_CHALLENGE_GAME');
+   if(ch.phase!=='countdown')return {unchanged:true};
    if(clock()<ch.startAt)throw error(409,'SNAKE_NOT_RUNNING');
-   advanceSnake(ch,room.match.members);
-   if(ch.phase!=='countdown')return;
    const p=g.players[identity.uid];if(!p)throw error(403,'NOT_A_PARTICIPANT');
    if(seq<=p.seq||!p.alive)return {unchanged:true};
-   p.seq=seq;p.updatedAt=clock();
-   if(dir!==SNAKE_OPP[p.dir])p.nextDir=dir;
+   const elapsed=Math.max(0,clock()-ch.startAt);
+   if(survived>Math.floor(elapsed/90)+3||score>Math.floor(elapsed/90)*50+100)throw error(400,'INVALID_SNAKE_PROGRESS');
+   if(score<p.score||survived<p.survived)throw error(400,'SNAKE_PROGRESS_REGRESSION');
+   p.seq=seq;p.score=score;p.survived=survived;p.updatedAt=clock();
+   if(finished){p.alive=false;p.finished=true;}
+   advanceSnake(ch,room.match.members);
   })};
  }));
  app.post('/api/hub/rooms/:code/challenge-snake-timeout',handler(async req=>{
