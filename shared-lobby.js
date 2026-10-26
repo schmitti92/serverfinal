@@ -508,6 +508,25 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
     })};
   }));
+  // Business: host-controlled virtual players for isolated gameplay tests.
+  app.post('/api/hub/rooms/:code/business-test-players',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const enabled=req.body?.enabled;
+    if(typeof enabled!=='boolean')throw error(400,'INVALID_TEST_PLAYER_SETTING');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='preparing'||room.game!=='business')throw error(409,'NO_BUSINESS_SETUP');
+      const humans=room.players.filter(p=>p.participating&&!p.testBot);
+      if(enabled&&humans.length+2>HUB_GAMES.business.max)throw error(409,'GAME_SEATS_FULL');
+      room.players=room.players.filter(p=>!p.testBot);
+      if(enabled){
+        for(let i=1;i<=2;i++)room.players.push({uid:'testbot:'+room.code+':business:'+i,
+          seat:randomUUID(),name:'🤖 Testspieler '+i,ready:true,participating:true,testBot:true,joinedAt:clock()});
+      }
+      room.players.forEach(p=>{p.ready=!!p.testBot;});
+    })};
+  }));
   // Host-only virtual seats, limited to Party Challenge preparation.
   app.post('/api/hub/rooms/:code/challenge-test-players',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
@@ -639,6 +658,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       if(room.phase!=='preparing'||!room.game)throw error(409,'NO_GAME_SELECTED');
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
+      if(player.testBot)throw error(403,'TEST_PLAYER_MANAGED_SEPARATELY');
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge')startGame(room);
