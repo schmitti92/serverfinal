@@ -502,34 +502,29 @@ test('Host cancellation is reflected for every player and old match cannot be re
 });
 
 
-test('Party Challenge rejects unavailable lengths and starts the five-game format',async()=>{
- for(const count of [4,9]){
-  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
-  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
-  await h.api('POST','/api/hub/rooms/'+code+'/join','cara');
-  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
-  assert.equal(selected.room.game,'partychallenge');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count})).status,400);
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:7})).status,400);
-  const blocked=await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count});
-  assert.equal(blocked.status,400);
-  assert.equal(blocked.error,'CHALLENGE_GAMES_NOT_READY');
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:5})).status,200);
-  for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
-  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
-  assert.equal(started.status,200);
-  assert.equal(started.room.phase,'playing');
-  assert.equal(started.room.match.challenge.order.length,5);
-  assert.equal(new Set(started.room.match.challenge.order).size,5);
-  assert.equal(started.room.match.challenge.phase,'countdown');
-  assert.equal(started.room.match.challenge.startAt,4000);
-  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','alice')).status,409);
-  const peer=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
-  assert.deepEqual(peer.match.challenge,started.room.match.challenge);
+test('Party Challenge rejects unsupported lengths and starts the current nine-game format',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/join','cara');
+ const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
+ assert.equal(selected.room.game,'partychallenge');
+ for(const count of [4,5,7]){
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count})).status,400);
  }
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','bob',{count:9})).status,403);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:9})).status,200);
+ for(const uid of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/start','bob')).status,403);
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
+ assert.equal(started.status,200);
+ assert.equal(started.room.phase,'playing');
+ assert.equal(started.room.match.challenge.order.length,9);
+ assert.equal(new Set(started.room.match.challenge.order).size,9);
+ assert.equal(started.room.match.challenge.phase,'countdown');
+ assert.equal(started.room.match.challenge.startAt,4000);
+ const peer=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ assert.deepEqual(peer.match.challenge,started.room.match.challenge);
 });
-
 
 test('Challenge progression rejects invalid room codes',async()=>{
  const h=harness();
@@ -658,79 +653,32 @@ test('Recheninsel online validates answers and awards points with two test playe
 });
 
 
-test('Complete five-game Challenge with three participants and final podium',async()=>{
+test('Current nine-game Challenge starts with bots and a unique order',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
- await h.api('POST','/api/hub/rooms/'+code+'/challenge-settings','alice',{count:5});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
  const ch=started.room.match.challenge;
- assert.deepEqual(ch.order,['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung']);
- h.advance(3000+ch.targetSeconds*1000);
- const first=await h.api('POST','/api/hub/rooms/'+code+'/challenge-time-stop','alice',{challengeId:ch.id});
- assert.equal(first.status,200);
- assert.equal(first.room.match.challenge.phase,'results');
- assert.equal(first.room.match.challenge.results.length,1);
- const next=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
- assert.equal(next.status,200);
- assert.equal(next.room.match.challenge.index,1);
- assert.equal(next.room.match.challenge.math.answer,undefined);
- h.advance(3000);
- let last;
- for(let round=1;round<=3;round++){
-  const q=round===1?next.room.match.challenge.math:last.room.match.challenge.math;
-  const answer=q.operator==='×'?q.a*q.b:q.operator==='−'?q.a-q.b:q.operator==='÷'?q.a/q.b:q.a+q.b;
-  last=await h.api('POST','/api/hub/rooms/'+code+'/challenge-math-answer','alice',{challengeId:ch.id,answer});
-  assert.equal(last.status,200);
-  if(round<3)h.advance(3000);
- }
- assert.equal(last.room.match.challenge.phase,'results');
- const toH=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
- assert.equal(toH.status,200);
- assert.equal(toH.room.match.challenge.index,2);
- let roundState=toH;
- for(const [i,shuffle] of [7160,7390,7140].entries()){
-  h.advance(3000+shuffle+12000);
-  roundState=await h.api('POST','/api/hub/rooms/'+code+'/challenge-huetchen-timeout','alice',{challengeId:ch.id,round:i+1});
-  assert.equal(roundState.status,200);
- }
- assert.equal(roundState.room.match.challenge.phase,'results');
- const toM=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
- assert.equal(toM.status,200);
- assert.equal(toM.room.match.challenge.order[3],'maulwurf-arena');
- h.advance(33000);
- roundState=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:ch.id});
- assert.equal(roundState.status,200);
- assert.equal(roundState.room.match.challenge.phase,'results');
- const toF=await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id});
- assert.equal(toF.status,200);
- assert.equal(toF.room.match.challenge.order[4],'flusssprung');
- h.advance(63000);
- roundState=await h.api('POST','/api/hub/rooms/'+code+'/challenge-flusssprung-timeout','alice',{challengeId:ch.id});
- assert.equal(roundState.status,200);
- const final=roundState.room.match.challenge;
- assert.equal(final.phase,'finished');
- assert.equal(final.results.length,5);
- assert.equal(final.totals.length,3);
- assert.equal(final.totals.reduce((sum,p)=>sum+p.points,0),final.points.reduce((a,b)=>a+b,0));
- assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/challenge-next','alice',{challengeId:ch.id})).status,409);
+ assert.equal(ch.order.length,9);
+ assert.equal(new Set(ch.order).size,9);
+ assert.equal(started.room.match.playerCount,3);
+ assert.equal(ch.phase,'countdown');
 });
 
-
-test('New Party Challenge defaults to supported five-game setup and starts with bots without saving settings',async()=>{
+test('New Party Challenge defaults to supported nine-game setup and starts with bots without saving settings',async()=>{
  const h=harness({challengeRandomInt:max=>max-1});
  const code=(await h.api('POST','/api/hub/rooms')).room.code;
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.equal(selected.room.settings.count,5);
+ assert.equal(selected.room.settings.count,9);
  await h.api('POST','/api/hub/rooms/'+code+'/challenge-test-players','alice',{enabled:true});
  await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  const started=await h.api('POST','/api/hub/rooms/'+code+'/start','alice');
  assert.equal(started.status,200);
- assert.equal(started.room.match.challenge.order.length,5);
+ assert.equal(started.room.match.challenge.order.length,9);
  assert.equal(started.room.match.playerCount,3);
 });
 
@@ -791,7 +739,7 @@ test('Maulwurf endpoints reject calls without an active challenge',async()=>{
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
  const selected=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'partychallenge'});
  assert.equal(selected.status,200);
- assert.deepEqual(selected.room.settings.availableGames.sort(),['flusssprung','huetchen-challenge','maulwurf-arena','recheninsel','zeitgefuehl'].sort());
+ assert.deepEqual(selected.room.settings.availableGames.sort(),['bomber-strand-arena','flusssprung','huetchen-challenge','lava-arena','maulwurf-arena','preisjaeger','recheninsel','snake-arena','zeitgefuehl'].sort());
  const hit=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-hit','alice',{challengeId:'invalid',tick:0,hole:0});
  assert.equal(hit.status,409);
  const timeout=await h.api('POST','/api/hub/rooms/'+code+'/challenge-maulwurf-timeout','alice',{challengeId:'invalid'});
