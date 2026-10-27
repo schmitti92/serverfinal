@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { installSharedLobby } from '../shared-lobby.js';
 
 function harness(options={}){
- let finished=false,skyjoBootstraps=0;
+ let finished=false,skyjoBootstraps=0,watchStarts=0,watchStops=0;
  let adapter;
  const docs=new Map(),routes=[],middles=[],listeners=new Map();
  const store={
   collection:name=>({doc:code=>({path:name+'/'+code,get:async()=>snapshot(docs.get(name+'/'+code)),
     onSnapshot(cb,_onError){
+     watchStarts++;
      const key=name+'/'+code;const set=listeners.get(key)||new Set();set.add(cb);listeners.set(key,set);
      queueMicrotask(()=>{if(set.has(cb))cb(snapshot(docs.get(key)));});
-     return ()=>{set.delete(cb);};
+     return ()=>{watchStops++;set.delete(cb);};
     }
    })}),
   pending:Promise.resolve(),
@@ -40,7 +41,7 @@ function harness(options={}){
   return {status:res.statusCode,...res.jsonBody};
  }
  const matches=(pattern,path)=>pattern.split('/').length===path.split('/').length && pattern.split('/').every((p,i)=>p.startsWith(':')||p===path.split('/')[i]);
- return {api,store,docs,identities,advance:ms=>now+=ms,adapter,setFinished(value){finished=value;},bootstraps:()=>skyjoBootstraps};
+ return {api,store,docs,identities,advance:ms=>now+=ms,adapter,watchStats:()=>({starts:watchStarts,stops:watchStops}),setFinished(value){finished=value;},bootstraps:()=>skyjoBootstraps};
 }
 
 test('Room create, verified membership, host powers and ready reset',async()=>{
@@ -1008,4 +1009,40 @@ test('Lava Arena test players receive authoritative movement and elimination',as
  assert.match(source,/member\.uid\.startsWith\('testbot:'\)/);
  assert.match(source,/tickLavaBots\(ch,room\.match\.members,now\)/);
  assert.match(source,/tile\?\.state===2\)\{p\.alive=false;p\.deathAt=now/);
+});
+
+test('Hub shares one Firestore watch between sockets and releases it after last disconnect',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const h=harness();
+ const created=await h.api('POST','/api/hub/rooms');
+ const code=created.room.code;
+ await h.api('POST',`/api/hub/rooms/${code}/join`,'bob');
+ function socket(){
+  const ws=new EventEmitter();ws.readyState=1;ws.sent=[];
+  ws.send=value=>ws.sent.push(JSON.parse(value));
+  ws.close=(status)=>{ws.readyState=3;ws.emit('close',status);};
+  h.adapter.attachSocket(ws);
+  return ws;
+ }
+ const a=socket(),b=socket();
+ a.emit('message',JSON.stringify({type:'subscribe',code,profileIdToken:'alice'}));
+ b.emit('message',JSON.stringify({type:'subscribe',code,profileIdToken:'bob'}));
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(h.watchStats().starts,1,'two sockets should share a single Firestore watch');
+ assert.ok(a.sent.some(x=>x.type==='room'));
+ assert.ok(b.sent.some(x=>x.type==='room'));
+ await h.api('POST',`/api/hub/rooms/${code}/select`,'alice',{game:'skyjo'});
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(a.sent.at(-1)?.room?.game,'skyjo');
+ assert.equal(b.sent.at(-1)?.room?.game,'skyjo');
+ a.close();
+ assert.equal(h.watchStats().stops,0,'first disconnect must keep shared watch alive');
+ b.close();
+ assert.equal(h.watchStats().stops,1,'last disconnect must unsubscribe');
+ const c=socket();
+ c.emit('message',JSON.stringify({type:'subscribe',code,profileIdToken:'alice'}));
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(h.watchStats().starts,2,'reconnect creates a fresh watch');
+ c.close();
+ assert.equal(h.watchStats().stops,2);
 });
