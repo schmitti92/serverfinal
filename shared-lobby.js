@@ -1277,6 +1277,41 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   }));
   // A Firestore snapshot sends each hub update to every authorized player.
   // This does not maintain a second authoritative in-memory room state.
+  // One Firestore watch per room per server instance. Each socket still gets
+  // independently validated and independently filtered room data.
+  const roomStreams=new Map();
+  function watchRoom(code,store,subscriber){
+    let stream=roomStreams.get(code);
+    if(!stream){
+      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null};
+      roomStreams.set(code,stream);
+      try{
+        stream.unsubscribe=documentFor(store,code).onSnapshot(snapshot=>{
+          if(roomStreams.get(code)!==stream)return;
+          stream.room=snapshot.exists?snapshot.data():null;
+          stream.hasSnapshot=true;
+          for(const fn of [...stream.subscribers])fn(stream.room,null);
+        },err=>{
+          if(roomStreams.get(code)!==stream)return;
+          roomStreams.delete(code);
+          for(const fn of [...stream.subscribers])fn(null,err||new Error('STREAM_UNAVAILABLE'));
+          stream.subscribers.clear();
+        });
+      }catch(e){
+        roomStreams.delete(code);
+        throw e;
+      }
+    }
+    stream.subscribers.add(subscriber);
+    if(stream.hasSnapshot)subscriber(stream.room,null);
+    return ()=>{
+      stream.subscribers.delete(subscriber);
+      if(stream.subscribers.size===0&&roomStreams.get(code)===stream){
+        roomStreams.delete(code);
+        try{stream.unsubscribe?.();}catch(_e){}
+      }
+    };
+  }
   function attachSocket(ws){
     let unwatch=null,closed=false,authenticated=false;
     // Suppress duplicate room payloads on reconnect/metadata-only snapshots.
@@ -1307,18 +1342,15 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
         const identity=await verifyProfile(token);
         if(!identity?.uid)throw error(401,'LOGIN_REQUIRED');
         const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-        const ref=documentFor(store,code);
         if(closed)return;
-        // The initial onSnapshot event already reads the document and checks membership.
-        // Avoid a redundant get() on every WebSocket (re)subscription.
-        if(typeof ref.onSnapshot!=='function')throw error(503,'REALTIME_UNAVAILABLE');
-        unwatch=ref.onSnapshot(next=>{
+        unwatch=watchRoom(code,store,(room,streamError)=>{
+          if(closed)return;
+          if(streamError){send({type:'error',error:'STREAM_UNAVAILABLE'});try{ws.close(1011);}catch(_e){}return;}
           try{
-            const room=next.exists?next.data():null;
             validateRead(room,identity);
             send({type:'room',room:expose(room,identity)});
           }catch(_e){send({type:'error',error:'NOT_A_MEMBER'});try{ws.close(4003);}catch(_e){}}
-        },()=>{send({type:'error',error:'STREAM_UNAVAILABLE'});try{ws.close(1011);}catch(_e){}});
+        });
       }catch(e){send({type:'error',error:e?.message||'STREAM_UNAVAILABLE'});try{ws.close(4003);}catch(_e){}}
     });
     ws.on('close',teardown);ws.on('error',teardown);
