@@ -1279,7 +1279,18 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   // This does not maintain a second authoritative in-memory room state.
   function attachSocket(ws){
     let unwatch=null,closed=false,authenticated=false;
-    const send=payload=>{if(ws.readyState===1)try{ws.send(JSON.stringify(payload));}catch(_e){}};
+    // Suppress duplicate room payloads on reconnect/metadata-only snapshots.
+    // Authentication and membership checks still run for every snapshot.
+    let lastRoomPayload='';
+    const send=payload=>{
+      if(ws.readyState!==1)return;
+      try{
+        const serialized=JSON.stringify(payload);
+        if(payload?.type==='room'&&serialized===lastRoomPayload)return;
+        ws.send(serialized);
+        if(payload?.type==='room')lastRoomPayload=serialized;
+      }catch(_e){}
+    };
     const teardown=()=>{closed=true;try{unwatch?.();}catch(_e){}unwatch=null;clearTimeout(authTimeout);clearTimeout(renewTimeout);};
     const authTimeout=setTimeout(()=>{if(!authenticated)try{ws.close(4003,'HUB_AUTH_TIMEOUT');}catch(_e){}},12000);
     const renewTimeout=setTimeout(()=>{try{ws.close(4001,'HUB_TOKEN_RENEW');}catch(_e){}},50*60*1000);
