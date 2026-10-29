@@ -9,6 +9,7 @@ import { installProfileStats } from "./profile-stats.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import { installHubBusiness } from "./business-hub.js";
+import { installEisstockOnline } from "./eisstock-online.js";
 import { validHubSkyjoState } from "./skyjo-hub-policy.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
@@ -5793,7 +5794,12 @@ function requireTurn(room, clientId, ws) {
 }
 
 /** ---------- WebSocket ---------- **/
+const eisstockOnline = installEisstockOnline(wss, app);
 wss.on("connection", (ws, req) => {
+  if(new URL(req.url || '/', 'http://localhost').pathname === '/eisstock'){
+    eisstockOnline(ws);
+    return;
+  }
   if(new URL(req.url || '/', 'http://localhost').pathname === '/hub'){
     sharedLobby.attachSocket(ws);
     return;
