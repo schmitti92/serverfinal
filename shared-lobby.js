@@ -874,6 +874,21 @@ function finishEisstock(ch,members){
  }));
  app.post('/api/hub/rooms/:code/challenge-maulwurf-hit',handler(async req=>{const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,tick,hole}=req.body||{};if(!code||typeof challengeId!=='string'||!Number.isInteger(tick)||tick<0||tick>=30||!Number.isInteger(hole)||hole<0||hole>8)throw error(400,'INVALID_MAULWURF_HIT');return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge,m=ch?.maulwurf;if(room.phase!=='playing'||ch?.id!==challengeId||ch.order[ch.index]!=='maulwurf-arena'||ch.phase!=='countdown'||!m)throw error(409,'WRONG_CHALLENGE_GAME');if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');if(clock()<ch.startAt+tick*1000||clock()>=Math.min(ch.startAt+30000,ch.startAt+(tick+1)*1000+350))throw error(409,'MAULWURF_NOT_VISIBLE');if(m.events[tick].hole!==hole)throw error(409,'MAULWURF_WRONG_HOLE');const hits=m.hits[identity.uid]||(m.hits[identity.uid]={});if(Object.hasOwn(hits,tick))return {unchanged:true};hits[tick]=m.events[tick].kind;})};}));
  app.post('/api/hub/rooms/:code/challenge-maulwurf-timeout',handler(async req=>{const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};if(!code||typeof challengeId!=='string')throw error(400,'INVALID_CHALLENGE_ID');return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge;if(room.phase!=='playing'||ch?.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');if(ch.order[ch.index]!=='maulwurf-arena'||ch.phase!=='countdown')return {unchanged:true};if(clock()<ch.startAt+30000)return {unchanged:true};finishMaulwurf(ch,room.match.members);})};}));
+ // The host advances test bots; all decisions and physics run in the room transaction.
+ app.post('/api/hub/rooms/:code/challenge-eisstock-bot',handler(async req=>{
+  const code=validCode(req.params.code),identity=req.hubIdentity;if(!code)throw error(400,'INVALID_ROOM_CODE');
+  return {room:await mutate(code,identity,room=>{
+   if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+   const ch=room.match?.challenge;
+   if(room.phase!=='playing'||!ch||ch.id!==req.body?.challengeId||ch.order[ch.index]!=='eisstock'||ch.phase!=='countdown')return {unchanged:true};
+   const game=ch.eisstock,member=room.match.members[game?.turn];
+   if(!game||game.phase!=='ready'||!member?.uid.startsWith('testbot:')||clock()<ch.startAt)return {unchanged:true};
+   const vx=(Math.random()-.5)*2.6,vy=-6.6-Math.random()*2.3;
+   game.stones.push({x:220,y:567,vx,vy,owner:member.seat});simulateEisstock(game.stones);game.shots++;
+   if(game.shots>=room.match.members.length*3){game.phase='done';finishEisstock(ch,room.match.members);}
+   else game.turn=game.shots%room.match.members.length;
+  })};
+ }));
  app.post('/api/hub/rooms/:code/challenge-eisstock-shoot',handler(async req=>{
  const code=validCode(req.params.code),identity=req.hubIdentity;if(!code)throw error(400,'INVALID_ROOM_CODE');
  return {room:await mutate(code,identity,room=>{
