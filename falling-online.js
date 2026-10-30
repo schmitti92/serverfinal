@@ -29,12 +29,12 @@ export function installFallingOnline(app) {
     if(room)return error("Bereits im Raum");
     let code;do{code=String(randomInt(100000,1000000))}while(rooms.has(code));
     room={code,players:[],round:0,phase:"lobby",startAt:0,duration:0,timer:null,updated:Date.now()};rooms.set(code,room);
-    player={ws,seat:1,name:String(m.name||"Spieler 1").slice(0,24),score:0,stops:null};room.players.push(player);emit(room);
+    player={ws,seat:1,name:String(m.name||"Spieler 1").slice(0,24),score:0,stops:null};room.players.push(player);send(ws,{type:'welcome',seat:player.seat});emit(room);
    }else if(m.type==="join"){
     if(room)return error("Bereits im Raum");
     const r=rooms.get(String(m.code||"").trim());if(!r)return error("Raum nicht gefunden");
     if(r.phase!=="lobby"||r.players.length>=4)return error("Raum läuft oder ist voll");
-    room=r;player={ws,seat:r.players.length+1,name:String(m.name||"Spieler").slice(0,24),score:0,stops:null};r.players.push(player);emit(r);
+    room=r;player={ws,seat:r.players.length+1,name:String(m.name||"Spieler").slice(0,24),score:0,stops:null};r.players.push(player);send(ws,{type:'welcome',seat:player.seat});emit(r);
    }else if(m.type==="start"){
     if(!room||!player||player.seat!==1||room.phase!=="lobby")return error("Nur der Host kann starten");
     if(room.players.length<2)return error("Mindestens zwei Spieler nötig");
