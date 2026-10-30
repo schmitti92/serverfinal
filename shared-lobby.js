@@ -11,8 +11,8 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
-const CHALLENGE_READY_GAMES=Object.freeze(['fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
-const CHALLENGE_GAMES=Object.freeze(['fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
+const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
+const CHALLENGE_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^(?:[0-9]{3}|[A-HJ-NP-Z2-9]{6})$/;
 const COLLECTION='spielesammlung_hub_v1';
@@ -365,6 +365,37 @@ function tickFalling(ch,members,now){
  ch.results.push({game:'fallende-gegenstaende',index:ch.index,standings:final,rounds:f.rounds,finishedAt:now});ch.phase=ch.index===ch.order.length-1?'finished':'results';
 }
 
+
+function setupEisstock(ch,members){ch.eisstock={stones:[],shots:0,turn:0,phase:'ready',round:1};}
+function eisstockScore(s){
+ const R=14,T={x:220,y:157},rings=[47,86,125];
+ const overlap=(lo,hi)=>{let n=0,total=0;for(let dy=-R;dy<=R;dy+=2)for(let dx=-R;dx<=R;dx+=2){if(dx*dx+dy*dy>R*R)continue;total++;const d=Math.hypot(s.x+dx-T.x,s.y+dy-T.y);if(d>=lo&&d<=hi)n++;}return n/total;};
+ return overlap(0,rings[0])>.5?3:overlap(rings[0],rings[1])>.5?2:overlap(rings[1],rings[2])>.5?1:0;
+}
+function simulateEisstock(stones){
+ const R=14;
+ for(let t=0;t<4000;t++){
+  for(const s of stones){s.x+=s.vx;s.y+=s.vy;s.vx*=.986;s.vy*=.986;
+   if(s.x<R){s.x=R;s.vx=Math.abs(s.vx)*.58}if(s.x>440-R){s.x=440-R;s.vx=-Math.abs(s.vx)*.58}
+   if(s.y<R){s.y=R;s.vy=Math.abs(s.vy)*.58}if(s.y>650-R){s.y=650-R;s.vy=-Math.abs(s.vy)*.58}}
+  for(let i=0;i<stones.length;i++)for(let j=i+1;j<stones.length;j++){
+   const a=stones[i],b=stones[j];let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);
+   if(d>=2*R)continue;if(d<.001){dx=1;dy=0;d=1}
+   const nx=dx/d,ny=dy/d,o=2*R-d;a.x-=nx*o/2;b.x+=nx*o/2;a.y-=ny*o/2;b.y+=ny*o/2;
+   const rel=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;if(rel<0){const impulse=-(1+.82)*rel/2;a.vx-=impulse*nx;a.vy-=impulse*ny;b.vx+=impulse*nx;b.vy+=impulse*ny}
+  }
+  for(const s of stones)if(Math.hypot(s.vx,s.vy)<.07){s.vx=0;s.vy=0}
+  if(stones.every(s=>!s.vx&&!s.vy))break;
+ }
+ for(const s of stones){s.vx=0;s.vy=0}
+}
+function finishEisstock(ch,members){
+ const standings=members.map(m=>({seat:m.seat,name:m.name,score:ch.eisstock.stones.filter(s=>s.owner===m.seat).reduce((n,s)=>n+eisstockScore(s),0)})).sort((a,b)=>b.score-a.score);
+ const best=standings[0].score;
+ for(const p of standings){p.challengePoints=p.score===best?100:Math.max(0,Math.round(100*p.score/Math.max(1,best)));const i=members.findIndex(m=>m.seat===p.seat);if(i>=0)ch.points[i]+=p.challengePoints}
+ ch.results.push({game:'eisstock',index:ch.index,standings,finishedAt:clock()});ch.phase=ch.index===ch.order.length-1?'finished':'results';
+}
+
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -379,6 +410,7 @@ function tickFalling(ch,members,now){
       settings:{count,selectedGame:single?selected:null},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
       challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
         points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
+    if(room.match.challenge.order[0]==='eisstock')setupEisstock(room.match.challenge,room.match.members);
     if(room.match.challenge.order[0]==='fallende-gegenstaende')setupFalling(room.match.challenge,room.match.members);
     if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+challengeRandomInt(11);
     if(room.match.challenge.order[0]==='recheninsel')setupRecheninsel(room.match.challenge);
@@ -842,6 +874,18 @@ function tickFalling(ch,members,now){
  }));
  app.post('/api/hub/rooms/:code/challenge-maulwurf-hit',handler(async req=>{const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,tick,hole}=req.body||{};if(!code||typeof challengeId!=='string'||!Number.isInteger(tick)||tick<0||tick>=30||!Number.isInteger(hole)||hole<0||hole>8)throw error(400,'INVALID_MAULWURF_HIT');return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge,m=ch?.maulwurf;if(room.phase!=='playing'||ch?.id!==challengeId||ch.order[ch.index]!=='maulwurf-arena'||ch.phase!=='countdown'||!m)throw error(409,'WRONG_CHALLENGE_GAME');if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');if(clock()<ch.startAt+tick*1000||clock()>=Math.min(ch.startAt+30000,ch.startAt+(tick+1)*1000+350))throw error(409,'MAULWURF_NOT_VISIBLE');if(m.events[tick].hole!==hole)throw error(409,'MAULWURF_WRONG_HOLE');const hits=m.hits[identity.uid]||(m.hits[identity.uid]={});if(Object.hasOwn(hits,tick))return {unchanged:true};hits[tick]=m.events[tick].kind;})};}));
  app.post('/api/hub/rooms/:code/challenge-maulwurf-timeout',handler(async req=>{const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};if(!code||typeof challengeId!=='string')throw error(400,'INVALID_CHALLENGE_ID');return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge;if(room.phase!=='playing'||ch?.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');if(ch.order[ch.index]!=='maulwurf-arena'||ch.phase!=='countdown')return {unchanged:true};if(clock()<ch.startAt+30000)return {unchanged:true};finishMaulwurf(ch,room.match.members);})};}));
+ app.post('/api/hub/rooms/:code/challenge-eisstock-shoot',handler(async req=>{
+ const code=validCode(req.params.code),identity=req.hubIdentity;if(!code)throw error(400,'INVALID_ROOM_CODE');
+ return {room:await mutate(code,identity,room=>{
+  const ch=room.match?.challenge;if(room.phase!=='playing'||!ch||ch.id!==req.body?.challengeId||ch.order[ch.index]!=='eisstock'||ch.phase!=='countdown')throw error(409,'EISSTOCK_NOT_ACTIVE');
+  const member=room.match.members.find(m=>m.uid===identity.uid);if(!member)throw error(403,'NOT_A_PARTICIPANT');
+  const game=ch.eisstock;if(!game||game.phase!=='ready'||room.match.members[game.turn]?.uid!==member.uid)throw error(409,'NOT_YOUR_TURN');
+  const vx=Number(req.body?.vx),vy=Number(req.body?.vy);if(!Number.isFinite(vx)||!Number.isFinite(vy)||Math.abs(vx)>7||vy>=-2.8||vy< -12)throw error(400,'INVALID_SHOT');
+  game.stones.push({x:220,y:567,vx,vy,owner:member.seat});simulateEisstock(game.stones);game.shots++;
+  if(game.shots>=room.match.members.length*3){game.phase='done';finishEisstock(ch,room.match.members);}
+  else game.turn=game.shots%room.match.members.length;
+ })};
+ }));
  app.post('/api/hub/rooms/:code/challenge-falling-tick',handler(async req=>{
   const code=validCode(req.params.code),identity=req.hubIdentity;if(!code)throw error(400,'INVALID_ROOM_CODE');
   return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge;if(room.phase!=='playing'||!ch||ch.id!==req.body?.challengeId||ch.order[ch.index]!=='fallende-gegenstaende')throw error(409,'FALLING_NOT_ACTIVE');tickFalling(ch,room.match.members,clock());})};
@@ -934,6 +978,7 @@ function tickFalling(ch,members,now){
       ch.phase='countdown';
       ch.startAt=clock()+3000;
       ch.timeStops={};
+      if(ch.order[ch.index]==='eisstock')setupEisstock(ch,room.match.members);
       if(ch.order[ch.index]==='fallende-gegenstaende')setupFalling(ch,room.match.members);
       if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+challengeRandomInt(11);
       if(ch.order[ch.index]==='recheninsel'){ch.mathHistory=[];setupRecheninsel(ch);}
