@@ -11,8 +11,8 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
 });
-const CHALLENGE_READY_GAMES=Object.freeze(['zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
-const CHALLENGE_GAMES=Object.freeze(['lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
+const CHALLENGE_READY_GAMES=Object.freeze(['fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
+const CHALLENGE_GAMES=Object.freeze(['fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^(?:[0-9]{3}|[A-HJ-NP-Z2-9]{6})$/;
 const COLLECTION='spielesammlung_hub_v1';
@@ -351,6 +351,20 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     ch.results.push({game:'flusssprung',index:ch.index,standings,finishedAt:clock()});
     ch.phase=ch.index===ch.order.length-1?'finished':'results';
   }
+
+const FALL_MS=[4000,3400,3800,3100,3600];
+function setupFalling(ch,members){ch.falling={round:1,startAt:ch.startAt,stops:{},totals:Object.fromEntries(members.map(m=>[m.uid,0])),rounds:[]};}
+function tickFalling(ch,members,now){
+ const f=ch.falling;if(!f||ch.phase!=='countdown'||now<f.startAt+FALL_MS[f.round-1]+600)return;
+ const standings=members.map(m=>{const cm=Object.hasOwn(f.stops,m.uid)?f.stops[m.uid]:100;f.totals[m.uid]=Math.round((f.totals[m.uid]+cm)*10)/10;return {seat:m.seat,name:m.name,cm,totalCm:f.totals[m.uid]};});
+ f.rounds.push({round:f.round,standings});
+ if(f.round<5){f.round++;f.startAt=now+3000;f.stops={};ch.startAt=f.startAt;return;}
+ const sorted=members.map(m=>({seat:m.seat,name:m.name,totalCm:f.totals[m.uid]})).sort((a,b)=>a.totalCm-b.totalCm);
+ const best=sorted[0].totalCm,final=sorted.map(p=>({...p,challengePoints:p.totalCm===best?100:Math.max(0,Math.round(100-p.totalCm))}));
+ for(const p of final){const i=members.findIndex(m=>m.seat===p.seat);if(i>=0)ch.points[i]+=p.challengePoints;}
+ ch.results.push({game:'fallende-gegenstaende',index:ch.index,standings:final,rounds:f.rounds,finishedAt:now});ch.phase=ch.index===ch.order.length-1?'finished':'results';
+}
+
   function startChallenge(room){
     const seats=activeSeats(room);
     if(seats.length<2||seats.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -365,6 +379,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       settings:{count,selectedGame:single?selected:null},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),
       challenge:{id:randomUUID(),order:order.slice(0,count),index:0,phase:'countdown',startAt:clock()+3000,
         points:seats.map(()=>0),results:[],timeTargets:{},timeStops:{}}};
+    if(room.match.challenge.order[0]==='fallende-gegenstaende')setupFalling(room.match.challenge,room.match.members);
     if(room.match.challenge.order[0]==='zeitgefuehl')room.match.challenge.timeTargets['0']=10+challengeRandomInt(11);
     if(room.match.challenge.order[0]==='recheninsel')setupRecheninsel(room.match.challenge);
     if(room.match.challenge.order[0]==='huetchen-challenge')setupHuetchen(room.match.challenge);
@@ -827,6 +842,22 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
  }));
  app.post('/api/hub/rooms/:code/challenge-maulwurf-hit',handler(async req=>{const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId,tick,hole}=req.body||{};if(!code||typeof challengeId!=='string'||!Number.isInteger(tick)||tick<0||tick>=30||!Number.isInteger(hole)||hole<0||hole>8)throw error(400,'INVALID_MAULWURF_HIT');return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge,m=ch?.maulwurf;if(room.phase!=='playing'||ch?.id!==challengeId||ch.order[ch.index]!=='maulwurf-arena'||ch.phase!=='countdown'||!m)throw error(409,'WRONG_CHALLENGE_GAME');if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');if(clock()<ch.startAt+tick*1000||clock()>=Math.min(ch.startAt+30000,ch.startAt+(tick+1)*1000+350))throw error(409,'MAULWURF_NOT_VISIBLE');if(m.events[tick].hole!==hole)throw error(409,'MAULWURF_WRONG_HOLE');const hits=m.hits[identity.uid]||(m.hits[identity.uid]={});if(Object.hasOwn(hits,tick))return {unchanged:true};hits[tick]=m.events[tick].kind;})};}));
  app.post('/api/hub/rooms/:code/challenge-maulwurf-timeout',handler(async req=>{const code=validCode(req.params.code),identity=req.hubIdentity,{challengeId}=req.body||{};if(!code||typeof challengeId!=='string')throw error(400,'INVALID_CHALLENGE_ID');return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge;if(room.phase!=='playing'||ch?.id!==challengeId)throw error(409,'CHALLENGE_NOT_ACTIVE');if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');if(ch.order[ch.index]!=='maulwurf-arena'||ch.phase!=='countdown')return {unchanged:true};if(clock()<ch.startAt+30000)return {unchanged:true};finishMaulwurf(ch,room.match.members);})};}));
+ app.post('/api/hub/rooms/:code/challenge-falling-tick',handler(async req=>{
+  const code=validCode(req.params.code),identity=req.hubIdentity;if(!code)throw error(400,'INVALID_ROOM_CODE');
+  return {room:await mutate(code,identity,room=>{const ch=room.match?.challenge;if(room.phase!=='playing'||!ch||ch.id!==req.body?.challengeId||ch.order[ch.index]!=='fallende-gegenstaende')throw error(409,'FALLING_NOT_ACTIVE');tickFalling(ch,room.match.members,clock());})};
+ }));
+ app.post('/api/hub/rooms/:code/challenge-falling-stop',handler(async req=>{
+  const code=validCode(req.params.code),identity=req.hubIdentity;if(!code)throw error(400,'INVALID_ROOM_CODE');
+  return {room:await mutate(code,identity,room=>{
+   const ch=room.match?.challenge;if(room.phase!=='playing'||!ch||ch.id!==req.body?.challengeId||ch.order[ch.index]!=='fallende-gegenstaende'||ch.phase!=='countdown')throw error(409,'FALLING_NOT_ACTIVE');
+   const member=room.match.members.find(m=>m.uid===identity.uid);if(!member)throw error(403,'NOT_A_PARTICIPANT');
+   const f=ch.falling;if(!f)throw error(409,'FALLING_NOT_READY');
+   const now=clock(),elapsed=now-f.startAt,duration=FALL_MS[f.round-1];if(elapsed<0)throw error(409,'FALLING_NOT_STARTED');
+   if(Object.hasOwn(f.stops,member.uid))return {unchanged:true};
+   f.stops[member.uid]=elapsed>=duration?100:Math.max(0,Math.round((1-elapsed/duration)*1000)/10);
+   if(room.match.members.every(m=>Object.hasOwn(f.stops,m.uid)))tickFalling(ch,room.match.members,f.startAt+duration+600);
+  })};
+ }));
  app.post('/api/hub/rooms/:code/challenge-time-stop',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
@@ -903,6 +934,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       ch.phase='countdown';
       ch.startAt=clock()+3000;
       ch.timeStops={};
+      if(ch.order[ch.index]==='fallende-gegenstaende')setupFalling(ch,room.match.members);
       if(ch.order[ch.index]==='zeitgefuehl')ch.timeTargets[String(ch.index)]=10+challengeRandomInt(11);
       if(ch.order[ch.index]==='recheninsel'){ch.mathHistory=[];setupRecheninsel(ch);}
       if(ch.order[ch.index]==='huetchen-challenge')setupHuetchen(ch);
