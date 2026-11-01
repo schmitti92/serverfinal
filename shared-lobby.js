@@ -1,3 +1,4 @@
+import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
  * Single Firestore room across games; no client-side authority or local profile state.
  * Deliberately DOES NOT launch legacy games until they have safe room adapters.
@@ -10,6 +11,7 @@ export const HUB_GAMES = Object.freeze({
   kreuz: { title:'KreuzKunter', min:2, max:6 },
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
+  farbenblitz: { title:'Farbenblitz', min:1, max:4 },
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHALLENGE_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -424,6 +426,11 @@ function finishEisstock(ch,members){
     room.phase='playing';
   }
   function startGame(room){
+    if(room.game==='farbenblitz'){
+      const seats=activeSeats(room);
+      room.match={id:randomUUID(),game:'farbenblitz',startedAt:clock(),gameCode:null,settings:{rounds:10,level:'mittel'},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),farbenblitz:createFarbenblitzMatch(seats)};
+      room.phase='playing';return;
+    }
     if(room.game==='partychallenge')return startChallenge(room);
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
@@ -453,6 +460,7 @@ function finishEisstock(ch,members){
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
         challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
+        farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -723,6 +731,25 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       startGame(room);
+    })};
+  }));
+  // Farbenblitz uses the existing authenticated hub room and transactional live stream.
+  app.post('/api/hub/rooms/:code/farbenblitz/understood',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='farbenblitz'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      acknowledgeFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock());
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/farbenblitz/answer',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{matchId,round,color}=req.body||{};
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(!Number.isInteger(round)||typeof color!=='string')throw error(400,'INVALID_ANSWER');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='farbenblitz'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      try{answerFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,{round,color},clock());}
+      catch(e){throw error(409,e.message);}
     })};
   }));
   // Any authenticated room member can request a completion check. The backend
