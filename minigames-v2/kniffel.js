@@ -18,9 +18,9 @@ if(action?.type==='move-score'){
  const {category,fromColumn,toColumn}=action;
  if(!Number.isInteger(category)||category<0||category>12||!Number.isInteger(fromColumn)||!Number.isInteger(toColumn)||fromColumn===toColumn||fromColumn<0||toColumn<0||fromColumn>=player.sheet.length||toColumn>=player.sheet.length)throw Error('INVALID_MOVE');
  const source=player.sheet[fromColumn],target=player.sheet[toColumn];
- if(source[category]===null||target[category]!==null)throw Error('INVALID_MOVE');
- target[category]=source[category];source[category]=null;
- if(player.crossedOut){player.crossedOut[toColumn][category]=!!player.crossedOut[fromColumn][category];player.crossedOut[fromColumn][category]=false;}
+ if(source[category]===null)throw Error('INVALID_MOVE');
+ [source[category],target[category]]=[target[category],source[category]];
+ if(player.crossedOut){[player.crossedOut[fromColumn][category],player.crossedOut[toColumn][category]]=[!!player.crossedOut[toColumn][category],!!player.crossedOut[fromColumn][category]];}
  player.moveUsed=true;game.revision++;return game;
 }
 if(game.players[game.turn]?.uid!==uid)throw Error('NOT_YOUR_TURN');
