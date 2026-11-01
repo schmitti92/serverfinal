@@ -785,6 +785,19 @@ function finishEisstock(ch,members){
       startGame(room);
     })};
   }));
+  app.post('/api/hub/rooms/:code/kniffel/test-players',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,count=req.body?.count;
+    if(!code||!Number.isInteger(count)||count<0||count>3)throw error(400,'INVALID_BOT_COUNT');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.game!=='kniffel'||room.phase!=='preparing')throw error(409,'NOT_PREPARING');
+      const humans=room.players.filter(p=>!p.testBot&&p.participating);
+      if(humans.length+count>4)throw error(409,'GAME_SEATS_FULL');
+      room.players=room.players.filter(p=>!p.testBot);
+      for(let i=0;i<count;i++)room.players.push({uid:'testbot:'+room.code+':kniffel:'+i,seat:randomUUID(),name:'🤖 Computer '+(i+1),ready:true,participating:true,testBot:true,joinedAt:clock()});
+      room.players.forEach(p=>{p.ready=!!p.testBot;});
+    })};
+  }));
   app.post('/api/hub/rooms/:code/kniffel/settings',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,mode=req.body?.mode;
     if(!code||!Object.hasOwn(KNIFFEL_MODES,mode))throw error(400,'INVALID_MODE');
