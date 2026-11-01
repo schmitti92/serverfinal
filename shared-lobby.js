@@ -872,8 +872,7 @@ function finishEisstock(ch,members){
             advanceKniffelBots(state);
           }else{
             applyKniffel(state,identity.uid,action);
-            // A subsequent gameplay action invalidates the single-step undo.
-            state.lastScoredTurn=null;
+            // Keep the last completed scoring turn undoable until another score is recorded.
             advanceKniffelBots(state);
           }
         }
