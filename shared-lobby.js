@@ -839,7 +839,45 @@ function finishEisstock(ch,members){
       const state=room.match.kniffel;
       if(state.revision!==revision)throw error(409,'STALE_ACTION');
       if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_PARTICIPATING');
-      try{applyKniffel(state,identity.uid,action);advanceKniffelBots(state);}catch(e){throw error(409,e.message);}
+      try{
+        if(action?.type==='undo-request'){
+          if(state.undoVote)throw Error('UNDO_ALREADY_PENDING');
+          if(!state.lastScoredTurn)throw Error('NOTHING_TO_UNDO');
+          const voters=room.match.members.filter(m=>!m.testBot&&!m.bot).map(m=>m.uid);
+          if(!voters.includes(identity.uid))throw Error('NOT_A_PLAYER');
+          state.undoVote={requester:identity.uid,approvals:[identity.uid],voters,turnRevision:state.lastScoredTurn.revision};
+          state.revision++;
+        }else if(action?.type==='undo-vote'){
+          const vote=state.undoVote;
+          if(!vote||!vote.voters.includes(identity.uid))throw Error('NO_UNDO_VOTE');
+          if(action.approve===false){state.undoVote=null;state.revision++;}
+          else if(action.approve===true){
+            if(!vote.approvals.includes(identity.uid))vote.approvals.push(identity.uid);
+            if(vote.voters.every(uid=>vote.approvals.includes(uid))){
+              const saved=state.lastScoredTurn;
+              if(!saved||saved.revision!==vote.turnRevision)throw Error('UNDO_EXPIRED');
+              const newRevision=state.revision+1;
+              const restored=structuredClone(saved.state);
+              Object.keys(state).forEach(k=>delete state[k]);
+              Object.assign(state,restored,{revision:newRevision,lastScoredTurn:null,undoVote:null});
+            }else state.revision++;
+          }else throw Error('INVALID_VOTE');
+        }else{
+          if(state.undoVote)throw Error('UNDO_VOTE_PENDING');
+          if(action?.type==='score'){
+            const previous=structuredClone(state);
+            delete previous.lastScoredTurn;delete previous.undoVote;
+            applyKniffel(state,identity.uid,action);
+            state.lastScoredTurn={state:previous,revision:state.revision};
+            advanceKniffelBots(state);
+          }else{
+            applyKniffel(state,identity.uid,action);
+            // A subsequent gameplay action invalidates the single-step undo.
+            state.lastScoredTurn=null;
+            advanceKniffelBots(state);
+          }
+        }
+      }catch(e){throw error(409,e.message);}
     })};
   }));
   // Farbenblitz uses the existing authenticated hub room and transactional live stream.
