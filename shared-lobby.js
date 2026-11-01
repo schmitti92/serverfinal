@@ -761,12 +761,12 @@ function finishEisstock(ch,members){
     })};
   }));
   app.post('/api/hub/rooms/:code/farbenblitz/answer',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity,{matchId,round,color}=req.body||{};
+    const code=validCode(req.params.code),identity=req.hubIdentity,{matchId,round,color,elapsedMs}=req.body||{};
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    if(!Number.isInteger(round)||typeof color!=='string')throw error(400,'INVALID_ANSWER');
+    if(!Number.isInteger(round)||typeof color!=='string'||!Number.isSafeInteger(elapsedMs)||elapsedMs<0||elapsedMs>3600000)throw error(400,'INVALID_ANSWER');
     return {room:await mutate(code,identity,room=>{
       if(room.phase!=='playing'||room.match?.game!=='farbenblitz'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
-      try{answerFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,{round,color},clock());}
+      try{answerFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,{round,color,elapsedMs},clock());}
       catch(e){throw error(409,e.message);}
     })};
   }));
