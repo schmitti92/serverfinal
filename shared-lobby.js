@@ -1,3 +1,4 @@
+import {createKniffel,applyKniffel,standings,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
 import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
@@ -13,6 +14,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
   farbenblitz: { title:'Farbenblitz', min:1, max:4 },
+  kniffel: { title:'Kniffel', min:1, max:4 },
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHALLENGE_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -427,6 +429,11 @@ function finishEisstock(ch,members){
     room.phase='playing';
   }
   function startGame(room){
+    if(room.game==='kniffel'){
+      const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic';
+      room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode},kniffel:createKniffel(seats,mode)};
+      room.phase='playing';return;
+    }
     if(room.game==='farbenblitz'){
       const seats=activeSeats(room);
       room.match={...createMiniGameSession({id:randomUUID(),game:'farbenblitz',createdAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name}))}),startedAt:clock(),gameCode:null,settings:{rounds:10,level:'mittel'},farbenblitz:createFarbenblitzMatch(seats)};
@@ -453,7 +460,7 @@ function finishEisstock(ch,members){
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -464,6 +471,7 @@ function finishEisstock(ch,members){
         status:{phase:hubMatchPhase(room.match)},
         challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
+        kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -486,10 +494,11 @@ function finishEisstock(ch,members){
   }
   function hubMatchPhase(match){
     if(!match)return null;
+    if(match.game==='kniffel')return match.kniffel?.finished?'finished':'playing';
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
     return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return match?.game==='farbenblitz'?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
+  function hubMatchFinished(match){return ['farbenblitz','kniffel'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -577,6 +586,7 @@ function finishEisstock(ch,members){
       if(room.phase==='playing')throw error(409,'MATCH_IN_PROGRESS');
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
       room.game=game;room.phase='preparing';
+      if(game==='kniffel')room.settings={...room.settings,kniffel:{mode:room.settings?.kniffel?.mode||'classic'}};
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       if(game==='business')room.settings={...room.settings,business:businessSettings(room.settings?.business)||{...BUSINESS_DEFAULTS}};
@@ -773,6 +783,26 @@ function finishEisstock(ch,members){
       room.players=room.players.filter(p=>!p.testBot);
       room.players.forEach((p,i)=>{p.participating=i<4;p.ready=false;});
       startGame(room);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/kniffel/settings',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,mode=req.body?.mode;
+    if(!code||!Object.hasOwn(KNIFFEL_MODES,mode))throw error(400,'INVALID_MODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.game!=='kniffel'||room.phase!=='preparing')throw error(409,'NOT_PREPARING');
+      room.settings={...room.settings,kniffel:{mode}};
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/kniffel/action',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{matchId,revision,action}=req.body||{};
+    if(!code||typeof matchId!=='string'||!Number.isSafeInteger(revision)||revision<0)throw error(400,'INVALID_REQUEST');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='kniffel'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      const state=room.match.kniffel;
+      if(state.revision!==revision)throw error(409,'STALE_ACTION');
+      if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_PARTICIPATING');
+      try{applyKniffel(state,identity.uid,action);}catch(e){throw error(409,e.message);}
     })};
   }));
   // Farbenblitz uses the existing authenticated hub room and transactional live stream.
