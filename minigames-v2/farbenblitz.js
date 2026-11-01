@@ -40,6 +40,6 @@ export function publicFarbenblitz(match,members,uid,now){
  const visible=phase==='playing'||phase==='finished';
  return {phase,round:match.round,rounds:match.rounds,level:match.level,startAt:match.startAt,
   readyCount:match.ready.length,playerCount:members.length,answered:Object.keys(match.answers).length,
-  myAnswered:Object.hasOwn(match.answers,uid),challenge:visible&&!match.finished?((({correct,...publicQuestion})=>publicQuestion)(challenge(match.round,match.level))):null,
+  myAnswered:Object.hasOwn(match.answers,uid),myColor:match.answers[uid]??null,challenge:visible&&!match.finished?((({correct,...publicQuestion})=>publicQuestion)(challenge(match.round,match.level))):null,
   results:match.finished?members.map(m=>({seat:m.seat,name:m.name,score:match.scores[m.uid]})):null};
 }
