@@ -459,7 +459,7 @@ function finishEisstock(ch,members){
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
-        status:{phase:room.match.game==='farbenblitz'?(room.match.farbenblitz?.finished?'finished':room.match.farbenblitz?.phase||'instructions'):'playing'},
+        status:{phase:hubMatchPhase(room.match)},
         challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
         playerCount:room.match.members.length,
@@ -470,6 +470,13 @@ function finishEisstock(ch,members){
     };
   }
   // A finished match returns to the same central room; no second room is created.
+  // Shared match completion contract. Keep the finished match readable for the results screen.
+  function hubMatchPhase(match){
+    if(!match)return null;
+    if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
+    return match.status?.phase||'playing';
+  }
+  function hubMatchFinished(match){return hubMatchPhase(match)==='finished';}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -739,14 +746,14 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase==='playing'){
-        if(room.match?.game==='farbenblitz'&&room.match.farbenblitz?.finished){
+        if(hubMatchFinished(room.match)){
           archiveCompletedMatch(room);
         }else if(room.match?.game==='farbenblitz'&&room.match.members.some(m=>m.uid===identity.uid)){
           return {unchanged:true};
         }else throw error(409,'MATCH_IN_PROGRESS');
       }
-      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='lobby'&&room.phase!=='preparing')throw error(409,'ROOM_NOT_READY');
       if(room.phase==='preparing'&&room.game&&room.game!=='farbenblitz')throw error(409,'OTHER_GAME_SELECTED');
       room.game='farbenblitz';room.phase='preparing';
