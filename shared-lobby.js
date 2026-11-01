@@ -1,4 +1,4 @@
-import {createKniffel,applyKniffel,standings,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
+import {createKniffel,applyKniffel,standings,allowed as kniffelAllowed,points as kniffelPoints,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
 import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
@@ -428,10 +428,33 @@ function finishEisstock(ch,members){
     if(room.match.challenge.order[0]==='lava-arena')setupLava(room.match.challenge,room.match.members);
     room.phase='playing';
   }
+  function advanceKniffelBots(state){
+    let steps=0;
+    while(!state.finished&&state.players[state.turn]?.bot){
+      if(++steps>4)throw Error('BOT_LOOP_LIMIT');
+      const bot=state.players[state.turn],uid=bot.uid;
+      applyKniffel(state,uid,{type:'roll'});
+      const counts=Array.from({length:7},(_,n)=>state.dice.filter(v=>v===n).length);
+      const bestFace=counts.slice(1).indexOf(Math.max(...counts.slice(1)))+1;
+      for(let r=0;r<2;r++){
+        state.held=state.dice.map(d=>d===bestFace);
+        applyKniffel(state,uid,{type:'roll'});
+      }
+      let choice=null,best=-Infinity;
+      bot.sheet.forEach((col,j)=>{for(const c of kniffelAllowed(state,j)){
+        const value=kniffelPoints(state.dice,c);
+        const utility=value-(c<6?(c+1)*1.2:c===11?17:c===10?13:c===9?10:c===8?9:7);
+        if(utility>best){best=utility;choice={type:'score',category:c,column:j};}
+      }});
+      if(!choice)throw Error('BOT_NO_SCORE');
+      applyKniffel(state,uid,choice);
+    }
+  }
   function startGame(room){
     if(room.game==='kniffel'){
       const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic';
       room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode},kniffel:createKniffel(seats,mode)};
+      advanceKniffelBots(room.match.kniffel);
       room.phase='playing';return;
     }
     if(room.game==='farbenblitz'){
@@ -815,7 +838,7 @@ function finishEisstock(ch,members){
       const state=room.match.kniffel;
       if(state.revision!==revision)throw error(409,'STALE_ACTION');
       if(!room.match.members.some(p=>p.uid===identity.uid))throw error(403,'NOT_PARTICIPATING');
-      try{applyKniffel(state,identity.uid,action);}catch(e){throw error(409,e.message);}
+      try{applyKniffel(state,identity.uid,action);advanceKniffelBots(state);}catch(e){throw error(409,e.message);}
     })};
   }));
   // Farbenblitz uses the existing authenticated hub room and transactional live stream.
