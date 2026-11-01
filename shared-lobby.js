@@ -739,8 +739,11 @@ function finishEisstock(ch,members){
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     return {room:await mutate(code,identity,room=>{
       if(room.phase==='playing'){
-        if(room.match?.game==='farbenblitz'&&room.match.members.some(m=>m.uid===identity.uid))return {unchanged:true};
-        throw error(409,'MATCH_IN_PROGRESS');
+        if(room.match?.game==='farbenblitz'&&room.match.farbenblitz?.finished){
+          archiveCompletedMatch(room);
+        }else if(room.match?.game==='farbenblitz'&&room.match.members.some(m=>m.uid===identity.uid)){
+          return {unchanged:true};
+        }else throw error(409,'MATCH_IN_PROGRESS');
       }
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='lobby'&&room.phase!=='preparing')throw error(409,'ROOM_NOT_READY');
