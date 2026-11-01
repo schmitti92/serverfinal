@@ -35,9 +35,10 @@ export function answerFarbenblitz(match,members,uid,{round,color},now){
  }
  return match;
 }
-export function publicFarbenblitz(match,members,uid){
- const visible=match.phase==='playing'||match.phase==='finished';
- return {phase:match.phase,round:match.round,rounds:match.rounds,level:match.level,startAt:match.startAt,
+export function publicFarbenblitz(match,members,uid,now){
+ const phase=match.phase==='countdown'&&Number.isFinite(now)&&now>=match.startAt?'playing':match.phase;
+ const visible=phase==='playing'||phase==='finished';
+ return {phase,round:match.round,rounds:match.rounds,level:match.level,startAt:match.startAt,
   readyCount:match.ready.length,playerCount:members.length,answered:Object.keys(match.answers).length,
   myAnswered:Object.hasOwn(match.answers,uid),challenge:visible&&!match.finished?((({correct,...publicQuestion})=>publicQuestion)(challenge(match.round,match.level))):null,
   results:match.finished?members.map(m=>({seat:m.seat,name:m.name,score:match.scores[m.uid]})):null};
