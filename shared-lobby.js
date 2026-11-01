@@ -1,4 +1,4 @@
-import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,assertFreshMatch} from './minigames-v2/engine/session.js';
+import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
  * Single Firestore room across games; no client-side authority or local profile state.
@@ -473,6 +473,17 @@ function finishEisstock(ch,members){
   }
   // A finished match returns to the same central room; no second room is created.
   // Shared match completion contract. Keep the finished match readable for the results screen.
+  // Bridge a game reducer's phase into the shared authoritative lifecycle.
+  // Transitional countdown -> playing -> finished is applied in order.
+  function syncMiniGameLifecycle(match){
+    if(!match||match.game!=='farbenblitz')return;
+    const target=match.farbenblitz?.finished?'finished':match.farbenblitz?.phase;
+    const order=['instructions','countdown','playing','finished'];
+    const current=engineMatchPhase(match);
+    const from=order.indexOf(current),to=order.indexOf(target);
+    if(from<0||to<0||to<from)throw Error('INVALID_MATCH_TRANSITION');
+    for(let i=from+1;i<=to;i++)setMatchPhase(match,order[i]);
+  }
   function hubMatchPhase(match){
     if(!match)return null;
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
@@ -771,6 +782,7 @@ function finishEisstock(ch,members){
     return {room:await mutate(code,identity,room=>{
       if(room.phase!=='playing'||room.match?.game!=='farbenblitz'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
       acknowledgeFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock());
+      syncMiniGameLifecycle(room.match);
     })};
   }));
   app.post('/api/hub/rooms/:code/farbenblitz/answer',handler(async req=>{
@@ -779,7 +791,7 @@ function finishEisstock(ch,members){
     if(!Number.isInteger(round)||typeof color!=='string'||!Number.isSafeInteger(elapsedMs)||elapsedMs<0||elapsedMs>3600000)throw error(400,'INVALID_ANSWER');
     return {room:await mutate(code,identity,room=>{
       if(room.phase!=='playing'||room.match?.game!=='farbenblitz'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
-      try{answerFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,{round,color,elapsedMs},clock());}
+      try{answerFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,{round,color,elapsedMs},clock());syncMiniGameLifecycle(room.match);}
       catch(e){throw error(409,e.message);}
     })};
   }));
