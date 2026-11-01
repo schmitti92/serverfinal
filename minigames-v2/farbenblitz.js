@@ -29,6 +29,7 @@ export function answerFarbenblitz(match,members,uid,{round,color,elapsedMs},now)
  if(Object.hasOwn(match.answers,uid))throw Error('ALREADY_ANSWERED');
  if(!Number.isSafeInteger(elapsedMs)||elapsedMs<0||elapsedMs>3600000)throw Error('INVALID_RESPONSE_TIME');
  match.answers[uid]=color;
+ match.times??={};
  match.times[uid]=(match.times[uid]??0)+elapsedMs;
  if(color===challenge(match.round,match.level).correct)match.scores[uid]++;
  if(Object.keys(match.answers).length===members.length){
@@ -43,5 +44,5 @@ export function publicFarbenblitz(match,members,uid,now){
  return {phase,round:match.round,rounds:match.rounds,level:match.level,startAt:match.startAt,
   readyCount:match.ready.length,playerCount:members.length,answered:Object.keys(match.answers).length,
   myAnswered:Object.hasOwn(match.answers,uid),myColor:match.answers[uid]??null,challenge:visible&&!match.finished?((({correct,...publicQuestion})=>publicQuestion)(challenge(match.round,match.level))):null,
-  results:match.finished?members.map(m=>({seat:m.seat,name:m.name,score:match.scores[m.uid],timeMs:match.times[m.uid]??0})):null};
+  results:match.finished?members.map(m=>({seat:m.seat,name:m.name,score:match.scores[m.uid],timeMs:match.times?.[m.uid]??0})):null};
 }
