@@ -1,3 +1,4 @@
+import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
  * Single Firestore room across games; no client-side authority or local profile state.
@@ -428,7 +429,8 @@ function finishEisstock(ch,members){
   function startGame(room){
     if(room.game==='farbenblitz'){
       const seats=activeSeats(room);
-      room.match={id:randomUUID(),game:'farbenblitz',startedAt:clock(),gameCode:null,settings:{rounds:10,level:'mittel'},members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),farbenblitz:createFarbenblitzMatch(seats)};
+      room.match={...createMiniGameSession({id:randomUUID(),game:'farbenblitz',createdAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name}))}),startedAt:clock(),gameCode:null,settings:{rounds:10,level:'mittel'},farbenblitz:createFarbenblitzMatch(seats)};
+      assertFreshMatch(room.lastCompleted,room.match);
       room.phase='playing';return;
     }
     if(room.game==='partychallenge')return startChallenge(room);
@@ -474,9 +476,9 @@ function finishEisstock(ch,members){
   function hubMatchPhase(match){
     if(!match)return null;
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
-    return match.status?.phase||'playing';
+    return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return hubMatchPhase(match)==='finished';}
+  function hubMatchFinished(match){return match?.game==='farbenblitz'?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
