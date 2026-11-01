@@ -29,3 +29,17 @@ test('do not reveal answer or score before finish',()=>{
  assert.equal(Object.hasOwn(mid.challenge,'correct'),false);
  assert.equal(Object.hasOwn(mid,'scores'),false);
 });
+
+test('first word is visible immediately after countdown without clicking an answer',()=>{
+ const members=[{uid:'a',seat:'one',name:'A'}],match=createFarbenblitzMatch(members);
+ acknowledgeFarbenblitz(match,members,'a',1000);
+ const before=publicFarbenblitz(match,members,'a',3999);
+ assert.equal(before.phase,'countdown');
+ assert.equal(before.challenge,null);
+ const after=publicFarbenblitz(match,members,'a',4000);
+ assert.equal(after.phase,'playing');
+ assert.ok(after.challenge?.word);
+ assert.ok(after.challenge?.ink);
+ assert.equal(after.results,null);
+ assert.equal(match.round,0);
+});
