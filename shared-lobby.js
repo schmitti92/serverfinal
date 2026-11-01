@@ -606,7 +606,8 @@ function finishEisstock(ch,members){
     if(!Object.hasOwn(HUB_GAMES,game))throw error(400,'INVALID_GAME');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
-      if(room.phase==='playing')throw error(409,'MATCH_IN_PROGRESS');
+      if(room.phase==='playing'&&!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
+      if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
       room.game=game;room.phase='preparing';
       if(game==='kniffel')room.settings={...room.settings,kniffel:{mode:room.settings?.kniffel?.mode||'classic'}};
