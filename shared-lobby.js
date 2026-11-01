@@ -459,6 +459,7 @@ function finishEisstock(ch,members){
       allReady:allReady(room),
       match:room.phase==='playing'&&room.match?{
         id:room.match.id,game:room.match.game,gameCode:room.match.gameCode,settings:room.match.settings,
+        status:{phase:room.match.game==='farbenblitz'?(room.match.farbenblitz?.finished?'finished':room.match.farbenblitz?.phase||'instructions'):'playing'},
         challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
         playerCount:room.match.members.length,
