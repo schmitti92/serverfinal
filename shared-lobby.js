@@ -733,6 +733,24 @@ function finishEisstock(ch,members){
       startGame(room);
     })};
   }));
+  // One-click launch: lobby readiness is replaced by the in-game instruction gate.
+  app.post('/api/hub/rooms/:code/farbenblitz/launch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase==='playing'){
+        if(room.match?.game==='farbenblitz'&&room.match.members.some(m=>m.uid===identity.uid))return {unchanged:true};
+        throw error(409,'MATCH_IN_PROGRESS');
+      }
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='lobby'&&room.phase!=='preparing')throw error(409,'ROOM_NOT_READY');
+      if(room.phase==='preparing'&&room.game&&room.game!=='farbenblitz')throw error(409,'OTHER_GAME_SELECTED');
+      room.game='farbenblitz';room.phase='preparing';
+      room.players=room.players.filter(p=>!p.testBot);
+      room.players.forEach((p,i)=>{p.participating=i<4;p.ready=false;});
+      startGame(room);
+    })};
+  }));
   // Farbenblitz uses the existing authenticated hub room and transactional live stream.
   app.post('/api/hub/rooms/:code/farbenblitz/understood',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
