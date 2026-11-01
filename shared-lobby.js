@@ -452,8 +452,8 @@ function finishEisstock(ch,members){
   }
   function startGame(room){
     if(room.game==='kniffel'){
-      const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic';
-      room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode},kniffel:createKniffel(seats,mode)};
+      const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic',extraJokers=room.settings?.kniffel?.extraJokers===true;
+      room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode,extraJokers},kniffel:createKniffel(seats,mode,extraJokers)};
       advanceKniffelBots(room.match.kniffel);
       room.phase='playing';return;
     }
@@ -610,7 +610,7 @@ function finishEisstock(ch,members){
       if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
       room.game=game;room.phase='preparing';
-      if(game==='kniffel')room.settings={...room.settings,kniffel:{mode:room.settings?.kniffel?.mode||'classic'}};
+      if(game==='kniffel')room.settings={...room.settings,kniffel:{mode:room.settings?.kniffel?.mode||'classic',extraJokers:room.settings?.kniffel?.extraJokers===true}};
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       if(game==='business')room.settings={...room.settings,business:businessSettings(room.settings?.business)||{...BUSINESS_DEFAULTS}};
@@ -823,12 +823,12 @@ function finishEisstock(ch,members){
     })};
   }));
   app.post('/api/hub/rooms/:code/kniffel/settings',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity,mode=req.body?.mode;
-    if(!code||!Object.hasOwn(KNIFFEL_MODES,mode))throw error(400,'INVALID_MODE');
+    const code=validCode(req.params.code),identity=req.hubIdentity,mode=req.body?.mode,extraJokers=req.body?.extraJokers;
+    if(!code||!Object.hasOwn(KNIFFEL_MODES,mode)||typeof extraJokers!=='boolean')throw error(400,'INVALID_SETTINGS');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.game!=='kniffel'||room.phase!=='preparing')throw error(409,'NOT_PREPARING');
-      room.settings={...room.settings,kniffel:{mode}};
+      room.settings={...room.settings,kniffel:{mode,extraJokers}};
     })};
   }));
   app.post('/api/hub/rooms/:code/kniffel/action',handler(async req=>{
