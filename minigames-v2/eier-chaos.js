@@ -69,6 +69,7 @@ export function moveEierChaos(match,members,uid,{x},now){
  return match;
 }
 export function publicEierChaos(match,members,uid,now){
- const phase=match.phase==='countdown'&&now>=match.startAt?'playing':match.phase==='playing'&&now>=match.startAt+DURATION_MS?'finished':match.phase;
+ // Never reveal results before authoritative finalization (including bot scoring).
+ const phase=match.phase==='countdown'&&now>=match.startAt?'playing':match.phase;
  return {phase,startAt:match.startAt,durationMs:DURATION_MS,readyCount:match.ready.length,playerCount:members.length,myBasket:match.players[uid]?.basket??null,results:phase==='finished'?members.map(m=>({seat:m.seat,name:m.name,score:match.players[m.uid].score})):null};
 }
