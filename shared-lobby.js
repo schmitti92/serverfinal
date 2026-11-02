@@ -1,6 +1,7 @@
 import {createKniffel,applyKniffel,standings,allowed as kniffelAllowed,points as kniffelPoints,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
 import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
+import {createMerkMatrix,acknowledgeMerkMatrix,markMerkMatrix,updateMerkMatrix,publicMerkMatrix} from './minigames-v2/merk-matrix.js';
 import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos,submitEierChaos,publicEierChaos} from './minigames-v2/eier-chaos.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
  * Single Firestore room across games; no client-side authority or local profile state.
@@ -16,6 +17,7 @@ export const HUB_GAMES = Object.freeze({
   partychallenge: { title:'Party Challenge', min:2, max:4 },
   farbenblitz: { title:'Farbenblitz', min:1, max:4 },
   'eier-chaos': { title:'Eier-Chaos', min:1, max:4 },
+  'merk-matrix': { title:'Merk-Matrix 2', min:1, max:4 },
   kniffel: { title:'Kniffel', min:1, max:4 },
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -465,6 +467,11 @@ function finishEisstock(ch,members){
       assertFreshMatch(room.lastCompleted,room.match);
       room.phase='playing';return;
     }
+    if(room.game==='merk-matrix'){
+      const seats=activeSeats(room);
+      room.match={...createMiniGameSession({id:randomUUID(),game:'merk-matrix',createdAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name}))}),startedAt:clock(),gameCode:null,settings:{},merkMatrix:createMerkMatrix(seats)};
+      assertFreshMatch(room.lastCompleted,room.match);room.phase='playing';return;
+    }
     if(room.game==='eier-chaos'){
       const seats=activeSeats(room);
       room.match={...createMiniGameSession({id:randomUUID(),game:'eier-chaos',createdAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name}))}),startedAt:clock(),gameCode:null,settings:{durationMs:60000},eierChaos:createEierChaosMatch(seats)};
@@ -503,6 +510,7 @@ function finishEisstock(ch,members){
         challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
         eierChaos:room.match.game==='eier-chaos'?publicEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock()):null,
+        merkMatrix:room.match.game==='merk-matrix'?publicMerkMatrix(room.match.merkMatrix,room.match.members,identity.uid,clock()):null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
@@ -516,9 +524,9 @@ function finishEisstock(ch,members){
   // Bridge a game reducer's phase into the shared authoritative lifecycle.
   // Transitional countdown -> playing -> finished is applied in order.
   function syncMiniGameLifecycle(match){
-    if(!match||!['farbenblitz','eier-chaos'].includes(match.game))return;
-    const gameState=match.game==='farbenblitz'?match.farbenblitz:match.eierChaos;
-    const target=gameState?.finished?'finished':gameState?.phase;
+    if(!match||!['farbenblitz','eier-chaos','merk-matrix'].includes(match.game))return;
+    const gameState=match.game==='farbenblitz'?match.farbenblitz:match.game==='eier-chaos'?match.eierChaos:match.merkMatrix;
+    const target=gameState?.finished?'finished':match.game==='merk-matrix'?(gameState?.phase==='instructions'?'instructions':gameState?.phase==='countdown'?'countdown':'playing'):gameState?.phase;
     const order=['instructions','countdown','playing','finished'];
     const current=engineMatchPhase(match);
     const from=order.indexOf(current),to=order.indexOf(target);
@@ -530,9 +538,10 @@ function finishEisstock(ch,members){
     if(match.game==='kniffel')return match.kniffel?.finished?'finished':'playing';
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
     if(match.game==='eier-chaos')return match.eierChaos?.finished?'finished':match.eierChaos?.phase||'instructions';
+    if(match.game==='merk-matrix')return match.merkMatrix?.finished?'finished':match.merkMatrix?.phase||'instructions';
     return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','kniffel'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
+  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -797,6 +806,52 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       startGame(room);
+    })};
+  }));
+  // Merk-Matrix uses the shared hub and its authenticated members; no game-specific room.
+  app.post('/api/hub/rooms/:code/merk-matrix/launch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,botCount=req.body?.bots??0;
+    if(!code||!Number.isInteger(botCount)||botCount<0||botCount>3)throw error(400,'INVALID_BOT_COUNT');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase==='playing'){
+        if(hubMatchFinished(room.match))archiveCompletedMatch(room);
+        else if(room.match?.game==='merk-matrix')return {unchanged:true};
+        else throw error(409,'MATCH_IN_PROGRESS');
+      }
+      if(!['lobby','preparing'].includes(room.phase))throw error(409,'ROOM_NOT_READY');
+      if(room.phase==='preparing'&&room.game&&room.game!=='merk-matrix')throw error(409,'OTHER_GAME_SELECTED');
+      room.game='merk-matrix';room.phase='preparing';room.players=room.players.filter(p=>!p.testBot);
+      if(room.players.length+botCount>4)throw error(409,'GAME_SEATS_FULL');
+      room.players.forEach(p=>{p.participating=true;p.ready=false;});
+      for(let i=1;i<=botCount;i++)room.players.push({uid:'testbot:'+room.code+':merk-matrix:'+i,seat:randomUUID(),name:'🤖 Testspieler '+i,ready:true,participating:true,testBot:true,joinedAt:clock()});
+      startGame(room);
+      for(const p of room.players.filter(p=>p.testBot))acknowledgeMerkMatrix(room.match.merkMatrix,room.match.members,p.uid,clock());
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/merk-matrix/understood',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='merk-matrix'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      try{acknowledgeMerkMatrix(room.match.merkMatrix,room.match.members,identity.uid,clock());syncMiniGameLifecycle(room.match);}catch(e){throw error(409,e.message);}
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/merk-matrix/mark',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{matchId,round,cells}=req.body||{};
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='merk-matrix'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      const s=room.match.merkMatrix;updateMerkMatrix(s,room.match.members,clock());
+      try{markMerkMatrix(s,room.match.members,identity.uid,{round,cells},clock());syncMiniGameLifecycle(room.match);}catch(e){throw error(409,e.message);}
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/merk-matrix/tick',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='merk-matrix'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      updateMerkMatrix(room.match.merkMatrix,room.match.members,clock());syncMiniGameLifecycle(room.match);
     })};
   }));
   // Shared hub owns all room membership, authentication and persistence.
