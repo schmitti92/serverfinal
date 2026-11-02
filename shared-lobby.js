@@ -1,7 +1,7 @@
 import {createKniffel,applyKniffel,standings,allowed as kniffelAllowed,points as kniffelPoints,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
 import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
-import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos,publicEierChaos} from './minigames-v2/eier-chaos.js';
+import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos,submitEierChaos,publicEierChaos} from './minigames-v2/eier-chaos.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
  * Single Firestore room across games; no client-side authority or local profile state.
  * Deliberately DOES NOT launch legacy games until they have safe room adapters.
@@ -847,7 +847,7 @@ function finishEisstock(ch,members){
       if(room.phase!=='playing'||room.match?.game!=='eier-chaos'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
       if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
       if(clock()<room.match.eierChaos.startAt+60000)throw error(409,'GAME_NOT_FINISHED');
-      advanceEierChaos(room.match.eierChaos,clock());syncMiniGameLifecycle(room.match);
+      submitEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock());syncMiniGameLifecycle(room.match);
     })};
   }));
   // One-click launch: lobby readiness is replaced by the in-game instruction gate.
