@@ -801,7 +801,8 @@ function finishEisstock(ch,members){
   }));
   // Shared hub owns all room membership, authentication and persistence.
   app.post('/api/hub/rooms/:code/eier-chaos/launch',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const code=validCode(req.params.code),identity=req.hubIdentity,botCount=req.body?.bots??0;
+    if(!Number.isInteger(botCount)||botCount<0||botCount>3)throw error(400,'INVALID_BOT_COUNT');
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
@@ -814,8 +815,11 @@ function finishEisstock(ch,members){
       if(room.phase==='preparing'&&room.game&&room.game!=='eier-chaos')throw error(409,'OTHER_GAME_SELECTED');
       room.game='eier-chaos';room.phase='preparing';
       room.players=room.players.filter(p=>!p.testBot);
+      if(room.players.length+botCount>4)throw error(409,'GAME_SEATS_FULL');
       room.players.forEach((p,i)=>{p.participating=i<4;p.ready=false;});
+      for(let i=1;i<=botCount;i++)room.players.push({uid:'testbot:'+room.code+':eier-chaos:'+i,seat:randomUUID(),name:'🤖 Testspieler '+i,ready:true,participating:true,testBot:true,joinedAt:clock()});
       startGame(room);
+      for(const p of room.players.filter(p=>p.testBot))acknowledgeEierChaos(room.match.eierChaos,room.match.members,p.uid,clock());
     })};
   }));
   app.post('/api/hub/rooms/:code/eier-chaos/understood',handler(async req=>{
