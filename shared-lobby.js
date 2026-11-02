@@ -1,6 +1,7 @@
 import {createKniffel,applyKniffel,standings,allowed as kniffelAllowed,points as kniffelPoints,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
 import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
+import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos,publicEierChaos} from './minigames-v2/eier-chaos.js';
 /** Gemeinsame Spielesammlung-Lobby (Phase 1).
  * Single Firestore room across games; no client-side authority or local profile state.
  * Deliberately DOES NOT launch legacy games until they have safe room adapters.
@@ -14,6 +15,7 @@ export const HUB_GAMES = Object.freeze({
   business: { title:'Das große Business', min:2, max:5 },
   partychallenge: { title:'Party Challenge', min:2, max:4 },
   farbenblitz: { title:'Farbenblitz', min:1, max:4 },
+  'eier-chaos': { title:'Eier-Chaos', min:1, max:4 },
   kniffel: { title:'Kniffel', min:1, max:4 },
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -463,6 +465,12 @@ function finishEisstock(ch,members){
       assertFreshMatch(room.lastCompleted,room.match);
       room.phase='playing';return;
     }
+    if(room.game==='eier-chaos'){
+      const seats=activeSeats(room);
+      room.match={...createMiniGameSession({id:randomUUID(),game:'eier-chaos',createdAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name}))}),startedAt:clock(),gameCode:null,settings:{durationMs:60000},eierChaos:createEierChaosMatch(seats)};
+      assertFreshMatch(room.lastCompleted,room.match);
+      room.phase='playing';return;
+    }
     if(room.game==='partychallenge')return startChallenge(room);
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
@@ -494,6 +502,7 @@ function finishEisstock(ch,members){
         status:{phase:hubMatchPhase(room.match)},
         challenge:room.match.game==='partychallenge'?publicChallenge(room.match.challenge,room.match.members,identity):null,
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
+        eierChaos:room.match.game==='eier-chaos'?publicEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock()):null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
@@ -507,8 +516,9 @@ function finishEisstock(ch,members){
   // Bridge a game reducer's phase into the shared authoritative lifecycle.
   // Transitional countdown -> playing -> finished is applied in order.
   function syncMiniGameLifecycle(match){
-    if(!match||match.game!=='farbenblitz')return;
-    const target=match.farbenblitz?.finished?'finished':match.farbenblitz?.phase;
+    if(!match||!['farbenblitz','eier-chaos'].includes(match.game))return;
+    const gameState=match.game==='farbenblitz'?match.farbenblitz:match.eierChaos;
+    const target=gameState?.finished?'finished':gameState?.phase;
     const order=['instructions','countdown','playing','finished'];
     const current=engineMatchPhase(match);
     const from=order.indexOf(current),to=order.indexOf(target);
@@ -519,9 +529,10 @@ function finishEisstock(ch,members){
     if(!match)return null;
     if(match.game==='kniffel')return match.kniffel?.finished?'finished':'playing';
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
+    if(match.game==='eier-chaos')return match.eierChaos?.finished?'finished':match.eierChaos?.phase||'instructions';
     return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return ['farbenblitz','kniffel'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
+  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','kniffel'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -786,6 +797,53 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       startGame(room);
+    })};
+  }));
+  // Shared hub owns all room membership, authentication and persistence.
+  app.post('/api/hub/rooms/:code/eier-chaos/launch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase==='playing'){
+        if(hubMatchFinished(room.match))archiveCompletedMatch(room);
+        else if(room.match?.game==='eier-chaos')return {unchanged:true};
+        else throw error(409,'MATCH_IN_PROGRESS');
+      }
+      if(!['lobby','preparing'].includes(room.phase))throw error(409,'ROOM_NOT_READY');
+      if(room.phase==='preparing'&&room.game&&room.game!=='eier-chaos')throw error(409,'OTHER_GAME_SELECTED');
+      room.game='eier-chaos';room.phase='preparing';
+      room.players=room.players.filter(p=>!p.testBot);
+      room.players.forEach((p,i)=>{p.participating=i<4;p.ready=false;});
+      startGame(room);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/eier-chaos/understood',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='eier-chaos'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      try{acknowledgeEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock());syncMiniGameLifecycle(room.match);}
+      catch(e){throw error(409,e.message);}
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/eier-chaos/move',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,{matchId,x}=req.body||{};
+    if(!code||!Number.isFinite(x)||x<0||x>1)throw error(400,'INVALID_POSITION');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='eier-chaos'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      try{moveEierChaos(room.match.eierChaos,room.match.members,identity.uid,{x},clock());syncMiniGameLifecycle(room.match);}
+      catch(e){throw error(409,e.message);}
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/eier-chaos/finish',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.phase!=='playing'||room.match?.game!=='eier-chaos'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
+      if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+      if(clock()<room.match.eierChaos.startAt+60000)throw error(409,'GAME_NOT_FINISHED');
+      advanceEierChaos(room.match.eierChaos,clock());syncMiniGameLifecycle(room.match);
     })};
   }));
   // One-click launch: lobby readiness is replaced by the in-game instruction gate.
