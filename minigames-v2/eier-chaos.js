@@ -41,9 +41,9 @@ export function moveEierChaos(match,members,uid,{x},now){
  checkMembers(members);
  if(!members.some(m=>m.uid===uid))throw Error('NOT_A_PARTICIPANT');
  if(!Number.isFinite(x)||x<0||x>1)throw Error('INVALID_POSITION');
- advanceEierChaos(match,now);
+ if(match.phase==='countdown'&&now>=match.startAt)match.phase='playing';
  if(match.phase!=='playing')throw Error('NOT_PLAYING');
- const player=match.players[uid],at=now-match.startAt;
+ const player=match.players[uid],at=Math.min(DURATION_MS,now-match.startAt);
  if(at<player.lastAt)throw Error('OUT_OF_ORDER_ACTION');
  const previous=player.lastAt;
  for(let i=0;i<EGG_COUNT;i++){
