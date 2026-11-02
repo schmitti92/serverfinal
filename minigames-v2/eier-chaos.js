@@ -16,7 +16,7 @@ function checkMembers(members){
 }
 export function createEierChaosMatch(members){
  checkMembers(members);
- return {phase:'instructions',ready:[],startAt:null,finished:false,players:Object.fromEntries(members.map(m=>[m.uid,{score:0,basket:.5,lastAt:0,caught:[]}]))};
+ return {phase:'instructions',ready:[],startAt:null,finished:false,submitted:[],players:Object.fromEntries(members.map(m=>[m.uid,{score:0,basket:.5,lastAt:0,caught:[]}]))};
 }
 export function acknowledgeEierChaos(match,members,uid,now){
  checkMembers(members);
@@ -43,8 +43,24 @@ function scoreBots(match){
 export function advanceEierChaos(match,now){
  if(!Number.isFinite(now))throw Error('INVALID_TIME');
  if(match.phase==='countdown'&&now>=match.startAt)match.phase='playing';
- if(match.phase==='playing'&&now>=match.startAt+DURATION_MS){scoreBots(match);match.phase='finished';match.finished=true;}
+ if(match.phase==='playing'&&now>=match.startAt+DURATION_MS){
+  scoreBots(match);
+  if(!Array.isArray(match.submitted))match.submitted=[];
+  for(const uid of Object.keys(match.players))if(uid.startsWith('testbot:')&&!match.submitted.includes(uid))match.submitted.push(uid);
+  if(match.submitted.length===Object.keys(match.players).length){match.phase='finished';match.finished=true;}
+ }
  return match;
+}
+/** Confirm an individual participant has finished; only the complete roster unlocks results. */
+export function submitEierChaos(match,members,uid,now){
+ checkMembers(members);
+ if(!members.some(m=>m.uid===uid))throw Error('NOT_A_PARTICIPANT');
+ if(!Number.isFinite(now)||match.startAt===null||now<match.startAt+DURATION_MS)throw Error('GAME_NOT_FINISHED');
+ advanceEierChaos(match,now);
+ if(match.phase==='finished')return match;
+ if(!Array.isArray(match.submitted))match.submitted=[];
+ if(!match.submitted.includes(uid))match.submitted.push(uid);
+ return advanceEierChaos(match,now);
 }
 /** Server timestamp is authoritative. Movement samples are rate-limited by caller.
  * A caught egg is awarded only when a sample brackets its landing time.
@@ -71,5 +87,6 @@ export function moveEierChaos(match,members,uid,{x},now){
 export function publicEierChaos(match,members,uid,now){
  // Never reveal results before authoritative finalization (including bot scoring).
  const phase=match.phase==='countdown'&&now>=match.startAt?'playing':match.phase;
- return {phase,startAt:match.startAt,durationMs:DURATION_MS,readyCount:match.ready.length,playerCount:members.length,myBasket:match.players[uid]?.basket??null,results:phase==='finished'?members.map(m=>({seat:m.seat,name:m.name,score:match.players[m.uid].score})):null};
+ const waiting=phase==='playing'&&match.startAt!==null&&now>=match.startAt+DURATION_MS;
+ return {phase:waiting?'awaiting-results':phase,submittedCount:match.submitted?.length??0,startAt:match.startAt,durationMs:DURATION_MS,readyCount:match.ready.length,playerCount:members.length,myBasket:match.players[uid]?.basket??null,results:phase==='finished'?members.map(m=>({seat:m.seat,name:m.name,score:match.players[m.uid].score})):null};
 }
