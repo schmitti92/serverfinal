@@ -12,7 +12,7 @@ test('results wait for authoritative finish and bots are scored',()=>{
  const match=createEierChaosMatch(roster);
  roster.forEach(p=>acknowledgeEierChaos(match,roster,p.uid,1000));
  const premature=publicEierChaos(match,roster,'a',64001);
- assert.equal(premature.phase,'playing');
+ assert.equal(premature.phase,'awaiting-results');
  assert.equal(premature.results,null);
  advanceEierChaos(match,64001);
  const finished=publicEierChaos(match,roster,'a',64001);
