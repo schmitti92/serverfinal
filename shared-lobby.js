@@ -829,6 +829,21 @@ function finishEisstock(ch,members){
       for(const p of room.players.filter(p=>p.testBot))acknowledgeMerkMatrix(room.match.merkMatrix,room.match.members,p.uid,clock());
     })};
   }));
+  app.post('/api/hub/rooms/:code/merk-matrix/rematch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.match?.game!=='merk-matrix'||!hubMatchFinished(room.match))throw error(409,'MATCH_NOT_FINISHED');
+      const old=room.match;
+      const members=activeSeats(room);
+      room.lastCompleted={id:old.id,game:old.game,finishedAt:clock()};
+      room.match={...createMiniGameSession({id:randomUUID(),game:'merk-matrix',createdAt:clock(),members:members.map(p=>({uid:p.uid,seat:p.seat,name:p.name}))}),startedAt:clock(),gameCode:null,settings:{},merkMatrix:createMerkMatrix(members)};
+      assertFreshMatch(room.lastCompleted,room.match);
+      room.phase='playing';room.game='merk-matrix';
+      for(const p of members.filter(p=>p.testBot))acknowledgeMerkMatrix(room.match.merkMatrix,room.match.members,p.uid,clock());
+    })};
+  }));
   app.post('/api/hub/rooms/:code/merk-matrix/understood',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,matchId=req.body?.matchId;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
