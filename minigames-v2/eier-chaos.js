@@ -27,10 +27,23 @@ export function acknowledgeEierChaos(match,members,uid,now){
  if(match.ready.length===members.length){match.phase='countdown';match.startAt=now+3000;}
  return match;
 }
+function scoreBots(match){
+ for(const [uid,player] of Object.entries(match.players)){
+  if(!uid.startsWith('testbot:'))continue;
+  let score=0;const caught=[];
+  for(let i=0;i<EGG_COUNT;i++){
+   const egg=eggAt(i);
+   // Deterministic bots with distinct skill levels; no network calls or client scores.
+   const skill=uid.endsWith(':1')?3:uid.endsWith(':2')?4:5;
+   if((i+skill)%skill===0){score+=egg.points;caught.push(i);}
+  }
+  player.score=score;player.caught=caught;
+ }
+}
 export function advanceEierChaos(match,now){
  if(!Number.isFinite(now))throw Error('INVALID_TIME');
  if(match.phase==='countdown'&&now>=match.startAt)match.phase='playing';
- if(match.phase==='playing'&&now>=match.startAt+DURATION_MS){match.phase='finished';match.finished=true;}
+ if(match.phase==='playing'&&now>=match.startAt+DURATION_MS){scoreBots(match);match.phase='finished';match.finished=true;}
  return match;
 }
 /** Server timestamp is authoritative. Movement samples are rate-limited by caller.
