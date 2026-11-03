@@ -98,18 +98,25 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
    if(room.engine.match?.phase!=='playing'||!room.game)throw bad(409,'NOT_PLAYING');
    if(!room.engine.match.roster.includes(actor))throw bad(403,'NOT_SELECTED');
    room.game=chooseDoor(room.game,actor,door);
-   for(const bot of room.game.alive.filter(id=>id.startsWith('bot:')&&!Object.hasOwn(room.game.choices,id))){
-    const choice=botAction(room.game,bot,room.game.round+room.engine.revision);
-    room.game=chooseDoor(room.game,bot,choice.door);
-   }
-   if(room.game.phase==='revealing'){
-    const round=room.game.round,roundChoices={...room.game.choices};
-    while(room.game.phase==='revealing')room.game=revealNext(room.game);
-    room.lastReveal={round:round+1,doors:room.game.reveals.length?room.game.reveals:room.game.lockedDoors[round]===undefined?[]:[0,1,2].map(door=>({door,locked:door===room.game.lockedDoors[round],visitors:Object.entries(roundChoices).filter(([,chosen])=>chosen===door).map(([id])=>id)}))};
-    if(room.game.finished){
-     const result=getResult(room.game);
-     for(const id of room.engine.match.roster)cmd(room,'submit-result',id,{verified:true,score:result.winnerIds.includes(id)?1:0});
+   // Engine2 owns bot scheduling; a bot-only survivor must never stall the room.
+   for(let guard=0;guard<4&&!room.game.finished;guard++){
+    if(room.game.phase==='choosing'){
+     for(const bot of room.game.alive.filter(id=>id.startsWith('bot:')&&!Object.hasOwn(room.game.choices,id))){
+      const action=botAction(room.game,bot,room.game.round+room.engine.revision);
+      room.game=chooseDoor(room.game,bot,action.door);
+     }
     }
+    if(room.game.phase!=='revealing')break;
+    const round=room.game.round,choices={...room.game.choices};
+    while(room.game.phase==='revealing')room.game=revealNext(room.game);
+    room.lastReveal={round:round+1,doors:[0,1,2].map(door=>({
+     door,locked:door===room.game.lockedDoors[round],
+     visitors:Object.entries(choices).filter(([,choice])=>choice===door).map(([id])=>id)
+    }))};
+   }
+   if(room.game.finished){
+    const result=getResult(room.game);
+    for(const id of room.engine.match.roster)cmd(room,'submit-result',id,{verified:true,score:result.winnerIds.includes(id)?1:0});
    }
    return room;
   });
