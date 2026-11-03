@@ -115,7 +115,7 @@ test('copy-roll is limited to one per player even when lobby gives three jokers'
 });
 
 test('free-entry joker can be activated during a copied turn and score any empty field',()=>{
- const g=createKniffel(members(2),'three',true,1);
+ const g=createKniffel(members(2),'triple-mixed',true,1);
  for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>6);
  applyKniffel(g,'u1',{type:'copy-roll'});
  applyKniffel(g,'u0',{type:'score',category:0,column:0});
