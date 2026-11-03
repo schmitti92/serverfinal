@@ -70,7 +70,7 @@ test('copy-roll captures opponent third roll, replaces next own turn and consume
  assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
  applyKniffel(g,'u0',{type:'score',category:0});
  assert.equal(g.turn,1);assert.equal(g.rolls,3);assert.deepEqual(g.dice,[4,4,4,4,4]);
- for(const type of ['roll','hold','reroll','extra-die','extra-roll','full-restart','free-entry'])
+ for(const type of ['roll','hold','reroll','extra-die','extra-roll','full-restart'])
   assert.throws(()=>applyKniffel(g,'u1',{type,index:0}),/COPIED_TURN_SCORE_ONLY/);
  applyKniffel(g,'u1',{type:'score',category:3});
  assert.equal(g.players[1].sheet[0][3],20);
@@ -112,4 +112,22 @@ test('copy-roll is limited to one per player even when lobby gives three jokers'
  applyKniffel(g,'u1',{type:'score',category:2});
  for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>4);
  assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+});
+
+test('free-entry joker can be activated during a copied turn and score any empty field',()=>{
+ const g=createKniffel(members(2),'three',true,1);
+ for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>6);
+ applyKniffel(g,'u1',{type:'copy-roll'});
+ applyKniffel(g,'u0',{type:'score',category:0,column:0});
+ assert.equal(g.turn,1);assert.ok(g.players[1].pendingCopy);
+ applyKniffel(g,'u1',{type:'free-entry'});
+ assert.equal(g.freeEntryActive,true);
+ assert.equal(g.players[1].jokerUses.freeEntry||0,0);
+ assert.ok(allowed(g,1).includes(10));
+ applyKniffel(g,'u1',{type:'score',category:10,column:1});
+ assert.equal(g.players[1].sheet[1][10],40);
+ assert.equal(g.players[1].pendingCopy,null);
+ assert.equal(g.players[1].jokerUses.freeEntry,1);
+ assert.equal(g.freeEntryActive,false);
+ assert.equal(g.turn,0);
 });
