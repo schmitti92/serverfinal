@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/*.test.js minigames-v2/*.test.mjs"
+    "test": "node --test tests/*.test.js minigames-v2/*.test.mjs engine2/*.test.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
