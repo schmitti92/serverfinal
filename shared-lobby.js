@@ -1,3 +1,5 @@
+import {createRoom as createEngine2Room,dispatch as engine2Dispatch,project as projectEngine2} from './engine2/MiniGameEngine2.js';
+import {createGame as createTreasureGame,chooseDoor as chooseTreasureDoor,revealNext as revealTreasureDoor,botAction as treasureBotAction,publicGame as publicTreasureGame,getResult as treasureResult} from './engine2/games/drei-schatzkammern/rules.js';
 import {createKniffel,applyKniffel,standings,allowed as kniffelAllowed,points as kniffelPoints,MODES as KNIFFEL_MODES} from './minigames-v2/kniffel.js';
 import {createMiniGameSession,matchPhase as engineMatchPhase,isMatchFinished as engineMatchFinished,setMatchPhase,assertFreshMatch} from './minigames-v2/engine/session.js';
 import {createFarbenblitzMatch,acknowledgeFarbenblitz,answerFarbenblitz,publicFarbenblitz} from './minigames-v2/farbenblitz.js';
@@ -18,6 +20,7 @@ export const HUB_GAMES = Object.freeze({
   farbenblitz: { title:'Farbenblitz', min:1, max:4 },
   'eier-chaos': { title:'Eier-Chaos', min:1, max:4 },
   'merk-matrix': { title:'Merk-Matrix 2', min:1, max:4 },
+  'drei-schatzkammern': { title:'Die drei Schatzkammern', min:1, max:4 },
   kniffel: { title:'Kniffel', min:1, max:4 },
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -455,6 +458,15 @@ function finishEisstock(ch,members){
     }
   }
   function startGame(room){
+    if(room.game==='drei-schatzkammern'){
+      const seats=activeSeats(room);
+      let engine=createEngine2Room({roomId:room.code,hostId:room.hostUid,hostName:seats.find(p=>p.uid===room.hostUid)?.name||'Host',now:clock()});
+      const dispatch2=(type,actorId,extra={})=>{engine=engine2Dispatch(engine,{type,actorId,commandId:randomUUID(),expectedRevision:engine.revision,now:clock(),...extra}).state;};
+      for(const p of seats)if(p.uid!==room.hostUid)dispatch2('join',p.uid,{name:p.name});
+      const id=randomUUID();dispatch2('prepare',room.hostUid,{matchId:id,gameId:'drei-schatzkammern'});
+      room.match={id,game:'drei-schatzkammern',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{},engine2:engine,treasure:createTreasureGame({players:engine.match.roster,lockedDoors:Array.from({length:3},()=>randomInt(3))}),treasureReveal:null};
+      room.phase='playing';return;
+    }
     if(room.game==='kniffel'){
       const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic',extraJokers=room.settings?.kniffel?.extraJokers===true;
       room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode,extraJokers},kniffel:createKniffel(seats,mode,extraJokers)};
@@ -511,6 +523,7 @@ function finishEisstock(ch,members){
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
         eierChaos:room.match.game==='eier-chaos'?publicEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock()):null,
         merkMatrix:room.match.game==='merk-matrix'?publicMerkMatrix(room.match.merkMatrix,room.match.members,identity.uid,clock()):null,
+        treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,engine:projectEngine2(room.match.engine2,identity.uid).match}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
@@ -535,13 +548,14 @@ function finishEisstock(ch,members){
   }
   function hubMatchPhase(match){
     if(!match)return null;
+    if(match.game==='drei-schatzkammern')return match.engine2?.match?.phase||'instructions';
     if(match.game==='kniffel')return match.kniffel?.finished?'finished':'playing';
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
     if(match.game==='eier-chaos')return match.eierChaos?.finished?'finished':match.eierChaos?.phase||'instructions';
     if(match.game==='merk-matrix')return match.merkMatrix?.finished?'finished':match.merkMatrix?.phase||'instructions';
     return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
+  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel','drei-schatzkammern'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -867,6 +881,70 @@ function finishEisstock(ch,members){
     return {room:await mutate(code,identity,room=>{
       if(room.phase!=='playing'||room.match?.game!=='merk-matrix'||room.match.id!==matchId)throw error(409,'MATCH_MISMATCH');
       updateMerkMatrix(room.match.merkMatrix,room.match.members,clock());syncMiniGameLifecycle(room.match);
+    })};
+  }));
+  // Engine 2.0 treasure game lives inside the existing hub room; never creates a second room.
+  app.post('/api/hub/rooms/:code/drei-schatzkammern/launch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,bots=req.body?.bots??0;
+    if(!code||!Number.isInteger(bots)||bots<0||bots>3)throw error(400,'INVALID_BOT_COUNT');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase==='playing'){
+        if(hubMatchFinished(room.match))archiveCompletedMatch(room);
+        else if(room.match?.game==='drei-schatzkammern')return {unchanged:true};
+        else throw error(409,'MATCH_IN_PROGRESS');
+      }
+      if(!['lobby','preparing'].includes(room.phase))throw error(409,'ROOM_NOT_READY');
+      room.game='drei-schatzkammern';room.phase='preparing';
+      room.players=room.players.filter(p=>!p.testBot);
+      if(room.players.length+bots>4)throw error(409,'GAME_SEATS_FULL');
+      room.players.forEach(p=>{p.participating=true;p.ready=false;});
+      for(let i=1;i<=bots;i++)room.players.push({uid:'testbot:'+room.code+':treasure:'+i,seat:randomUUID(),name:'🤖 Testspieler '+i,ready:true,participating:true,testBot:true,joinedAt:clock()});
+      startGame(room);
+      let e=room.match.engine2;
+      for(const p of room.players.filter(p=>p.testBot)){
+        e=engine2Dispatch(e,{type:'ready',actorId:p.uid,commandId:randomUUID(),expectedRevision:e.revision,now:clock()}).state;
+      }
+      room.match.engine2=e;
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/drei-schatzkammern/ready',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.match?.game!=='drei-schatzkammern')throw error(409,'NOT_TREASURE_MATCH');
+      let e=room.match.engine2;
+      if(e.match.phase==='instructions')e=engine2Dispatch(e,{type:'ready',actorId:identity.uid,commandId:randomUUID(),expectedRevision:e.revision,now:clock()}).state;
+      if(e.match.phase==='countdown')e=engine2Dispatch(e,{type:'tick',actorId:room.hostUid,commandId:randomUUID(),expectedRevision:e.revision,now:e.match.startedAt}).state;
+      room.match.engine2=e;
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/drei-schatzkammern/choose',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,room=>{
+      if(room.match?.game!=='drei-schatzkammern'||room.match.engine2.match.phase!=='playing')throw error(409,'NOT_PLAYING');
+      let g=room.match.treasure;
+      if(!room.match.engine2.match.roster.includes(identity.uid))throw error(403,'NOT_PARTICIPATING');
+      g=chooseTreasureDoor(g,identity.uid,req.body?.door);
+      for(let guard=0;guard<4&&!g.finished;guard++){
+        if(g.phase==='choosing'){
+          for(const bot of g.alive.filter(id=>id.startsWith('testbot:')&&!Object.hasOwn(g.choices,id))){
+            g=chooseTreasureDoor(g,bot,treasureBotAction(g,bot,g.round+room.revision).door);
+          }
+        }
+        if(g.phase!=='revealing')break;
+        const round=g.round,choices={...g.choices};
+        while(g.phase==='revealing')g=revealTreasureDoor(g);
+        room.match.treasureReveal={round:round+1,doors:[0,1,2].map(door=>({door,locked:door===g.lockedDoors[round],visitors:Object.entries(choices).filter(([,d])=>d===door).map(([id])=>id)}))};
+      }
+      room.match.treasure=g;
+      if(g.finished){
+        const winners=treasureResult(g).winnerIds;
+        let e=room.match.engine2;
+        for(const id of e.match.roster)e=engine2Dispatch(e,{type:'submit-result',actorId:id,verified:true,score:winners.includes(id)?1:0,commandId:randomUUID(),expectedRevision:e.revision,now:clock()}).state;
+        room.match.engine2=e;
+      }
     })};
   }));
   // Shared hub owns all room membership, authentication and persistence.
