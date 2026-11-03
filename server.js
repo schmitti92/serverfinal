@@ -8,6 +8,7 @@ import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
+import { installEngine2Api } from "./engine2/api.js";
 import { installHubBusiness } from "./business-hub.js";
 import { installEisstockOnline } from "./eisstock-online.js";
 import { installFallingOnline } from "./falling-online.js";
@@ -4333,6 +4334,11 @@ installProfileApi(app,{
 });
 const profileStatsV8=installProfileStats(app,{
   admin,isReady:()=>profileProjectMatches,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
+// Isolated Engine 2.0 API. Existing shared lobby and game routes remain untouched.
+installEngine2Api(app,{
+  verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 let hubBusinessApi=null;
