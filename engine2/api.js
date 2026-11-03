@@ -103,9 +103,9 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
     room.game=chooseDoor(room.game,bot,choice.door);
    }
    if(room.game.phase==='revealing'){
-    const round=room.game.round;
+    const round=room.game.round,roundChoices={...room.game.choices};
     while(room.game.phase==='revealing')room.game=revealNext(room.game);
-    room.lastReveal={round:round+1,doors:room.game.reveals.length?room.game.reveals:room.game.lockedDoors[round]===undefined?[]:[0,1,2].map(door=>({door,locked:door===room.game.lockedDoors[round],visitors:Object.entries(room.game.choices).filter(([,chosen])=>chosen===door).map(([id])=>id)}))};
+    room.lastReveal={round:round+1,doors:room.game.reveals.length?room.game.reveals:room.game.lockedDoors[round]===undefined?[]:[0,1,2].map(door=>({door,locked:door===room.game.lockedDoors[round],visitors:Object.entries(roundChoices).filter(([,chosen])=>chosen===door).map(([id])=>id)}))};
     if(room.game.finished){
      const result=getResult(room.game);
      for(const id of room.engine.match.roster)cmd(room,'submit-result',id,{verified:true,score:result.winnerIds.includes(id)?1:0});
