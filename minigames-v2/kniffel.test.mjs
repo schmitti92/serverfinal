@@ -103,3 +103,13 @@ test('copy-roll supports six dice and 100-point kniffel',()=>{
  applyKniffel(g,'u1',{type:'score',category:11});
  assert.equal(g.players[1].sheet[0][11],100);
 });
+
+test('copy-roll is limited to one per player even when lobby gives three jokers',()=>{
+ const g=createKniffel(members(2),'classic',true,3);
+ for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>3);
+ applyKniffel(g,'u1',{type:'copy-roll'});
+ applyKniffel(g,'u0',{type:'score',category:0});
+ applyKniffel(g,'u1',{type:'score',category:2});
+ for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>4);
+ assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+});
