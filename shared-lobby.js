@@ -28,6 +28,7 @@ const CHALLENGE_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','lava-ar
 const CHARSET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_PATTERN=/^(?:[0-9]{3}|[A-HJ-NP-Z2-9]{6})$/;
 const COLLECTION='spielesammlung_hub_v1';
+const KNIFFEL_STATS_COLLECTION='kniffel_player_stats_v1';
 const HUB_BARIKADE_CODE=/^B[A-HJ-NP-Z2-9]{9}$/;
 const HUB_KREUZ_CODE=/^K[A-HJ-NP-Z2-9]{9}$/;
 const HUB_SKYJO_CODE=/^S[A-HJ-NP-Z2-9]{9}$/;
@@ -575,6 +576,20 @@ function finishEisstock(ch,members){
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const result=await change(room);
+      // Record each completed match exactly once, in the same transaction as its final move.
+      if(room.match?.game==='kniffel'&&room.match.kniffel?.finished&&!room.match.kniffel.statsRecorded){
+        const game=room.match.kniffel;
+        const ranking=standings(game),best=ranking[0]?.total;
+        const realPlayers=game.players.filter(p=>!p.bot);
+        const refs=realPlayers.map(p=>store.collection(KNIFFEL_STATS_COLLECTION).doc(p.uid));
+        const snapshots=await Promise.all(refs.map(ref=>tx.get(ref)));
+        realPlayers.forEach((p,i)=>{
+          const prior=snapshots[i].exists?snapshots[i].data():{};
+          const score=ranking.find(x=>x.uid===p.uid)?.total??0;
+          tx.set(refs[i],{uid:p.uid,name:p.name,played:(prior.played||0)+1,wins:(prior.wins||0)+(score===best?1:0),highestScore:Math.max(prior.highestScore||0,score),updatedAt:clock()});
+        });
+        game.statsRecorded=true;
+      }
       if(result?.remove){tx.delete(ref);return result.value;}
       if(result?.unchanged)return expose(room,identity);
       room.revision=(Number(room.revision)||0)+1;
@@ -591,6 +606,16 @@ function finishEisstock(ch,members){
   };
   app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business'],challengeFoundation:true}));
   app.use('/api/hub/rooms',authentication);
+  app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const snap=await documentFor(store,code).get();
+    const room=snap.exists?snap.data():null;
+    validateRead(room,identity);
+    const members=room.players.filter(p=>!p.testBot&&!p.bot);
+    const docs=await Promise.all(members.map(p=>store.collection(KNIFFEL_STATS_COLLECTION).doc(p.uid).get()));
+    return {stats:members.map((p,i)=>{const d=docs[i].exists?docs[i].data():{};return {uid:p.uid,name:p.name,wins:d.wins||0,played:d.played||0,highestScore:d.highestScore||0};})};
+  }));
   app.post('/api/hub/rooms',handler(async req=>{
     const identity=req.hubIdentity,store=db();
     for(let attempts=0;attempts<8;attempts++){
