@@ -440,10 +440,10 @@ function finishEisstock(ch,members){
     while(!state.finished&&state.players[state.turn]?.bot){
       if(++steps>4)throw Error('BOT_LOOP_LIMIT');
       const bot=state.players[state.turn],uid=bot.uid;
-      applyKniffel(state,uid,{type:'roll'});
+      if(!bot.pendingCopy)applyKniffel(state,uid,{type:'roll'});
       const counts=Array.from({length:7},(_,n)=>state.dice.filter(v=>v===n).length);
       const bestFace=counts.slice(1).indexOf(Math.max(...counts.slice(1)))+1;
-      for(let r=0;r<2;r++){
+      if(!bot.pendingCopy)for(let r=0;r<2;r++){
         state.held=state.dice.map(d=>d===bestFace);
         applyKniffel(state,uid,{type:'roll'});
       }
