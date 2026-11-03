@@ -58,3 +58,48 @@ test('old games still default to one joker and bad counts are rejected',()=>{
  assert.throws(()=>applyKniffel(g,'u0',{type:'extra-die'}),/JOKER_UNAVAILABLE/);
  for(const n of [0,4,1.5,'3',null])assert.throws(()=>createKniffel(members(1),'classic',true,n),/INVALID_JOKER_COUNT/);
 });
+
+test('copy-roll captures opponent third roll, replaces next own turn and consumes one joker',()=>{
+ const g=createKniffel(members(2),'classic',true,2);
+ for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>i+2);
+ assert.deepEqual(g.dice,[4,4,4,4,4]);
+ assert.throws(()=>applyKniffel(g,'u0',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+ applyKniffel(g,'u1',{type:'copy-roll'});
+ assert.deepEqual(g.players[1].pendingCopy.dice,[4,4,4,4,4]);
+ assert.equal(g.players[1].jokerUses.copyRoll,1);
+ assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+ applyKniffel(g,'u0',{type:'score',category:0});
+ assert.equal(g.turn,1);assert.equal(g.rolls,3);assert.deepEqual(g.dice,[4,4,4,4,4]);
+ for(const type of ['roll','hold','reroll','extra-die','extra-roll','full-restart','free-entry'])
+  assert.throws(()=>applyKniffel(g,'u1',{type,index:0}),/COPIED_TURN_SCORE_ONLY/);
+ applyKniffel(g,'u1',{type:'score',category:3});
+ assert.equal(g.players[1].sheet[0][3],20);
+ assert.equal(g.players[1].pendingCopy,null);
+ assert.equal(g.turn,0);assert.equal(g.rolls,0);
+});
+test('copy-roll requires third roll, another player, enabled joker and valid remaining count',()=>{
+ const g=createKniffel(members(2),'classic',true,1);
+ assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+ applyKniffel(g,'u0',{type:'roll'},()=>1);
+ assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+ applyKniffel(g,'u0',{type:'roll'},()=>2);
+ applyKniffel(g,'u0',{type:'roll'},()=>3);
+ applyKniffel(g,'u1',{type:'copy-roll'});
+ applyKniffel(g,'u0',{type:'score',category:0});
+ applyKniffel(g,'u1',{type:'score',category:2});
+ for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>4);
+ assert.throws(()=>applyKniffel(g,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+ const disabled=createKniffel(members(2),'classic',false);
+ for(let i=0;i<3;i++)applyKniffel(disabled,'u0',{type:'roll'},()=>5);
+ assert.throws(()=>applyKniffel(disabled,'u1',{type:'copy-roll'}),/JOKER_UNAVAILABLE/);
+});
+test('copy-roll supports six dice and 100-point kniffel',()=>{
+ const g=createKniffel(members(2),'classic',true,1);
+ applyKniffel(g,'u0',{type:'extra-die'});
+ for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>6);
+ applyKniffel(g,'u1',{type:'copy-roll'});
+ applyKniffel(g,'u0',{type:'score',category:11});
+ assert.equal(g.dice.length,6);
+ applyKniffel(g,'u1',{type:'score',category:11});
+ assert.equal(g.players[1].sheet[0][11],100);
+});
