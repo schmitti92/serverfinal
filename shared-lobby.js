@@ -468,8 +468,8 @@ function finishEisstock(ch,members){
       room.phase='playing';return;
     }
     if(room.game==='kniffel'){
-      const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic',extraJokers=room.settings?.kniffel?.extraJokers===true;
-      room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode,extraJokers},kniffel:createKniffel(seats,mode,extraJokers)};
+      const seats=activeSeats(room);const mode=room.settings?.kniffel?.mode||'classic',extraJokers=room.settings?.kniffel?.extraJokers===true,jokerCount=room.settings?.kniffel?.jokerCount??1;
+      room.match={id:randomUUID(),game:'kniffel',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{mode,extraJokers,jokerCount},kniffel:createKniffel(seats,mode,extraJokers,jokerCount)};
       advanceKniffelBots(room.match.kniffel);
       room.phase='playing';return;
     }
@@ -1033,12 +1033,12 @@ function finishEisstock(ch,members){
     })};
   }));
   app.post('/api/hub/rooms/:code/kniffel/settings',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity,mode=req.body?.mode,extraJokers=req.body?.extraJokers;
-    if(!code||!Object.hasOwn(KNIFFEL_MODES,mode)||typeof extraJokers!=='boolean')throw error(400,'INVALID_SETTINGS');
+    const code=validCode(req.params.code),identity=req.hubIdentity,mode=req.body?.mode,extraJokers=req.body?.extraJokers,jokerCount=req.body?.jokerCount??1;
+    if(!code||!Object.hasOwn(KNIFFEL_MODES,mode)||typeof extraJokers!=='boolean'||!Number.isInteger(jokerCount)||jokerCount<1||jokerCount>3)throw error(400,'INVALID_SETTINGS');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.game!=='kniffel'||room.phase!=='preparing')throw error(409,'NOT_PREPARING');
-      room.settings={...room.settings,kniffel:{mode,extraJokers}};
+      room.settings={...room.settings,kniffel:{mode,extraJokers,jokerCount}};
     })};
   }));
   app.post('/api/hub/rooms/:code/kniffel/action',handler(async req=>{
