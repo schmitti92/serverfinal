@@ -25,7 +25,7 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
    next();
   }catch(e){res.status(e.status||401).json({ok:false,error:e.message||'LOGIN_REQUIRED'});}
  }
- const output=(room,id)=>({ok:true,room:project(room.engine,id),game:room.game?publicGame(room.game,id):null,gameId:room.engine.match?.gameId||null});
+ const output=(room,id)=>({ok:true,room:project(room.engine,id),game:room.game?{...publicGame(room.game,id),lastReveal:room.lastReveal||null}:null,gameId:room.engine.match?.gameId||null});
  async function transact(roomId,actor,fn){
   if(!CODE.test(roomId))throw bad(400,'INVALID_ROOM_CODE');
   return db().runTransaction(async t=>{
@@ -80,7 +80,7 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
   return transact(req.params.code,actor,room=>{
    if(room.engine.hostId!==actor)throw bad(403,'HOST_ONLY');
    cmd(room,'prepare',actor,{matchId:randomUUID(),gameId:GAME});
-   room.game=createGame({players:room.engine.match.roster,lockedDoors:Array.from({length:3},()=>randomInt(3))});
+   room.game=createGame({players:room.engine.match.roster,lockedDoors:Array.from({length:3},()=>randomInt(3))});room.lastReveal=null;
    return room;
   });
  }));
@@ -103,7 +103,9 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
     room.game=chooseDoor(room.game,bot,choice.door);
    }
    if(room.game.phase==='revealing'){
+    const round=room.game.round;
     while(room.game.phase==='revealing')room.game=revealNext(room.game);
+    room.lastReveal={round:round+1,doors:room.game.reveals.length?room.game.reveals:room.game.lockedDoors[round]===undefined?[]:[0,1,2].map(door=>({door,locked:door===room.game.lockedDoors[round],visitors:Object.entries(room.game.choices).filter(([,chosen])=>chosen===door).map(([id])=>id)}))};
     if(room.game.finished){
      const result=getResult(room.game);
      for(const id of room.engine.match.roster)cmd(room,'submit-result',id,{verified:true,score:result.winnerIds.includes(id)?1:0});
