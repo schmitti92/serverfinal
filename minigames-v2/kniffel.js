@@ -28,7 +28,7 @@ if(action?.type==='move-score'){
 if(action?.type==='copy-roll'){
  const player=game.players.find(p=>p.uid===uid),source=game.players[game.turn];
  if(!player)throw Error('NOT_A_PLAYER');
- if(!game.extraJokers||!source||source.uid===uid||game.rolls!==3||!isDice(game.dice)||player.pendingCopy||jokerRemaining(game,player,'copyRoll','copyRollUsed')===0)throw Error('JOKER_UNAVAILABLE');
+ if(!game.extraJokers||!source||source.uid===uid||game.rolls!==3||!isDice(game.dice)||player.pendingCopy||(player.jokerUses?.copyRoll??(player.copyRollUsed?1:0))>=1)throw Error('JOKER_UNAVAILABLE');
  // A completed third roll is captured as an immutable snapshot, even if the source later scores.
  player.pendingCopy={dice:[...game.dice],sourceUid:source.uid,sourceName:source.name};
  spendJoker(player,'copyRoll','copyRollUsed');game.revision++;return game;
