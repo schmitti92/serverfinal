@@ -523,7 +523,7 @@ function finishEisstock(ch,members){
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
         eierChaos:room.match.game==='eier-chaos'?publicEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock()):null,
         merkMatrix:room.match.game==='merk-matrix'?publicMerkMatrix(room.match.merkMatrix,room.match.members,identity.uid,clock()):null,
-        treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,engine:projectEngine2(room.match.engine2,identity.uid).match}:null,
+        treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,myReady:!!room.match.engine2.match.ready[identity.uid],engine:projectEngine2(room.match.engine2,identity.uid).match}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
