@@ -16,3 +16,45 @@ test('full restart cancels free entry without refunding already consumed joker',
 test('full restart cannot be used before roll, twice, disabled or by other player',()=>{const g=createKniffel(members(2),'classic',true);assert.throws(()=>applyKniffel(g,'u0',{type:'full-restart'}));applyKniffel(g,'u0',{type:'roll'},()=>2);assert.throws(()=>applyKniffel(g,'u1',{type:'full-restart'}));applyKniffel(g,'u0',{type:'full-restart'});assert.throws(()=>applyKniffel(g,'u0',{type:'full-restart'}));const h=createKniffel(members(1));applyKniffel(h,'u0',{type:'roll'},()=>2);assert.throws(()=>applyKniffel(h,'u0',{type:'full-restart'}));});
 
 test('six identical dice score 100 Kniffel points, five identical score 50',()=>{const six=createKniffel(members(1),'classic',true);applyKniffel(six,'u0',{type:'extra-die'});applyKniffel(six,'u0',{type:'roll'},()=>6);applyKniffel(six,'u0',{type:'score',category:11});assert.equal(six.players[0].sheet[0][11],100);const five=createKniffel(members(1),'classic',true);applyKniffel(five,'u0',{type:'extra-die'});let n=0;applyKniffel(five,'u0',{type:'roll'},()=>++n===6?5:6);applyKniffel(five,'u0',{type:'score',category:11});assert.equal(five.players[0].sheet[0][11],50);});
+
+test('three joker uses of each kind are tracked and fourth is blocked',()=>{
+ const g=createKniffel(members(1),'triple-free',true,3),uid='u0',p=g.players[0];
+ for(let i=0;i<3;i++){
+  applyKniffel(g,uid,{type:'extra-roll'});
+  applyKniffel(g,uid,{type:'extra-die'});
+  applyKniffel(g,uid,{type:'roll'},()=>i+1);
+  applyKniffel(g,uid,{type:'reroll'},()=>i+2);
+  applyKniffel(g,uid,{type:'free-entry'});
+  applyKniffel(g,uid,{type:'score',category:i,column:0});
+ }
+ assert.equal(p.jokerUses.extraRoll,3);
+ assert.equal(p.jokerUses.extraDie,3);
+ assert.equal(p.jokerUses.reroll,3);
+ assert.equal(p.jokerUses.freeEntry,3);
+ assert.throws(()=>applyKniffel(g,uid,{type:'extra-roll'}),/JOKER_UNAVAILABLE/);
+ assert.throws(()=>applyKniffel(g,uid,{type:'extra-die'}),/JOKER_UNAVAILABLE/);
+ applyKniffel(g,uid,{type:'roll'},()=>4);
+ assert.throws(()=>applyKniffel(g,uid,{type:'reroll'}),/JOKER_UNAVAILABLE/);
+ assert.throws(()=>applyKniffel(g,uid,{type:'free-entry'}),/JOKER_UNAVAILABLE/);
+});
+test('three moves and three complete restarts are possible, fourth is blocked',()=>{
+ const g=createKniffel(members(1),'triple-free',true,3),uid='u0',p=g.players[0];
+ applyKniffel(g,uid,{type:'roll'},()=>2);
+ applyKniffel(g,uid,{type:'score',category:0,column:0});
+ for(let i=0;i<3;i++){
+  applyKniffel(g,uid,{type:'move-score',category:0,fromColumn:i%2,toColumn:1-i%2});
+  applyKniffel(g,uid,{type:'roll'},()=>2);
+  applyKniffel(g,uid,{type:'full-restart'});
+ }
+ assert.equal(p.jokerUses.move,3);
+ assert.equal(p.jokerUses.fullRestart,3);
+ assert.throws(()=>applyKniffel(g,uid,{type:'move-score',category:0,fromColumn:1,toColumn:0}),/JOKER_UNAVAILABLE/);
+ applyKniffel(g,uid,{type:'roll'},()=>3);
+ assert.throws(()=>applyKniffel(g,uid,{type:'full-restart'}),/JOKER_UNAVAILABLE/);
+});
+test('old games still default to one joker and bad counts are rejected',()=>{
+ const g=createKniffel(members(1),'classic',true);
+ applyKniffel(g,'u0',{type:'extra-die'});
+ assert.throws(()=>applyKniffel(g,'u0',{type:'extra-die'}),/JOKER_UNAVAILABLE/);
+ for(const n of [0,4,1.5,'3',null])assert.throws(()=>createKniffel(members(1),'classic',true,n),/INVALID_JOKER_COUNT/);
+});
