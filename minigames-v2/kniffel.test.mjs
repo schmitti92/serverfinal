@@ -123,9 +123,9 @@ test('free-entry joker can be activated during a copied turn and score any empty
  applyKniffel(g,'u1',{type:'free-entry'});
  assert.equal(g.freeEntryActive,true);
  assert.equal(g.players[1].jokerUses.freeEntry||0,0);
- assert.ok(allowed(g,1).includes(10));
- applyKniffel(g,'u1',{type:'score',category:10,column:1});
- assert.equal(g.players[1].sheet[1][10],40);
+ assert.ok(allowed(g,1).includes(11));
+ applyKniffel(g,'u1',{type:'score',category:11,column:1});
+ assert.equal(g.players[1].sheet[1][11],50);
  assert.equal(g.players[1].pendingCopy,null);
  assert.equal(g.players[1].jokerUses.freeEntry,1);
  assert.equal(g.freeEntryActive,false);
