@@ -80,7 +80,7 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
   return transact(req.params.code,actor,room=>{
    if(room.engine.hostId!==actor)throw bad(403,'HOST_ONLY');
    cmd(room,'prepare',actor,{matchId:randomUUID(),gameId:GAME});
-   room.game=createGame({players:room.engine.match.roster,lockedDoors:Array.from({length:3},()=>randomInt(3))});room.lastReveal=null;
+   room.game=createGame({players:room.engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],Array.from({length:5},(_,i)=>i).sort(()=>0.5-Math.random()).slice(0,3)]});room.lastReveal=null;
    return room;
   });
  }));
@@ -101,7 +101,7 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
    // Engine2 owns bot scheduling; a bot-only survivor must never stall the room.
    for(let guard=0;guard<4&&!room.game.finished;guard++){
     if(room.game.phase==='choosing'){
-     for(const bot of room.game.alive.filter(id=>id.startsWith('bot:')&&!Object.hasOwn(room.game.choices,id))){
+     for(const bot of room.game.alive.filter(id=>(id.startsWith('bot:')||id.startsWith('testbot:'))&&!Object.hasOwn(room.game.choices,id))){
       const action=botAction(room.game,bot,room.game.round+room.engine.revision);
       room.game=chooseDoor(room.game,bot,action.door);
      }
@@ -109,8 +109,8 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
     if(room.game.phase!=='revealing')break;
     const round=room.game.round,choices={...room.game.choices};
     while(room.game.phase==='revealing')room.game=revealNext(room.game);
-    room.lastReveal={round:round+1,doors:[0,1,2].map(door=>({
-     door,locked:door===room.game.lockedDoors[round],
+    room.lastReveal={round:round+1,doors:Array.from({length:round===2?5:3},(_,door)=>door).map(door=>({
+     door,locked:room.game.lockedDoors[round].includes(door),
      visitors:Object.entries(choices).filter(([,choice])=>choice===door).map(([id])=>id)
     }))};
    }
