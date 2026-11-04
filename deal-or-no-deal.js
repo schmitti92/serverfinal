@@ -1,5 +1,5 @@
 'use strict';
-const crypto=require('node:crypto');
+import * as crypto from 'node:crypto';
 const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000];
 const STEPS=[5,4,4,3,2,2,1,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
 const shuffle=(a,rand=crypto.randomInt)=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
@@ -50,4 +50,4 @@ function offer(g,random){
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;return {...pub,events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i]})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
-module.exports={VALUES,STEPS,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
+export {VALUES,STEPS,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
