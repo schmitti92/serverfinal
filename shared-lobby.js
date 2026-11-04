@@ -951,6 +951,7 @@ function finishEisstock(ch,members){
       if(room.match?.game!=='drei-schatzkammern')throw error(409,'NOT_PLAYING');
       if(room.match.engine2.match.phase==='countdown'&&clock()>=room.match.engine2.match.startedAt)room.match.engine2=engine2Dispatch(room.match.engine2,{type:'tick',actorId:room.hostUid,commandId:randomUUID(),expectedRevision:room.match.engine2.revision,now:clock()}).state;
       if(room.match.engine2.match.phase!=='playing')throw error(409,'COUNTDOWN_ACTIVE');
+      if(room.match.treasureReveal?.endsAt&&clock()<room.match.treasureReveal.endsAt)throw error(409,'REVEAL_IN_PROGRESS');
       let g=room.match.treasure;
       if(!room.match.engine2.match.roster.includes(identity.uid))throw error(403,'NOT_PARTICIPATING');
       g=chooseTreasureDoor(g,identity.uid,req.body?.door);
