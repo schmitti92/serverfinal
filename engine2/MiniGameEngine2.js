@@ -88,7 +88,7 @@ function apply(s,c){
   ensureActor(s,id);
   if(m?.phase!=='instructions'||!m.roster.includes(id))fail('NOT_SELECTED');
   m.ready[id]=true;
-  if(m.roster.every(p=>p.startsWith('bot:')||m.ready[p])){
+  if(m.roster.every(p=>(p.startsWith('bot:')||p.startsWith('testbot:'))||m.ready[p])){
    m.phase='countdown';m.startedAt=c.now+3000;
   }return;
  }
