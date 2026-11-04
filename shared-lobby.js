@@ -964,6 +964,9 @@ function finishEisstock(ch,members){
         const round=g.round,choices={...g.choices};
         while(g.phase==='revealing')g=revealTreasureDoor(g);
         room.match.treasureReveal={round:round+1,startedAt:clock(),doors:Array.from({length:round===2?5:3},(_,door)=>door).map(door=>({door,locked:g.lockedDoors[round].includes(door),visitors:Object.entries(choices).filter(([,d])=>d===door).map(([id])=>id)}))};
+        room.match.treasureReveal.durationMs=room.match.treasureReveal.doors.length*1400;
+        room.match.treasureReveal.endsAt=room.match.treasureReveal.startedAt+room.match.treasureReveal.durationMs;
+        room.match.treasureReveal.doors.forEach((entry,index)=>{entry.revealAt=room.match.treasureReveal.startedAt+index*1400;});
         room.match.treasureHistory=(room.match.treasureHistory||[]).concat(room.match.treasureReveal);
       }
       room.match.treasure=g;
