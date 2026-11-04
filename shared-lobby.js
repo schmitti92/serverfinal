@@ -940,7 +940,7 @@ function finishEisstock(ch,members){
       if(room.match?.game!=='drei-schatzkammern')throw error(409,'NOT_TREASURE_MATCH');
       let e=room.match.engine2;
       if(e.match.phase==='instructions')e=engine2Dispatch(e,{type:'ready',actorId:identity.uid,commandId:randomUUID(),expectedRevision:e.revision,now:clock()}).state;
-      if(e.match.phase==='countdown')e=engine2Dispatch(e,{type:'tick',actorId:room.hostUid,commandId:randomUUID(),expectedRevision:e.revision,now:e.match.startedAt}).state;
+      // The three-second countdown must not be fast-forwarded.
       room.match.engine2=e;
     })};
   }));
