@@ -1,7 +1,7 @@
 'use strict';
-const assert=require('node:assert/strict');
-const {test}=require('node:test');
-const {create,apply,publicView,free,VALUES}=require('../deal-or-no-deal');
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {create,apply,publicView,free,VALUES,nextTurn} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -9,7 +9,7 @@ function simulate(count,allDeal=false){
  for(let i=0;i<count;i++)g=send(g,g.order[i],'select',{case:i});
  let loops=0;
  while(g.phase!=='final'&&loops++<200){
-  if(g.phase==='open'){const actor=g.order.find((_,i)=>false)||null;const turn=require('../deal-or-no-deal').nextTurn(g);g=send(g,turn,'open',{case:free(g)[0]})}
+  if(g.phase==='open'){const actor=g.order.find((_,i)=>false)||null;const turn=nextTurn(g);g=send(g,turn,'open',{case:free(g)[0]})}
   else if(g.phase==='reveal')g=send(g,g.pending.actor,'ack-reveal');
   else if(g.phase==='decision'){const round=g.history.at(-1);const id=round.participants.find(id=>!round.decisions.some(d=>d.id===id));g=send(g,id,'decide',{deal:allDeal})}
   else throw Error('Unexpected phase '+g.phase);
