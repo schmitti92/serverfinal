@@ -80,7 +80,7 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
   return transact(req.params.code,actor,room=>{
    if(room.engine.hostId!==actor)throw bad(403,'HOST_ONLY');
    cmd(room,'prepare',actor,{matchId:randomUUID(),gameId:GAME});
-   room.game=createGame({players:room.engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],Array.from({length:5},(_,i)=>i).sort(()=>0.5-Math.random()).slice(0,3)]});room.lastReveal=null;
+   room.game=createGame({players:room.engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],(()=>{const doors=[0,1,2,3,4];for(let i=doors.length-1;i>0;i--){const j=randomInt(i+1);[doors[i],doors[j]]=[doors[j],doors[i]];}return doors.slice(0,3);})()]});room.lastReveal=null;
    return room;
   });
  }));
