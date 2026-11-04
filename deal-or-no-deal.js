@@ -16,7 +16,8 @@ function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnI
 function apply(g,actor,command,random=crypto.randomInt){
  if(!g||!command||typeof command.id!=='string'||command.id.length>100)throw Error('COMMAND_ID_REQUIRED');
  if(g.commands.includes(command.id))return g;
- if(command.revision!==g.revision)throw Error('STALE_REVISION');
+ // Independent banker votes may arrive against the same revision; Firestore transaction serializes them.
+ if(command.revision!==g.revision&&!(g.phase==='decision'&&command.type==='decide'))throw Error('STALE_REVISION');
  const next=structuredClone(g),p=next.players.find(p=>p.id===String(actor));if(!p)throw Error('NOT_PARTICIPANT');
  if(next.phase==='select'){
   if(command.type!=='select'||next.order[next.selectionIndex]!==p.id||!Number.isInteger(command.case)||command.case<0||command.case>=26||locked(next).has(command.case))throw Error('INVALID_SELECTION');
@@ -31,8 +32,8 @@ function apply(g,actor,command,random=crypto.randomInt){
   next.turnIndex=(next.order.indexOf(p.id)+1)%next.order.length;next.pending=null;
   if(next.roundOpened>=(STEPS[next.round]||1)||free(next).length===0)offer(next,random);else next.phase='open';
  }else if(next.phase==='decision'){
-  const current=active(next).filter(p=>!next.history[next.history.length-1].decisions.some(d=>d.id===p.id))[0];
-  if(!current||current.id!==p.id||command.type!=='decide'||typeof command.deal!=='boolean')throw Error('INVALID_DECISION');
+  const ballot=next.history[next.history.length-1];
+  if(command.type!=='decide'||typeof command.deal!=='boolean'||!ballot.participants.includes(p.id)||ballot.decisions.some(d=>d.id===p.id))throw Error('INVALID_DECISION');
   next.history[next.history.length-1].decisions.push({id:p.id,deal:command.deal});
   if(command.deal)p.deal=next.offer;
   if(next.history[next.history.length-1].decisions.length===next.history[next.history.length-1].participants.length){
