@@ -4292,7 +4292,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
