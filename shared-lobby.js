@@ -465,7 +465,7 @@ function finishEisstock(ch,members){
       const dispatch2=(type,actorId,extra={})=>{engine=engine2Dispatch(engine,{type,actorId,commandId:randomUUID(),expectedRevision:engine.revision,now:clock(),...extra}).state;};
       for(const p of seats)if(p.uid!==room.hostUid)dispatch2('join',p.uid,{name:p.name});
       const id=randomUUID();dispatch2('prepare',room.hostUid,{matchId:id,gameId:'drei-schatzkammern'});
-      room.match={id,game:'drei-schatzkammern',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{},engine2:engine,treasure:createTreasureGame({players:engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],Array.from({length:5},(_,i)=>i).sort(()=>0.5-Math.random()).slice(0,3)]}),treasureReveal:null,treasureHistory:[]};
+      room.match={id,game:'drei-schatzkammern',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{},engine2:engine,treasure:createTreasureGame({players:engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],(()=>{const doors=[0,1,2,3,4];for(let i=doors.length-1;i>0;i--){const j=randomInt(i+1);[doors[i],doors[j]]=[doors[j],doors[i]];}return doors.slice(0,3);})()]}),treasureReveal:null,treasureHistory:[]};
       room.phase='playing';return;
     }
     if(room.game==='kniffel'){
