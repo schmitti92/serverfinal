@@ -465,7 +465,7 @@ function finishEisstock(ch,members){
       const dispatch2=(type,actorId,extra={})=>{engine=engine2Dispatch(engine,{type,actorId,commandId:randomUUID(),expectedRevision:engine.revision,now:clock(),...extra}).state;};
       for(const p of seats)if(p.uid!==room.hostUid)dispatch2('join',p.uid,{name:p.name});
       const id=randomUUID();dispatch2('prepare',room.hostUid,{matchId:id,gameId:'drei-schatzkammern'});
-      room.match={id,game:'drei-schatzkammern',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{},engine2:engine,treasure:createTreasureGame({players:engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],Array.from({length:5},(_,i)=>i).sort(()=>0.5-Math.random()).slice(0,3)]}),treasureReveal:null};
+      room.match={id,game:'drei-schatzkammern',startedAt:clock(),members:seats.map(p=>({uid:p.uid,seat:p.seat,name:p.name})),settings:{},engine2:engine,treasure:createTreasureGame({players:engine.match.roster,lockedDoors:[[randomInt(3)],[randomInt(3)],Array.from({length:5},(_,i)=>i).sort(()=>0.5-Math.random()).slice(0,3)]}),treasureReveal:null,treasureHistory:[]};
       room.phase='playing';return;
     }
     if(room.game==='kniffel'){
@@ -524,7 +524,7 @@ function finishEisstock(ch,members){
         farbenblitz:room.match.game==='farbenblitz'?publicFarbenblitz(room.match.farbenblitz,room.match.members,identity.uid,clock()):null,
         eierChaos:room.match.game==='eier-chaos'?publicEierChaos(room.match.eierChaos,room.match.members,identity.uid,clock()):null,
         merkMatrix:room.match.game==='merk-matrix'?publicMerkMatrix(room.match.merkMatrix,room.match.members,identity.uid,clock()):null,
-        treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,myReady:!!room.match.engine2.match.ready[identity.uid],engine:projectEngine2(room.match.engine2,identity.uid).match}:null,
+        treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,revealHistory:room.match.treasureHistory||[],myReady:!!room.match.engine2.match.ready[identity.uid],engine:(()=>{const m=projectEngine2(room.match.engine2,identity.uid).match;return m?.phase==='countdown'&&clock()>=m.startedAt?{...m,phase:'playing'}:m;})()}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
@@ -948,7 +948,9 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     return {room:await mutate(code,identity,room=>{
-      if(room.match?.game!=='drei-schatzkammern'||room.match.engine2.match.phase!=='playing')throw error(409,'NOT_PLAYING');
+      if(room.match?.game!=='drei-schatzkammern')throw error(409,'NOT_PLAYING');
+      if(room.match.engine2.match.phase==='countdown'&&clock()>=room.match.engine2.match.startedAt)room.match.engine2=engine2Dispatch(room.match.engine2,{type:'tick',actorId:room.hostUid,commandId:randomUUID(),expectedRevision:room.match.engine2.revision,now:clock()}).state;
+      if(room.match.engine2.match.phase!=='playing')throw error(409,'COUNTDOWN_ACTIVE');
       let g=room.match.treasure;
       if(!room.match.engine2.match.roster.includes(identity.uid))throw error(403,'NOT_PARTICIPATING');
       g=chooseTreasureDoor(g,identity.uid,req.body?.door);
@@ -961,7 +963,8 @@ function finishEisstock(ch,members){
         if(g.phase!=='revealing')break;
         const round=g.round,choices={...g.choices};
         while(g.phase==='revealing')g=revealTreasureDoor(g);
-        room.match.treasureReveal={round:round+1,doors:Array.from({length:round===2?5:3},(_,door)=>door).map(door=>({door,locked:g.lockedDoors[round].includes(door),visitors:Object.entries(choices).filter(([,d])=>d===door).map(([id])=>id)}))};
+        room.match.treasureReveal={round:round+1,startedAt:clock(),doors:Array.from({length:round===2?5:3},(_,door)=>door).map(door=>({door,locked:g.lockedDoors[round].includes(door),visitors:Object.entries(choices).filter(([,d])=>d===door).map(([id])=>id)}))};
+        room.match.treasureHistory=(room.match.treasureHistory||[]).concat(room.match.treasureReveal);
       }
       room.match.treasure=g;
       if(g.finished){
