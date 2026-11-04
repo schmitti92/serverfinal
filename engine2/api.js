@@ -88,13 +88,14 @@ export function installEngine2Api(app,{verifyProfile,getFirestore}){
   const actor=req.engine2User.id;
   return transact(req.params.code,actor,room=>{
    cmd(room,'ready',actor);
-   if(room.engine.match.phase==='countdown')cmd(room,'tick',room.engine.hostId,{now:room.engine.match.startedAt});
+   // Countdown is based on actual server time; it is not fast-forwarded.
    return room;
   });
  }));
  app.post('/api/engine2/rooms/:code/choose',identity,wrap(async req=>{
   const actor=req.engine2User.id,door=req.body?.door;
   return transact(req.params.code,actor,room=>{
+   if(room.engine.match?.phase==='countdown'&&Date.now()>=room.engine.match.startedAt)cmd(room,'tick',room.engine.hostId,{now:Date.now()});
    if(room.engine.match?.phase!=='playing'||!room.game)throw bad(409,'NOT_PLAYING');
    if(!room.engine.match.roster.includes(actor))throw bad(403,'NOT_SELECTED');
    room.game=chooseDoor(room.game,actor,door);
