@@ -38,8 +38,16 @@ const CHRISTMAS_PACKS=Object.freeze([
 {id:'premium',name:'Premium-Weihnachtspaket',price:4500000,count:12,guaranteed:'rare',guaranteedCount:2}
 ]);
 const CHRISTMAS_LINES=Object.freeze([...Array.from({length:4},(_,r)=>[0,1,2,3].map(c=>r*4+c)),...Array.from({length:4},(_,c)=>[0,1,2,3].map(r=>r*4+c)),[0,5,10,15],[3,6,9,12]]);
-const CHRISTMAS_REWARDS=Object.freeze(['santa','rudolph','christmas-studio','winter-lobby','gift-cases','golden-gifts','banker-office','holiday-animations','aurora-studio','collector-frame']);
-function christmasProgress(cards){const owned=CHRISTMAS_CARDS.map(c=>(cards[c.id]||0)>0);const bingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index])?i:null).filter(i=>i!==null);return {collected:owned.filter(Boolean).length,total:16,bingoLines,bingos:bingoLines.length,rewards:CHRISTMAS_REWARDS.slice(0,bingoLines.length),rewardOrder:'fixed',nextReward:CHRISTMAS_REWARDS[bingoLines.length]||null}}
+const CHRISTMAS_REWARDS=Object.freeze(['rudolph','winter-lobby','christmas-studio','gift-cases','santa']);
+const CHRISTMAS_COLLECTOR_FRAME='collector-frame';
+function christmasProgress(cards){
+ const owned=CHRISTMAS_CARDS.map(c=>(cards[c.id]||0)>0);
+ const bingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index])?i:null).filter(i=>i!==null);
+ const bingos=bingoLines.length,unlockedCount=Math.min(CHRISTMAS_REWARDS.length,Math.floor(bingos/2));
+ const rewards=CHRISTMAS_REWARDS.slice(0,unlockedCount);
+ if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
+ return {collected:owned.filter(Boolean).length,total:16,bingoLines,bingos,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:null,collectorFrameUnlocked:unlockedCount===5};
+}
 function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCount||1;for(let i=0;i<pack.count;i++){const min=i<guaranteed?pack.guaranteed:'common';const pool=CHRISTMAS_CARDS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(min));const weights=pool.map(c=>({card:c,weight:{common:65,rare:29,epic:5,legendary:1}[c.rarity]}));const total=weights.reduce((a,w)=>a+w.weight,0);let n=randomInt(total);for(const w of weights){n-=w.weight;if(n<0){drawn.push(w.card);break}}}return drawn}
 
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
