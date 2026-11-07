@@ -64,3 +64,21 @@ test('banker votes remain hidden until all participants have responded',()=>{
  g=send(g,second,'decide',{deal:false});
  assert.deepEqual(publicView(g).history.at(-1).decisions,[{id:first,deal:true},{id:second,deal:false}]);
 });
+
+test('opening event permanently identifies the acting player and exposes it to every viewer',()=>{
+ let g=create([{id:'p1',name:'One',avatar:11},{id:'p2',name:'Two',avatar:12},{id:'p3',name:'Three',avatar:13}],rand);
+ assert.deepEqual(g.players.map(p=>p.avatar),[11,12,13]);
+ for(let i=0;i<3;i++)g=send(g,g.order[i],'select',{case:i});
+ for(let i=0;i<3;i++){
+  const actor=nextTurn(g),chosen=free(g)[0];
+  g=send(g,actor,'open',{case:chosen});
+  assert.equal(g.pending.actor,actor);
+  g=send(g,actor,'ack-reveal');
+  const event=g.events.at(-1);
+  assert.equal(event.playerId,actor);
+  assert.equal(event.case,chosen);
+  const publicOpening=publicView(g).openedAmounts.at(-1);
+  assert.equal(publicOpening.playerId,actor);
+  assert.equal(publicOpening.amount,event.amount);
+ }
+});
