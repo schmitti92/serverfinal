@@ -54,7 +54,6 @@ function offer(g,random){
  // Early offers are conservative when jackpots dominate; late offers approach
  // the full expected value, even for highly skewed remaining amounts.
  const riskDiscount=concentration*(.22*(1-stage));
- const previous=g.history.at(-1)?.offer;
  const previousAvg=g.history.at(-1)?.expectedValue;
  const trend=previousAvg>0?Math.max(-1,Math.min(1,avg/previousAvg-1)):0;
  // Small, bounded market reaction; never override the current board.
