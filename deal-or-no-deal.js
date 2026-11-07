@@ -47,7 +47,9 @@ function offer(g,random){
  const multiplier=MULT[Math.min(g.round,7)];
  const variance=(random(10001)/10000-.5)*.1;
  g.offer=Math.max(0,Math.round(avg*multiplier*(1+variance)));
- g.history.push({round:g.round+1,offer:g.offer,participants:active(g).map(p=>p.id),decisions:[]});
+ const bonusRoll=random(1000);
+ const bonusPack=bonusRoll<100?(bonusRoll<10?'premium':bonusRoll<60?'large':'small'):null;
+ g.history.push({round:g.round+1,offer:g.offer,bonusPack,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i]})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
