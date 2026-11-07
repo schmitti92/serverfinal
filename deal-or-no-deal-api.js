@@ -49,7 +49,7 @@ function christmasProgress(cards){
  if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
  const secondBingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index+16])?i:null).filter(i=>i!==null);
  const totalBingos=bingos+secondBingoLines.length;
- const bonusIds=['santa-profile-avatar','ice-blue-case','christmas-profile-banner','diamond-case','christmas-champion'];
+ const bonusIds=['santa-profile-avatar','lobby-snowfall','christmas-profile-banner','diamond-case','christmas-champion'];
  const bonusRewards=bonusIds.filter((_,i)=>totalBingos>=12+i*2);
  rewards.push(...bonusRewards);
  const nextBonusIndex=bonusRewards.length;
