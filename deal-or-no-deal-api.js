@@ -83,10 +83,17 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
  const db=getFirestore();await check(db,code,req.dealIdentity.uid);
  const snap=await db.collection(collection).doc(code).get();if(!snap.exists)throw Error('MATCH_NOT_FOUND');
- const game=snap.data().game,uid=req.dealIdentity.uid;
- const rounds=(game.history||[]).filter(h=>h.bonusPack&&h.decisions?.some(d=>d.id===uid&&d.deal===true)).map(h=>h.round);
- const rewards=await Promise.all(rounds.map(async round=>{const doc=await db.collection('deal_christmas_banker_rewards_v1').doc(game.id+'_'+round+'_'+uid).get();return doc.exists?{...doc.data(),id:doc.id}:null}));
- return res.json({ok:true,rewards:rewards.filter(Boolean)});
+ const game=snap.data().game;
+ // The accepted bonus and its cards are public to everyone in this room.
+ // Read only rewards for accepted deals, never unrevealed/declined offers.
+ const accepted=(game.history||[]).flatMap(h=>h.bonusPack?(h.decisions||[]).filter(d=>d.deal===true).map(d=>({round:h.round,uid:d.id})):[]);
+ const rewards=await Promise.all(accepted.map(async item=>{
+  const doc=await db.collection('deal_christmas_banker_rewards_v1').doc(game.id+'_'+item.round+'_'+item.uid).get();
+  if(!doc.exists)return null;
+  const data=doc.data();
+  return {id:doc.id,gameId:data.gameId,round:data.round,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Spieler',packId:data.packId,packName:data.packName,revealed:data.revealed,createdAt:data.createdAt};
+ }));
+ return res.json({ok:true,rewards:rewards.filter(Boolean).sort((a,b)=>a.createdAt-b.createdAt)});
  }catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/christmas-cent-reward',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid);const snap=await db.collection(collection).doc(code).get();if(!snap.exists)return res.json({ok:true,reward:null});const game=snap.data().game;const event=(game.events||[]).find(e=>e.type==='opened'&&e.amount===1);if(!event)return res.json({ok:true,reward:null});const reward=await db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+event.eventId).get();if(!reward.exists||reward.data().uid!==req.dealIdentity.uid)return res.json({ok:true,reward:null});return res.json({ok:true,reward:{...reward.data(),id:reward.id}})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/avatars',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid);const snap=await db.collection(avatarCollection).doc(code).get();return res.json({ok:true,avatars:snap.exists?snap.data().avatars||{}:{}})}catch(e){return fail(res,e)}});
