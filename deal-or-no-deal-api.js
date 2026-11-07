@@ -25,7 +25,7 @@ const CARD_PACKS=Object.freeze([
 {id:'legendary',name:'Legendäres Kartenpaket',emoji:'👑',price:150000000,count:5,guaranteed:'epic',weights:{common:25,rare:45,epic:24,legendary:6}}
 ]);
 const rarities=['common','rare','epic','legendary'];
-function drawCard(minRarity='common',rand=randomInt){const choices=CARD_DEFINITIONS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(minRarity));const weights=choices.map(c=>({card:c,weight:{common:65,rare:29,epic:5,legendary:1}[c.rarity]}));const total=weights.reduce((a,b)=>a+b.weight,0);let n=rand(total);for(const entry of weights){n-=entry.weight;if(n<0)return entry.card}return weights.at(-1).card}
+function drawCard(minRarity='common',rand=randomInt){const choices=CARD_DEFINITIONS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(minRarity));const weights=choices.map(c=>({card:c,weight:(pack.id==='premium'?{common:50,rare:25,epic:5,legendary:20}:{common:65,rare:29,epic:5,legendary:1})[c.rarity]}));const total=weights.reduce((a,b)=>a+b.weight,0);let n=rand(total);for(const entry of weights){n-=entry.weight;if(n<0)return entry.card}return weights.at(-1).card}
 function openPack(pack,rand=randomInt){const cards=[];for(let i=0;i<pack.count;i++){if(i===0)cards.push(drawCard(pack.guaranteed,rand));else{let n=rand(100),rarity='common';for(const level of rarities){n-=pack.weights[level];if(n<0){rarity=level;break}}const options=CARD_DEFINITIONS.filter(c=>c.rarity===rarity);cards.push(options[rand(options.length)])}}return cards}
 
 // Christmas album is isolated from the permanent Goldstudio collection.
