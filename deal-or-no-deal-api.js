@@ -33,9 +33,9 @@ const CHRISTMAS_COLLECTION='deal_or_no_deal_christmas_v1';
 const CHRISTMAS_NAMES=['Winterdorf','Lebkuchenhaus','Weihnachtsmann','Rentier','Weihnachtsbaum','Weihnachtszug','Schneekugel','Wichtelwerkstatt','Polarlichter','Eisschloss','Rentierschlitten','Weihnachtslaterne','Weihnachtsengel','Adventskerzen','Schneemannfamilie','Weihnachtskrippe'];
 const CHRISTMAS_CARDS=Object.freeze(CHRISTMAS_NAMES.map((name,i)=>({id:'christmas-'+String(i+1).padStart(2,'0'),name,rarity:i<4?'common':i<8?'rare':i<12?'epic':'legendary'})));
 const CHRISTMAS_PACKS=Object.freeze([
-{id:'small',name:'Kleines Weihnachtspaket',price:20000000,count:3,guaranteed:'common'},
-{id:'large',name:'Großes Weihnachtspaket',price:50000000,count:7,guaranteed:'rare'},
-{id:'premium',name:'Premium-Weihnachtspaket',price:100000000,count:12,guaranteed:'rare',guaranteedCount:2}
+{id:'small',name:'Kleines Weihnachtspaket',price:20000000,count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}},
+{id:'large',name:'Großes Weihnachtspaket',price:50000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}},
+{id:'premium',name:'Premium-Weihnachtspaket',price:100000000,count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}
 ]);
 const CHRISTMAS_LINES=Object.freeze([...Array.from({length:4},(_,r)=>[0,1,2,3].map(c=>r*4+c)),...Array.from({length:4},(_,c)=>[0,1,2,3].map(r=>r*4+c)),[0,5,10,15],[3,6,9,12]]);
 const CHRISTMAS_REWARDS=Object.freeze(['rudolph','winter-lobby','christmas-studio','gift-cases','santa']);
@@ -48,7 +48,7 @@ function christmasProgress(cards){
  if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
  return {collected:owned.filter(Boolean).length,total:16,bingoLines,bingos,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:null,collectorFrameUnlocked:unlockedCount===5};
 }
-function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCount||1;for(let i=0;i<pack.count;i++){const min=i<guaranteed?pack.guaranteed:'common';const pool=CHRISTMAS_CARDS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(min));const weights=pool.map(c=>({card:c,weight:{common:65,rare:29,epic:5,legendary:1}[c.rarity]}));const total=weights.reduce((a,w)=>a+w.weight,0);let n=randomInt(total);for(const w of weights){n-=w.weight;if(n<0){drawn.push(w.card);break}}}return drawn}
+function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCount||0;for(let i=0;i<pack.count;i++){const min=i<guaranteed?pack.guaranteed:'common';const pool=CHRISTMAS_CARDS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(min));const weights=pool.map(c=>({card:c,weight:pack.weights[c.rarity]}));const total=weights.reduce((a,w)=>a+w.weight,0);let n=randomInt(total);for(const w of weights){n-=w.weight;if(n<0){drawn.push(w.card);break}}}return drawn}
 
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
 export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
