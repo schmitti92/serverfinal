@@ -44,12 +44,27 @@ function apply(g,actor,command,random=crypto.randomInt){
 }
 function offer(g,random){
  const remaining=publicRemaining(g),avg=remaining.reduce((a,b)=>a+b,0)/remaining.length;
- const multiplier=MULT[Math.min(g.round,7)];
- const variance=(random(10001)/10000-.5)*.1;
- g.offer=Math.max(0,Math.round(avg*multiplier*(1+variance)));
+ // The arithmetic mean is the fair expected value. A cautious banker also
+ // considers how much of that expectation depends on a few jackpot cases.
+ const sorted=[...remaining].sort((a,b)=>a-b);
+ const median=sorted.length%2?sorted[(sorted.length-1)/2]:(sorted[sorted.length/2-1]+sorted[sorted.length/2])/2;
+ const concentration=avg>0?Math.max(0,Math.min(1,(avg-median)/avg)):0;
+ const stage=Math.min(1,Math.max(0,g.round/7));
+ const base=MULT[Math.min(g.round,7)];
+ // Early offers are conservative when jackpots dominate; late offers approach
+ // the full expected value, even for highly skewed remaining amounts.
+ const riskDiscount=concentration*(.22*(1-stage));
+ const previous=g.history.at(-1)?.offer;
+ const previousAvg=g.history.at(-1)?.expectedValue;
+ const trend=previousAvg>0?Math.max(-1,Math.min(1,avg/previousAvg-1)):0;
+ // Small, bounded market reaction; never override the current board.
+ const momentum=Math.max(-.025,Math.min(.025,trend*.06));
+ const variance=(random(10001)/10000-.5)*.06;
+ const factor=Math.max(.12,Math.min(1,base-riskDiscount+momentum+variance));
+ g.offer=Math.max(1,Math.min(Math.round(avg),Math.round(avg*factor)));
  const bonusRoll=random(1000);
  const bonusPack=bonusRoll<100?(bonusRoll<10?'premium':bonusRoll<60?'large':'small'):null;
- g.history.push({round:g.round+1,offer:g.offer,bonusPack,participants:active(g).map(p=>p.id),decisions:[]});
+ g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
