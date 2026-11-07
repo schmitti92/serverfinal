@@ -44,11 +44,12 @@ const CHRISTMAS_COLLECTOR_FRAME='collector-frame';
 function christmasProgress(cards){
  const owned=CHRISTMAS_CARDS.map(c=>(cards[c.id]||0)>0);
  const bingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index])?i:null).filter(i=>i!==null);
- const bingos=bingoLines.length,unlockedCount=Math.min(CHRISTMAS_REWARDS.length,Math.floor(bingos/2));
- const rewards=CHRISTMAS_REWARDS.slice(0,unlockedCount);
- if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
+ const bingos=bingoLines.length;
  const secondBingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index+16])?i:null).filter(i=>i!==null);
  const totalBingos=bingos+secondBingoLines.length;
+ const unlockedCount=Math.min(CHRISTMAS_REWARDS.length,Math.floor(totalBingos/2));
+ const rewards=CHRISTMAS_REWARDS.slice(0,unlockedCount);
+ if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
  const bonusIds=['santa-profile-avatar','lobby-snowfall','christmas-profile-banner','snowman-profile-avatar','christmas-champion'];
  const bonusRewards=bonusIds.filter((_,i)=>totalBingos>=12+i*2);
  rewards.push(...bonusRewards);
