@@ -86,7 +86,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const game=snap.data().game;
  // The accepted bonus and its cards are public to everyone in this room.
  // Read only rewards for accepted deals, never unrevealed/declined offers.
- const accepted=(game.history||[]).flatMap(h=>h.bonusPack?(h.decisions||[]).filter(d=>d.deal===true).map(d=>({round:h.round,uid:d.id})):[]);
+ const accepted=(game.history||[]).flatMap(h=>h.bonusPack&&h.decisions?.length===h.participants?.length?(h.decisions||[]).filter(d=>d.deal===true).map(d=>({round:h.round,uid:d.id})):[]);
  const rewards=await Promise.all(accepted.map(async item=>{
   const doc=await db.collection('deal_christmas_banker_rewards_v1').doc(game.id+'_'+item.round+'_'+item.uid).get();
   if(!doc.exists)return null;
