@@ -85,17 +85,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);await settleFinal(db,code);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await Promise.all(players.map(p=>db.collection(walletCollection).doc(p.uid).get()));return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const snap=await db.collection(collection).doc(code).get();return res.json({ok:true,game:snap.exists?publicView(snap.data().game):null})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarSnap=await db.collection(avatarCollection).doc(code).get();const avatarMap=avatarSnap.exists?avatarSnap.data().avatars||{}:{};for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=10?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){if(before.phase!=='final'&&after.phase==='final'){
-   const payouts=after.players.map(p=>({id:p.id,payout:p.deal??after.values[p.case]}));
-   const max=Math.max(...payouts.map(p=>p.payout));
-   const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id)}));
-   const snapshots=await Promise.all(entries.map(async e=>({wallet:await tx.get(e.account),receipt:await tx.get(e.receipt)})));
-   for(let i=0;i<entries.length;i++){const e=entries[i],snap=snapshots[i];if(snap.receipt.exists)continue;
-    const previous=snap.wallet.exists?snap.wallet.data():{};
-    tx.set(e.account,{balance:(previous.balance||0)+e.payout,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),updatedAt:Date.now()},{merge:true});
-    tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
-   }
-  }
+ app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
   const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
   if(openedOneCent&&req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId){
@@ -112,6 +102,17 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
     tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
     tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()});
+   }
+  }
+if(before.phase!=='final'&&after.phase==='final'){
+   const payouts=after.players.map(p=>({id:p.id,payout:p.deal??after.values[p.case]}));
+   const max=Math.max(...payouts.map(p=>p.payout));
+   const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id)}));
+   const snapshots=await Promise.all(entries.map(async e=>({wallet:await tx.get(e.account),receipt:await tx.get(e.receipt)})));
+   for(let i=0;i<entries.length;i++){const e=entries[i],snap=snapshots[i];if(snap.receipt.exists)continue;
+    const previous=snap.wallet.exists?snap.wallet.data():{};
+    tx.set(e.account,{balance:(previous.balance||0)+e.payout,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),updatedAt:Date.now()},{merge:true});
+    tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
    }
   }
   tx.update(ref,{game:after,updatedAt:Date.now()})}return after});return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
