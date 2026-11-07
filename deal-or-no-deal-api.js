@@ -31,7 +31,8 @@ function openPack(pack,rand=randomInt){const cards=[];for(let i=0;i<pack.count;i
 // Christmas album is isolated from the permanent Goldstudio collection.
 const CHRISTMAS_COLLECTION='deal_or_no_deal_christmas_v1';
 const CHRISTMAS_NAMES=['Winterdorf','Lebkuchenhaus','Weihnachtsmann','Rentier','Weihnachtsbaum','Weihnachtszug','Schneekugel','Wichtelwerkstatt','Polarlichter','Eisschloss','Rentierschlitten','Weihnachtslaterne','Weihnachtsengel','Adventskerzen','Schneemannfamilie','Weihnachtskrippe'];
-const CHRISTMAS_CARDS=Object.freeze(CHRISTMAS_NAMES.map((name,i)=>({id:'christmas-'+String(i+1).padStart(2,'0'),name,rarity:i<4?'common':i<8?'rare':i<12?'epic':'legendary'})));
+const CHRISTMAS_EXTRA_NAMES=["Schneemann","Weihnachtsengel","Rentier im Schnee","Weihnachtsbaum im Glanz","Lebkuchenmann","Weihnachtskranz","Schlittenfahrt","Stern von Bethlehem","Elfenhilfe","Weihnachtspinguin","Polarbär","Weihnachtsglocken","Kerzenschein","Winterdorf im Schnee","Geschenkstapel","Schneeflocke"];
+const CHRISTMAS_CARDS=Object.freeze([...CHRISTMAS_NAMES,...CHRISTMAS_EXTRA_NAMES].map((name,i)=>({id:'christmas-'+String(i+1).padStart(2,'0'),name,rarity:i%16<4?'common':i%16<8?'rare':i%16<12?'epic':'legendary'})));
 const CHRISTMAS_PACKS=Object.freeze([
 {id:'small',name:'Kleines Weihnachtspaket',price:20000000,count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}},
 {id:'large',name:'Großes Weihnachtspaket',price:50000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}},
@@ -46,7 +47,8 @@ function christmasProgress(cards){
  const bingos=bingoLines.length,unlockedCount=Math.min(CHRISTMAS_REWARDS.length,Math.floor(bingos/2));
  const rewards=CHRISTMAS_REWARDS.slice(0,unlockedCount);
  if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
- return {collected:owned.filter(Boolean).length,total:16,bingoLines,bingos,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:null,collectorFrameUnlocked:unlockedCount===5};
+ const secondBingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index+16])?i:null).filter(i=>i!==null);
+ return {collected:owned.filter(Boolean).length,total:32,bingoLines,bingos,secondBingoLines,secondBingos:secondBingoLines.length,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:null,collectorFrameUnlocked:unlockedCount===5};
 }
 function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCount||0;for(let i=0;i<pack.count;i++){const min=i<guaranteed?pack.guaranteed:'common';const pool=CHRISTMAS_CARDS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(min));const weights=pool.map(c=>({card:c,weight:pack.weights[c.rarity]}));const total=weights.reduce((a,w)=>a+w.weight,0);let n=randomInt(total);for(const w of weights){n-=w.weight;if(n<0){drawn.push(w.card);break}}}return drawn}
 
