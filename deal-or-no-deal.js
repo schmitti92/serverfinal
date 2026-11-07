@@ -28,7 +28,7 @@ function apply(g,actor,command,random=crypto.randomInt){
  }else if(next.phase==='reveal'){
   if(command.type!=='ack-reveal'||next.pending?.actor!==p.id)throw Error('INVALID_REVEAL_ACK');
   next.opened.push(next.pending.case);next.roundOpened++;
-  next.events.push({type:'opened',case:next.pending.case,amount:next.values[next.pending.case],eventId:next.pending.eventId});
+  next.events.push({type:'opened',case:next.pending.case,amount:next.values[next.pending.case],playerId:p.id,eventId:next.pending.eventId});
   next.turnIndex=(next.order.indexOf(p.id)+1)%next.order.length;next.pending=null;
   if(next.roundOpened>=(STEPS[next.round]||1)||free(next).length===0)offer(next,random);else next.phase='open';
  }else if(next.phase==='decision'){
@@ -52,5 +52,5 @@ function offer(g,random){
  g.history.push({round:g.round+1,offer:g.offer,bonusPack,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
-function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i]})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
+function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
 export {VALUES,STEPS,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
