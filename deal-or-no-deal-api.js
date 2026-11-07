@@ -87,6 +87,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarSnap=await db.collection(avatarCollection).doc(code).get();const avatarMap=avatarSnap.exists?avatarSnap.data().avatars||{}:{};for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=10?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
+  let awardWrite=null;
   const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
   if(openedOneCent&&req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId){
    const uid=before.pending.actor;
@@ -100,8 +101,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const previous=christmasSnap.exists?christmasSnap.data():{};
     const cards={...(previous.cards||{})};
     for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
-    tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
-    tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()});
+    awardWrite=()=>{tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
    }
   }
 if(before.phase!=='final'&&after.phase==='final'){
@@ -115,6 +115,6 @@ if(before.phase!=='final'&&after.phase==='final'){
     tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
    }
   }
-  tx.update(ref,{game:after,updatedAt:Date.now()})}return after});return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
  return {collection};
 }
