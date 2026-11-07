@@ -82,3 +82,25 @@ test('opening event permanently identifies the acting player and exposes it to e
   assert.equal(publicOpening.amount,event.amount);
  }
 });
+
+test('banker offer is positive, no higher than fair expected value, and records the valuation',()=>{
+ for(let count=1;count<=4;count++){
+  let g=create(Array.from({length:count},(_,i)=>({id:'p'+i})),rand);
+  for(let i=0;i<count;i++)g=send(g,g.order[i],'select',{case:i});
+  let checks=0;
+  while(g.phase!=='final'&&checks<20){
+   if(g.phase==='open'){g=send(g,nextTurn(g),'open',{case:free(g)[0]});}
+   else if(g.phase==='reveal'){g=send(g,g.pending.actor,'ack-reveal');}
+   else if(g.phase==='decision'){
+    const remaining=publicRemaining(g);
+    const expected=remaining.reduce((sum,v)=>sum+v,0)/remaining.length;
+    assert.equal(g.history.at(-1).expectedValue,expected);
+    assert.ok(g.offer>=1&&g.offer<=Math.round(expected));
+    checks++;
+    const ballot=g.history.at(-1);
+    for(const id of ballot.participants)g=send(g,id,'decide',{deal:false});
+   }else break;
+  }
+  assert.ok(checks>0);
+ }
+});
