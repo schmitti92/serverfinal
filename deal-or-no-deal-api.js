@@ -79,6 +79,15 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards)})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/christmas/open',auth,async(req,res)=>{try{const pack=CHRISTMAS_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CHRISTMAS_COLLECTION).doc(uid),receiptRef=db.collection('deal_or_no_deal_christmas_receipts_v1').doc(uid+'_'+requestId);
  const result=await db.runTransaction(async tx=>{const [wallet,snap,receipt]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(receiptRef)]);if(receipt.exists){if(receipt.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...receipt.data().result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const previous=snap.exists?snap.data():{};const cards={...(previous.cards||{})};const drawn=christmasDraw(pack);for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;const remaining=balance-pack.price;const result={balance:remaining,cards,opened:(previous.opened||0)+1,revealed:drawn,progress:christmasProgress(cards)};tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});tx.set(cardsRef,{cards,opened:result.opened,updatedAt:Date.now()},{merge:true});tx.create(receiptRef,{packId:pack.id,result,createdAt:Date.now()});return result});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/:code/christmas-banker-rewards',auth,async(req,res)=>{try{
+ const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
+ const db=getFirestore();await check(db,code,req.dealIdentity.uid);
+ const snap=await db.collection(collection).doc(code).get();if(!snap.exists)throw Error('MATCH_NOT_FOUND');
+ const game=snap.data().game,uid=req.dealIdentity.uid;
+ const rounds=(game.history||[]).filter(h=>h.bonusPack&&h.decisions?.some(d=>d.id===uid&&d.deal===true)).map(h=>h.round);
+ const rewards=await Promise.all(rounds.map(async round=>{const doc=await db.collection('deal_christmas_banker_rewards_v1').doc(game.id+'_'+round+'_'+uid).get();return doc.exists?{...doc.data(),id:doc.id}:null}));
+ return res.json({ok:true,rewards:rewards.filter(Boolean)});
+ }catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/christmas-cent-reward',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid);const snap=await db.collection(collection).doc(code).get();if(!snap.exists)return res.json({ok:true,reward:null});const game=snap.data().game;const event=(game.events||[]).find(e=>e.type==='opened'&&e.amount===1);if(!event)return res.json({ok:true,reward:null});const reward=await db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+event.eventId).get();if(!reward.exists||reward.data().uid!==req.dealIdentity.uid)return res.json({ok:true,reward:null});return res.json({ok:true,reward:{...reward.data(),id:reward.id}})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/avatars',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid);const snap=await db.collection(avatarCollection).doc(code).get();return res.json({ok:true,avatars:snap.exists?snap.data().avatars||{}:{}})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/avatar',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const avatar=Number(req.body?.avatar);if(!Number.isInteger(avatar)||avatar<1||avatar>12)throw Error('INVALID_AVATAR');const db=getFirestore();await check(db,code,req.dealIdentity.uid);if(avatar===11||avatar===12){const christmas=await db.collection(CHRISTMAS_COLLECTION).doc(req.dealIdentity.uid).get();const reward=avatar===11?'rudolph':'santa';if(!christmasProgress(christmas.exists?christmas.data().cards||{}:{}).rewards.includes(reward))throw Error('CHRISTMAS_REWARD_LOCKED')}await db.collection(avatarCollection).doc(code).set({avatars:{[req.dealIdentity.uid]:avatar},updatedAt:Date.now()},{merge:true});return res.json({ok:true,avatar})}catch(e){return fail(res,e)}});
@@ -104,7 +113,27 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     awardWrite=()=>{tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
    }
   }
-if(before.phase!=='final'&&after.phase==='final'){
+// A Christmas pack is included in a banker offer only when the player accepts the deal.
+  const lastBefore=before.history?.at(-1);
+  const newlyAccepted=before.phase==='decision'&&req.body?.type==='decide'&&req.body?.deal===true
+    &&lastBefore?.bonusPack&&!lastBefore.decisions?.some(d=>d.id===req.dealIdentity.uid);
+  if(newlyAccepted){
+   const uid=req.dealIdentity.uid;
+   const rewardRef=db.collection('deal_christmas_banker_rewards_v1').doc(after.id+'_'+lastBefore.round+'_'+uid);
+   const christmasRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const [rewardSnap,christmasSnap]=await Promise.all([tx.get(rewardRef),tx.get(christmasRef)]);
+   if(!rewardSnap.exists){
+    const pack=CHRISTMAS_PACKS.find(p=>p.id===lastBefore.bonusPack);
+    if(!pack)throw Error('INVALID_PACK');
+    const drawn=christmasDraw(pack),previous=christmasSnap.exists?christmasSnap.data():{};
+    const cards={...(previous.cards||{})};
+    for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
+    const priorWrite=awardWrite;
+    awardWrite=()=>{priorWrite?.();tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
+      tx.create(rewardRef,{uid,gameId:after.id,round:lastBefore.round,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
+   }
+  }
+  if(before.phase!=='final'&&after.phase==='final'){
    const payouts=after.players.map(p=>({id:p.id,payout:p.deal??after.values[p.case]}));
    const max=Math.max(...payouts.map(p=>p.payout));
    const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id)}));
