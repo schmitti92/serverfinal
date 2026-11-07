@@ -513,7 +513,7 @@ function finishEisstock(ch,members){
       canLaunch:!!HUB_GAMES[room.game],
       settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
-      players:room.players.map(p=>({seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
+      players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
       chat:(Array.isArray(room.chat)?room.chat:[]).slice(-40).map(m=>({id:m.id,name:m.name,text:m.text,at:m.at})),
       allReady:allReady(room),
