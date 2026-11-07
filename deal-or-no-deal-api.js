@@ -33,9 +33,9 @@ const CHRISTMAS_COLLECTION='deal_or_no_deal_christmas_v1';
 const CHRISTMAS_NAMES=['Winterdorf','Lebkuchenhaus','Weihnachtsmann','Rentier','Weihnachtsbaum','Weihnachtszug','Schneekugel','Wichtelwerkstatt','Polarlichter','Eisschloss','Rentierschlitten','Weihnachtslaterne','Weihnachtsengel','Adventskerzen','Schneemannfamilie','Weihnachtskrippe'];
 const CHRISTMAS_CARDS=Object.freeze(CHRISTMAS_NAMES.map((name,i)=>({id:'christmas-'+String(i+1).padStart(2,'0'),name,rarity:i<4?'common':i<8?'rare':i<12?'epic':'legendary'})));
 const CHRISTMAS_PACKS=Object.freeze([
-{id:'small',name:'Kleines Weihnachtspaket',price:1000000,count:3,guaranteed:'common'},
-{id:'large',name:'Großes Weihnachtspaket',price:2500000,count:7,guaranteed:'rare'},
-{id:'premium',name:'Premium-Weihnachtspaket',price:4500000,count:12,guaranteed:'rare',guaranteedCount:2}
+{id:'small',name:'Kleines Weihnachtspaket',price:200000,count:3,guaranteed:'common'},
+{id:'large',name:'Großes Weihnachtspaket',price:500000,count:7,guaranteed:'rare'},
+{id:'premium',name:'Premium-Weihnachtspaket',price:1000000,count:12,guaranteed:'rare',guaranteedCount:2}
 ]);
 const CHRISTMAS_LINES=Object.freeze([...Array.from({length:4},(_,r)=>[0,1,2,3].map(c=>r*4+c)),...Array.from({length:4},(_,c)=>[0,1,2,3].map(r=>r*4+c)),[0,5,10,15],[3,6,9,12]]);
 const CHRISTMAS_REWARDS=Object.freeze(['rudolph','winter-lobby','christmas-studio','gift-cases','santa']);
