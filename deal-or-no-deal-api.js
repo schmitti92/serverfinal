@@ -48,7 +48,12 @@ function christmasProgress(cards){
  const rewards=CHRISTMAS_REWARDS.slice(0,unlockedCount);
  if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
  const secondBingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index+16])?i:null).filter(i=>i!==null);
- return {collected:owned.filter(Boolean).length,total:32,bingoLines,bingos,secondBingoLines,secondBingos:secondBingoLines.length,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:null,collectorFrameUnlocked:unlockedCount===5};
+ const totalBingos=bingos+secondBingoLines.length;
+ const bonusIds=['golden-player-frame','ice-blue-case','magic-winter-stage','diamond-case','christmas-champion'];
+ const bonusRewards=bonusIds.filter((_,i)=>totalBingos>=12+i*2);
+ rewards.push(...bonusRewards);
+ const nextBonusIndex=bonusRewards.length;
+ return {collected:owned.filter(Boolean).length,total:32,bingoLines,bingos,secondBingoLines,secondBingos:secondBingoLines.length,totalBingos,maxBingos:20,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||bonusIds[nextBonusIndex]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:nextBonusIndex<5?12+nextBonusIndex*2:null,collectorFrameUnlocked:unlockedCount===5};
 }
 function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCount||0;for(let i=0;i<pack.count;i++){const min=i<guaranteed?pack.guaranteed:'common';const pool=CHRISTMAS_CARDS.filter(c=>rarities.indexOf(c.rarity)>=rarities.indexOf(min));const weights=pool.map(c=>({card:c,weight:pack.weights[c.rarity]}));const total=weights.reduce((a,w)=>a+w.weight,0);let n=randomInt(total);for(const w of weights){n-=w.weight;if(n<0){drawn.push(w.card);break}}}return drawn}
 
