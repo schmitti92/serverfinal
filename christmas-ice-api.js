@@ -63,7 +63,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
 
  app.post('/api/christmas-ice/action',auth,async(req,res)=>{
   const {type,index,hammer,requestId}=req.body||{};
-  if(!['start','strike','next','reset'].includes(type))return res.status(400).json({ok:false,error:'INVALID_ACTION'});
+  if(!['start','strike','next','reset','welcome'].includes(type))return res.status(400).json({ok:false,error:'INVALID_ACTION'});
   if(!/^[A-Za-z0-9_-]{12,90}$/.test(String(requestId||'')))return res.status(400).json({ok:false,error:'INVALID_REQUEST_ID'});
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
@@ -83,6 +83,12 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     const state=normalizeIceState(snap.data());
     const previous=state.lastActions?.find(x=>x.id===requestId);
     if(previous)return {state:{...publicIceState(state),balance:walletBalance},result:{...previous.result,replayed:true},changed:false};
+    if(type==='welcome'){
+     if(state.goldenHammerGift2026)return {state:{...publicIceState(state),balance:walletBalance},result:{granted:false,alreadyClaimed:true},changed:false};
+     const next={...state,goldenHammerGift2026:true,freeHammers:{...state.freeHammers,lucky:(state.freeHammers?.lucky||0)+3},wheelHammers:{...state.wheelHammers,lucky:(state.wheelHammers?.lucky||0)+3}};
+     tx.set(ref,next);
+     return {state:{...publicIceState(next),balance:walletBalance},result:{granted:true,hammer:'lucky',amount:3},changed:true};
+    }
     if(type==='reset'){
      const next=resetIceState(state);
      const result={reset:true};
