@@ -77,7 +77,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const promise=db.collection(collection).doc(code).get().then(snap=>snap.exists?publicView(snap.data().game):null);
   gameCache.set(code,{promise,expires:now+2500});
   if(gameCache.size>300){for(const [key,item] of gameCache){if(item.expires<=now)gameCache.delete(key)}if(gameCache.size>300)gameCache.delete(gameCache.keys().next().value)}
-  try{return await promise}catch(error){if((gameGenerations.get(code)||0)===generation&&gameCache.get(code)?.promise===promise)gameCache.delete(code);throw error}
+  try{const result=await promise;if((gameGenerations.get(code)||0)!==generation)return readGame(db,code);return result}catch(error){if((gameGenerations.get(code)||0)===generation&&gameCache.get(code)?.promise===promise)gameCache.delete(code);throw error}
  };
  const hubCollection='spielesammlung_hub_v1';
  const avatarCollection='deal_or_no_deal_avatars_v1';
