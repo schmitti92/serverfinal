@@ -89,3 +89,16 @@ test('reset cannot duplicate already granted joker on third picture',()=>{
  assert.equal(again.result.gift,null);
  assert.equal(again.state.peekJokers,1);
 });
+
+test('winner wheel hammer survives progress reset and can be spent',()=>{
+ let state=newIceState(()=>7);
+ state.freeHammers.double=1;
+ state.freeHammers.lucky=1;
+ const reset=resetIceState(state,()=>7);
+ assert.equal(reset.freeHammers.double,1);
+ assert.equal(reset.freeHammers.lucky,1);
+ const hit=strikeIce(reset,{index:0,hammer:'double',requestId:'wheel-double-use-001'},()=>0);
+ assert.equal(hit.state.freeHammers.double,0);
+ assert.equal(hit.state.balance,0);
+ assert.equal(hit.result.targets.length,2);
+});
