@@ -202,3 +202,28 @@ test('Rejoining player gets latest state after missing a committed move',async()
  assert.equal(rejoined.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.players.length,3);
  a.close();c.close();rejoined.close();
 });
+
+test('Unauthenticated heartbeat does not receive a pong',async()=>{
+ const {api,Socket}=harness();
+ const ws=new Socket();api.attachSocket(ws);
+ ws.message({type:'ping'});
+ await flush();
+ assert.equal(ws.sent.length,0);
+ ws.close();
+});
+
+test('Closed subscription receives no later game broadcasts',async()=>{
+ const {api,Socket,invoke}=harness();
+ const departed=new Socket(),active=new Socket();
+ api.attachSocket(departed);api.attachSocket(active);
+ departed.message({type:'subscribe',code:'123',token:'a'});
+ active.message({type:'subscribe',code:'123',token:'b'});
+ await flush();
+ const prior=departed.sent.length;
+ departed.close();
+ const started=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(started.body.ok,true);
+ assert.equal(departed.sent.length,prior);
+ assert.ok(active.sent.some(m=>m.type==='deal-state'&&m.game?.id===started.body.game.id));
+ active.close();
+});
