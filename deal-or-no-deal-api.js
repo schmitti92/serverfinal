@@ -67,13 +67,27 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // Share simultaneous game-state reads across players. Authorization remains per request.
  // Mutations invalidate immediately; generation prevents an in-flight stale read
  // from overwriting a newly committed state.
+ // In-process diagnostic counters: no Firestore writes, no personal identifiers.
+ // These count application read attempts, not Firebase's billed document reads.
+ const firestoreUsage={startedAt:Date.now(),gameReads:0,gameCacheHits:0,roomReads:0,roomCacheHits:0,gameActions:0};
+ const usageTimer=setInterval(()=>{
+  const elapsedMinutes=Math.max(1,(Date.now()-firestoreUsage.startedAt)/60000);
+  console.info('[deal-firestore-usage]',JSON.stringify({
+   minutes:Number(elapsedMinutes.toFixed(1)),
+   gameReads:firestoreUsage.gameReads,gameCacheHits:firestoreUsage.gameCacheHits,
+   roomReads:firestoreUsage.roomReads,roomCacheHits:firestoreUsage.roomCacheHits,
+   gameActions:firestoreUsage.gameActions
+  }));
+ },60000);
+ usageTimer.unref?.();
  const gameCache=new Map();
  const gameGenerations=new Map();
  const invalidateGame=code=>{gameGenerations.set(code,(gameGenerations.get(code)||0)+1);gameCache.delete(code)};
  const readGame=async(db,code)=>{
   const now=Date.now(),existing=gameCache.get(code);
-  if(existing&&existing.expires>now)return existing.promise;
+  if(existing&&existing.expires>now){firestoreUsage.gameCacheHits++;return existing.promise;}
   const generation=gameGenerations.get(code)||0;
+  firestoreUsage.gameReads++;
   const promise=db.collection(collection).doc(code).get().then(snap=>snap.exists?publicView(snap.data().game):null);
   gameCache.set(code,{promise,expires:now+2500});
   if(gameCache.size>300){for(const [key,item] of gameCache){if(item.expires<=now)gameCache.delete(key)}if(gameCache.size>300)gameCache.delete(gameCache.keys().next().value)}
@@ -91,13 +105,14 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const now=Date.now();
   let entry=allowCache?roomReadCache.get(code):null;
   if(!entry||entry.expires<=now){
+   firestoreUsage.roomReads++;
    const promise=db.collection(hubCollection).doc(code).get();
    entry={promise,expires:now+2000};
    if(allowCache){
     roomReadCache.set(code,entry);
     if(roomReadCache.size>300){for(const [key,item] of roomReadCache){if(item.expires<=now)roomReadCache.delete(key)}if(roomReadCache.size>300)roomReadCache.delete(roomReadCache.keys().next().value)}
    }
-  }
+  }else if(allowCache){firestoreUsage.roomCacheHits++;}
   let snap;
   try{snap=await entry.promise}catch(e){if(roomReadCache.get(code)===entry)roomReadCache.delete(code);throw e}
   if(!snap.exists)throw Error('ROOM_NOT_FOUND');
@@ -144,7 +159,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinal(db,code);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await Promise.all(players.map(p=>db.collection(walletCollection).doc(p.uid).get()));return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarSnap=await db.collection(avatarCollection).doc(code).get();const avatarMap=avatarSnap.exists?avatarSnap.data().avatars||{}:{};for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=13?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
+ app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{firestoreUsage.gameActions++;const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
   let awardWrite=null;
   const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
