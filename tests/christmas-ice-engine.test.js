@@ -45,3 +45,22 @@ test('reset starts at zero, preserves earned jokers and blocks duplicate picture
  const hit=strikeIce(reset,{index:4,hammer:'single',requestId:'fresh-strike-00001'},()=>0);
  assert.equal(hit.result.gift,null);assert.equal(hit.state.completed,1);
 });
+
+test('all twenty tiles can be opened without starter credit',()=>{
+ let s=newIceState(()=>19);
+ for(let i=0;i<20&&!s.finished;i++){
+  const a=strikeIce(s,{index:i,hammer:'single',requestId:'ice-free-hit-'+String(i).padStart(4,'0')},()=>0);
+  s=a.state;
+ }
+ assert.equal(s.completed,1);
+ assert.equal(s.balance>=0,true);
+});
+test('reset does not grant previously earned money again',()=>{
+ let s=newIceState(()=>0);
+ const a=strikeIce(s,{index:0,hammer:'single',requestId:'ice-money-first-001'},()=>0);
+ assert.equal(a.result.gift.kind,'money');
+ const replay=resetIceState(a.state,()=>0);
+ const b=strikeIce(replay,{index:0,hammer:'single',requestId:'ice-money-repeat-01'},()=>0);
+ assert.equal(b.result.gift,null);
+ assert.equal(b.state.balance,0);
+});
