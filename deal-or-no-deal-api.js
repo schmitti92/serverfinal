@@ -374,5 +374,5 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    }
   }
   awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
- return {collection,attachSocket};
+ return {collection,attachSocket,notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
 }
