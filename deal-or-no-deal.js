@@ -40,6 +40,7 @@ function apply(g,actor,command,random=crypto.randomInt){
    if(!active(next).length||!free(next).length)next.phase='final';else{next.round++;next.roundOpened=0;next.phase='open';}
   }
  }else throw Error('INVALID_PHASE');
+ if(g.phase!=='final'&&next.phase==='final')next.finalStartedAt=Date.now();
  next.revision++;next.commands.push(command.id);if(next.commands.length>300)next.commands.shift();return next;
 }
 function offer(g,random){
