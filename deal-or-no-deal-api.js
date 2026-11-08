@@ -215,7 +215,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const game=await readGame(db,code);if(!game)return res.json({ok:true,startedAt:null});
   const prefix=game.id+(kind==='final'?'':'_');
   if(!rewardId.startsWith(prefix))throw Error('INVALID_REWARD');
-  return res.json({ok:true,startedAt:game.christmasWheelSpins?.[kind+':'+rewardId]||null});
+  return res.json({ok:true,startedAt:game.christmasWheelSpins?.[kind+':'+rewardId]||null,serverNow:Date.now(),gameId:game.id});
  }catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/christmas-wheel-spin',auth,async(req,res)=>{try{
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
@@ -238,7 +238,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    tx.update(ref,{game:updated,updatedAt:Date.now()});return updated;
   });
   invalidateGame(code);broadcastGame(code,game);
-  return res.json({ok:true,startedAt:game.christmasWheelSpins[kind+':'+rewardId]});
+  return res.json({ok:true,startedAt:game.christmasWheelSpins[kind+':'+rewardId],serverNow:Date.now(),gameId:game.id});
  }catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/christmas-final-reward',auth,async(req,res)=>{try{
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
