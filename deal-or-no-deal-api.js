@@ -1,4 +1,5 @@
 import {create,apply,publicView} from './deal-or-no-deal.js';
+import {FieldValue} from 'firebase-admin/firestore';
 const SHOP_ITEMS=Object.freeze([{"id":"brille","name":"Goldene Sonnenbrille","price":100000000,"category":"Accessoires","emoji":"🕶️"},{"id":"pirat","name":"Piratenhut","price":150000000,"category":"Accessoires","emoji":"🏴‍☠️"},{"id":"mikro","name":"Show-Mikrofon","price":200000000,"category":"Extras","emoji":"🎙️"},{"id":"silberrahmen","name":"Silberner Profilrahmen","price":300000000,"category":"Rahmen","emoji":"🪞"},{"id":"silberkoffer","name":"Silberkoffer","price":500000000,"category":"Koffer","emoji":"💼"},{"id":"krone","name":"Königskrone","price":750000000,"category":"Accessoires","emoji":"👑"},{"id":"goldrahmen","name":"Goldener Profilrahmen","price":1000000000,"category":"Rahmen","emoji":"🖼️"},{"id":"goldkoffer","name":"Goldkoffer","price":1500000000,"category":"Koffer","emoji":"🧳"},{"id":"vip","name":"VIP-Abzeichen","price":2500000000,"category":"Extras","emoji":"🌟"},{"id":"studio","name":"Exklusives Studio","price":4000000000,"category":"Hintergründe","emoji":"🎬"},{"id":"diamant","name":"Diamantkoffer","price":7500000000,"category":"Koffer","emoji":"💎"},{"id":"trophaee","name":"Legendäre Show-Trophäe","price":10000000000,"category":"Extras","emoji":"🏆"}]);
 import {randomInt} from 'node:crypto';
 const CARD_COLLECTION='deal_or_no_deal_cards_v1';
@@ -316,10 +317,11 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    if(!finalRewardSnap.exists){
     const roll=randomInt(100),pack=CHRISTMAS_PACKS.find(p=>p.id===(roll<10?'premium':roll<60?'large':'small'));
     const drawn=christmasDraw(pack),previous=finalAlbumSnap.exists?finalAlbumSnap.data():{};
-    const cards={...(previous.cards||{})};
-    for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
+    const increments={};
+    const counts={};for(const card of drawn)counts[card.id]=(counts[card.id]||0)+1;
+    for(const [id,count] of Object.entries(counts))increments[id]=FieldValue.increment(count);
     const previousAward=awardWrite;
-    awardWrite=()=>{previousAward?.();tx.set(finalAlbumRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
+    awardWrite=()=>{previousAward?.();tx.set(finalAlbumRef,{cards:increments,opened:FieldValue.increment(1),updatedAt:Date.now()},{merge:true});
      tx.create(finalRewardRef,{uid:winner.id,gameId:after.id,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
    }
    const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id)}));
