@@ -20,6 +20,47 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
    return res.json({ok:true,started:snap.exists,state:snap.exists?publicIceState(snap.data()):null});
   }catch(e){return fail(res,e)}
  });
+ // A final-round winner gets exactly one hammer wheel spin, only after the
+ // existing Christmas card-pack wheel has started. The award is persisted once.
+ app.post('/api/christmas-ice/final-hammer',auth,async(req,res)=>{
+  const code=String(req.body?.code||'').toUpperCase();
+  const gameId=String(req.body?.gameId||'');
+  if(!/^(?:\\d{3}|[A-HJ-NP-Z2-9]{6})$/.test(code)||!gameId||gameId.length>180)
+   return res.status(400).json({ok:false,error:'INVALID_MATCH'});
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const gameRef=db.collection('deal_or_no_deal_matches_v1').doc(code);
+   const progressRef=db.collection(collection).doc(req.iceUid);
+   const receiptRef=db.collection('christmas_ice_final_hammer_v1').doc(gameId);
+   const result=await db.runTransaction(async tx=>{
+    const [gameSnap,receiptSnap,progressSnap]=await Promise.all([tx.get(gameRef),tx.get(receiptRef),tx.get(progressRef)]);
+    if(!gameSnap.exists)throw Error('MATCH_NOT_FOUND');
+    const game=gameSnap.data()?.game;
+    if(!game||game.id!==gameId||game.phase!=='final')throw Error('MATCH_NOT_FINAL');
+    const payouts=(game.finalValues||[]).map(x=>({id:x.id,payout:x.payout}));
+    if(!payouts.length)throw Error('RESULT_NOT_READY');
+    const max=Math.max(...payouts.map(x=>x.payout));
+    const winners=payouts.filter(x=>x.payout===max);
+    if(winners.length!==1||String(winners[0].id)!==req.iceUid)throw Error('WINNER_ONLY');
+    if(!game.christmasWheelSpins?.['final:'+game.id])throw Error('PACK_WHEEL_FIRST');
+    if(receiptSnap.exists){
+     if(receiptSnap.data()?.uid!==req.iceUid)throw Error('ALREADY_AWARDED');
+     return {hammer:receiptSnap.data().hammer,replayed:true};
+    }
+    // Identical 50/35/15 distribution as the existing event hammer draw.
+    const roll=Math.floor(Math.random()*100);
+    const hammer=roll<50?'single':roll<85?'double':'lucky';
+    const state=progressSnap.exists?progressSnap.data():newIceState();
+    const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1}};
+    tx.set(progressRef,next);
+    tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:Date.now()});
+    return {hammer,replayed:false};
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+
  app.post('/api/christmas-ice/action',auth,async(req,res)=>{
   const {type,index,hammer,requestId}=req.body||{};
   if(!['start','strike','next','reset'].includes(type))return res.status(400).json({ok:false,error:'INVALID_ACTION'});
