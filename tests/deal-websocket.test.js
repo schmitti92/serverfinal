@@ -5,9 +5,9 @@ import crypto from 'node:crypto';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 
 const flush=()=>new Promise(resolve=>setTimeout(resolve,20));
-function harness(){
+function harness(participants=['a','b']){
  const routes=new Map(),docs=new Map();
- docs.set('spielesammlung_hub_v1/123',{hostUid:'a',revision:1,players:[{uid:'a',name:'A'},{uid:'b',name:'B'}]});
+ docs.set('spielesammlung_hub_v1/123',{hostUid:'a',revision:1,players:participants.map(uid=>({uid,name:uid.toUpperCase()}))});
  const app={get:(path,...fns)=>routes.set('GET '+path,fns),post:(path,...fns)=>routes.set('POST '+path,fns)};
  const db={collection:name=>({doc:id=>({
   get:async()=>({exists:docs.has(name+'/'+id),data:()=>docs.get(name+'/'+id)}),
@@ -17,7 +17,7 @@ function harness(){
   const tx={get:async ref=>ref.get(),set:(ref,data)=>pending.push(()=>ref.set(data)),update:(ref,data)=>pending.push(async()=>ref.set({...((await ref.get()).data()||{}),...data})),create:(ref,data)=>pending.push(()=>ref.set(data))};
   const result=await fn(tx);for(const write of pending)await write();return result;
  }};
- const api=installDealOrNoDeal(app,{verifyProfile:async token=>['a','b'].includes(token)?{uid:token}:null,getFirestore:()=>db});
+ const api=installDealOrNoDeal(app,{verifyProfile:async token=>participants.includes(token)?{uid:token}:null,getFirestore:()=>db});
  class Socket extends EventEmitter{
   readyState=1;sent=[];
   send(value){this.sent.push(JSON.parse(value))}
@@ -133,4 +133,36 @@ test('Two players finish a banker round and receive exactly one wallet payout',a
  const final=a.sent.filter(m=>m.type==='deal-state').at(-1).game;
  assert.equal(final.finalValues.length,2);
  a.close();b.close();
+});
+
+test('Three players share case selections and a simultaneous banker vote',async()=>{
+ const {api,Socket,invoke}=harness(['a','b','c']);
+ const sockets=['a','b','c'].map(uid=>{const ws=new Socket();api.attachSocket(ws);ws.message({type:'subscribe',code:'123',token:uid});return ws});
+ await flush();
+ let res=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(res.body.ok,true);
+ let game=res.body.game;
+ const act=async(uid,type,extra={})=>{
+  const response=await invoke('POST','/api/deal-or-no-deal/:code/action',uid,{id:crypto.randomUUID(),revision:game.revision,type,...extra});
+  assert.equal(response.body.ok,true,JSON.stringify(response.body));
+  game=response.body.game;
+  for(const ws of sockets){
+   const state=ws.sent.filter(m=>m.type==='deal-state').at(-1)?.game;
+   assert.equal(state?.revision,game.revision);
+   assert.equal(Object.hasOwn(state,'values'),false);
+  }
+ };
+ for(let i=0;i<3;i++)await act(game.order[i],'select',{case:i});
+ for(let i=3;i<8;i++){
+  const actor=game.order[game.turnIndex];
+  await act(actor,'open',{case:i});
+  await act(actor,'ack-reveal');
+ }
+ assert.equal(game.phase,'decision');
+ const voters=game.history.at(-1).participants;
+ assert.equal(voters.length,3);
+ for(const actor of voters)await act(actor,'decide',{deal:true});
+ assert.equal(game.phase,'final');
+ assert.equal(game.finalValues.length,3);
+ for(const ws of sockets)ws.close();
 });
