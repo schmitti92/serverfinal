@@ -54,8 +54,12 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     const hammer=roll<50?'single':roll<85?'double':'lucky';
     const state=progressSnap.exists?normalizeIceState(progressSnap.data()):newIceState();
     const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1},wheelHammers:{...state.wheelHammers,[hammer]:(state.wheelHammers?.[hammer]||0)+1}};
+    const wheelStartedAt=Date.now();
+    // Publish the outcome on the existing shared game document. Other players
+    // receive it through their normal game-state updates, with no new listener.
+    tx.update(gameRef,{game:{...game,christmasHammerWheel:{gameId,uid:req.iceUid,hammer,startedAt:wheelStartedAt},revision:(game.revision||0)+1},updatedAt:wheelStartedAt});
     tx.set(progressRef,next);
-    tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:Date.now()});
+    tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:wheelStartedAt});
     return {hammer,replayed:false};
    });
    res.set('Cache-Control','no-store');
