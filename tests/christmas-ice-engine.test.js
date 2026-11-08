@@ -64,3 +64,28 @@ test('reset does not grant previously earned money again',()=>{
  assert.equal(b.result.gift,null);
  assert.equal(b.state.balance,0);
 });
+
+test('free hammers refill after each picture without negative balance',()=>{
+ let s=newIceState(()=>19);
+ for(let i=0;i<20;i++){
+  s=strikeIce(s,{index:i,hammer:'single',requestId:'full-picture-'+String(i).padStart(4,'0')},()=>0).state;
+  if(s.finished)break;
+ }
+ assert.equal(s.completed,1);
+ const next=nextIcePicture(s,()=>19);
+ assert.equal(next.finished,false);
+ assert.ok(next.freeHammers.single>=20);
+ assert.equal(next.balance>=0,true);
+});
+test('reset cannot duplicate already granted joker on third picture',()=>{
+ let s=newIceState(()=>4);s.completed=2;s.maxRewarded=2;
+ const won=strikeIce(s,{index:4,hammer:'single',requestId:'joker-claim-000001'},()=>0);
+ assert.equal(won.state.peekJokers,1);
+ const restarted=resetIceState(won.state,()=>4);
+ assert.equal(restarted.maxRewarded,3);
+ assert.equal(restarted.peekJokers,1);
+ const replay={...restarted,completed:2};
+ const again=strikeIce(replay,{index:4,hammer:'single',requestId:'joker-repeat-00001'},()=>0);
+ assert.equal(again.result.gift,null);
+ assert.equal(again.state.peekJokers,1);
+});
