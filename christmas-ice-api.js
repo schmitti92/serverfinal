@@ -63,7 +63,9 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
     tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:wheelStartedAt});
     return {hammer,replayed:false,game:nextGame};
    });
-   if(result.game&&typeof notifyDealGameChanged==='function')notifyDealGameChanged(code,result.game);
+   if(result.game&&typeof notifyDealGameChanged==='function'){
+    try{notifyDealGameChanged(code,result.game)}catch(error){console.error('Hammer wheel broadcast failed after successful award',error)}
+   }
    res.set('Cache-Control','no-store');
    return res.json({ok:true,hammer:result.hammer,replayed:result.replayed});
   }catch(e){return fail(res,e)}
