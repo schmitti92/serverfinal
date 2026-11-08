@@ -1,12 +1,12 @@
 'use strict';
 import * as crypto from 'node:crypto';
-const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000];
+const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000];
 const STEPS=[5,4,4,3,2,2,1,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
 const shuffle=(a,rand=crypto.randomInt)=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
 const active=g=>g.players.filter(p=>p.deal===null);
 const locked=g=>new Set(g.players.map(p=>p.case).filter(Number.isInteger));
-const free=g=>Array.from({length:26},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i));
-const publicRemaining=g=>Array.from({length:26},(_,i)=>i).filter(i=>!g.opened.includes(i)).map(i=>g.values[i]);
+const free=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i));
+const publicRemaining=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!g.opened.includes(i)).map(i=>g.values[i]);
 function create(players,random=crypto.randomInt){
  if(!Array.isArray(players)||players.length<1||players.length>4)throw Error('PLAYER_COUNT');
  const ids=players.map(p=>String(p.id));if(new Set(ids).size!==ids.length)throw Error('DUPLICATE_PLAYER');
@@ -20,7 +20,7 @@ function apply(g,actor,command,random=crypto.randomInt){
  if(command.revision!==g.revision&&!(g.phase==='decision'&&command.type==='decide'))throw Error('STALE_REVISION');
  const next=structuredClone(g),p=next.players.find(p=>p.id===String(actor));if(!p)throw Error('NOT_PARTICIPANT');
  if(next.phase==='select'){
-  if(command.type!=='select'||next.order[next.selectionIndex]!==p.id||!Number.isInteger(command.case)||command.case<0||command.case>=26||locked(next).has(command.case))throw Error('INVALID_SELECTION');
+  if(command.type!=='select'||next.order[next.selectionIndex]!==p.id||!Number.isInteger(command.case)||command.case<0||command.case>=next.values.length||locked(next).has(command.case))throw Error('INVALID_SELECTION');
   p.case=command.case;next.selectionIndex++;if(next.selectionIndex===next.players.length)next.phase='open';
  }else if(next.phase==='open'){
   if(command.type!=='open'||nextTurn(next)!==p.id||!free(next).includes(command.case))throw Error('INVALID_OPEN');
