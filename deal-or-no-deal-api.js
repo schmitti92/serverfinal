@@ -76,7 +76,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   expiry.unref?.();
   ws.on('message',async raw=>{
    let msg;try{msg=JSON.parse(String(raw))}catch{return};
-   if(msg?.type==='ping'){sendSocket(ws,{type:'pong'});return}
+   if(msg?.type==='ping'){if(joined)sendSocket(ws,{type:'pong'});return}
    if(msg?.type!=='subscribe'||authenticated)return;
    authenticated=true;
    const code=String(msg.code||'').toUpperCase(),token=String(msg.token||'');
