@@ -166,3 +166,24 @@ test('Three players share case selections and a simultaneous banker vote',async(
  assert.equal(game.finalValues.length,3);
  for(const ws of sockets)ws.close();
 });
+
+test('Rejoining player gets latest state after missing a committed move',async()=>{
+ const {api,Socket,invoke}=harness(['a','b','c']);
+ const a=new Socket(),b=new Socket(),c=new Socket();
+ for(const [ws,uid] of [[a,'a'],[b,'b'],[c,'c']]){api.attachSocket(ws);ws.message({type:'subscribe',code:'123',token:uid})}
+ await flush();
+ let response=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(response.body.ok,true);
+ const game=response.body.game;
+ b.close();
+ response=await invoke('POST','/api/deal-or-no-deal/:code/action',game.order[0],{id:crypto.randomUUID(),revision:game.revision,type:'select',case:0});
+ assert.equal(response.body.ok,true,JSON.stringify(response.body));
+ assert.equal(a.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.revision,1);
+ assert.equal(c.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.revision,1);
+ const rejoined=new Socket();api.attachSocket(rejoined);
+ rejoined.message({type:'subscribe',code:'123',token:'b'});
+ await flush();
+ assert.equal(rejoined.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.revision,1);
+ assert.equal(rejoined.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.players.length,3);
+ a.close();c.close();rejoined.close();
+});
