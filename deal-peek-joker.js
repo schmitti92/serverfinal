@@ -26,19 +26,22 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
   try {
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const gameRef=db.collection('deal_or_no_deal_matches_v1').doc(code);
+   const roomRef=db.collection('spielesammlung_hub_v1').doc(code);
    const invRef=db.collection('deal_peek_inventory_v1').doc(req.peekUid);
    const receiptRef=invRef.collection('receipts').doc(requestId);
    const result=await db.runTransaction(async tx=>{
-    const [receiptSnap,gameSnap,invSnap]=await Promise.all([tx.get(receiptRef),tx.get(gameRef),tx.get(invRef)]);
+    const [receiptSnap,gameSnap,invSnap,roomSnap]=await Promise.all([tx.get(receiptRef),tx.get(gameRef),tx.get(invRef),tx.get(roomRef)]);
+    if(!roomSnap.exists||!roomSnap.data()?.players?.some(p=>String(p.uid)===req.peekUid&&!p.testBot&&!p.bot))throw Error('NOT_IN_ROOM');
     if(!gameSnap.exists)throw Error('GAME_NOT_FOUND');
     const game=gameSnap.data()?.game;
     if(!game||!Array.isArray(game.values)||game.values.length!==26)throw Error('GAME_INVALID');
-    if(!game.players?.some(p=>String(p.id)===req.peekUid&&p.deal===null))throw Error('NOT_ACTIVE_PLAYER');
+    if(!game.players?.some(p=>String(p.id)===req.peekUid))throw Error('NOT_PARTICIPANT');
     if(receiptSnap.exists){
      const receipt=receiptSnap.data();
      if(receipt.code!==code||receipt.case!==caseIndex||receipt.gameId!==game.id)throw Error('REQUEST_REUSED');
      return {case:receipt.case,amount:receipt.amount,balance:receipt.balance,replayed:true};
     }
+    if(!game.players.some(p=>String(p.id)===req.peekUid&&p.deal===null))throw Error('NOT_ACTIVE_PLAYER');
     if(!['open','decision','reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
     if(game.opened?.includes(caseIndex)||game.pending?.case===caseIndex)throw Error('CASE_NOT_CLOSED');
     const balance=Number(invSnap.data()?.balance)||0;
@@ -54,7 +57,7 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
    return res.json({ok:true,...result});
   }catch(e){
    const error=String(e?.message||'JOKER_ERROR');
-   const status=error==='NOT_ACTIVE_PLAYER'?403:error==='GAME_NOT_FOUND'?404:
+   const status=['NOT_ACTIVE_PLAYER','NOT_PARTICIPANT','NOT_IN_ROOM'].includes(error)?403:error==='GAME_NOT_FOUND'?404:
     error==='STORAGE_UNAVAILABLE'?503:409;
    return res.status(status).json({ok:false,error});
   }
