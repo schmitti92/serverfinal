@@ -3,7 +3,7 @@ import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState,normal
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
-export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
+export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDealGameChanged}){
  const collection='christmas_ice_progress_v1',inventoryCollection='deal_peek_inventory_v1',walletCollection='deal_or_no_deal_wallets_v1';
  const auth=async(req,res,next)=>{
   try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];
@@ -57,13 +57,15 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     const wheelStartedAt=Date.now();
     // Publish the outcome on the existing shared game document. Other players
     // receive it through their normal game-state updates, with no new listener.
-    tx.update(gameRef,{game:{...game,christmasHammerWheel:{gameId,uid:req.iceUid,hammer,startedAt:wheelStartedAt},revision:(game.revision||0)+1},updatedAt:wheelStartedAt});
+    const nextGame={...game,christmasHammerWheel:{gameId,uid:req.iceUid,hammer,startedAt:wheelStartedAt},revision:(game.revision||0)+1};
+    tx.update(gameRef,{game:nextGame,updatedAt:wheelStartedAt});
     tx.set(progressRef,next);
     tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:wheelStartedAt});
-    return {hammer,replayed:false};
+    return {hammer,replayed:false,game:nextGame};
    });
+   if(result.game&&typeof notifyDealGameChanged==='function')notifyDealGameChanged(code,result.game);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,...result});
+   return res.json({ok:true,hammer:result.hammer,replayed:result.replayed});
   }catch(e){return fail(res,e)}
  });
 
