@@ -1,5 +1,5 @@
 'use strict';
-import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState} from './christmas-ice-engine.js';
+import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState,normalizeIceState} from './christmas-ice-engine.js';
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
@@ -17,7 +17,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
   try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const [snap,wallet]=await Promise.all([db.collection(collection).doc(req.iceUid).get(),db.collection(walletCollection).doc(req.iceUid).get()]);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,started:snap.exists,state:snap.exists?{...publicIceState(snap.data()),balance:Number(wallet.data()?.balance)||0}:null});
+   return res.json({ok:true,started:snap.exists,state:snap.exists?{...publicIceState(normalizeIceState(snap.data())),balance:Number(wallet.data()?.balance)||0}:null});
   }catch(e){return fail(res,e)}
  });
  // A final-round winner gets exactly one hammer wheel spin, only after the
@@ -50,7 +50,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     // Identical 50/35/15 distribution as the existing event hammer draw.
     const roll=Math.floor(Math.random()*100);
     const hammer=roll<50?'single':roll<85?'double':'lucky';
-    const state=progressSnap.exists?progressSnap.data():newIceState();
+    const state=progressSnap.exists?normalizeIceState(progressSnap.data()):newIceState();
     const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1},wheelHammers:{...state.wheelHammers,[hammer]:(state.wheelHammers?.[hammer]||0)+1}};
     tx.set(progressRef,next);
     tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:Date.now()});
@@ -75,12 +75,12 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     const walletBalance=Number(walletSnap.data()?.balance)||0;
     if(!Number.isSafeInteger(walletBalance)||walletBalance<0)throw Error('INVALID_WALLET_BALANCE');
     if(type==='start'){
-     if(snap.exists)return {state:{...publicIceState(snap.data()),balance:walletBalance},changed:false};
+     if(snap.exists)return {state:{...publicIceState(normalizeIceState(snap.data())),balance:walletBalance},changed:false};
      const state=newIceState();tx.create(ref,state);
      return {state:{...publicIceState(state),balance:walletBalance},changed:true};
     }
     if(!snap.exists)throw Error('START_REQUIRED');
-    const state=snap.data();
+    const state=normalizeIceState(snap.data());
     const previous=state.lastActions?.find(x=>x.id===requestId);
     if(previous)return {state:{...publicIceState(state),balance:walletBalance},result:{...previous.result,replayed:true},changed:false};
     if(type==='reset'){
