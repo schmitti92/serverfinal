@@ -136,7 +136,7 @@ test('Two players finish a banker round and receive exactly one wallet payout',a
 });
 
 test('Three players share case selections and a simultaneous banker vote',async()=>{
- const {api,Socket,invoke}=harness(['a','b','c']);
+ const {api,Socket,invoke,docs}=harness(['a','b','c']);
  const sockets=['a','b','c'].map(uid=>{const ws=new Socket();api.attachSocket(ws);ws.message({type:'subscribe',code:'123',token:uid});return ws});
  await flush();
  let res=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
