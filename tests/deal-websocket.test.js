@@ -31,7 +31,7 @@ function harness(){
   for(const fn of handlers){await new Promise((resolve,reject)=>{let next=false;Promise.resolve(fn(req,res,()=>{next=true;resolve()})).then(()=>{if(!next)resolve()},reject)})}
   return res;
  };
- return {api,Socket,invoke};
+ return {api,Socket,invoke,docs};
 }
 test('Deal socket rejects users who are not room members',async()=>{
  const {api,Socket}=harness();const ws=new Socket();api.attachSocket(ws);
@@ -90,5 +90,47 @@ test('Both subscribed players receive every committed selection, open and reveal
  await act(actor,'ack-reveal');
  assert.equal(game.phase,'open');
  assert.equal(game.opened.length,1);
+ a.close();b.close();
+});
+
+test('Two players finish a banker round and receive exactly one wallet payout',async()=>{
+ const {api,Socket,invoke,docs}=harness();
+ const a=new Socket(),b=new Socket();
+ api.attachSocket(a);api.attachSocket(b);
+ a.message({type:'subscribe',code:'123',token:'a'});
+ b.message({type:'subscribe',code:'123',token:'b'});
+ await flush();
+ let result=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(result.body.ok,true);
+ let game=result.body.game;
+ const act=async(actor,type,extra={})=>{
+  const body={id:crypto.randomUUID(),revision:game.revision,type,...extra};
+  result=await invoke('POST','/api/deal-or-no-deal/:code/action',actor,body);
+  assert.equal(result.body.ok,true,JSON.stringify(result.body));
+  game=result.body.game;
+  for(const ws of [a,b]){
+   const last=ws.sent.filter(m=>m.type==='deal-state').at(-1)?.game;
+   assert.equal(last?.revision,game.revision);
+   assert.equal(last?.phase,game.phase);
+   assert.equal(Object.hasOwn(last,'values'),false);
+  }
+ };
+ for(let i=0;i<2;i++)await act(game.order[i],'select',{case:i});
+ for(let i=2;i<7;i++){
+  const actor=game.order[game.turnIndex];
+  await act(actor,'open',{case:i});
+  await act(actor,'ack-reveal');
+ }
+ assert.equal(game.phase,'decision');
+ const voters=game.history.at(-1).participants;
+ for(const actor of voters)await act(actor,'decide',{deal:true});
+ assert.equal(game.phase,'final');
+ for(const uid of ['a','b']){
+  const wallet=docs.get('deal_or_no_deal_wallets_v1/'+uid);
+  assert.equal(wallet?.games,1);
+  assert.ok(docs.has('deal_or_no_deal_payouts_v1/'+game.id+'_'+uid));
+ }
+ const final=a.sent.filter(m=>m.type==='deal-state').at(-1).game;
+ assert.equal(final.finalValues.length,2);
  a.close();b.close();
 });
