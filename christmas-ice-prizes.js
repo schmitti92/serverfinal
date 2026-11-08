@@ -9,7 +9,7 @@ export const HAMMER_PRICES=Object.freeze({single:300000,double:500000,lucky:1000
 export const MONEY_PRIZES=Object.freeze([100,500,1000,2500,5000,10000,25000,50000,100000,200000,350000,500000,750000,1000000,1500000,2000000]);
 export function giftKind(number){
  if(!Number.isInteger(number)||number<1||number>ICE_PICTURES)throw Error('INVALID_PICTURE');
- return ['money','hammer','joker'][(number-1)%3];
+ return number%3===0?'joker':'money';
 }
 export function drawHammer(random=randomInt){
  const roll=random(100);
