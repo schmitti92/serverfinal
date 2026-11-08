@@ -207,6 +207,29 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards)})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/christmas/open',auth,async(req,res)=>{try{const pack=CHRISTMAS_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CHRISTMAS_COLLECTION).doc(uid),receiptRef=db.collection('deal_or_no_deal_christmas_receipts_v1').doc(uid+'_'+requestId);
  const result=await db.runTransaction(async tx=>{const [wallet,snap,receipt]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(receiptRef)]);if(receipt.exists){if(receipt.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...receipt.data().result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const previous=snap.exists?snap.data():{};const cards={...(previous.cards||{})};const drawn=christmasDraw(pack);for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;const remaining=balance-pack.price;const result={balance:remaining,cards,opened:(previous.opened||0)+1,revealed:drawn,progress:christmasProgress(cards)};tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});tx.set(cardsRef,{cards,opened:result.opened,updatedAt:Date.now()},{merge:true});tx.create(receiptRef,{packId:pack.id,result,createdAt:Date.now()});return result});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/:code/christmas-wheel-spin',auth,async(req,res)=>{try{
+  const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
+  const db=getFirestore();await check(db,code,req.dealIdentity.uid);
+  const kind=String(req.body?.kind||''),rewardId=String(req.body?.rewardId||'');
+  if(!['cent','banker','final'].includes(kind)||!rewardId||rewardId.length>180)throw Error('INVALID_REWARD');
+  const collections={cent:'deal_christmas_cent_rewards_v1',banker:'deal_christmas_banker_rewards_v1',final:'deal_christmas_final_rewards_v1'};
+  const ref=db.collection(collection).doc(code),rewardRef=db.collection(collections[kind]).doc(rewardId);
+  const game=await db.runTransaction(async tx=>{
+   const [gameSnap,rewardSnap]=await Promise.all([tx.get(ref),tx.get(rewardRef)]);
+   if(!gameSnap.exists||!rewardSnap.exists)throw Error('REWARD_NOT_FOUND');
+   const current=gameSnap.data().game,reward=rewardSnap.data();
+   if(reward.gameId!==current.id||reward.uid!==req.dealIdentity.uid)throw Error('WINNER_ONLY');
+   if(kind==='final'&&current.phase!=='final')throw Error('MATCH_NOT_FINAL');
+   if(kind==='cent'&&!current.events?.some(e=>e.type==='opened'&&e.eventId===reward.eventId&&e.amount===1))throw Error('INVALID_REWARD');
+   if(kind==='banker'&&!current.history?.some(h=>h.round===reward.round&&h.decisions?.some(d=>d.id===reward.uid&&d.deal)))throw Error('INVALID_REWARD');
+   const key=kind+':'+rewardId;
+   if(current.christmasWheelSpins?.[key])return current;
+   const updated={...current,christmasWheelSpins:{...(current.christmasWheelSpins||{}),[key]:Date.now()},revision:(current.revision||0)+1};
+   tx.update(ref,{game:updated,updatedAt:Date.now()});return updated;
+  });
+  invalidateGame(code);broadcastGame(code,game);
+  return res.json({ok:true,startedAt:game.christmasWheelSpins[kind+':'+rewardId]});
+ }catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/christmas-final-reward',auth,async(req,res)=>{try{
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
@@ -214,7 +237,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const snap=await db.collection('deal_christmas_final_rewards_v1').doc(game.id).get();
   if(!snap.exists)return res.json({ok:true,reward:null});
   const data=snap.data();
-  return res.json({ok:true,reward:{id:snap.id,gameId:game.id,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Gewinner',packId:data.packId,packName:data.packName,revealed:data.revealed,spun:!!game.finalWheelSpun,createdAt:data.createdAt}});
+  return res.json({ok:true,reward:{id:snap.id,gameId:game.id,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Gewinner',packId:data.packId,packName:data.packName,revealed:data.revealed,spun:!!game.christmasWheelSpins?.['final:'+snap.id],createdAt:data.createdAt}});
  }catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/christmas-final-spin',auth,async(req,res)=>{try{
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
