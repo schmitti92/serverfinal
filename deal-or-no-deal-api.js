@@ -70,6 +70,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  };
  const attachSocket=(ws)=>{
   let joined=null,authenticated=false;
+  // Force periodic re-authentication and fresh room membership checks.
+  // Do not retain a subscription indefinitely after a player leaves the room.
+  const expiry=setTimeout(()=>{if(ws.readyState===1)ws.close(1000,'REAUTH_REQUIRED')},120000);
+  expiry.unref?.();
   ws.on('message',async raw=>{
    let msg;try{msg=JSON.parse(String(raw))}catch{return};
    if(msg?.type==='ping'){sendSocket(ws,{type:'pong'});return}
@@ -92,7 +96,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     if(ws.readyState===1)sendSocket(ws,{type:'deal-state',game});
    }catch(error){sendSocket(ws,{type:'deal-error',error:String(error?.message||'SUBSCRIPTION_FAILED')});ws.close(1008)}
   });
-  ws.on('close',()=>{if(joined){const peers=dealSockets.get(joined);peers?.delete(ws);if(peers?.size===0)dealSockets.delete(joined)}});
+  ws.on('close',()=>{clearTimeout(expiry);if(joined){const peers=dealSockets.get(joined);peers?.delete(ws);if(peers?.size===0)dealSockets.delete(joined)}});
  };
 
  const auth=async(req,res,next)=>{try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];const identity=await verifyProfile(token);if(!identity)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});req.dealIdentity=identity;next()}catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'})}};
