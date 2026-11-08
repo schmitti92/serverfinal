@@ -122,3 +122,11 @@ test('new matches independently reshuffle every case with no preferred jackpot r
  for(const hits of positions)assert.ok(hits>=55&&hits<=145,'Biased jackpot distribution: '+positions.join(','));
  assert.equal(identical,0);
 });
+
+test('public game reveals 27-case count without exposing hidden amounts',()=>{
+ const game=create([{id:'p1',name:'Spieler'}],rand);
+ const view=publicView(game);
+ assert.equal(view.caseCount,27);
+ assert.equal(view.values,undefined);
+ assert.equal(free(game).length,27);
+});
