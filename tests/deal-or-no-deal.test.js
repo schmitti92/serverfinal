@@ -104,3 +104,21 @@ test('banker offer is positive, no higher than fair expected value, and records 
   assert.ok(checks>0);
  }
 });
+
+test('new matches independently reshuffle every case with no preferred jackpot region',()=>{
+ const rounds=2600,positions=Array(26).fill(0);
+ let previous=null,identical=0;
+ for(let i=0;i<rounds;i++){
+  const game=create([{id:'p1',name:'Spieler'}]);
+  assert.equal(game.values.length,26);
+  assert.deepEqual([...game.values].sort((a,b)=>a-b),[...VALUES].sort((a,b)=>a-b));
+  const jackpot=game.values.indexOf(100000000);
+  positions[jackpot]++;
+  if(previous&&previous.every((value,index)=>value===game.values[index]))identical++;
+  previous=game.values;
+ }
+ // 26 equally likely positions: expected 100 hits each. Loose statistical
+ // tolerance avoids flaky tests while detecting persistent lower-number bias.
+ for(const hits of positions)assert.ok(hits>=55&&hits<=145,'Biased jackpot distribution: '+positions.join(','));
+ assert.equal(identical,0);
+});
