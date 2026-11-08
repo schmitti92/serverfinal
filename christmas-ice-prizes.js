@@ -5,7 +5,7 @@ import {randomInt} from 'node:crypto';
 // It is not yet wired to HTTP until server-validated progress is implemented.
 export const ICE_PICTURES=70;
 export const ICE_TILES=20;
-export const HAMMER_PRICES=Object.freeze({single:300000,double:500000,lucky:1000000});
+export const HAMMER_PRICES=Object.freeze({single:30000000,double:50000000,lucky:100000000});
 export const MONEY_PRIZES=Object.freeze([100,500,1000,2500,5000,10000,25000,50000,100000,200000,350000,500000,750000,1000000,1500000,2000000]);
 export function giftKind(number){
  if(!Number.isInteger(number)||number<1||number>ICE_PICTURES)throw Error('INVALID_PICTURE');
@@ -19,7 +19,7 @@ export function drawHammer(random=randomInt){
 export function drawMoney(random=randomInt){
  const index=random(MONEY_PRIZES.length);
  if(!Number.isInteger(index)||index<0||index>=MONEY_PRIZES.length)throw Error('INVALID_RANDOM');
- return MONEY_PRIZES[index];
+ return MONEY_PRIZES[index]*100;
 }
 export function drawGift(number,random=randomInt){
  const kind=giftKind(number);
