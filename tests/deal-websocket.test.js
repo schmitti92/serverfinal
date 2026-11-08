@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import crypto from 'node:crypto';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 
 const flush=()=>new Promise(resolve=>setTimeout(resolve,20));
@@ -58,4 +59,36 @@ test('Deal socket delivers public state to two players after start',async()=>{
   assert.equal(Object.hasOwn(state.game,'commands'),false);
   ws.close();
  }
+});
+
+test('Both subscribed players receive every committed selection, open and reveal',async()=>{
+ const {api,Socket,invoke}=harness();
+ const a=new Socket(),b=new Socket();
+ api.attachSocket(a);api.attachSocket(b);
+ a.message({type:'subscribe',code:'123',token:'a'});
+ b.message({type:'subscribe',code:'123',token:'b'});
+ await flush();
+ const started=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(started.body.ok,true);
+ let game=started.body.game;
+ const act=async(actor,type,extra={})=>{
+  const result=await invoke('POST','/api/deal-or-no-deal/:code/action',actor,{id:crypto.randomUUID(),revision:game.revision,type,...extra});
+  assert.equal(result.statusCode,200,JSON.stringify(result.body));
+  game=result.body.game;
+  for(const ws of [a,b]){
+   const last=ws.sent.filter(m=>m.type==='deal-state').at(-1);
+   assert.equal(last.game.revision,game.revision);
+   assert.equal(last.game.phase,game.phase);
+   assert.equal(Object.hasOwn(last.game,'values'),false);
+  }
+ };
+ for(let i=0;i<2;i++)await act(game.order[i],'select',{case:i});
+ assert.equal(game.phase,'open');
+ const actor=game.order[game.turnIndex];
+ await act(actor,'open',{case:2});
+ assert.equal(game.phase,'reveal');
+ await act(actor,'ack-reveal');
+ assert.equal(game.phase,'open');
+ assert.equal(game.opened.length,1);
+ a.close();b.close();
 });
