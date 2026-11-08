@@ -9,15 +9,24 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
   const db=()=>{if(!isReady())return null;try{return getFirestore()||null;}catch{return null;}};
   const count=n=>Number.isSafeInteger(n)&&n>=0?n:0;
   const safeScore=n=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<=1e8?n:null;
+  // Short-lived profile cache: Firebase Auth still verifies every token, including revocation.
+  // Only the Firestore profile lookup is cached; incomplete profiles are never cached.
+  const identityProfiles=new Map();
   async function identity(idToken){
     if(typeof idToken!=='string'||idToken.length<80||idToken.length>8000||!admin.apps.length||!isReady())return null;
     try{
       const decoded=await admin.auth().verifyIdToken(idToken,true);
       if(!validUid(decoded.uid))return null;
       const store=db();if(!store)return null;
+      const now=Date.now();
+      const cached=identityProfiles.get(decoded.uid);
+      if(cached&&cached.expires>now)return {uid:decoded.uid,name:cached.name};
       const p=await store.collection(PROFILES).doc(decoded.uid).get();
       if(!p.exists||p.data()?.setupComplete===false)return null;
-      return {uid:decoded.uid,name:clean(p.data()?.name,24)||'Spieler'};
+      const name=clean(p.data()?.name,24)||'Spieler';
+      if(identityProfiles.size>=1000){for(const [uid,entry] of identityProfiles){if(entry.expires<=now)identityProfiles.delete(uid)}if(identityProfiles.size>=1000)identityProfiles.delete(identityProfiles.keys().next().value)}
+      identityProfiles.set(decoded.uid,{name,expires:now+15000});
+      return {uid:decoded.uid,name};
     }catch{return null;}
   }
   // Only trusted, internal server code calls book(); no public POST route exists.
