@@ -1,0 +1,19 @@
+name: Christmas Ice checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'christmas-ice-*.js'
+      - 'tests/christmas-ice-*.test.js'
+      - '.github/workflows/christmas-ice-tests.yml'
+  workflow_dispatch:
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run event rules tests
+        run: node --test tests/christmas-ice-prizes.test.js tests/christmas-ice-engine.test.js
