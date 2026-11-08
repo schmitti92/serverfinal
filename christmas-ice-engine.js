@@ -5,7 +5,7 @@ import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES} from './christmas-ice-pri
 // The star position never goes to a public response until it has been found.
 export function newIceState(random=randomInt){
  return {version:1,completed:0,balance:0,star:random(ICE_TILES),
-  opened:[],freeHammers:{single:20,double:0,lucky:0},peekJokers:0,
+  opened:[],freeHammers:{single:0,double:0,lucky:0},peekJokers:0,
   finished:false,prizes:[],maxRewarded:0,lastActions:[]};
 }
 export function publicIceState(s){
@@ -49,10 +49,10 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
 }
 export function nextIcePicture(s,random=randomInt){
  if(!s.finished||s.completed>=ICE_PICTURES)throw Error('PICTURE_NOT_READY');
- return {...s,star:random(ICE_TILES),opened:[],finished:false,freeHammers:{...s.freeHammers,single:(s.freeHammers?.single||0)+20}};
+ return {...s,star:random(ICE_TILES),opened:[],finished:false,freeHammers:{...s.freeHammers}};
 }
 
 export function resetIceState(s,random=randomInt){
  const fresh=newIceState(random);
- return {...fresh,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0,freeHammers:{single:Math.max(20,s.freeHammers?.single||0),double:Math.max(0,s.freeHammers?.double||0),lucky:Math.max(0,s.freeHammers?.lucky||0)}};
+ return {...fresh,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0,freeHammers:{single:Math.max(0,s.freeHammers?.single||0),double:Math.max(0,s.freeHammers?.double||0),lucky:Math.max(0,s.freeHammers?.lucky||0)}};
 }
