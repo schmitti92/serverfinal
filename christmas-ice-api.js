@@ -25,7 +25,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
  app.post('/api/christmas-ice/final-hammer',auth,async(req,res)=>{
   const code=String(req.body?.code||'').toUpperCase();
   const gameId=String(req.body?.gameId||'');
-  if(!/^(?:\\d{3}|[A-HJ-NP-Z2-9]{6})$/.test(code)||!gameId||gameId.length>180)
+  if(!/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/.test(code)||!gameId||gameId.length>180)
    return res.status(400).json({ok:false,error:'INVALID_MATCH'});
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
