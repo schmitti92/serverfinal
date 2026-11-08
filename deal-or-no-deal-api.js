@@ -230,6 +230,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const current=gameSnap.data().game,reward=rewardSnap.data();
    if(reward.gameId!==current.id||reward.uid!==req.dealIdentity.uid)throw Error('WINNER_ONLY');
    if(kind==='final'&&current.phase!=='final')throw Error('MATCH_NOT_FINAL');
+   if(kind==='final'){const payouts=current.players.map(p=>p.deal??current.values[p.case]);if(payouts.filter(v=>v===Math.max(...payouts)).length!==1)throw Error('TIED_GAME_NO_WINNER_WHEEL')}
    if(kind==='cent'&&!current.events?.some(e=>e.type==='opened'&&e.eventId===reward.eventId&&e.amount===1))throw Error('INVALID_REWARD');
    if(kind==='banker'&&!current.history?.some(h=>h.round===reward.round&&h.decisions?.some(d=>d.id===reward.uid&&d.deal)))throw Error('INVALID_REWARD');
    const key=kind+':'+rewardId;
@@ -247,6 +248,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const snap=await db.collection('deal_christmas_final_rewards_v1').doc(game.id).get();
   if(!snap.exists)return res.json({ok:true,reward:null});
   const data=snap.data();
+  const payouts=game.players.map(p=>p.deal??game.values[p.case]);
+  if(payouts.filter(v=>v===Math.max(...payouts)).length!==1)return res.json({ok:true,reward:null,tie:true});
   return res.json({ok:true,reward:{id:snap.id,gameId:game.id,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Gewinner',packId:data.packId,packName:data.packName,revealed:data.revealed,spun:!!game.christmasWheelSpins?.['final:'+snap.id],createdAt:data.createdAt}});
  }catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/christmas-final-spin',auth,async(req,res)=>{try{
@@ -259,6 +262,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const payouts=game.players.map(p=>({id:p.id,payout:p.deal??game.values[p.case]}));
    const max=Math.max(...payouts.map(p=>p.payout));
    const winner=payouts.find(p=>p.payout===max);
+   if(payouts.filter(p=>p.payout===max).length!==1)throw Error('TIED_GAME_NO_WINNER_WHEEL');
    if(winner.id!==req.dealIdentity.uid)throw Error('WINNER_ONLY');
    if(game.finalWheelSpun)return game;
    const updated={...game,finalWheelSpun:true,revision:(game.revision||0)+1};
@@ -344,6 +348,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    // One free Christmas wheel prize for the highest payout (first player wins a tie).
    // The pack and cards are fixed and credited exactly once when the match ends.
    const winner=payouts.find(p=>p.payout===max);
+   const uniqueWinner=payouts.filter(p=>p.payout===max).length===1;
+   if(uniqueWinner){
    const finalRewardRef=db.collection('deal_christmas_final_rewards_v1').doc(after.id);
    const finalAlbumRef=db.collection(CHRISTMAS_COLLECTION).doc(winner.id);
    const [finalRewardSnap,finalAlbumSnap]=await Promise.all([tx.get(finalRewardRef),tx.get(finalAlbumRef)]);
@@ -356,6 +362,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const previousAward=awardWrite;
     awardWrite=()=>{previousAward?.();tx.set(finalAlbumRef,{cards:increments,opened:FieldValue.increment(1),updatedAt:Date.now()},{merge:true});
      tx.create(finalRewardRef,{uid:winner.id,gameId:after.id,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
+   }
    }
    const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id)}));
    const snapshots=await Promise.all(entries.map(async e=>({wallet:await tx.get(e.account),receipt:await tx.get(e.receipt)})));
