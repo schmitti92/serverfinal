@@ -241,6 +241,28 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   invalidateGame(code);broadcastGame(code,game);
   return res.json({ok:true,startedAt:game.christmasWheelSpins[kind+':'+rewardId],serverNow:Date.now(),gameId:game.id});
  }catch(e){return fail(res,e)}});
+ // Only the recipient may release the shared card-reveal overlay for everyone.
+ app.post('/api/deal-or-no-deal/:code/christmas-wheel-continue',auth,async(req,res)=>{try{
+  const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
+  const db=getFirestore();await check(db,code,req.dealIdentity.uid);
+  const kind=String(req.body?.kind||''),rewardId=String(req.body?.rewardId||'');
+  if(!['cent','banker','final'].includes(kind)||!rewardId||rewardId.length>180)throw Error('INVALID_REWARD');
+  const collections={cent:'deal_christmas_cent_rewards_v1',banker:'deal_christmas_banker_rewards_v1',final:'deal_christmas_final_rewards_v1'};
+  const ref=db.collection(collection).doc(code),rewardRef=db.collection(collections[kind]).doc(rewardId);
+  const game=await db.runTransaction(async tx=>{
+   const [gameSnap,rewardSnap]=await Promise.all([tx.get(ref),tx.get(rewardRef)]);
+   if(!gameSnap.exists||!rewardSnap.exists)throw Error('REWARD_NOT_FOUND');
+   const current=gameSnap.data().game,reward=rewardSnap.data();
+   if(reward.gameId!==current.id||String(reward.uid)!==String(req.dealIdentity.uid))throw Error('WINNER_ONLY');
+   const key=kind+':'+rewardId;
+   if(!current.christmasWheelSpins?.[key])throw Error('WHEEL_NOT_STARTED');
+   if(current.christmasWheelClosed?.[key])return current;
+   const updated={...current,christmasWheelClosed:{...(current.christmasWheelClosed||{}),[key]:Date.now()},revision:(current.revision||0)+1};
+   tx.update(ref,{game:updated,updatedAt:Date.now()});return updated;
+  });
+  invalidateGame(code);broadcastGame(code,game);
+  return res.json({ok:true,closedAt:game.christmasWheelClosed[kind+':'+rewardId]});
+ }catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/christmas-final-reward',auth,async(req,res)=>{try{
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
