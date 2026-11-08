@@ -54,5 +54,5 @@ export function nextIcePicture(s,random=randomInt){
 
 export function resetIceState(s,random=randomInt){
  const fresh=newIceState(random);
- return {...fresh,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0};
+ return {...fresh,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0,freeHammers:{single:Math.max(20,s.freeHammers?.single||0),double:Math.max(0,s.freeHammers?.double||0),lucky:Math.max(0,s.freeHammers?.lucky||0)}};
 }
