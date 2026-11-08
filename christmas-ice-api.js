@@ -44,6 +44,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
     if(winners.length!==1||String(winners[0].id)!==req.iceUid)throw Error('WINNER_ONLY');
     const packWheelAt=Number(game.christmasWheelSpins?.['final:'+game.id]||0);
     if(!packWheelAt)throw Error('PACK_WHEEL_FIRST');
+    if(!game.christmasWheelClosed?.['final:'+game.id])throw Error('PACK_REVEAL_NOT_CONFIRMED');
     if(Date.now()-packWheelAt<12500)throw Error('PACK_WHEEL_IN_PROGRESS');
     if(receiptSnap.exists){
      if(receiptSnap.data()?.uid!==req.iceUid)throw Error('ALREADY_AWARDED');
