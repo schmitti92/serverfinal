@@ -37,12 +37,14 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     if(!gameSnap.exists)throw Error('MATCH_NOT_FOUND');
     const game=gameSnap.data()?.game;
     if(!game||game.id!==gameId||game.phase!=='final')throw Error('MATCH_NOT_FINAL');
-    const payouts=(game.finalValues||[]).map(x=>({id:x.id,payout:x.payout}));
+    const payouts=(game.players||[]).map(p=>({id:p.id,payout:p.deal??game.values?.[p.case]}));
     if(!payouts.length)throw Error('RESULT_NOT_READY');
     const max=Math.max(...payouts.map(x=>x.payout));
     const winners=payouts.filter(x=>x.payout===max);
     if(winners.length!==1||String(winners[0].id)!==req.iceUid)throw Error('WINNER_ONLY');
-    if(!game.christmasWheelSpins?.['final:'+game.id])throw Error('PACK_WHEEL_FIRST');
+    const packWheelAt=Number(game.christmasWheelSpins?.['final:'+game.id]||0);
+    if(!packWheelAt)throw Error('PACK_WHEEL_FIRST');
+    if(Date.now()-packWheelAt<12500)throw Error('PACK_WHEEL_IN_PROGRESS');
     if(receiptSnap.exists){
      if(receiptSnap.data()?.uid!==req.iceUid)throw Error('ALREADY_AWARDED');
      return {hammer:receiptSnap.data().hammer,replayed:true};
