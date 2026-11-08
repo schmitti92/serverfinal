@@ -51,7 +51,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     const roll=Math.floor(Math.random()*100);
     const hammer=roll<50?'single':roll<85?'double':'lucky';
     const state=progressSnap.exists?progressSnap.data():newIceState();
-    const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1}};
+    const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1},wheelHammers:{...state.wheelHammers,[hammer]:(state.wheelHammers?.[hammer]||0)+1}};
     tx.set(progressRef,next);
     tx.create(receiptRef,{uid:req.iceUid,gameId,hammer,createdAt:Date.now()});
     return {hammer,replayed:false};
