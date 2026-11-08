@@ -277,6 +277,6 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
    }
   }
-  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
  return {collection,attachSocket};
 }
