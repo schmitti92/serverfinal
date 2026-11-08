@@ -248,7 +248,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const snap=await db.collection('deal_christmas_final_rewards_v1').doc(game.id).get();
   if(!snap.exists)return res.json({ok:true,reward:null});
   const data=snap.data();
-  const payouts=(game.finalValues||[]).map(p=>p.payout);
+  const payouts=(game.players||[]).map(p=>p.deal??game.values?.[p.case]);
   if(!payouts.length)return res.json({ok:true,reward:null,error:'FINAL_VALUES_NOT_READY'});
   if(payouts.filter(v=>v===Math.max(...payouts)).length!==1)return res.json({ok:true,reward:null,tie:true});
   return res.json({ok:true,reward:{id:snap.id,gameId:game.id,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Gewinner',packId:data.packId,packName:data.packName,revealed:data.revealed,spun:!!game.christmasWheelSpins?.['final:'+snap.id],createdAt:data.createdAt}});
