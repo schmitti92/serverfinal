@@ -43,24 +43,33 @@ function apply(g,actor,command,random=crypto.randomInt){
  next.revision++;next.commands.push(command.id);if(next.commands.length>300)next.commands.shift();return next;
 }
 function offer(g,random){
- const remaining=publicRemaining(g),avg=remaining.reduce((a,b)=>a+b,0)/remaining.length;
- // The arithmetic mean is the fair expected value. A cautious banker also
- // considers how much of that expectation depends on a few jackpot cases.
+ const remaining=publicRemaining(g);
+ const avg=remaining.reduce((a,b)=>a+b,0)/remaining.length;
  const sorted=[...remaining].sort((a,b)=>a-b);
  const median=sorted.length%2?sorted[(sorted.length-1)/2]:(sorted[sorted.length/2-1]+sorted[sorted.length/2])/2;
  const concentration=avg>0?Math.max(0,Math.min(1,(avg-median)/avg)):0;
- const stage=Math.min(1,Math.max(0,g.round/7));
- const base=MULT[Math.min(g.round,7)];
- // Early offers are conservative when jackpots dominate; late offers approach
- // the full expected value, even for highly skewed remaining amounts.
- const riskDiscount=concentration*(.075*(1-stage));
+ // Progressively more tempting offers, based on the actual remaining expected value.
+ const ranges=[[.35,.48],[.43,.57],[.52,.67],[.61,.76],[.70,.84],[.78,.92],[.85,.98],[.90,1.05]];
+ const index=Math.min(g.round,ranges.length-1);
+ const [low,high]=ranges[index];
+ const progress=Math.min(1,g.round/7);
+ const roll=()=>random(10001)/10000;
+ let factor=low+(high-low)*roll();
+ // When the board is dominated by one jackpot, the banker prices its volatility.
+ // The discount fades as the final offers approach.
+ factor-=concentration*.035*(1-progress);
  const previousAvg=g.history.at(-1)?.expectedValue;
  const trend=previousAvg>0?Math.max(-1,Math.min(1,avg/previousAvg-1)):0;
- // Small, bounded market reaction; never override the current board.
- const momentum=Math.max(-.025,Math.min(.025,trend*.06));
- const variance=(random(10001)/10000-.5)*.06;
- const factor=Math.max(.12,Math.min(1,base-riskDiscount+momentum+variance));
- g.offer=Math.max(1,Math.min(Math.round(avg),Math.round(avg*factor)));
+ factor+=Math.max(-.02,Math.min(.02,trend*.04));
+ // Losing the one-cent case is a good moment for a small, not unrealistic, boost.
+ const lastOpened=g.events?.filter(e=>e.type==='opened').at(-1);
+ if(lastOpened?.amount===1)factor+=.025;
+ // 8% of rounds: a surprising, especially tempting banker offer.
+ const generous=random(1000)<80;
+ if(generous)factor+=.06+.04*roll();
+ // Late offers can exceed expected value slightly; the bonus is bounded.
+ factor=Math.max(.15,Math.min(1.15,factor));
+ g.offer=Math.max(1,Math.round(avg*factor));
  const bonusRoll=random(1000);
  const bonusPack=bonusRoll<100?(bonusRoll<10?'premium':bonusRoll<60?'large':'small'):null;
  g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,participants:active(g).map(p=>p.id),decisions:[]});
