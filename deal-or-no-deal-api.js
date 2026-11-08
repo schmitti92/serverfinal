@@ -61,19 +61,71 @@ function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCoun
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
 export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const collection='deal_or_no_deal_matches_v1';
+ const dealSockets=new Map();
+ const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
+ const broadcastGame=(code,game)=>{
+  const listeners=dealSockets.get(code);if(!listeners?.size)return;
+  const view=publicView(game);
+  for(const ws of listeners)sendSocket(ws,{type:'deal-state',game:view});
+ };
+ const attachSocket=(ws)=>{
+  let joined=null,authenticated=false;
+  // Force periodic re-authentication and fresh room membership checks.
+  // Do not retain a subscription indefinitely after a player leaves the room.
+  const expiry=setTimeout(()=>{if(ws.readyState===1)ws.close(1000,'REAUTH_REQUIRED')},120000);
+  expiry.unref?.();
+  ws.on('message',async raw=>{
+   let msg;try{msg=JSON.parse(String(raw))}catch{return};
+   if(msg?.type==='ping'){if(joined)sendSocket(ws,{type:'pong'});return}
+   if(msg?.type!=='subscribe'||authenticated)return;
+   authenticated=true;
+   const code=String(msg.code||'').toUpperCase(),token=String(msg.token||'');
+   if(!CODE.test(code)||!token||token.length>8192){sendSocket(ws,{type:'deal-error',error:'INVALID_SUBSCRIPTION'});ws.close(1008);return}
+   try{
+    const identity=await verifyProfile(token);
+    if(!identity)throw Error('LOGIN_REQUIRED');
+    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+    await check(db,code,identity.uid);
+    if(ws.readyState!==1)return;
+    joined=code;
+    if(!dealSockets.has(code))dealSockets.set(code,new Set());
+    dealSockets.get(code).add(ws);
+    sendSocket(ws,{type:'deal-subscribed',code});
+    // Subscribe before snapshot: any concurrent mutation is reconciled by revision.
+    const game=await readGame(db,code);
+    if(ws.readyState===1)sendSocket(ws,{type:'deal-state',game});
+   }catch(error){sendSocket(ws,{type:'deal-error',error:String(error?.message||'SUBSCRIPTION_FAILED')});ws.close(1008)}
+  });
+  ws.on('close',()=>{clearTimeout(expiry);if(joined){const peers=dealSockets.get(joined);peers?.delete(ws);if(peers?.size===0)dealSockets.delete(joined)}});
+ };
+
  const auth=async(req,res,next)=>{try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];const identity=await verifyProfile(token);if(!identity)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});req.dealIdentity=identity;next()}catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'})}};
  const fail=(res,e)=>{const message=String(e?.message||'ERROR');return res.status(message==='NOT_IN_ROOM'?403:message==='ROOM_NOT_FOUND'?404:409).json({ok:false,error:message})};
  // This collection name must match the hub room storage configuration.
  // Share simultaneous game-state reads across players. Authorization remains per request.
  // Mutations invalidate immediately; generation prevents an in-flight stale read
  // from overwriting a newly committed state.
+ // In-process diagnostic counters: no Firestore writes, no personal identifiers.
+ // These count application read attempts, not Firebase's billed document reads.
+ const firestoreUsage={startedAt:Date.now(),gameReads:0,gameCacheHits:0,roomReads:0,roomCacheHits:0,gameActions:0,avatarReads:0,avatarCacheHits:0,settlementRuns:0,settlementCacheHits:0,walletReads:0,christmasReads:0,rewardReads:0};
+ const usageTimer=setInterval(()=>{
+  const elapsedMinutes=Math.max(1,(Date.now()-firestoreUsage.startedAt)/60000);
+  console.info('[deal-firestore-usage]',JSON.stringify({
+   minutes:Number(elapsedMinutes.toFixed(1)),
+   gameReads:firestoreUsage.gameReads,gameCacheHits:firestoreUsage.gameCacheHits,
+   roomReads:firestoreUsage.roomReads,roomCacheHits:firestoreUsage.roomCacheHits,
+   gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,walletReads:firestoreUsage.walletReads,christmasReads:firestoreUsage.christmasReads,rewardReads:firestoreUsage.rewardReads
+  }));
+ },60000);
+ usageTimer.unref?.();
  const gameCache=new Map();
  const gameGenerations=new Map();
  const invalidateGame=code=>{gameGenerations.set(code,(gameGenerations.get(code)||0)+1);gameCache.delete(code)};
  const readGame=async(db,code)=>{
   const now=Date.now(),existing=gameCache.get(code);
-  if(existing&&existing.expires>now)return existing.promise;
+  if(existing&&existing.expires>now){firestoreUsage.gameCacheHits++;return existing.promise;}
   const generation=gameGenerations.get(code)||0;
+  firestoreUsage.gameReads++;
   const promise=db.collection(collection).doc(code).get().then(snap=>snap.exists?publicView(snap.data().game):null);
   gameCache.set(code,{promise,expires:now+2500});
   if(gameCache.size>300){for(const [key,item] of gameCache){if(item.expires<=now)gameCache.delete(key)}if(gameCache.size>300)gameCache.delete(gameCache.keys().next().value)}
@@ -86,18 +138,34 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const inventoryCollection='deal_or_no_deal_inventory_v1';
  // Cache only GET membership checks for 2 seconds; all mutations use a fresh room read.
  // Never cache membership failures. A removed user can retain read access for at most 2s.
+ // Avatar reads are shared across all players in the same room.
+ // Successful avatar changes invalidate immediately; expired entries are discarded.
+ const avatarReadCache=new Map();
+ const avatarCacheGenerations=new Map();
+ const invalidateAvatars=code=>{avatarCacheGenerations.set(code,(avatarCacheGenerations.get(code)||0)+1);avatarReadCache.delete(code)};
+ const readAvatars=async(db,code)=>{
+  const now=Date.now(),cached=avatarReadCache.get(code);
+  if(cached&&cached.expires>now){firestoreUsage.avatarCacheHits++;return cached.promise;}
+  firestoreUsage.avatarReads++;
+  const generation=avatarCacheGenerations.get(code)||0;
+  const promise=db.collection(avatarCollection).doc(code).get().then(snap=>snap.exists?snap.data().avatars||{}:{});
+  avatarReadCache.set(code,{promise,expires:now+30000});
+  if(avatarReadCache.size>300){for(const [key,item] of avatarReadCache){if(item.expires<=now)avatarReadCache.delete(key)}if(avatarReadCache.size>300)avatarReadCache.delete(avatarReadCache.keys().next().value)}
+  try{const result=await promise;if((avatarCacheGenerations.get(code)||0)!==generation)return readAvatars(db,code);return result}catch(error){if(avatarReadCache.get(code)?.promise===promise)avatarReadCache.delete(code);throw error}
+ };
  const roomReadCache=new Map();
  const check=async(db,code,uid,allowCache=false)=>{
   const now=Date.now();
   let entry=allowCache?roomReadCache.get(code):null;
   if(!entry||entry.expires<=now){
+   firestoreUsage.roomReads++;
    const promise=db.collection(hubCollection).doc(code).get();
    entry={promise,expires:now+2000};
    if(allowCache){
     roomReadCache.set(code,entry);
     if(roomReadCache.size>300){for(const [key,item] of roomReadCache){if(item.expires<=now)roomReadCache.delete(key)}if(roomReadCache.size>300)roomReadCache.delete(roomReadCache.keys().next().value)}
    }
-  }
+  }else if(allowCache){firestoreUsage.roomCacheHits++;}
   let snap;
   try{snap=await entry.promise}catch(e){if(roomReadCache.get(code)===entry)roomReadCache.delete(code);throw e}
   if(!snap.exists)throw Error('ROOM_NOT_FOUND');
@@ -106,11 +174,27 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   return room
  };
  // Idempotent reconciliation also repairs a final match whose payout was not credited.
+ // Only reconcile a finished game once per running server. A restart safely
+ // rechecks Firestore receipts; rejected transactions are never cached.
+ const settledGames=new Map();
+ const settleFinalOnce=async(db,code,gameId)=>{
+  const key=code+':'+gameId;
+  const previous=settledGames.get(key);
+  if(previous){firestoreUsage.settlementCacheHits++;return previous;}
+  firestoreUsage.settlementRuns++;
+  const promise=settleFinal(db,code).then(result=>{
+   if(result!==gameId){settledGames.delete(key);return result;}
+   return result;
+  }).catch(error=>{settledGames.delete(key);throw error});
+  settledGames.set(key,promise);
+  if(settledGames.size>300)settledGames.delete(settledGames.keys().next().value);
+  return promise;
+ };
  const settleFinal=async(db,code)=>{const matchRef=db.collection(collection).doc(code);return db.runTransaction(async tx=>{const match=await tx.get(matchRef);if(!match.exists)return false;const game=match.data().game;if(!game||!['final','done'].includes(game.phase)||!Array.isArray(game.values))return false;
  const payouts=game.players.map(p=>({uid:p.id,amount:p.deal??game.values[p.case]}));if(payouts.some(p=>!Number.isSafeInteger(p.amount)||p.amount<0))throw Error('INVALID_PAYOUT');const maximum=Math.max(...payouts.map(p=>p.amount));
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt)})));let changed=false;
- for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.amount,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.amount,createdAt:Date.now()});changed=true}return changed})};
+ for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.amount,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.amount,createdAt:Date.now()});changed=true}return game.id})};
  app.get('/api/deal-or-no-deal/shop/catalog',auth,(req,res)=>res.json({ok:true,items:SHOP_ITEMS,minPrice:100000000}));
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
@@ -125,8 +209,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.get('/api/deal-or-no-deal/:code/christmas-banker-rewards',auth,async(req,res)=>{try{
  const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
  const db=getFirestore();await check(db,code,req.dealIdentity.uid);
- const snap=await db.collection(collection).doc(code).get();if(!snap.exists)throw Error('MATCH_NOT_FOUND');
- const game=snap.data().game;
+ const game=await readGame(db,code);if(!game)throw Error('MATCH_NOT_FOUND');
  // The accepted bonus and its cards are public to everyone in this room.
  // Read only rewards for accepted deals, never unrevealed/declined offers.
  const accepted=(game.history||[]).flatMap(h=>h.bonusPack&&h.decisions?.length===h.participants?.length?(h.decisions||[]).filter(d=>d.deal===true).map(d=>({round:h.round,uid:d.id})):[]);
@@ -138,13 +221,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  }));
  return res.json({ok:true,rewards:rewards.filter(Boolean).sort((a,b)=>a.createdAt-b.createdAt)});
  }catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/:code/christmas-cent-reward',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid);const snap=await db.collection(collection).doc(code).get();if(!snap.exists)return res.json({ok:true,reward:null});const game=snap.data().game;const event=(game.events||[]).find(e=>e.type==='opened'&&e.amount===1);if(!event)return res.json({ok:true,reward:null});const reward=await db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+event.eventId).get();if(!reward.exists)return res.json({ok:true,reward:null});const data=reward.data();return res.json({ok:true,reward:{id:reward.id,gameId:data.gameId,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Spieler',packId:data.packId,packName:data.packName,revealed:data.revealed,createdAt:data.createdAt}})}catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/:code/avatars',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);const snap=await db.collection(avatarCollection).doc(code).get();return res.json({ok:true,avatars:snap.exists?snap.data().avatars||{}:{}})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/:code/avatar',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const avatar=Number(req.body?.avatar);if(!Number.isInteger(avatar)||avatar<1||avatar>13)throw Error('INVALID_AVATAR');const db=getFirestore();await check(db,code,req.dealIdentity.uid);if(avatar===11||avatar===12||avatar===13){const christmas=await db.collection(CHRISTMAS_COLLECTION).doc(req.dealIdentity.uid).get();const reward=avatar===11?'rudolph':avatar===12?'santa':'snowman-profile-avatar';if(!christmasProgress(christmas.exists?christmas.data().cards||{}:{}).rewards.includes(reward))throw Error('CHRISTMAS_REWARD_LOCKED')}const ref=db.collection(avatarCollection).doc(code);const avatars=await db.runTransaction(async tx=>{const snap=await tx.get(ref);const choices={...(snap.exists?snap.data().avatars||{}:{})};if(Object.entries(choices).some(([uid,value])=>uid!==req.dealIdentity.uid&&Number(value)===avatar))throw Error('AVATAR_TAKEN');choices[req.dealIdentity.uid]=avatar;tx.set(ref,{avatars:choices,updatedAt:Date.now()});return choices});return res.json({ok:true,avatar,avatars})}catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinal(db,code);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await Promise.all(players.map(p=>db.collection(walletCollection).doc(p.uid).get()));return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/:code/christmas-cent-reward',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid);const game=await readGame(db,code);if(!game)return res.json({ok:true,reward:null});const event=(game.events||[]).find(e=>e.type==='opened'&&e.amount===1);if(!event)return res.json({ok:true,reward:null});const reward=await db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+event.eventId).get();if(!reward.exists)return res.json({ok:true,reward:null});const data=reward.data();return res.json({ok:true,reward:{id:reward.id,gameId:data.gameId,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Spieler',packId:data.packId,packName:data.packName,revealed:data.revealed,createdAt:data.createdAt}})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/:code/avatars',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);const avatars=await readAvatars(db,code);return res.json({ok:true,avatars})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/:code/avatar',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const avatar=Number(req.body?.avatar);if(!Number.isInteger(avatar)||avatar<1||avatar>13)throw Error('INVALID_AVATAR');const db=getFirestore();await check(db,code,req.dealIdentity.uid);if(avatar===11||avatar===12||avatar===13){const christmas=await db.collection(CHRISTMAS_COLLECTION).doc(req.dealIdentity.uid).get();const reward=avatar===11?'rudolph':avatar===12?'santa':'snowman-profile-avatar';if(!christmasProgress(christmas.exists?christmas.data().cards||{}:{}).rewards.includes(reward))throw Error('CHRISTMAS_REWARD_LOCKED')}const ref=db.collection(avatarCollection).doc(code);const avatars=await db.runTransaction(async tx=>{const snap=await tx.get(ref);const choices={...(snap.exists?snap.data().avatars||{}:{})};if(Object.entries(choices).some(([uid,value])=>uid!==req.dealIdentity.uid&&Number(value)===avatar))throw Error('AVATAR_TAKEN');choices[req.dealIdentity.uid]=avatar;tx.set(ref,{avatars:choices,updatedAt:Date.now()});return choices});invalidateAvatars(code);return res.json({ok:true,avatar,avatars})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await Promise.all(players.map(p=>db.collection(walletCollection).doc(p.uid).get()));return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarSnap=await db.collection(avatarCollection).doc(code).get();const avatarMap=avatarSnap.exists?avatarSnap.data().avatars||{}:{};for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=13?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
+ app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=13?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{firestoreUsage.gameActions++;const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
   let awardWrite=null;
   const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
@@ -194,6 +277,6 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
    }
   }
-  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
- return {collection};
+  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+ return {collection,attachSocket};
 }

@@ -6,12 +6,14 @@ on:
       - 'deal-or-no-deal.js'
       - 'deal-or-no-deal-api.js'
       - 'tests/deal-or-no-deal.test.js'
+      - 'tests/deal-websocket.test.js'
       - '.github/workflows/deal-or-no-deal-tests.yml'
   pull_request:
     paths:
       - 'deal-or-no-deal.js'
       - 'deal-or-no-deal-api.js'
       - 'tests/deal-or-no-deal.test.js'
+      - 'tests/deal-websocket.test.js'
       - '.github/workflows/deal-or-no-deal-tests.yml'
   workflow_dispatch:
 jobs:
@@ -24,4 +26,4 @@ jobs:
         with:
           node-version: '22'
       - name: Check 1-4 player gameplay and privacy
-        run: node --test tests/deal-or-no-deal.test.js
+        run: node --test tests/deal-or-no-deal.test.js tests/deal-websocket.test.js

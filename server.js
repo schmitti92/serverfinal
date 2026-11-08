@@ -4342,7 +4342,7 @@ installEngine2Api(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
-installDealOrNoDeal(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
+const dealOrNoDealOnline=installDealOrNoDeal(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
@@ -5809,6 +5809,10 @@ wss.on("connection", (ws, req) => {
   if(new URL(req.url || "/", "http://localhost").pathname === "/falling") { fallingOnline(ws); return; }
   if(new URL(req.url || '/', 'http://localhost').pathname === '/eisstock'){
     eisstockOnline(ws);
+    return;
+  }
+  if(new URL(req.url || '/', 'http://localhost').pathname === '/deal-or-no-deal'){
+    dealOrNoDealOnline.attachSocket(ws);
     return;
   }
   if(new URL(req.url || '/', 'http://localhost').pathname === '/hub'){
