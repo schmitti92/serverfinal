@@ -164,6 +164,21 @@ test('Three players share case selections and a simultaneous banker vote',async(
  for(const actor of voters)await act(actor,'decide',{deal:true});
  assert.equal(game.phase,'final');
  assert.equal(game.finalValues.length,3);
+ // The first balance request settles the final match; repeated requests must not double-credit.
+ const first=await invoke('GET','/api/deal-or-no-deal/:code/balances','a');
+ assert.equal(first.body.ok,true,JSON.stringify(first.body));
+ const balances=new Map(first.body.players.map(p=>[p.id,p]));
+ for(const payout of game.finalValues){
+  assert.equal(balances.get(payout.id)?.balance,payout.payout);
+  assert.equal(balances.get(payout.id)?.games,1);
+  assert.equal(docs.get('deal_or_no_deal_payouts_v1/'+game.id+'_'+payout.id)?.amount,payout.payout);
+ }
+ const second=await invoke('GET','/api/deal-or-no-deal/:code/balances','b');
+ assert.equal(second.body.ok,true);
+ for(const p of second.body.players){
+  assert.equal(p.balance,balances.get(p.id).balance);
+  assert.equal(p.games,1);
+ }
  for(const ws of sockets)ws.close();
 });
 
