@@ -6,7 +6,7 @@ import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES} from './christmas-ice-pri
 export function newIceState(random=randomInt){
  return {version:1,completed:0,balance:0,star:random(ICE_TILES),
   opened:[],freeHammers:{single:20,double:0,lucky:0},peekJokers:0,
-  finished:false,prizes:[],lastActions:[]};
+  finished:false,prizes:[],maxRewarded:0,lastActions:[]};
 }
 export function publicIceState(s){
  const {star,lastActions,...visible}=s;
@@ -33,13 +33,14 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  let gift=null;
  if(found){
   const number=s.completed+1;
-  gift=drawGift(number,random);
+  gift=number>(s.maxRewarded||0)?drawGift(number,random):null;
+  next.maxRewarded=Math.max(s.maxRewarded||0,number);
   next.completed=number;
   next.finished=true;
-  next.prizes.push(gift);
-  if(gift.kind==='money')next.balance+=gift.amount;
-  if(gift.kind==='hammer')next.freeHammers[gift.hammer]++;
-  if(gift.kind==='joker')next.peekJokers++;
+  if(gift)next.prizes.push(gift);
+  if(gift?.kind==='money')next.balance+=gift.amount;
+  if(gift?.kind==='hammer')next.freeHammers[gift.hammer]++;
+  if(gift?.kind==='joker')next.peekJokers++;
  }
  const result={targets,found,gift,completed:next.completed,balance:next.balance};
  next.lastActions.push({id:requestId,result});
@@ -49,4 +50,9 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
 export function nextIcePicture(s,random=randomInt){
  if(!s.finished||s.completed>=ICE_PICTURES)throw Error('PICTURE_NOT_READY');
  return {...s,star:random(ICE_TILES),opened:[],finished:false,freeHammers:{...s.freeHammers,single:(s.freeHammers?.single||0)+20}};
+}
+
+export function resetIceState(s,random=randomInt){
+ const fresh=newIceState(random);
+ return {...fresh,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0};
 }
