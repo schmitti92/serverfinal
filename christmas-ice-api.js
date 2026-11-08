@@ -1,5 +1,5 @@
 'use strict';
-import {newIceState,publicIceState,strikeIce,nextIcePicture} from './christmas-ice-engine.js';
+import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState} from './christmas-ice-engine.js';
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
@@ -22,7 +22,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
  });
  app.post('/api/christmas-ice/action',auth,async(req,res)=>{
   const {type,index,hammer,requestId}=req.body||{};
-  if(!['start','strike','next'].includes(type))return res.status(400).json({ok:false,error:'INVALID_ACTION'});
+  if(!['start','strike','next','reset'].includes(type))return res.status(400).json({ok:false,error:'INVALID_ACTION'});
   if(!/^[A-Za-z0-9_-]{12,90}$/.test(String(requestId||'')))return res.status(400).json({ok:false,error:'INVALID_REQUEST_ID'});
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
@@ -39,6 +39,13 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore}){
     const state=snap.data();
     const previous=state.lastActions?.find(x=>x.id===requestId);
     if(previous)return {state:publicIceState(state),result:{...previous.result,replayed:true},changed:false};
+    if(type==='reset'){
+     const next=resetIceState(state);
+     const result={reset:true};
+     next.lastActions=[{id:requestId,result}];
+     tx.set(ref,next);
+     return {state:publicIceState(next),result,changed:true};
+    }
     if(type==='next'){
      const next=nextIcePicture(state);
      const result={advanced:true,completed:next.completed};
