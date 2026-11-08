@@ -16,9 +16,9 @@ function simulate(count,allDeal=false){
  }
  assert.equal(g.phase,'final');return g;
 }
-test('26 distinct monetary values',()=>assert.equal(new Set(VALUES).size,26));
+test('27 distinct monetary values including 3 million euros',()=>{assert.equal(new Set(VALUES).size,27);assert.ok(VALUES.includes(300000000));});
 for(let count=1;count<=4;count++){
- test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,26-count);assert.equal(g.history.length,12-count);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
+ test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,13-count);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
  test(count+' players accepting first deal end immediately',()=>{let g=simulate(count,true);assert.equal(g.opened.length,5);assert.equal(g.history.length,1);assert.equal(g.players.every(p=>p.deal!==null),true)});
 }
 test('private assignments never leaked before finale',()=>{let g=create([{id:'a'},{id:'b'}],rand);g=send(g,g.order[0],'select',{case:0});g=send(g,g.order[1],'select',{case:1});const v=publicView(g);assert.equal('values' in v,false);assert.equal('commands' in v,false);assert.equal(v.finalValues,null);assert.equal(JSON.stringify(v).includes('100000000'),false)});
@@ -106,18 +106,18 @@ test('banker offer is positive, no higher than fair expected value, and records 
 });
 
 test('new matches independently reshuffle every case with no preferred jackpot region',()=>{
- const rounds=2600,positions=Array(26).fill(0);
+ const rounds=2600,positions=Array(27).fill(0);
  let previous=null,identical=0;
  for(let i=0;i<rounds;i++){
   const game=create([{id:'p1',name:'Spieler'}]);
-  assert.equal(game.values.length,26);
+  assert.equal(game.values.length,27);
   assert.deepEqual([...game.values].sort((a,b)=>a-b),[...VALUES].sort((a,b)=>a-b));
   const jackpot=game.values.indexOf(100000000);
   positions[jackpot]++;
   if(previous&&previous.every((value,index)=>value===game.values[index]))identical++;
   previous=game.values;
  }
- // 26 equally likely positions: expected 100 hits each. Loose statistical
+ // 27 equally likely positions: expected about 96 hits each. Loose statistical
  // tolerance avoids flaky tests while detecting persistent lower-number bias.
  for(const hits of positions)assert.ok(hits>=55&&hits<=145,'Biased jackpot distribution: '+positions.join(','));
  assert.equal(identical,0);
