@@ -61,6 +61,40 @@ function christmasDraw(pack){const drawn=[];const guaranteed=pack.guaranteedCoun
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
 export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const collection='deal_or_no_deal_matches_v1';
+ const dealSockets=new Map();
+ const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
+ const broadcastGame=(code,game)=>{
+  const listeners=dealSockets.get(code);if(!listeners?.size)return;
+  const view=publicView(game);
+  for(const ws of listeners)sendSocket(ws,{type:'deal-state',game:view});
+ };
+ const attachSocket=(ws)=>{
+  let joined=null,authenticated=false;
+  ws.on('message',async raw=>{
+   let msg;try{msg=JSON.parse(String(raw))}catch{return};
+   if(msg?.type==='ping'){sendSocket(ws,{type:'pong'});return}
+   if(msg?.type!=='subscribe'||authenticated)return;
+   authenticated=true;
+   const code=String(msg.code||'').toUpperCase(),token=String(msg.token||'');
+   if(!CODE.test(code)||!token||token.length>8192){sendSocket(ws,{type:'deal-error',error:'INVALID_SUBSCRIPTION'});ws.close(1008);return}
+   try{
+    const identity=await verifyProfile(token);
+    if(!identity)throw Error('LOGIN_REQUIRED');
+    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+    await check(db,code,identity.uid);
+    if(ws.readyState!==1)return;
+    joined=code;
+    if(!dealSockets.has(code))dealSockets.set(code,new Set());
+    dealSockets.get(code).add(ws);
+    sendSocket(ws,{type:'deal-subscribed',code});
+    // Subscribe before snapshot: any concurrent mutation is reconciled by revision.
+    const game=await readGame(db,code);
+    if(ws.readyState===1)sendSocket(ws,{type:'deal-state',game});
+   }catch(error){sendSocket(ws,{type:'deal-error',error:String(error?.message||'SUBSCRIPTION_FAILED')});ws.close(1008)}
+  });
+  ws.on('close',()=>{if(joined){const peers=dealSockets.get(joined);peers?.delete(ws);if(peers?.size===0)dealSockets.delete(joined)}});
+ };
+
  const auth=async(req,res,next)=>{try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];const identity=await verifyProfile(token);if(!identity)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});req.dealIdentity=identity;next()}catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'})}};
  const fail=(res,e)=>{const message=String(e?.message||'ERROR');return res.status(message==='NOT_IN_ROOM'?403:message==='ROOM_NOT_FOUND'?404:409).json({ok:false,error:message})};
  // This collection name must match the hub room storage configuration.
@@ -188,7 +222,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.post('/api/deal-or-no-deal/:code/avatar',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const avatar=Number(req.body?.avatar);if(!Number.isInteger(avatar)||avatar<1||avatar>13)throw Error('INVALID_AVATAR');const db=getFirestore();await check(db,code,req.dealIdentity.uid);if(avatar===11||avatar===12||avatar===13){const christmas=await db.collection(CHRISTMAS_COLLECTION).doc(req.dealIdentity.uid).get();const reward=avatar===11?'rudolph':avatar===12?'santa':'snowman-profile-avatar';if(!christmasProgress(christmas.exists?christmas.data().cards||{}:{}).rewards.includes(reward))throw Error('CHRISTMAS_REWARD_LOCKED')}const ref=db.collection(avatarCollection).doc(code);const avatars=await db.runTransaction(async tx=>{const snap=await tx.get(ref);const choices={...(snap.exists?snap.data().avatars||{}:{})};if(Object.entries(choices).some(([uid,value])=>uid!==req.dealIdentity.uid&&Number(value)===avatar))throw Error('AVATAR_TAKEN');choices[req.dealIdentity.uid]=avatar;tx.set(ref,{avatars:choices,updatedAt:Date.now()});return choices});invalidateAvatars(code);return res.json({ok:true,avatar,avatars})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await Promise.all(players.map(p=>db.collection(walletCollection).doc(p.uid).get()));return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=13?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=13?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');const game=create(players);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{try{firestoreUsage.gameActions++;const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid);const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
   let awardWrite=null;
@@ -240,5 +274,5 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    }
   }
   awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
- return {collection};
+ return {collection,attachSocket};
 }
