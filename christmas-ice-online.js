@@ -41,7 +41,7 @@ export function installChristmasIceOnline(app,{verifyProfile,getFirestore}){
   }catch(e){return fail(res,e)}
  });
  // Each strike is idempotent via a monotonically increasing expected revision.
- // A successful star reveals a picture; every third picture grants one online peek joker.
+ // A successful star reveals a picture; every third picture (except milestone pictures) grants one online peek joker.
  app.post('/api/christmas-ice/strike',auth,async(req,res)=>{
   const kind=String(req.body?.kind||''),tile=req.body?.tile,revision=req.body?.revision;
   if(!Object.hasOwn(PRICES,kind)||!Number.isInteger(tile)||tile<0||tile>=20||
@@ -61,10 +61,12 @@ export function installChristmasIceOnline(app,{verifyProfile,getFirestore}){
     // Read the inventory only if this action will grant a joker.
     const hits=kind==='single'?1:kind==='double'?2:randomInt(3,7);
     const available=Array.from({length:20},(_,i)=>i).filter(i=>!state.opened.includes(i));
-    const chosen=[tile,...available.filter(i=>i!==tile).sort(()=>randomInt(3)-1).slice(0,Math.min(hits-1,available.length-1))];
+    const remaining=available.filter(i=>i!==tile);
+    for(let i=remaining.length-1;i>0;i--){const j=randomInt(i+1);[remaining[i],remaining[j]]=[remaining[j],remaining[i]]}
+    const chosen=[tile,...remaining.slice(0,Math.min(hits-1,remaining.length))];
     const starFound=chosen.includes(state.star);
     const nextCompleted=state.completed+(starFound?1:0);
-    const grantsJoker=starFound&&nextCompleted%3===0;
+    const grantsJoker=starFound&&nextCompleted%3===0&&nextCompleted%10!==0;
     const inv=grantsJoker?await tx.get(invRef):null;
     const next={...state,balance:state.balance-(free>0?0:PRICES[kind]),
       freeHammers:{...state.freeHammers,[kind]:Math.max(0,free-1)},
