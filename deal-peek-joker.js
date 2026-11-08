@@ -33,14 +33,14 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
     if(!gameSnap.exists)throw Error('GAME_NOT_FOUND');
     const game=gameSnap.data()?.game;
     if(!game||!Array.isArray(game.values)||game.values.length!==26)throw Error('GAME_INVALID');
-    if(!game.players?.some(p=>String(p.id)===req.peekUid))throw Error('NOT_PARTICIPANT');
-    if(!['open','decision','reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
-    if(game.opened?.includes(caseIndex)||game.pending?.case===caseIndex)throw Error('CASE_NOT_CLOSED');
+    if(!game.players?.some(p=>String(p.id)===req.peekUid&&p.deal===null))throw Error('NOT_ACTIVE_PLAYER');
     if(receiptSnap.exists){
      const receipt=receiptSnap.data();
      if(receipt.code!==code||receipt.case!==caseIndex||receipt.gameId!==game.id)throw Error('REQUEST_REUSED');
      return {case:receipt.case,amount:receipt.amount,balance:receipt.balance,replayed:true};
     }
+    if(!['open','decision','reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
+    if(game.opened?.includes(caseIndex)||game.pending?.case===caseIndex)throw Error('CASE_NOT_CLOSED');
     const balance=Number(invSnap.data()?.balance)||0;
     if(!Number.isSafeInteger(balance)||balance<1)throw Error('NO_JOKERS');
     const amount=game.values[caseIndex];
@@ -54,7 +54,7 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
    return res.json({ok:true,...result});
   }catch(e){
    const error=String(e?.message||'JOKER_ERROR');
-   const status=error==='NOT_PARTICIPANT'?403:error==='GAME_NOT_FOUND'?404:
+   const status=error==='NOT_ACTIVE_PLAYER'?403:error==='GAME_NOT_FOUND'?404:
     error==='STORAGE_UNAVAILABLE'?503:409;
    return res.status(status).json({ok:false,error});
   }
