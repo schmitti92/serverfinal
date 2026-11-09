@@ -1,6 +1,6 @@
 import {create,apply,publicView} from './deal-or-no-deal.js';
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
-import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
+import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
 const SHOP_ITEMS=Object.freeze([{"id":"brille","name":"Goldene Sonnenbrille","price":100000000,"category":"Accessoires","emoji":"🕶️"},{"id":"pirat","name":"Piratenhut","price":150000000,"category":"Accessoires","emoji":"🏴‍☠️"},{"id":"mikro","name":"Show-Mikrofon","price":200000000,"category":"Extras","emoji":"🎙️"},{"id":"silberrahmen","name":"Silberner Profilrahmen","price":300000000,"category":"Rahmen","emoji":"🪞"},{"id":"silberkoffer","name":"Silberkoffer","price":500000000,"category":"Koffer","emoji":"💼"},{"id":"krone","name":"Königskrone","price":750000000,"category":"Accessoires","emoji":"👑"},{"id":"goldrahmen","name":"Goldener Profilrahmen","price":1000000000,"category":"Rahmen","emoji":"🖼️"},{"id":"goldkoffer","name":"Goldkoffer","price":1500000000,"category":"Koffer","emoji":"🧳"},{"id":"vip","name":"VIP-Abzeichen","price":2500000000,"category":"Extras","emoji":"🌟"},{"id":"studio","name":"Exklusives Studio","price":4000000000,"category":"Hintergründe","emoji":"🎬"},{"id":"diamant","name":"Diamantkoffer","price":7500000000,"category":"Koffer","emoji":"💎"},{"id":"trophaee","name":"Legendäre Show-Trophäe","price":10000000000,"category":"Extras","emoji":"🏆"}]);
@@ -39,6 +39,15 @@ const CHRISTMAS_PACKS=Object.freeze([
 {id:'large',name:'Großes Weihnachtspaket',price:50000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}},
 {id:'premium',name:'Premium-Weihnachtspaket',price:100000000,count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}
 ]);
+// Exclusive Bingo 28 pack: 16 cards, including one guaranteed legendary and
+// three further epic-or-better. Not for sale in the regular card shop.
+const BINGO_PLATINUM_PACK=Object.freeze({id:'platinum',name:'Platin-Kartenpaket',count:16,
+ guaranteed:'epic',guaranteedCount:3,weights:{common:30,rare:35,epic:25,legendary:10}});
+function drawBingoPlatinumPack(){
+ const legendary=christmasDraw({...BINGO_PLATINUM_PACK,count:1,guaranteed:'legendary',guaranteedCount:1});
+ const rest=christmasDraw({...BINGO_PLATINUM_PACK,count:15});
+ return [...legendary,...rest];
+}
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
 export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const collection='deal_or_no_deal_matches_v1';
@@ -184,7 +193,76 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.post('/api/deal-or-no-deal/cards/open',auth,async(req,res)=>{try{const pack=CARD_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CARD_COLLECTION).doc(uid);
  const result=await db.runTransaction(async tx=>{const [wallet,snap]=await Promise.all([tx.get(walletRef),tx.get(cardsRef)]);const previous=snap.exists?snap.data():{};if(previous.lastPurchase?.requestId===requestId){if(previous.lastPurchase.packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...previous.lastPurchase.result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const owned={...(previous.cards||{})};const cards=openPack(pack);for(const card of cards)owned[card.id]=(owned[card.id]||0)+1;const remaining=balance-pack.price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});const purchaseResult={balance:remaining,cards:owned,opened:(previous.opened||0)+1,revealed:cards.map(({id,name,rarity,emoji,series})=>({id,name,rarity,emoji,series}))};tx.set(cardsRef,{cards:owned,opened:purchaseResult.opened,lastPurchase:{requestId,packId:pack.id,result:purchaseResult},updatedAt:Date.now()},{merge:true});return purchaseResult});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
 
- app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards),hammerProgress:hammerBingoProgress(cards,data.hammerBingoClaimed,data.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,data.duplicateReserve,data.monsterWheelTickets),monsterWheel:{durationMs:MONSTER_WHEEL_DURATION_MS,slots:MONSTER_WHEEL_SLOTS,tickets:data.monsterWheelTickets||0,lastSpin:data.monsterWheelLastSpin||null,giftzwergUnlocked:data.monsterGiftzwergUnlocked===true}})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards),northPoleClaimed:Object.keys(data.northPoleMilestonesClaimed||{}),northPolePending:NORTH_POLE_MILESTONES.filter(m=>christmasProgress(cards).totalBingos>=m.at&&!data.northPoleMilestonesClaimed?.[m.id]).map(m=>m.id),hammerProgress:hammerBingoProgress(cards,data.hammerBingoClaimed,data.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,data.duplicateReserve,data.monsterWheelTickets),monsterWheel:{durationMs:MONSTER_WHEEL_DURATION_MS,slots:MONSTER_WHEEL_SLOTS,tickets:data.monsterWheelTickets||0,lastSpin:data.monsterWheelLastSpin||null,giftzwergUnlocked:data.monsterGiftzwergUnlocked===true}})}catch(e){return fail(res,e)}});
+
+ // Claim all reached Nordpol milestones once. This POST never trusts the
+ // client to supply a Bingo total, prize type, quantity, or selected cards.
+ // Awarded packets draw cards immediately and return them for the pack cinema.
+ app.post('/api/deal-or-no-deal/christmas/north-pole/claim',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid,now=Date.now();
+   const albumRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const iceRef=db.collection('christmas_ice_progress_v1').doc(uid);
+   const jokerRef=db.collection('deal_peek_inventory_v1').doc(uid);
+   const result=await db.runTransaction(async tx=>{
+    const albumSnap=await tx.get(albumRef),album=albumSnap.exists?albumSnap.data():{};
+    const claimed={...(album.northPoleMilestonesClaimed||{})};
+    const progress=christmasProgress(album.cards||{});
+    const pending=NORTH_POLE_MILESTONES.filter(m=>progress.totalBingos>=m.at&&!claimed[m.id]);
+    if(!pending.length)return {claimed:[],packs:[],progress,replayed:true};
+    // Read all affected inventory documents before the first write.
+    const needsHammer=pending.some(m=>m.kind==='hammer'||m.kind==='combo');
+    const needsJoker=pending.some(m=>m.kind==='joker'||m.kind==='combo');
+    const [iceSnap,jokerSnap]=await Promise.all([
+     needsHammer?tx.get(iceRef):Promise.resolve(null),
+     needsJoker?tx.get(jokerRef):Promise.resolve(null)
+    ]);
+    const cards={...(album.cards||{})},packs=[];
+    let goldHammers=0,jokers=0,monsterTickets=0;
+    const grantPack=(pack,drawn)=>{
+     const revealed=markChristmasDiscoveries(drawn,cards);
+     for(const card of revealed)cards[card.id]=checkMonsterBalance(Number(cards[card.id]||0),1);
+     packs.push({packId:pack.id,packName:pack.name,revealed});
+    };
+    for(const m of pending){
+     if(m.kind==='pack'){
+      const pack=CHRISTMAS_PACKS.find(p=>p.id===m.packId);
+      if(!pack)throw Error('INVALID_BINGO_PACK');
+      for(let n=0;n<m.quantity;n++)grantPack(pack,christmasDraw(pack));
+     }else if(m.kind==='hammer')goldHammers+=m.quantity;
+     else if(m.kind==='joker')jokers+=m.quantity;
+     else if(m.kind==='combo'){
+      goldHammers+=1;jokers+=1;
+      grantPack(BINGO_PLATINUM_PACK,drawBingoPlatinumPack());
+     }else if(m.kind==='monster')monsterTickets+=m.quantity;
+     else throw Error('INVALID_BINGO_REWARD');
+     claimed[m.id]=now;
+    }
+    if(needsHammer){
+     const ice=iceSnap?.exists?normalizeIceState(iceSnap.data()):newIceState();
+     tx.set(iceRef,{...ice,
+      freeHammers:{...ice.freeHammers,lucky:checkMonsterBalance(Number(ice.freeHammers?.lucky||0),goldHammers)},
+      wheelHammers:{...ice.wheelHammers,lucky:checkMonsterBalance(Number(ice.wheelHammers?.lucky||0),goldHammers)},
+      updatedAt:now
+     });
+    }
+    if(needsJoker){
+     const balance=Number(jokerSnap?.data()?.balance)||0;
+     tx.set(jokerRef,{balance:checkMonsterBalance(balance,jokers,1000000),updatedAt:now},{merge:true});
+    }
+    tx.set(albumRef,{
+     cards,opened:checkMonsterBalance(Number(album.opened||0),packs.length),
+     monsterWheelTickets:checkMonsterBalance(Number(album.monsterWheelTickets||0),monsterTickets),
+     northPoleMilestonesClaimed:claimed,updatedAt:now
+    },{merge:true});
+    return {claimed:pending.map(({at,id,name})=>({at,id,name})),packs,goldHammers,jokers,monsterTickets,
+     progress:christmasProgress(cards),replayed:false};
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
  app.post('/api/deal-or-no-deal/christmas/open',auth,async(req,res)=>{try{const pack=CHRISTMAS_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CHRISTMAS_COLLECTION).doc(uid),receiptRef=db.collection('deal_or_no_deal_christmas_receipts_v1').doc(uid+'_'+requestId);
  const result=await db.runTransaction(async tx=>{const [wallet,snap,receipt]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(receiptRef)]);if(receipt.exists){if(receipt.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...receipt.data().result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const previous=snap.exists?snap.data():{};const cards={...(previous.cards||{})};const drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;const remaining=balance-pack.price;const result={balance:remaining,cards,opened:(previous.opened||0)+1,revealed:drawn,progress:christmasProgress(cards),hammerProgress:hammerBingoProgress(cards,previous.hammerBingoClaimed,previous.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,previous.duplicateReserve,previous.monsterWheelTickets)};tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});tx.set(cardsRef,{cards,opened:result.opened,updatedAt:Date.now()},{merge:true});tx.create(receiptRef,{packId:pack.id,result,createdAt:Date.now()});return result});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
 
