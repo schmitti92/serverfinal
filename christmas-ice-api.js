@@ -142,7 +142,11 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
      if(!Number.isSafeInteger(old)||old<0||old>=1000000)throw Error('INVALID_JOKER_BALANCE');
      tx.set(inventory,{balance:old+1,updatedAt:Date.now()},{merge:true});
     }
-    tx.set(walletRef,{balance:next.balance,updatedAt:Date.now()},{merge:true});
+    // A free hammer usually changes only ice progress. Avoid a redundant
+    // wallet write unless a paid hit or a money prize changed the balance.
+    // The entire strike (and any money prize) stays atomic in this transaction.
+    if(next.balance!==walletBalance)
+     tx.set(walletRef,{balance:next.balance,updatedAt:Date.now()},{merge:true});
     tx.set(ref,next);
     return {state:{...publicIceState(next),balance:next.balance},result:strike.result,changed:true};
    });
