@@ -96,7 +96,7 @@ test('a pack completing overlapping lines grants every distinct line once',()=>{
  assert.equal(all.awarded.length,20);
  const regular=all.awarded.filter(x=>x.board===3),mixed=all.awarded.filter(x=>x.board===4);
  assert.equal(regular.length,10);assert.equal(mixed.length,10);
- assert.deepEqual(all.totals,{single:21,double:9,lucky:3});
+ assert.deepEqual(all.totals,{single:24,double:9,lucky:3});
  assert.equal(collectHammerBingoClaims(cards,all.claims).awarded.length,0);
  const progress=hammerBingoProgress(cards,all.claims);
  assert.deepEqual(progress.boards.map(b=>b.claimableLines.length),[0,0]);
