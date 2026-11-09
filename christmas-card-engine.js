@@ -60,11 +60,14 @@ export function markChristmasDiscoveries(drawn,previousCards={}){
 
 // Read-only progress for the Hammer-Bingo boards. Rewards and resets will
 // require exactly-once server receipts and are deliberately NOT granted here.
-export function hammerBingoProgress(cards={}){
+export function hammerBingoProgress(cards={},claimed={}){
+ const claims=normalizeHammerClaims(claimed);
  const boards=[33,49].map((start,i)=>{
   const owned=Array.from({length:16},(_,offset)=>Number(cards['christmas-'+String(start+offset).padStart(2,'0')]||0)>0);
   const bingoLines=BINGO_LINES.map((line,k)=>line.every(index=>owned[index])?k:null).filter(k=>k!==null);
-  return {board:i+3,collected:owned.filter(Boolean).length,total:16,bingoLines,bingos:bingoLines.length,maxBingos:10,complete:owned.every(Boolean)};
+  const key=i===0?'common':'mixed';
+  const claimedLines=claims[key];
+  return {board:i+3,collected:owned.filter(Boolean).length,total:16,bingoLines,bingos:bingoLines.length,maxBingos:10,complete:owned.every(Boolean),claimedLines,claimableLines:bingoLines.filter(line=>!claimedLines.includes(line))};
  });
  return {collected:boards.reduce((sum,b)=>sum+b.collected,0),total:32,boards};
 }
