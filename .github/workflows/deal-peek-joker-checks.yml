@@ -1,0 +1,29 @@
+name: Deal or No Deal peek Joker checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-peek-joker.js'
+      - 'deal-peek-awards.js'
+      - 'tests/deal-peek-joker.test.js'
+      - 'tests/deal-peek-awards.test.js'
+      - '.github/workflows/deal-peek-joker-checks.yml'
+  pull_request:
+    paths:
+      - 'deal-peek-joker.js'
+      - 'deal-peek-awards.js'
+      - 'tests/deal-peek-joker.test.js'
+      - 'tests/deal-peek-awards.test.js'
+      - '.github/workflows/deal-peek-joker-checks.yml'
+  workflow_dispatch:
+jobs:
+  joker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate 26/27/28-case peeks, identity, funds and receipts
+        run: node --test tests/deal-peek-joker.test.js tests/deal-peek-awards.test.js
