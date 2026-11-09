@@ -42,7 +42,7 @@ const CHRISTMAS_LINES=Object.freeze([...Array.from({length:4},(_,r)=>[0,1,2,3].m
 const CHRISTMAS_REWARDS=Object.freeze(['rudolph','winter-lobby','christmas-studio','gift-cases','snowman-profile-avatar']);
 const CHRISTMAS_COLLECTOR_FRAME='collector-frame';
 function christmasProgress(cards){
- const owned=CHRISTMAS_CARDS.map(c=>(cards[c.id]||0)>0);
+ const owned=CHRISTMAS_CARDS.slice(0,32).map(c=>(cards[c.id]||0)>0);
  const bingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index])?i:null).filter(i=>i!==null);
  const bingos=bingoLines.length;
  const secondBingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index+16])?i:null).filter(i=>i!==null);
@@ -222,8 +222,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const album=albumSnap.exists?albumSnap.data():{};
     const delta=settleHammerBingoCycle(album.cards||{},album.hammerBingoClaimed,album.hammerBingoCycles);
     const progress=hammerBingoProgress(delta.cards,delta.claims,delta.cycles);
+    const classicProgress=christmasProgress(delta.cards);
     if(!delta.changed)return {
-     awarded:[],jackpots:[],totals:delta.totals,hammerProgress:progress,replayed:true
+     awarded:[],jackpots:[],totals:delta.totals,hammerProgress:progress,progress:classicProgress,replayed:true
     };
     const oldIce=iceSnap.exists?normalizeIceState(iceSnap.data()):newIceState();
     const freeHammers={...oldIce.freeHammers},wheelHammers={...oldIce.wheelHammers};
@@ -244,7 +245,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     },{merge:true});
     return {
      awarded:delta.awarded,jackpots:delta.jackpots,totals:delta.totals,
-     hammerProgress:progress,cards:delta.cards,replayed:false
+     hammerProgress:progress,progress:classicProgress,cards:delta.cards,replayed:false
     };
    });
    res.set('Cache-Control','no-store');
