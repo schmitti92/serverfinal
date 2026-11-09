@@ -6,6 +6,11 @@ on:
       - 'christmas-ice-*.js'
       - 'tests/christmas-ice-*.test.js'
       - '.github/workflows/christmas-ice-checks.yml'
+  pull_request:
+    paths:
+      - 'christmas-ice-*.js'
+      - 'tests/christmas-ice-*.test.js'
+      - '.github/workflows/christmas-ice-checks.yml'
   workflow_dispatch:
 jobs:
   test:
