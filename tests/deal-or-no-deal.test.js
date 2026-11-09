@@ -16,7 +16,28 @@ function simulate(count,allDeal=false){
  }
  assert.equal(g.phase,'final');return g;
 }
-test('27 distinct monetary values including 3 million euros',()=>{assert.equal(new Set(VALUES).size,27);assert.ok(VALUES.includes(300000000));});
+test('28 distinct monetary values including 3 and 5 million euros',()=>{assert.equal(new Set(VALUES).size,28);assert.ok(VALUES.includes(300000000));assert.ok(VALUES.includes(500000000));});
+for(const count of [26,27,28]){
+ test(count+' cases contain the correct prizes and reach a final',()=>{
+  let game=create([{id:'a',name:'Spieler A'}],rand,count);
+  assert.equal(game.values.length,count);
+  assert.equal(publicView(game).caseCount,count);
+  assert.equal(game.values.includes(500000000),count===28);
+  assert.equal(game.values.includes(300000000),count>=27);
+  game=send(game,'a','select',{case:0});
+  let guard=0;
+  while(game.phase!=='final'&&guard++<200){
+   if(game.phase==='open')game=send(game,'a','open',{case:free(game)[0]});
+   else if(game.phase==='reveal')game=send(game,'a','ack-reveal');
+   else if(game.phase==='decision')game=send(game,'a','decide',{deal:false});
+   else throw Error('Unexpected phase '+game.phase);
+  }
+  assert.equal(game.phase,'final');
+  assert.equal(game.opened.length,count-1);
+ });
+}
+test('invalid case counts are rejected',()=>{for(const n of [25,29,0,26.5])assert.throws(()=>create([{id:'a'}],rand,n),/INVALID_CASE_COUNT/)});
+
 for(let count=1;count<=4;count++){
  test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,13-count);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
  test(count+' players accepting first deal end immediately',()=>{let g=simulate(count,true);assert.equal(g.opened.length,5);assert.equal(g.history.length,1);assert.equal(g.players.every(p=>p.deal!==null),true)});
