@@ -9,7 +9,7 @@ const packs=[
 ];
 test('96 stable ids with original 80 preserved and fourth board rarity layout correct',()=>{
  assert.equal(CHRISTMAS_CARDS.length,96);
- assert.equal(new Set(CHRISTMAS_CARDS.map(c=>c.id)).size,80);
+ assert.equal(new Set(CHRISTMAS_CARDS.map(c=>c.id)).size,96);
  assert.deepEqual(CHRISTMAS_CARDS.slice(0,32).map(c=>c.id),Array.from({length:32},(_,i)=>'christmas-'+String(i+1).padStart(2,'0')));
  assert.deepEqual(CHRISTMAS_CARDS.slice(32,48).map(c=>c.rarity),Array(16).fill('common'));
  assert.deepEqual(CHRISTMAS_CARDS.slice(48,64).map(c=>c.rarity),Array.from({length:16},(_,i)=>CHRISTMAS_RARITIES[i%4]));
