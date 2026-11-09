@@ -74,7 +74,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   expiry.unref?.();
   ws.on('message',async raw=>{
    let msg;try{msg=JSON.parse(String(raw))}catch{return};
-   if(msg?.type==='ping'){if(joined){sendSocket(ws,{type:'pong'});if(Number.isSafeInteger(msg.revision)){try{const db=getFirestore();if(db){const latest=await readGame(db,joined);if(ws.readyState===1&&latest&&Number(latest.revision)!==msg.revision)sendSocket(ws,{type:'deal-state',game:latest})}}catch(error){console.warn('[deal-sync-ping]',String(error?.message||error))}}}return}
+   if(msg?.type==='ping'){if(joined){sendSocket(ws,{type:'pong',serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});if(Number.isSafeInteger(msg.revision)){try{const db=getFirestore();if(db){const latest=await readGame(db,joined);if(ws.readyState===1&&latest&&Number(latest.revision)!==msg.revision)sendSocket(ws,{type:'deal-state',game:latest})}}catch(error){console.warn('[deal-sync-ping]',String(error?.message||error))}}}return}
    if(msg?.type!=='subscribe'||authenticated)return;
    authenticated=true;
    const code=String(msg.code||'').toUpperCase(),token=String(msg.token||'');
@@ -88,7 +88,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     joined=code;
     if(!dealSockets.has(code))dealSockets.set(code,new Set());
     dealSockets.get(code).add(ws);
-    sendSocket(ws,{type:'deal-subscribed',code});
+    sendSocket(ws,{type:'deal-subscribed',code,serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});
     // Subscribe before snapshot: any concurrent mutation is reconciled by revision.
     const game=await readGame(db,code);
     if(ws.readyState===1)sendSocket(ws,{type:'deal-state',game});
