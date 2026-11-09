@@ -395,7 +395,14 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const current=gameSnap.data().game,reward=rewardSnap.data();
    if(reward.gameId!==current.id||String(reward.uid)!==String(req.dealIdentity.uid))throw Error('WINNER_ONLY');
    const key=kind+':'+rewardId;
-   if(!current.christmasWheelSpins?.[key])throw Error('WHEEL_NOT_STARTED');
+   // Banker packs are determined and credited when the deal is accepted.
+   // Only their shared card reveal needs acknowledgement; no wheel spin is required.
+   if(kind==='banker'&&!current.history?.some(h=>
+    h.round===reward.round&&h.bonusPack===reward.packId&&
+    h.decisions?.length===h.participants?.length&&
+    h.decisions.some(d=>d.id===reward.uid&&d.deal===true)
+   ))throw Error('INVALID_REWARD');
+   if(kind!=='banker'&&!current.christmasWheelSpins?.[key])throw Error('WHEEL_NOT_STARTED');
    if(current.christmasWheelClosed?.[key])return current;
    const updated={...current,christmasWheelClosed:{...(current.christmasWheelClosed||{}),[key]:Date.now()},revision:(current.revision||0)+1};
    tx.update(ref,{game:updated,updatedAt:Date.now()});return updated;
