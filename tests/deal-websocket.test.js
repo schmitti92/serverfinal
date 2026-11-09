@@ -222,6 +222,57 @@ test('Subscribed sockets receive an authoritative clock sample without requiring
  ws.close();
 });
 
+test('Banker deal packs can be revealed and confirmed without spinning a wheel',async()=>{
+ const {invoke,docs}=harness();
+ const url='/api/deal-or-no-deal/:code';
+ const started=await invoke('POST',url+'/start','a');
+ assert.equal(started.statusCode,200);
+ let game=started.body.game;
+ const act=async(actor,type,extra={})=>{
+  const response=await invoke('POST',url+'/action',actor,{id:crypto.randomUUID(),revision:game.revision,type,...extra});
+  assert.equal(response.statusCode,200,JSON.stringify(response.body));
+  game=response.body.game;
+ };
+ for(let i=0;i<2;i++)await act(game.order[i],'select',{case:i});
+ for(let i=2;i<7;i++){
+  const actor=game.order[game.turnIndex];
+  await act(actor,'open',{case:i});
+  await act(actor,'ack-reveal');
+ }
+ assert.equal(game.phase,'decision');
+ // Fix the randomized banker pack for deterministic coverage.
+ const stored=docs.get('deal_or_no_deal_matches_v1/123');
+ stored.game.history.at(-1).bonusPack='small';
+ const participants=game.history.at(-1).participants;
+ for(const actor of participants)await act(actor,'decide',{deal:true});
+ assert.equal(game.phase,'final');
+ const rewardId=game.id+'_1_a';
+ const savedPack=docs.get('deal_christmas_banker_rewards_v1/'+rewardId);
+ assert.equal(savedPack?.packId,'small');
+ assert.ok(savedPack?.revealed?.length>0);
+ assert.equal(game.christmasWheelSpins?.['banker:'+rewardId],undefined);
+ const before=game.revision;
+ const viewer=await invoke('POST',url+'/christmas-wheel-continue','b',{kind:'banker',rewardId});
+ assert.equal(viewer.statusCode,409);
+ assert.equal(viewer.body.error,'WINNER_ONLY');
+ const confirmed=await invoke('POST',url+'/christmas-wheel-continue','a',{kind:'banker',rewardId});
+ assert.equal(confirmed.statusCode,200,JSON.stringify(confirmed.body));
+ assert.ok(confirmed.body.closedAt>0);
+ const after=docs.get('deal_or_no_deal_matches_v1/123').game;
+ assert.equal(after.revision,before+1);
+ assert.ok(after.christmasWheelClosed['banker:'+rewardId]);
+ assert.equal(after.christmasWheelSpins?.['banker:'+rewardId],undefined);
+ const again=await invoke('POST',url+'/christmas-wheel-continue','a',{kind:'banker',rewardId});
+ assert.equal(again.statusCode,200);
+ assert.equal(docs.get('deal_or_no_deal_matches_v1/123').game.revision,before+1);
+ // Other reward types still require a server-confirmed wheel start.
+ const fakeCentId=game.id+'_cent-test';
+ docs.set('deal_christmas_cent_rewards_v1/'+fakeCentId,{uid:'a',gameId:game.id});
+ const cent=await invoke('POST',url+'/christmas-wheel-continue','a',{kind:'cent',rewardId:fakeCentId});
+ assert.equal(cent.statusCode,409);
+ assert.equal(cent.body.error,'WHEEL_NOT_STARTED');
+});
+
 test('Unauthenticated heartbeat does not receive a pong',async()=>{
  const {api,Socket}=harness();
  const ws=new Socket();api.attachSocket(ws);
