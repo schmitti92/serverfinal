@@ -11,7 +11,7 @@ function create(players,random=crypto.randomInt,caseCount=27){
  if(![26,27,28].includes(caseCount))throw Error('INVALID_CASE_COUNT');
  if(!Array.isArray(players)||players.length<1||players.length>4)throw Error('PLAYER_COUNT');
  const ids=players.map(p=>String(p.id));if(new Set(ids).size!==ids.length)throw Error('DUPLICATE_PLAYER');
- return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=14?p.avatar:null,case:null,deal:null})),values:shuffle(VALUES.slice(0,caseCount),random),order:shuffle(ids,random),selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
+ return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null})),values:shuffle(VALUES.slice(0,caseCount),random),order:shuffle(ids,random),selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
 }
 function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnIndex+i)%g.order.length];if(g.players.some(p=>p.id===id&&p.deal===null))return id}return null}
 function apply(g,actor,command,random=crypto.randomInt){
