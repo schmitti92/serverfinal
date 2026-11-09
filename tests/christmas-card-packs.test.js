@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress} from '../christmas-card-engine.js';
+import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries} from '../christmas-card-engine.js';
 
 const packs=[
  {id:'small',count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}},
@@ -51,4 +51,18 @@ test('Hammer-Bingo collection reports independent lines for both new boards',()=
  assert.equal(progress.boards[1].bingos,10);
  assert.equal(progress.boards[1].complete,true);
  assert.equal(progress.boards[0].complete,false);
+});
+
+test('new discovery is identified against pre-pack ownership and only once per pack',()=>{
+ const drawn=[CHRISTMAS_CARDS[32],CHRISTMAS_CARDS[32],CHRISTMAS_CARDS[0],CHRISTMAS_CARDS[48]];
+ const old={ [CHRISTMAS_CARDS[0].id]:2 };
+ const result=markChristmasDiscoveries(drawn,old);
+ assert.deepEqual(result.map(c=>c.isNew),[true,false,false,true]);
+ assert.equal(result[0].id,CHRISTMAS_CARDS[32].id);
+ assert.deepEqual(old,{[CHRISTMAS_CARDS[0].id]:2});
+ assert.equal('isNew' in drawn[0],false);
+});
+test('new discovery is false if card is already owned in profile, including Hammer-Bingo',()=>{
+ const drawn=[CHRISTMAS_CARDS[32],CHRISTMAS_CARDS[48]];
+ assert.deepEqual(markChristmasDiscoveries(drawn,{[drawn[0].id]:1,[drawn[1].id]:3}).map(c=>c.isNew),[false,false]);
 });
