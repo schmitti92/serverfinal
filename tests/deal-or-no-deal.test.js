@@ -1,7 +1,7 @@
 'use strict';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {create,apply,publicView,free,VALUES,publicRemaining,nextTurn} from '../deal-or-no-deal.js';
+import {create,apply,publicView,free,VALUES,publicRemaining,nextTurn,drawHammerFromTwelve} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -129,4 +129,36 @@ test('public game reveals 27-case count without exposing hidden amounts',()=>{
  assert.equal(view.caseCount,27);
  assert.equal(view.values,undefined);
  assert.equal(free(game).length,27);
+});
+
+test('the 12 equal hammer-wheel slots are exactly 5 single, 5 double, 2 lucky',()=>{
+ const outcomes=Array.from({length:12},(_,sector)=>drawHammerFromTwelve(n=>{assert.equal(n,12);return sector}));
+ assert.equal(outcomes.filter(x=>x==='single').length,5);
+ assert.equal(outcomes.filter(x=>x==='double').length,5);
+ assert.equal(outcomes.filter(x=>x==='lucky').length,2);
+});
+test('Banker hammer bonus is rolled once for a new offer and shown without secrets',()=>{
+ let g=create([{id:'p1',name:'Player'}],rand);
+ g=send(g,g.order[0],'select',{case:0});
+ while(g.phase!=='decision'){
+  if(g.phase==='open')g=send(g,nextTurn(g),'open',{case:free(g)[0]});
+  else if(g.phase==='reveal')g=send(g,g.pending.actor,'ack-reveal');
+ }
+ assert.equal(g.history.at(-1).bonusHammer,'single');
+ assert.equal(publicView(g).history.at(-1).bonusHammer,'single');
+ const before=g.history.at(-1).bonusHammer;
+ g=send(g,'p1','decide',{deal:true});
+ assert.equal(g.history.at(-1).bonusHammer,before);
+ assert.equal(g.history.at(-1).decisions[0].deal,true);
+});
+test('Banker bonus can be absent with a roll outside the 1-in-10 outcome',()=>{
+ const neverBonus=n=>n-1;
+ let g=create([{id:'p1'}],neverBonus);
+ const command=(actor,type,extra={})=>apply(g,actor,{id:'no-bonus-'+g.revision,revision:g.revision,type,...extra},neverBonus);
+ g=command(g.order[0],'select',{case:0});
+ while(g.phase!=='decision'){
+  if(g.phase==='open')g=command(nextTurn(g),'open',{case:free(g)[0]});
+  else if(g.phase==='reveal')g=command(g.pending.actor,'ack-reveal');
+ }
+ assert.equal(g.history.at(-1).bonusHammer,null);
 });
