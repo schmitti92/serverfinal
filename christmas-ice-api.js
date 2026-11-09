@@ -21,6 +21,15 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
    return res.json({ok:true,started:snap.exists,state:snap.exists?{...publicIceState(normalizeIceState(snap.data())),balance:Number(wallet.data()?.balance)||0}:null});
   }catch(e){return fail(res,e)}
  });
+ // Lightweight avatar unlock check: one progress read, no wallet access.
+ app.get('/api/christmas-ice/unlocks',auth,async(req,res)=>{
+  try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const snap=await db.collection(collection).doc(req.iceUid).get();
+   const state=snap.exists?normalizeIceState(snap.data()):null;
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,janSchlappen:!!state&&Math.max(Number(state.maxRewarded||0),Number(state.completed||0))>=10});
+  }catch(e){return fail(res,e)}
+ });
  // A final-round winner gets exactly one hammer wheel spin, only after the
  // existing Christmas card-pack wheel has started. The award is persisted once.
  app.post('/api/christmas-ice/final-hammer',auth,async(req,res)=>{
