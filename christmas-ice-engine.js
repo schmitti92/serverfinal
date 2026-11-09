@@ -1,6 +1,6 @@
 'use strict';
 import {randomInt} from 'node:crypto';
-import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES,ICE_TILES_AFTER_TEN,ICE_NO_STAR_FROM_PICTURE,iceTileCount,nextIceTileCount} from './christmas-ice-prizes.js';
+import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES,ICE_NO_STAR_FROM_PICTURE,iceTileCount,nextIceTileCount} from './christmas-ice-prizes.js';
 // Pure reducer. One state document per player; no reads during animation.
 // The star position never goes to a public response until it has been found.
 export function newIceState(random=randomInt){
@@ -75,11 +75,13 @@ export function resetIceState(s,random=randomInt){
 // Old test builds gave 20 free strikes per picture. Discard those test grants
 // while keeping separately recorded winner-wheel prizes and progress.
 export function normalizeIceState(s){
- // Sanitize persisted sessions at and after picture 17 without
- // resetting progress, replay receipts, inventory, or already-paid rewards.
+ // Upgrade old picture-21+ saves from 25 to 30 tiles without discarding
+ // opened tiles, receipts, prizes, inventory or progress. A finished picture 20
+ // keeps 25 tiles until the next image is started.
  const noStar=Number(s.completed)>=ICE_NO_STAR_FROM_PICTURE
   ||(Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE&&!s.finished);
- const clean=noStar?{...s,star:null,tileCount:ICE_TILES_AFTER_TEN}:s;
+ const tilesRequired=iceTileCount(s);
+ const clean={...s,tileCount:tilesRequired,...(noStar?{star:null}:{})};
  if((clean.version||1)>=2)return clean;
  const wheel=clean.wheelHammers||{};
  return {...clean,version:2,freeHammers:{single:Math.max(0,wheel.single||0),double:Math.max(0,wheel.double||0),lucky:Math.max(0,wheel.lucky||0)},wheelHammers:{single:Math.max(0,wheel.single||0),double:Math.max(0,wheel.double||0),lucky:Math.max(0,wheel.lucky||0)}};
