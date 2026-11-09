@@ -258,8 +258,8 @@ test('fourth classic Bingo board counts ten lines and leaves previous unlocks in
  assert.equal(full.collected,64);
  assert.equal(full.totalBingos,40);
  assert.equal(full.nextReward,null);
- assert.equal(full.rewards.filter(x=>x.startsWith('north-')).length,2);
- assert.equal(full.rewards.includes('north-pole-legend'),true);
+ assert.equal(full.rewards.filter(x=>x.startsWith('north-')).length,5);
+ assert.equal(full.rewards.includes('north-monster-spin-1'),true);
  for(let i=81;i<=96;i++)cards['christmas-'+i]=2;
  assert.equal(classicChristmasProgress(cards).totalBingos,40,'Duplicates cannot add extra Bingos');
 });
