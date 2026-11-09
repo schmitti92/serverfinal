@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {newIceState,strikeIce,nextIcePicture,publicIceState,resetIceState} from '../christmas-ice-engine.js';
+import {ICE_TILES,ICE_TILES_AFTER_TEN,iceTileCount,nextIceTileCount} from '../christmas-ice-prizes.js';
 const id='ice-strike-request-0001';
 test('no star leaked to player before completion',()=>{
  const s=newIceState(()=>7);
@@ -66,7 +67,8 @@ test('reset does not grant previously earned money again',()=>{
 });
 
 test('no free hammers are granted on advancing to the next picture',()=>{
- let s=newIceState(()=>19);
+ // All 20 strikes are paid. The original zero-balance fixture could never reach the star.
+ let s={...newIceState(()=>19),balance:600000000};
  for(let i=0;i<20;i++){
   s=strikeIce(s,{index:i,hammer:'single',requestId:'full-picture-'+String(i).padStart(4,'0')},()=>0).state;
   if(s.finished)break;
@@ -101,4 +103,85 @@ test('winner wheel hammer survives progress reset and can be spent',()=>{
  assert.equal(hit.state.freeHammers.double,0);
  assert.equal(hit.state.balance,0);
  assert.equal(hit.result.targets.length,2);
+});
+
+test('first ten pictures keep their original 20 ice tiles and early star reveal',()=>{
+ const s={...newIceState(()=>19),completed:9,maxRewarded:9,balance:30000000};
+ assert.equal(iceTileCount(s),ICE_TILES);
+ assert.equal(publicIceState(s).tilesRequired,20);
+ const win=strikeIce(s,{index:19,hammer:'single',requestId:'picture-ten-star-001'},()=>0);
+ assert.equal(win.result.found,true);
+ assert.equal(win.state.completed,10);
+ assert.equal(win.state.finished,true);
+ assert.equal(win.state.tileCount,20,'tenth picture stays on its original board');
+ assert.equal(publicIceState(win.state).requiresFullClear,false);
+ const next=nextIcePicture(win.state,()=>24);
+ assert.equal(next.completed,10);
+ assert.equal(next.tileCount,25);
+ assert.equal(next.star,24,'new full-clear board can use all 25 star positions');
+ assert.equal(publicIceState(next).star,null);
+ assert.equal(publicIceState(next).tilesRequired,25);
+ assert.equal(publicIceState(next).tilesRemaining,25);
+ assert.equal(publicIceState(next).requiresFullClear,true);
+});
+test('after 10 pictures all 25 blocks must be removed, even when star was opened first',()=>{
+ let s={...newIceState(()=>0),completed:10,maxRewarded:10,
+  tileCount:25,star:0,freeHammers:{single:25,double:0,lucky:0}};
+ assert.equal(iceTileCount(s),25);
+ assert.equal(nextIceTileCount(s),25);
+ assert.throws(()=>strikeIce(s,{index:25,hammer:'single',requestId:'invalid-ice-25tile'},()=>0),/INVALID_TILE/);
+ for(let index=0;index<25;index++){
+  const strike=strikeIce(s,{index,hammer:'single',requestId:'picture-eleven-hit-'+String(index).padStart(3,'0')},()=>0);
+  s=strike.state;
+  assert.equal(s.opened.length,index+1);
+  assert.equal(s.freeHammers.single,24-index);
+  if(index<24){
+   assert.equal(strike.result.found,false,'cannot finish 25-tile board with only '+(index+1)+' removed');
+   assert.equal(strike.result.gift,null);
+   assert.equal(s.completed,10);
+   assert.equal(s.finished,false);
+   assert.throws(()=>nextIcePicture(s),/PICTURE_NOT_READY/);
+  }else{
+   assert.equal(strike.result.found,true);
+   assert.equal(s.finished,true);
+   assert.equal(s.completed,11);
+   assert.equal(strike.result.gift.kind,'money');
+   assert.equal(publicIceState(s).tilesRemaining,0);
+   const replay=strikeIce(s,{index,hammer:'single',requestId:'picture-eleven-hit-024'});
+   assert.equal(replay.changed,false);
+   assert.equal(replay.result.replayed,true);
+  }
+ }
+ const next=nextIcePicture(s,()=>24);
+ assert.equal(next.tileCount,25);
+ assert.equal(next.opened.length,0);
+ assert.equal(next.star,24);
+});
+test('earned tenth-picture milestone persists with 25 tiles even after progress reset',()=>{
+ const s={...newIceState(()=>0),completed:12,maxRewarded:12,finished:true,tileCount:25};
+ const reset=resetIceState(s,()=>24);
+ assert.equal(reset.completed,0);
+ assert.equal(reset.maxRewarded,12);
+ assert.equal(reset.tileCount,25);
+ assert.equal(reset.star,24);
+ assert.equal(publicIceState(reset).requiresFullClear,true);
+ assert.equal(iceTileCount({...s,tileCount:undefined}),25,'legacy state without tileCount upgrades safely');
+ assert.equal(iceTileCount({...newIceState(()=>7),completed:10,tileCount:undefined}),25);
+});
+test('multi-hit hammer clears up to remaining tiles on the 25 block board without extra credits',()=>{
+ let s={...newIceState(()=>0),completed:10,maxRewarded:10,tileCount:25,
+  freeHammers:{single:0,double:0,lucky:1}};
+ // The 3–6 tile lucky hammer can hit the early star but must not finish.
+ const first=strikeIce(s,{index:0,hammer:'lucky',requestId:'post-ten-lucky-001'},()=>0);
+ assert.equal(first.result.found,false);
+ assert.equal(first.state.opened.length,3);
+ assert.equal(first.state.completed,10);
+ assert.equal(first.result.gift,null);
+ assert.equal(first.state.freeHammers.lucky,0);
+ const nearEnd={...first.state,opened:Array.from({length:24},(_,i)=>i),
+  freeHammers:{single:0,double:1,lucky:0}};
+ const last=strikeIce(nearEnd,{index:24,hammer:'double',requestId:'post-ten-double-001'},()=>0);
+ assert.deepEqual(last.result.targets,[24]);
+ assert.equal(last.state.opened.length,25);
+ assert.equal(last.state.completed,11);
 });
