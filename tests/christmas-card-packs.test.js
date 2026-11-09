@@ -219,3 +219,12 @@ test('Hammer jackpot never resets the North Pole collection',()=>{
  assert.equal(classicChristmasProgress(result.cards).totalBingos,before.totalBingos);
  for(let i=65;i<=80;i++)assert.equal(result.cards['christmas-'+i],1);
 });
+
+
+test('uploaded Christmas photos preserve the 16 Nordpol card IDs and rarity',()=>{
+ const names=["Funkelnder Weihnachtsbaum","Schlitten im Mondschein","Weihnachtsmann mit Geschenken","Glitzernde Weihnachtskugeln","Kakao am Winterfenster","Kleiner Weihnachtsfreund","Leuchtendes Winterdorf","Süße Nikolausstiefel","Wichtel im Zauberwald","Familie in der Schneekugel","Winterfee","Verzauberter Tannenwald","Goldener Weihnachtsbaum","Weihnachtsmanns Schneekugel","Schneemann im Wohnzimmer","Wichtel auf Zuckerstange"];
+ assert.deepEqual(CHRISTMAS_CARDS.slice(64,80).map(c=>c.name),names);
+ assert.deepEqual(CHRISTMAS_CARDS.slice(64,80).map(c=>c.id),
+  Array.from({length:16},(_,i)=>'christmas-'+String(65+i)));
+ assert.ok(CHRISTMAS_CARDS.slice(64,80).every(c=>c.series==='Geheimnisse des Nordpols'));
+});
