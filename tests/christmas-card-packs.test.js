@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries} from '../christmas-card-engine.js';
+import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,hammerBingoPrize,collectHammerBingoClaims} from '../christmas-card-engine.js';
 
 const packs=[
  {id:'small',count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}},
@@ -65,4 +65,44 @@ test('new discovery is identified against pre-pack ownership and only once per p
 test('new discovery is false if card is already owned in profile, including Hammer-Bingo',()=>{
  const drawn=[CHRISTMAS_CARDS[32],CHRISTMAS_CARDS[48]];
  assert.deepEqual(markChristmasDiscoveries(drawn,{[drawn[0].id]:1,[drawn[1].id]:3}).map(c=>c.isNew),[false,false]);
+});
+
+test('each mixed board reward is exactly twice the normal reward on all ten lines',()=>{
+ for(let line=0;line<10;line++){
+  const normal=hammerBingoPrize(3,line),double=hammerBingoPrize(4,line);
+  assert.deepEqual(double,Object.fromEntries(Object.entries(normal).map(([key,value])=>[key,value*2])));
+ }
+ assert.deepEqual(hammerBingoPrize(3,0),{single:1});
+ assert.deepEqual(hammerBingoPrize(4,0),{single:2});
+ assert.deepEqual(hammerBingoPrize(3,9),{lucky:1});
+ assert.deepEqual(hammerBingoPrize(4,9),{lucky:2});
+});
+test('one newly completed row pays once, reload and duplicate card do not pay again',()=>{
+ const cards={};
+ for(let n=33;n<=36;n++)cards['christmas-'+n]=1;
+ const first=collectHammerBingoClaims(cards,{});
+ assert.deepEqual(first.awarded.map(x=>[x.board,x.line]),[[3,0]]);
+ assert.deepEqual(first.totals,{single:1,double:0,lucky:0});
+ const repeat=collectHammerBingoClaims(cards,first.claims);
+ assert.equal(repeat.awarded.length,0);
+ cards['christmas-33']=5;
+ assert.equal(collectHammerBingoClaims(cards,first.claims).awarded.length,0);
+});
+test('a pack completing overlapping lines grants every distinct line once',()=>{
+ const cards={};
+ for(let n=33;n<=48;n++)cards['christmas-'+n]=1;
+ for(let n=49;n<=64;n++)cards['christmas-'+n]=1;
+ const all=collectHammerBingoClaims(cards,{});
+ assert.equal(all.awarded.length,20);
+ const regular=all.awarded.filter(x=>x.board===3),mixed=all.awarded.filter(x=>x.board===4);
+ assert.equal(regular.length,10);assert.equal(mixed.length,10);
+ assert.deepEqual(all.totals,{single:21,double:9,lucky:3});
+ assert.equal(collectHammerBingoClaims(cards,all.claims).awarded.length,0);
+ const progress=hammerBingoProgress(cards,all.claims);
+ assert.deepEqual(progress.boards.map(b=>b.claimableLines.length),[0,0]);
+});
+test('pre-existing complete lines are safely claimable once after rollout',()=>{
+ const owned={'christmas-33':1,'christmas-34':1,'christmas-35':1,'christmas-36':1};
+ assert.deepEqual(hammerBingoProgress(owned,{}).boards[0].claimableLines,[0]);
+ assert.deepEqual(hammerBingoProgress(owned,{common:[0]}).boards[0].claimableLines,[]);
 });
