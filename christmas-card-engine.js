@@ -68,3 +68,49 @@ export function hammerBingoProgress(cards={}){
  });
  return {collected:boards.reduce((sum,b)=>sum+b.collected,0),total:32,boards};
 }
+
+/**
+ * 4 rows (right), 4 columns (below) and 2 diagonals. Indexes 0..9
+ * follow the same BINGO_LINES order on the Christmas album.
+ * The mixed/legendary board pays exactly twice the standard board.
+ */
+export const HAMMER_BINGO_BASE_PRIZES=Object.freeze([
+ Object.freeze({single:1}), // row 1
+ Object.freeze({single:1}), // row 2
+ Object.freeze({single:1}), // row 3
+ Object.freeze({single:2}), // row 4
+ Object.freeze({single:1}), // column 1
+ Object.freeze({single:2}), // column 2
+ Object.freeze({double:1}), // column 3
+ Object.freeze({double:1}), // column 4
+ Object.freeze({double:1}), // diagonal \
+ Object.freeze({lucky:1})   // diagonal /
+]);
+export function hammerBingoPrize(board,lineIndex){
+ if(![3,4].includes(board)||!Number.isInteger(lineIndex)||lineIndex<0||lineIndex>9)throw Error('INVALID_BINGO_LINE');
+ const multiplier=board===4?2:1;
+ return Object.fromEntries(Object.entries(HAMMER_BINGO_BASE_PRIZES[lineIndex]).map(([type,n])=>[type,n*multiplier]));
+}
+export function normalizeHammerClaims(claims){
+ return {
+  common:[...new Set((Array.isArray(claims?.common)?claims.common:[]).filter(i=>Number.isInteger(i)&&i>=0&&i<10))].sort((a,b)=>a-b),
+  mixed:[...new Set((Array.isArray(claims?.mixed)?claims.mixed:[]).filter(i=>Number.isInteger(i)&&i>=0&&i<10))].sort((a,b)=>a-b)
+ };
+}
+export function collectHammerBingoClaims(cards={},previousClaims={}){
+ const claims=normalizeHammerClaims(previousClaims);
+ const nextClaims={common:[...claims.common],mixed:[...claims.mixed]};
+ const awarded=[],totals={single:0,double:0,lucky:0};
+ for(const [board,start,key] of [[3,33,'common'],[4,49,'mixed']]){
+  const owned=Array.from({length:16},(_,i)=>Number(cards['christmas-'+String(start+i).padStart(2,'0')]||0)>0);
+  for(let line=0;line<10;line++){
+   if(nextClaims[key].includes(line)||!BINGO_LINES[line].every(i=>owned[i]))continue;
+   const hammers=hammerBingoPrize(board,line);
+   awarded.push({board,line,hammers});
+   nextClaims[key].push(line);
+   for(const [type,count] of Object.entries(hammers))totals[type]+=count;
+  }
+  nextClaims[key].sort((a,b)=>a-b);
+ }
+ return {claims:nextClaims,awarded,totals};
+}
