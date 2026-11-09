@@ -17,7 +17,10 @@ function fixture({album={cards:bingoCards(),opened:0},balance=0}={}){
  const routes=new Map(),documents=new Map([[walletKey,{balance}],[albumKey,structuredClone(album)]]);
  const writes=[];
  const db={
-  collection:collection=>({doc:id=>({key:collection+'/'+id})}),
+  collection:collection=>({doc:id=>{
+   const key=collection+'/'+id;
+   return {key,get:async()=>({exists:documents.has(key),data:()=>structuredClone(documents.get(key))})};
+  }}),
   runTransaction:async execute=>{
    const queued=[];
    const tx={
@@ -147,7 +150,7 @@ test('Other North Pole rewards still settle atomically alongside Premium voucher
  const f=fixture({album:{cards:bingoCards(16),opened:0}});
  assert.equal(classicChristmasProgress(f.album().cards).totalBingos,30);
  const result=await f.request('POST','christmas/north-pole/claim');
- assert.equal(result.code,200);
+ assert.equal(result.code,200,JSON.stringify(result));
  assert.equal(result.claimed.length,5);
  assert.equal(result.freePacks.premium,2);
  assert.equal(result.goldHammers,3);
