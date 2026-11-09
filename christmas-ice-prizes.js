@@ -7,12 +7,16 @@ export const ICE_PICTURES=70;
 export const ICE_TILES=20;
 export const ICE_TILES_AFTER_TEN=25;
 export const ICE_FULL_CLEAR_MILESTONE=10;
+// From picture 15 on, stars do not exist: only clearing every ice block finishes.
+export const ICE_NO_STAR_FROM_PICTURE=15;
 
 // The event's difficulty upgrade is permanent after a player's tenth image.
 // A persisted per-picture tile count keeps image 10 on its original 20-tile board.
 export function iceTileCount(state){
- if(state?.tileCount===ICE_TILES||state?.tileCount===ICE_TILES_AFTER_TEN)return state.tileCount;
+ // Picture 15+ must never reuse an old 20-tile saved board.
  const completed=Number(state?.completed)||0;
+ if(completed>=ICE_NO_STAR_FROM_PICTURE-1)return ICE_TILES_AFTER_TEN;
+ if(state?.tileCount===ICE_TILES||state?.tileCount===ICE_TILES_AFTER_TEN)return state.tileCount;
  const rewarded=Number(state?.maxRewarded)||0;
  return Math.max(completed,rewarded)>=ICE_FULL_CLEAR_MILESTONE?ICE_TILES_AFTER_TEN:ICE_TILES;
 }
