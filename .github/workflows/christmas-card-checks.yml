@@ -7,6 +7,8 @@ on:
       - 'deal-or-no-deal-api.js'
       - 'tests/christmas-card-packs.test.js'
       - 'tests/christmas-duplicates.test.js'
+      - 'tests/monster-wheel.test.js'
+      - 'monster-wheel.js'
       - '.github/workflows/christmas-card-checks.yml'
   pull_request:
     paths:
@@ -14,6 +16,8 @@ on:
       - 'deal-or-no-deal-api.js'
       - 'tests/christmas-card-packs.test.js'
       - 'tests/christmas-duplicates.test.js'
+      - 'tests/monster-wheel.test.js'
+      - 'monster-wheel.js'
       - '.github/workflows/christmas-card-checks.yml'
   workflow_dispatch:
 jobs:
@@ -26,4 +30,4 @@ jobs:
         with:
           node-version: '22'
       - name: Christmas pack draws and Hammer-Bingo payout regressions
-        run: node --test tests/christmas-card-packs.test.js tests/christmas-duplicates.test.js
+        run: node --test tests/christmas-card-packs.test.js tests/christmas-duplicates.test.js tests/monster-wheel.test.js
