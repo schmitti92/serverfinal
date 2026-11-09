@@ -11,6 +11,7 @@ import { installSharedLobby } from "./shared-lobby.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
 import { installChristmasIceApi } from "./christmas-ice-api.js";
+import { installChristmasHatsApi } from "./christmas-hats-api.js";
 import { installEngine2Api } from "./engine2/api.js";
 import { installHubBusiness } from "./business-hub.js";
 import { installEisstockOnline } from "./eisstock-online.js";
@@ -4347,6 +4348,8 @@ installEngine2Api(app,{
 const dealOrNoDealOnline=installDealOrNoDeal(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 installPeekJoker(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 installChristmasIceApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},notifyDealGameChanged:dealOrNoDealOnline.notifyGameChanged});
+// Independent 10-room Christmas hats jackpot (no effect on core Deal matches).
+installChristmasHatsApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
