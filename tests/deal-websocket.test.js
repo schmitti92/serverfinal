@@ -284,14 +284,15 @@ test('Nordpol Bingo milestones 22–30 credit packs, hammers, jokers and monster
  const first=await claim();
  assert.equal(first.statusCode,200,JSON.stringify(first.body));
  assert.deepEqual(first.body.claimed.map(x=>x.at),[22]);
- assert.equal(first.body.packs.length,2);
- assert.equal(first.body.packs.every(x=>x.packId==='premium'&&x.revealed.length===12),true);
- assert.equal(docs.get(base).opened,2);
+ assert.equal(first.body.packs.length,0,'Bingo 22 now saves two Premium vouchers for later shop opening');
+ assert.equal(first.body.freePacks.premium,2);
+ assert.equal(docs.get(base).freeChristmasPacks.premium,2);
+ assert.equal(docs.get(base).opened,0,'no cards drawn until user opens a free package');
  assert.equal(docs.get(base).northPoleMilestonesClaimed['north-premium-2']>0,true);
  const second=await claim();
  assert.equal(second.statusCode,200);
  assert.equal(second.body.claimed.length,0);
- assert.equal(docs.get(base).opened,2);
+ assert.equal(docs.get(base).opened,0);
  // Existing Nordpol cards now complete the entire third board, yielding 30.
  const progressed=docs.get(base);
  for(let i=65;i<=80;i++)progressed.cards['christmas-'+i]=1;
@@ -310,7 +311,8 @@ test('Nordpol Bingo milestones 22–30 credit packs, hammers, jokers and monster
  assert.equal(docs.get('christmas_ice_progress_v1/a').wheelHammers.lucky,3);
  assert.equal(docs.get('deal_peek_inventory_v1/a').balance,3);
  assert.equal(docs.get(base).monsterWheelTickets,1);
- assert.equal(docs.get(base).opened,3);
+ assert.equal(docs.get(base).opened,1,'only the platinum combo opens cards immediately');
+ assert.equal(docs.get(base).freeChristmasPacks.premium,2);
  const fourth=await claim();
  assert.equal(fourth.body.claimed.length,0);
  assert.equal(docs.get(base).monsterWheelTickets,1);
