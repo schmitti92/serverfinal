@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,hammerBingoPrize,collectHammerBingoClaims} from '../christmas-card-engine.js';
+import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,hammerBingoPrize,collectHammerBingoClaims,settleHammerBingoCycle,HAMMER_BINGO_JACKPOTS} from '../christmas-card-engine.js';
 
 const packs=[
  {id:'small',count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}},
@@ -105,4 +105,80 @@ test('pre-existing complete lines are safely claimable once after rollout',()=>{
  const owned={'christmas-33':1,'christmas-34':1,'christmas-35':1,'christmas-36':1};
  assert.deepEqual(hammerBingoProgress(owned,{}).boards[0].claimableLines,[0]);
  assert.deepEqual(hammerBingoProgress(owned,{common:[0]}).boards[0].claimableLines,[]);
+});
+
+test('standard Hammer-Bingo jackpot pays ten single hammers and resets only field 3',()=>{
+ const cards={'christmas-01':3,'christmas-49':1,'christmas-50':2};
+ for(let n=33;n<=48;n++)cards['christmas-'+n]=1;
+ const first=settleHammerBingoCycle(cards);
+ assert.deepEqual(first.jackpots,[{board:3,cycle:1,hammers:{single:10,double:0,lucky:0}}]);
+ assert.equal(first.totals.single,18); // eight singles from 10 lines + 10 jackpot
+ assert.equal(first.totals.double,3);
+ assert.equal(first.totals.lucky,1);
+ assert.equal(first.cards['christmas-01'],3);
+ assert.equal(first.cards['christmas-49'],1);
+ assert.equal(first.cards['christmas-50'],2);
+ for(let n=33;n<=48;n++)assert.equal(first.cards['christmas-'+n],0);
+ assert.deepEqual(first.claims.common,[]);
+ assert.deepEqual(first.cycles,{common:1,mixed:0});
+ assert.equal(first.awarded.length,10);
+ const repeat=settleHammerBingoCycle(first.cards,first.claims,first.cycles);
+ assert.equal(repeat.changed,false);
+ assert.equal(repeat.jackpots.length,0);
+ assert.deepEqual(repeat.totals,{single:0,double:0,lucky:0});
+});
+
+test('hard Hammer-Bingo jackpot pays ten double and three golden (lucky) hammers',()=>{
+ const cards={'christmas-33':4,'christmas-01':1};
+ for(let n=49;n<=64;n++)cards['christmas-'+n]=1;
+ const result=settleHammerBingoCycle(cards,{common:[1],mixed:[]},{common:2,mixed:0});
+ assert.deepEqual(result.jackpots,[{board:4,cycle:1,hammers:{single:0,double:10,lucky:3}}]);
+ assert.equal(result.totals.double,16);
+ assert.equal(result.totals.lucky,5);
+ assert.equal(result.totals.single,16); // doubled row/column rewards from this board
+ assert.equal(result.cards['christmas-33'],4);
+ assert.equal(result.cards['christmas-01'],1);
+ assert.equal(result.claims.common[0],1);
+ assert.deepEqual(result.claims.mixed,[]);
+ for(let n=49;n<=64;n++)assert.equal(result.cards['christmas-'+n],0);
+ assert.deepEqual(HAMMER_BINGO_JACKPOTS.mixed,{single:0,double:10,lucky:3});
+});
+
+test('previously paid bingo lines are not paid again when jackpot is awarded',()=>{
+ const cards={};
+ for(let n=33;n<=48;n++)cards['christmas-'+n]=3;
+ const claimed={common:Array.from({length:10},(_,i)=>i),mixed:[]};
+ const result=settleHammerBingoCycle(cards,claimed,{common:4,mixed:1});
+ assert.equal(result.awarded.length,0);
+ assert.deepEqual(result.totals,{single:10,double:0,lucky:0});
+ assert.deepEqual(result.jackpots,[{board:3,cycle:5,hammers:{single:10,double:0,lucky:0}}]);
+});
+
+test('both 4x4 boards can jackpot in the same pack without affecting original 32',()=>{
+ const cards=Object.fromEntries(Array.from({length:64},(_,i)=>['christmas-'+String(i+1).padStart(2,'0'),i<32?2:1]));
+ const result=settleHammerBingoCycle(cards);
+ assert.equal(result.jackpots.length,2);
+ assert.deepEqual(result.cycles,{common:1,mixed:1});
+ assert.deepEqual(result.totals,{single:34,double:19,lucky:6});
+ for(let n=1;n<=32;n++)assert.equal(result.cards['christmas-'+String(n).padStart(2,'0')],2);
+ for(let n=33;n<=64;n++)assert.equal(result.cards['christmas-'+n],0);
+});
+
+test('after a complete reset a player can collect cards and win the same bingo and jackpot again',()=>{
+ const cards=Object.fromEntries(Array.from({length:16},(_,i)=>['christmas-'+String(i+33),1]));
+ const first=settleHammerBingoCycle(cards);
+ const secondCards={...first.cards};
+ for(let n=33;n<=48;n++)secondCards['christmas-'+n]=1;
+ const second=settleHammerBingoCycle(secondCards,first.claims,first.cycles);
+ assert.deepEqual(second.jackpots.map(x=>x.cycle),[2]);
+ assert.equal(second.awarded.length,10);
+ assert.equal(second.totals.single,18);
+});
+
+test('field only jackpots when all 16 distinct cards are owned',()=>{
+ const cards={};
+ for(let n=33;n<=47;n++)cards['christmas-'+n]=99;
+ const result=settleHammerBingoCycle(cards);
+ assert.equal(result.jackpots.length,0);
+ assert.ok(result.cards['christmas-33']>0);
 });
