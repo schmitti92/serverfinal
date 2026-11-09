@@ -46,6 +46,18 @@ export function christmasDraw(pack,rand=randomInt){
  return result;
 }
 
+// Annotate the result BEFORE any counts are incremented. Only the first copy
+// of an as-yet-unowned card within one pack is a new discovery. Keep this
+// information in the server-side pack receipt so retries replay identical badges.
+export function markChristmasDiscoveries(drawn,previousCards={}){
+ const seen=new Set();
+ return drawn.map(card=>{
+  const isNew=!(Number(previousCards[card.id])>0)&&!seen.has(card.id);
+  seen.add(card.id);
+  return {...card,isNew};
+ });
+}
+
 // Read-only progress for the Hammer-Bingo boards. Rewards and resets will
 // require exactly-once server receipts and are deliberately NOT granted here.
 export function hammerBingoProgress(cards={}){
