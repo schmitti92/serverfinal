@@ -48,7 +48,7 @@ function fixture({album={cards:bingoCards(),opened:0},balance=0}={}){
   const handlers=routes.get(method+' /api/deal-or-no-deal/'+endpoint);
   assert.ok(handlers,'Endpoint missing: '+endpoint);
   const req={body,get:()=> 'Bearer test-token'};
-  const res={statusCode:200,status(n){this.statusCode=n;return this},json(data){this.payload=data;return data}};
+  const res={statusCode:200,set(){return this},status(n){this.statusCode=n;return this},json(data){this.payload=data;return data}};
   for(const handler of handlers){
    if(handler.length>=3)await new Promise((resolve,reject)=>{
     Promise.resolve(handler(req,res,resolve)).catch(reject);
