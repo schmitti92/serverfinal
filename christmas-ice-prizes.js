@@ -9,8 +9,8 @@ export const ICE_TILES_AFTER_TEN=25;
 export const ICE_TILES_AFTER_TWENTY=30;
 export const ICE_FULL_CLEAR_MILESTONE=10;
 export const ICE_THIRTY_TILE_MILESTONE=20;
-// Pictures 1–16 have a hidden star; from picture 17 the entire board must be cleared.
-export const ICE_NO_STAR_FROM_PICTURE=17;
+// Pictures 1–22 have a hidden star; from picture 23 every ice tile must be cleared.
+export const ICE_NO_STAR_FROM_PICTURE=23;
 
 // A new difficulty level applies to the NEXT picture after each milestone:
 // 1–10: 20 tiles; 11–20: 25; 21–70: 30. The completed milestone image
