@@ -35,7 +35,8 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
    const snap=await db.collection(collection).doc(req.iceUid).get();
    const state=snap.exists?normalizeIceState(snap.data()):null;
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,janSchlappen:!!state&&Math.max(Number(state.maxRewarded||0),Number(state.completed||0))>=10});
+   const best=state?Math.max(Number(state.maxRewarded||0),Number(state.completed||0)):0;
+   return res.json({ok:true,janSchlappen:best>=10,kniffelChristmasDice:best>=20});
   }catch(e){return fail(res,e)}
  });
  // A single winner click starts the pack wheel and later the hammer wheel.
