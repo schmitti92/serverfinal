@@ -203,6 +203,25 @@ test('Rejoining player gets latest state after missing a committed move',async()
  a.close();c.close();rejoined.close();
 });
 
+test('Subscribed sockets receive an authoritative clock sample without requiring game revision',async()=>{
+ const {api,Socket}=harness();
+ const ws=new Socket();api.attachSocket(ws);
+ ws.message({type:'subscribe',code:'123',token:'a',clientSentAt:12345});
+ await flush();
+ const subscribed=ws.sent.find(m=>m.type==='deal-subscribed');
+ assert.ok(subscribed);
+ assert.equal(subscribed.clientSentAt,12345);
+ assert.ok(Number.isSafeInteger(subscribed.serverNow));
+ assert.ok(Math.abs(Date.now()-subscribed.serverNow)<10000);
+ ws.message({type:'ping',clientSentAt:23456});
+ await flush();
+ const pong=ws.sent.find(m=>m.type==='pong');
+ assert.ok(pong);
+ assert.equal(pong.clientSentAt,23456);
+ assert.ok(Number.isSafeInteger(pong.serverNow));
+ ws.close();
+});
+
 test('Unauthenticated heartbeat does not receive a pong',async()=>{
  const {api,Socket}=harness();
  const ws=new Socket();api.attachSocket(ws);
