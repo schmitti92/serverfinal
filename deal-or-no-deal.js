@@ -43,6 +43,10 @@ function apply(g,actor,command,random=crypto.randomInt){
  if(g.phase!=='final'&&next.phase==='final')next.finalStartedAt=Date.now();
  next.revision++;next.commands.push(command.id);if(next.commands.length>300)next.commands.shift();return next;
 }
+function drawHammerFromTwelve(random=crypto.randomInt){
+ const sector=random(12); // 5 single, 5 double, 2 lucky; each sector has probability 1/12.
+ return sector<5?'single':sector<10?'double':'lucky';
+}
 function offer(g,random){
  const remaining=publicRemaining(g);
  const avg=remaining.reduce((a,b)=>a+b,0)/remaining.length;
@@ -73,8 +77,10 @@ function offer(g,random){
  g.offer=Math.max(1,Math.round(avg*factor));
  const bonusRoll=random(1000);
  const bonusPack=bonusRoll<100?(bonusRoll<10?'premium':bonusRoll<60?'large':'small'):null;
- g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,participants:active(g).map(p=>p.id),decisions:[]});
+ // Independent 10% chance for an extra hammer; draw the type from the actual 12-field wheel.
+ const bonusHammer=random(10)===0?drawHammerFromTwelve(random):null;
+ g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
-export {VALUES,STEPS,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
+export {drawHammerFromTwelve,VALUES,STEPS,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
