@@ -30,10 +30,10 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  const count=Math.min(closed.length,hammer==='single'?1:hammer==='double'?2:3+random(4));
  const targets=[index],remaining=closed.filter(i=>i!==index);
  while(targets.length<count){const j=random(remaining.length);targets.push(remaining.splice(j,1)[0])}
- // Pictures 1–16: finding the star reveals the whole picture immediately.
- // Picture 17+: there is no star and every ice tile must be removed.
- // Restore a hidden star in older 15/16 saves that previously stored null;
- // choose only from unopened tiles and persist it with this strike.
+ // Pictures 1–22: finding the star reveals the whole picture immediately.
+ // Picture 23+: there is no star and every ice tile must be removed.
+ // Restore a hidden star in existing picture 17–22 saves that previously
+ // stored null. Choose from unopened tiles and persist with the strike.
  const noStar=Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE;
  const validStar=Number.isInteger(s.star)&&s.star>=0&&s.star<tilesRequired&&!s.opened.includes(s.star);
  const star=noStar?null:validStar?s.star:closed[random(closed.length)];
