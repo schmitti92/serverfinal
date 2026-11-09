@@ -1,30 +1,31 @@
 import {randomInt} from 'node:crypto';
 
 // Keep ids christmas-01 .. christmas-32 unchanged: existing profiles store them.
-// Hammer-Bingo IDs 33..64 and North Pole album IDs 65..80 are permanent.
+// Hammer-Bingo IDs 33..64, Nordpol IDs 65..80 and fourth classic board IDs 81..96 are permanent.
 // Never renumber them: existing users have stored card counts.
 export const CHRISTMAS_RARITIES=Object.freeze(['common','rare','epic','legendary']);
 const ORIGINAL_NAMES=["Winterdorf","Lebkuchenhaus","Weihnachtsmann","Rentier","Weihnachtsbaum","Weihnachtszug","Schneekugel","Wichtelwerkstatt","Polarlichter","Eisschloss","Rentierschlitten","Weihnachtslaterne","Weihnachtsengel","Adventskerzen","Schneemannfamilie","Weihnachtskrippe","Schneemann","Weihnachtsengel","Rentier im Schnee","Weihnachtsbaum im Glanz","Lebkuchenmann","Weihnachtskranz","Schlittenfahrt","Stern von Bethlehem","Elfenhilfe","Weihnachtspinguin","Polarbär","Weihnachtsglocken","Kerzenschein","Winterdorf im Schnee","Geschenkstapel","Schneeflocke"];
 const HAMMER_NAMES=["Winterwanderung zur Berghütte","Plätzchenbacken mit Opa","Weihnachtsmarkt zu zweit","Punsch am Weihnachtsmarkt","Gemeinsam den Baum schmücken","Geschenke liebevoll einpacken","Winterlicher Marktspaziergang","Plätzchen mit den Großeltern","Der Stern auf dem Weihnachtsbaum","Bescherung unterm Weihnachtsbaum","Winterdorf bei Sonnenuntergang","Winterhütte im Abendlicht","Festlicher Waldweg","Verschneiter Waldpfad","Berghütte im Sonnenlicht","Weihnachtsmarkt im Winterdorf","Weihnachtsleuchtturm am Meer","Wintersee im Abendrot","Eislaufen am Wintersee","Weihnachtszug durch die Berge","Verschneite Brücke am Bach","Weihnachtsdorf im Bergtal","Weihnachtsmarkt im Schneetreiben","Bergdorf in der Abenddämmerung","Wintersee beim Sonnenaufgang","Berghütte in der Winternacht","Weihnachtsmarkt im Lichterglanz","Festlicher Baum im Winterwald","Waldhütte im Abendrot","Alpenhütte im Sonnenuntergang","Laternenweg zur Winterkapelle","Weihnachtsdorf am Bergsee"];
 const NORTH_POLE_NAMES=["Funkelnder Weihnachtsbaum","Schlitten im Mondschein","Weihnachtsmann mit Geschenken","Glitzernde Weihnachtskugeln","Kakao am Winterfenster","Kleiner Weihnachtsfreund","Leuchtendes Winterdorf","Süße Nikolausstiefel","Wichtel im Zauberwald","Familie in der Schneekugel","Winterfee","Verzauberter Tannenwald","Goldener Weihnachtsbaum","Weihnachtsmanns Schneekugel","Schneemann im Wohnzimmer","Wichtel auf Zuckerstange"];
+const FOURTH_BOARD_NAMES=["Oma backt Plätzchen","Nikolaus und das freche Rentier","Rentiere verschenken ein Auto","Weihnachtsmann und Schneemann","Schneemobil voller Geschenke","Lustiger Weihnachts-Elch","Weihnachtskalorien zählen nicht","Überraschung vom Weihnachtsmann","Opa und die Geschenke","Plätzchenbacken mit Hund","Gemütliches Weihnachtszimmer","Weihnachtsmann im Lichterglanz","Cool bleiben, es ist Weihnachten","Weihnachtswichtel im Geschenkerausch","Schneemann auf dem Sofa","Weihnachtsmann im Büro"];
 const BINGO_LINES=Object.freeze([
  ...Array.from({length:4},(_,row)=>[0,1,2,3].map(col=>row*4+col)),
  ...Array.from({length:4},(_,col)=>[0,1,2,3].map(row=>row*4+col)),
  [0,5,10,15],[3,6,9,12]
 ]);
 
-export const CHRISTMAS_CARDS=Object.freeze([...ORIGINAL_NAMES,...HAMMER_NAMES,...NORTH_POLE_NAMES].map((name,index)=>{
+export const CHRISTMAS_CARDS=Object.freeze([...ORIGINAL_NAMES,...HAMMER_NAMES,...NORTH_POLE_NAMES,...FOURTH_BOARD_NAMES].map((name,index)=>{
  const rarity=index<32?CHRISTMAS_RARITIES[Math.floor(index%16/4)]
- :index<48?'common':index<64?CHRISTMAS_RARITIES[(index-48)%4]:CHRISTMAS_RARITIES[Math.floor((index-64)/4)];
+ :index<48?'common':index<64?CHRISTMAS_RARITIES[(index-48)%4]:CHRISTMAS_RARITIES[Math.floor(((index-64)%16)/4)];
  return Object.freeze({
    id:'christmas-'+String(index+1).padStart(2,'0'),
    name,rarity,
    series:index<16?'Weihnachtskollektion I':index<32?'Weihnachtskollektion II'
-      :index<48?'Weihnachtswerkstatt':index<64?'Legendäre Winterwelt':'Geheimnisse des Nordpols'
+      :index<48?'Weihnachtswerkstatt':index<64?'Legendäre Winterwelt':index<80?'Geheimnisse des Nordpols':'Die lustige Weihnachtswelt'
  });
 }));
 
-// All 80 Christmas card IDs share one duplicate market. Only copies beyond
+// All 96 Christmas card IDs share one duplicate market. Only copies beyond
 // the first are spendable; a first copy always remains available for Bingo.
 export const MONSTER_WHEEL_EXCHANGE_COST=100;
 const validStock=n=>Number.isSafeInteger(n)&&n>=0?n:0;
@@ -73,8 +74,9 @@ export function christmasHammerDuplicatesSaved(cards={},jackpots=[]){
 }
 
 /**
- * Classic album: 3 permanent 4x4 boards. Hammer-Bingo boards are separate
- * and intentionally excluded from the 30 classic milestone unlocks.
+ * Classic album: 4 permanent 4x4 boards. Hammer-Bingo boards are separate
+ * and intentionally excluded from classic bingo progress. Existing milestone
+ * prizes end at 30; the fourth board's prizes will be configured separately.
  * Rewards are derived from owned card counts; no extra Firestore write.
  */
 export const NORTH_POLE_REWARD_IDS=Object.freeze([
@@ -83,11 +85,13 @@ export const NORTH_POLE_REWARD_IDS=Object.freeze([
 export function classicChristmasProgress(cards={}){
  const owned=CHRISTMAS_CARDS.slice(0,32).map(c=>Number(cards[c.id]||0)>0);
  const thirdOwned=CHRISTMAS_CARDS.slice(64,80).map(c=>Number(cards[c.id]||0)>0);
+ const fourthOwned=CHRISTMAS_CARDS.slice(80,96).map(c=>Number(cards[c.id]||0)>0);
  const lines=board=>BINGO_LINES.map((line,i)=>line.every(j=>board[j])?i:null).filter(i=>i!==null);
  const firstBingoLines=lines(owned.slice(0,16));
  const secondBingoLines=lines(owned.slice(16,32));
  const thirdBingoLines=lines(thirdOwned);
- const totalBingos=firstBingoLines.length+secondBingoLines.length+thirdBingoLines.length;
+ const fourthBingoLines=lines(fourthOwned);
+ const totalBingos=firstBingoLines.length+secondBingoLines.length+thirdBingoLines.length+fourthBingoLines.length;
  const mainRewards=['rudolph','winter-lobby','christmas-studio','gift-cases','snowman-profile-avatar'];
  const bonusRewards=['santa-profile-avatar','lobby-snowfall','christmas-profile-banner','santa','christmas-champion'];
  const ordered=[...mainRewards,...bonusRewards,...NORTH_POLE_REWARD_IDS];
@@ -96,11 +100,12 @@ export function classicChristmasProgress(cards={}){
  if(totalBingos>=10)rewards.splice(5,0,'collector-frame');
  const next=ordered.findIndex((_,i)=>totalBingos<2*(i+1));
  return {
-  collected:owned.filter(Boolean).length+thirdOwned.filter(Boolean).length,total:48,
+  collected:owned.filter(Boolean).length+thirdOwned.filter(Boolean).length+fourthOwned.filter(Boolean).length,total:64,
   bingoLines:firstBingoLines,bingos:firstBingoLines.length,
   secondBingoLines,secondBingos:secondBingoLines.length,
   thirdBingoLines,thirdBingos:thirdBingoLines.length,
-  totalBingos,maxBingos:30,rewards,rewardOrder:'every-two-bingos',
+  fourthBingoLines,fourthBingos:fourthBingoLines.length,
+  totalBingos,maxBingos:40,rewards,rewardOrder:'every-two-bingos',
   nextReward:next<0?null:ordered[next],
   nextRewardAt:next<0?null:2*(next+1),collectorFrameUnlocked:totalBingos>=10
  };
