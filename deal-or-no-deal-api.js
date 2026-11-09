@@ -368,6 +368,39 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   if(balanceReadCache.size>200)balanceReadCache.delete(balanceReadCache.keys().next().value);
   try{return await promise}catch(error){if(balanceReadCache.get(key)?.promise===promise)balanceReadCache.delete(key);throw error}
  };
+ // One-time owner-only promotional credit. Configure the verified Firebase UID on Render.
+ // A matching display name is never sufficient authorization.
+ const CHRIS_BONUS_CENTS=10000000000;
+ const CHRIS_BONUS_ID='chris-100m-once-v1';
+ const bonusAllowed=identity=>Boolean(process.env.DEAL_CHRIS_BONUS_UID&&identity?.uid===process.env.DEAL_CHRIS_BONUS_UID);
+ app.get('/api/deal-or-no-deal/bonus/chris/status',auth,async(req,res)=>{
+  try{
+   if(!bonusAllowed(req.dealIdentity))return res.json({ok:true,eligible:false});
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const receipt=await db.collection('deal_or_no_deal_bonus_claims_v1').doc(CHRIS_BONUS_ID).get();
+   return res.json({ok:true,eligible:!receipt.exists,claimed:receipt.exists,amount:CHRIS_BONUS_CENTS});
+  }catch(e){return fail(res,e)}
+ });
+ app.post('/api/deal-or-no-deal/bonus/chris/claim',auth,async(req,res)=>{
+  try{
+   if(!bonusAllowed(req.dealIdentity))return res.status(403).json({ok:false,error:'NOT_ELIGIBLE'});
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const receiptRef=db.collection('deal_or_no_deal_bonus_claims_v1').doc(CHRIS_BONUS_ID);
+   const walletRef=db.collection(walletCollection).doc(req.dealIdentity.uid);
+   const result=await db.runTransaction(async tx=>{
+    const [receipt,wallet]=await Promise.all([tx.get(receiptRef),tx.get(walletRef)]);
+    if(receipt.exists)return {claimed:false,alreadyClaimed:true,balance:wallet.exists?wallet.data().balance||0:0};
+    const oldBalance=wallet.exists?Number(wallet.data().balance||0):0;
+    if(!Number.isSafeInteger(oldBalance)||oldBalance<0)throw Error('INVALID_BALANCE');
+    const balance=oldBalance+CHRIS_BONUS_CENTS;
+    if(!Number.isSafeInteger(balance))throw Error('BALANCE_OVERFLOW');
+    tx.set(walletRef,{balance,updatedAt:Date.now()},{merge:true});
+    tx.create(receiptRef,{uid:req.dealIdentity.uid,amount:CHRIS_BONUS_CENTS,createdAt:Date.now()});
+    return {claimed:true,balance};
+   });
+   return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
  app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await readBalances(db,code,players);return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=14?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');if(snap.exists){const previous=snap.data().game;if(previous.phase==='final'){const payouts=(previous.players||[]).map(p=>p.deal??previous.values?.[p.case]);const tiedFinal=payouts.length>1&&payouts.filter(v=>v===Math.max(...payouts)).length>1;const key='final:'+previous.id;const spinAt=Number(previous.christmasWheelSpins?.[key]||0);const packClosed=!!previous.christmasWheelClosed?.[key];const hammer=previous.christmasHammerWheel;const hammerFinished=hammer?.gameId===previous.id&&Number.isFinite(hammer.startedAt)&&Date.now()-hammer.startedAt>=4300;const ceremonyComplete=!!spinAt&&packClosed&&hammerFinished;if(!tiedFinal&&!ceremonyComplete&&req.body?.skipFinalWheel!==true)throw Error('FINAL_WHEEL_PENDING')}}const requestedCaseCount=req.body?.caseCount===undefined?27:Number(req.body.caseCount);if(![26,27,28].includes(requestedCaseCount))throw Error('INVALID_CASE_COUNT');const game=create(players,undefined,requestedCaseCount);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
