@@ -1,6 +1,6 @@
 import {create,apply,publicView} from './deal-or-no-deal.js';
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
-import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved} from './christmas-card-engine.js';
+import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
 const SHOP_ITEMS=Object.freeze([{"id":"brille","name":"Goldene Sonnenbrille","price":100000000,"category":"Accessoires","emoji":"🕶️"},{"id":"pirat","name":"Piratenhut","price":150000000,"category":"Accessoires","emoji":"🏴‍☠️"},{"id":"mikro","name":"Show-Mikrofon","price":200000000,"category":"Extras","emoji":"🎙️"},{"id":"silberrahmen","name":"Silberner Profilrahmen","price":300000000,"category":"Rahmen","emoji":"🪞"},{"id":"silberkoffer","name":"Silberkoffer","price":500000000,"category":"Koffer","emoji":"💼"},{"id":"krone","name":"Königskrone","price":750000000,"category":"Accessoires","emoji":"👑"},{"id":"goldrahmen","name":"Goldener Profilrahmen","price":1000000000,"category":"Rahmen","emoji":"🖼️"},{"id":"goldkoffer","name":"Goldkoffer","price":1500000000,"category":"Koffer","emoji":"🧳"},{"id":"vip","name":"VIP-Abzeichen","price":2500000000,"category":"Extras","emoji":"🌟"},{"id":"studio","name":"Exklusives Studio","price":4000000000,"category":"Hintergründe","emoji":"🎬"},{"id":"diamant","name":"Diamantkoffer","price":7500000000,"category":"Koffer","emoji":"💎"},{"id":"trophaee","name":"Legendäre Show-Trophäe","price":10000000000,"category":"Extras","emoji":"🏆"}]);
 import {randomInt} from 'node:crypto';
@@ -38,24 +38,6 @@ const CHRISTMAS_PACKS=Object.freeze([
 {id:'large',name:'Großes Weihnachtspaket',price:50000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}},
 {id:'premium',name:'Premium-Weihnachtspaket',price:100000000,count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}
 ]);
-const CHRISTMAS_LINES=Object.freeze([...Array.from({length:4},(_,r)=>[0,1,2,3].map(c=>r*4+c)),...Array.from({length:4},(_,c)=>[0,1,2,3].map(r=>r*4+c)),[0,5,10,15],[3,6,9,12]]);
-const CHRISTMAS_REWARDS=Object.freeze(['rudolph','winter-lobby','christmas-studio','gift-cases','snowman-profile-avatar']);
-const CHRISTMAS_COLLECTOR_FRAME='collector-frame';
-function christmasProgress(cards){
- const owned=CHRISTMAS_CARDS.slice(0,32).map(c=>(cards[c.id]||0)>0);
- const bingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index])?i:null).filter(i=>i!==null);
- const bingos=bingoLines.length;
- const secondBingoLines=CHRISTMAS_LINES.map((line,i)=>line.every(index=>owned[index+16])?i:null).filter(i=>i!==null);
- const totalBingos=bingos+secondBingoLines.length;
- const unlockedCount=Math.min(CHRISTMAS_REWARDS.length,Math.floor(totalBingos/2));
- const rewards=CHRISTMAS_REWARDS.slice(0,unlockedCount);
- if(unlockedCount===CHRISTMAS_REWARDS.length)rewards.push(CHRISTMAS_COLLECTOR_FRAME);
- const bonusIds=['santa-profile-avatar','lobby-snowfall','christmas-profile-banner','santa','christmas-champion'];
- const bonusRewards=bonusIds.filter((_,i)=>totalBingos>=12+i*2);
- rewards.push(...bonusRewards);
- const nextBonusIndex=bonusRewards.length;
- return {collected:owned.filter(Boolean).length,total:32,bingoLines,bingos,secondBingoLines,secondBingos:secondBingoLines.length,totalBingos,maxBingos:20,rewards,rewardOrder:'every-two-bingos',nextReward:CHRISTMAS_REWARDS[unlockedCount]||bonusIds[nextBonusIndex]||null,nextRewardAt:unlockedCount<5?(unlockedCount+1)*2:nextBonusIndex<5?12+nextBonusIndex*2:null,collectorFrameUnlocked:unlockedCount===5};
-}
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
 export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const collection='deal_or_no_deal_matches_v1';

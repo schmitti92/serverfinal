@@ -1,19 +1,22 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,hammerBingoPrize,collectHammerBingoClaims,settleHammerBingoCycle,HAMMER_BINGO_JACKPOTS} from '../christmas-card-engine.js';
+import {CHRISTMAS_CARDS,CHRISTMAS_RARITIES,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,hammerBingoPrize,collectHammerBingoClaims,settleHammerBingoCycle,HAMMER_BINGO_JACKPOTS,classicChristmasProgress,NORTH_POLE_REWARD_IDS} from '../christmas-card-engine.js';
 
 const packs=[
  {id:'small',count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}},
  {id:'large',count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}},
  {id:'premium',count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}
 ];
-test('64 stable ids, original 32 preserved and Hammer-Bingo rarity layout correct',()=>{
- assert.equal(CHRISTMAS_CARDS.length,64);
- assert.equal(new Set(CHRISTMAS_CARDS.map(c=>c.id)).size,64);
+test('80 stable ids, original 64 preserved and North Pole rarity layout correct',()=>{
+ assert.equal(CHRISTMAS_CARDS.length,80);
+ assert.equal(new Set(CHRISTMAS_CARDS.map(c=>c.id)).size,80);
  assert.deepEqual(CHRISTMAS_CARDS.slice(0,32).map(c=>c.id),Array.from({length:32},(_,i)=>'christmas-'+String(i+1).padStart(2,'0')));
  assert.deepEqual(CHRISTMAS_CARDS.slice(32,48).map(c=>c.rarity),Array(16).fill('common'));
- assert.deepEqual(CHRISTMAS_CARDS.slice(48).map(c=>c.rarity),Array.from({length:16},(_,i)=>CHRISTMAS_RARITIES[i%4]));
- assert.deepEqual(Object.fromEntries(CHRISTMAS_RARITIES.map(r=>[r,CHRISTMAS_CARDS.filter(c=>c.rarity===r).length])),{common:28,rare:12,epic:12,legendary:12});
+ assert.deepEqual(CHRISTMAS_CARDS.slice(48,64).map(c=>c.rarity),Array.from({length:16},(_,i)=>CHRISTMAS_RARITIES[i%4]));
+ assert.deepEqual(CHRISTMAS_CARDS.slice(64,80).map(c=>c.rarity),Array.from({length:16},(_,i)=>CHRISTMAS_RARITIES[Math.floor(i/4)]));
+ assert.equal(CHRISTMAS_CARDS[64].id,'christmas-65');
+ assert.equal(CHRISTMAS_CARDS[79].id,'christmas-80');
+ assert.deepEqual(Object.fromEntries(CHRISTMAS_RARITIES.map(r=>[r,CHRISTMAS_CARDS.filter(c=>c.rarity===r).length])),{common:32,rare:16,epic:16,legendary:16});
 });
 for(const pack of packs){
  test(pack.id+' pack draws exact count and guaranteed rarity minimum',()=>{
@@ -181,4 +184,38 @@ test('field only jackpots when all 16 distinct cards are owned',()=>{
  const result=settleHammerBingoCycle(cards);
  assert.equal(result.jackpots.length,0);
  assert.ok(result.cards['christmas-33']>0);
+});
+
+test('North Pole 4x4 board adds ten unique classic Bingos without changing old rewards',()=>{
+ const base=Object.fromEntries(Array.from({length:32},(_,i)=>['christmas-'+String(i+1).padStart(2,'0'),1]));
+ const old=classicChristmasProgress(base);
+ assert.equal(old.totalBingos,20);assert.equal(old.total,48);
+ assert.equal(old.thirdBingos,0);
+ assert.equal(old.rewards.includes('christmas-champion'),true);
+ assert.equal(old.rewards.includes(NORTH_POLE_REWARD_IDS[0]),false);
+ for(let i=65;i<=68;i++)base['christmas-'+i]=1;
+ let next=classicChristmasProgress(base);
+ assert.equal(next.thirdBingos,1);
+ assert.equal(next.totalBingos,21);
+ assert.equal(next.rewards.includes(NORTH_POLE_REWARD_IDS[0]),false);
+ for(let i=69;i<=72;i++)base['christmas-'+i]=1;
+ next=classicChristmasProgress(base);
+ assert.equal(next.totalBingos,22);
+ assert.equal(next.nextRewardAt,24);
+ assert.equal(next.rewards.includes(NORTH_POLE_REWARD_IDS[0]),true);
+ for(let i=73;i<=80;i++)base['christmas-'+i]=1;
+ next=classicChristmasProgress(base);
+ assert.equal(next.collected,48);assert.equal(next.maxBingos,30);
+ assert.equal(next.totalBingos,30);
+ assert.deepEqual(next.rewards.slice(-5),NORTH_POLE_REWARD_IDS);
+ assert.equal(next.nextReward,null);
+});
+test('Hammer jackpot never resets the North Pole collection',()=>{
+ const cards=Object.fromEntries(Array.from({length:48},(_,i)=>['christmas-'+String(i+33),1]));
+ const before=classicChristmasProgress(cards);
+ const result=settleHammerBingoCycle(cards);
+ assert.equal(result.jackpots.length,2);
+ assert.equal(classicChristmasProgress(result.cards).thirdBingos,10);
+ assert.equal(classicChristmasProgress(result.cards).totalBingos,before.totalBingos);
+ for(let i=65;i<=80;i++)assert.equal(result.cards['christmas-'+i],1);
 });

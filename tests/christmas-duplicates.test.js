@@ -7,12 +7,18 @@ import {
 
 const id=n=>'christmas-'+String(n).padStart(2,'0');
 
-test('only second and subsequent copies among all 64 cards count as duplicates',()=>{
- assert.equal(CHRISTMAS_CARDS.length,64);
+test('only second and subsequent copies among all 80 cards count as duplicates',()=>{
+ assert.equal(CHRISTMAS_CARDS.length,80);
  assert.equal(christmasDuplicateStock({[id(1)]:1,[id(33)]:2,[id(64)]:4}).available,4);
  assert.equal(christmasDuplicateStock({[id(1)]:1,[id(33)]:2,[id(64)]:4}).canExchange,false);
  assert.equal(christmasDuplicateStock({unknown:999}).available,0);
  assert.equal(MONSTER_WHEEL_EXCHANGE_COST,100);
+});
+
+test('duplicate market recognises Nordpol cards 65 through 80 while keeping first copies',()=>{
+ const cards={[id(65)]:1,[id(66)]:5,[id(80)]:2};
+ assert.equal(christmasDuplicateStock(cards).available,5);
+ assert.equal(christmasDuplicateStock({[id(80)]:1}).available,0);
 });
 
 test('100 duplicates are removed while first copies are preserved',()=>{
