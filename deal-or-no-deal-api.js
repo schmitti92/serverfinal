@@ -398,6 +398,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     tx.create(receiptRef,{uid:req.dealIdentity.uid,amount:CHRIS_BONUS_CENTS,createdAt:Date.now()});
     return {claimed:true,balance};
    });
+   if(result.claimed)balanceReadCache.clear();
    return res.json({ok:true,...result});
   }catch(e){return fail(res,e)}
  });
