@@ -273,6 +273,50 @@ test('Banker deal packs can be revealed and confirmed without spinning a wheel',
  assert.equal(cent.body.error,'WHEEL_NOT_STARTED');
 });
 
+test('Nordpol Bingo milestones 22–30 credit packs, hammers, jokers and monster ticket exactly once',async()=>{
+ const {invoke,docs}=harness(['a']);
+ const base='deal_or_no_deal_christmas_v1/a';
+ const cards=Object.fromEntries(Array.from({length:32},(_,i)=>['christmas-'+String(i+1).padStart(2,'0'),1]));
+ // 20 original Bingos plus two complete Nordpol rows = 22.
+ for(let i=65;i<=72;i++)cards['christmas-'+i]=1;
+ docs.set(base,{cards,opened:0,monsterWheelTickets:0});
+ const claim=()=>invoke('POST','/api/deal-or-no-deal/christmas/north-pole/claim','a',{});
+ const first=await claim();
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.deepEqual(first.body.claimed.map(x=>x.at),[22]);
+ assert.equal(first.body.packs.length,2);
+ assert.equal(first.body.packs.every(x=>x.packId==='premium'&&x.revealed.length===12),true);
+ assert.equal(docs.get(base).opened,2);
+ assert.equal(docs.get(base).northPoleMilestonesClaimed['north-premium-2']>0,true);
+ const second=await claim();
+ assert.equal(second.statusCode,200);
+ assert.equal(second.body.claimed.length,0);
+ assert.equal(docs.get(base).opened,2);
+ // Existing Nordpol cards now complete the entire third board, yielding 30.
+ const progressed=docs.get(base);
+ for(let i=65;i<=80;i++)progressed.cards['christmas-'+i]=1;
+ docs.set(base,progressed);
+ const third=await claim();
+ assert.equal(third.statusCode,200,JSON.stringify(third.body));
+ assert.deepEqual(third.body.claimed.map(x=>x.at),[24,26,28,30]);
+ assert.equal(third.body.packs.length,1);
+ assert.equal(third.body.packs[0].packId,'platinum');
+ assert.equal(third.body.packs[0].revealed.length,16);
+ assert.equal(third.body.packs[0].revealed.filter(x=>x.rarity==='legendary').length>=1,true);
+ assert.equal(third.body.goldHammers,3);
+ assert.equal(third.body.jokers,3);
+ assert.equal(third.body.monsterTickets,1);
+ assert.equal(docs.get('christmas_ice_progress_v1/a').freeHammers.lucky,3);
+ assert.equal(docs.get('christmas_ice_progress_v1/a').wheelHammers.lucky,3);
+ assert.equal(docs.get('deal_peek_inventory_v1/a').balance,3);
+ assert.equal(docs.get(base).monsterWheelTickets,1);
+ assert.equal(docs.get(base).opened,3);
+ const fourth=await claim();
+ assert.equal(fourth.body.claimed.length,0);
+ assert.equal(docs.get(base).monsterWheelTickets,1);
+ assert.equal(docs.get('deal_peek_inventory_v1/a').balance,3);
+ assert.equal(docs.get('christmas_ice_progress_v1/a').freeHammers.lucky,3);
+});
 test('Unauthenticated heartbeat does not receive a pong',async()=>{
  const {api,Socket}=harness();
  const ws=new Socket();api.attachSocket(ws);
