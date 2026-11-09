@@ -67,7 +67,8 @@ test('reset does not grant previously earned money again',()=>{
 });
 
 test('no free hammers are granted on advancing to the next picture',()=>{
- let s=newIceState(()=>19);
+ // All 20 strikes are paid. The original zero-balance fixture could never reach the star.
+ let s={...newIceState(()=>19),balance:600000000};
  for(let i=0;i<20;i++){
   s=strikeIce(s,{index:i,hammer:'single',requestId:'full-picture-'+String(i).padStart(4,'0')},()=>0).state;
   if(s.finished)break;
