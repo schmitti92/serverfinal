@@ -215,3 +215,88 @@ test('milestone reset preserves earned inventory and 25-tile upgrade',()=>{
  assert.equal(reset.peekJokers,3);
  assert.equal(publicIceState(reset).requiresFullClear,false);
 });
+
+test('picture 20 remains 25 tiles and picture 21 starts with exactly 30 ice tiles',()=>{
+ const on20={...newIceState(()=>0),completed:19,maxRewarded:19,finished:false,
+  tileCount:25,star:null,opened:Array.from({length:24},(_,i)=>i),
+  freeHammers:{single:1,double:0,lucky:0}};
+ assert.equal(iceTileCount(on20),25);
+ const last=strikeIce(on20,{index:24,hammer:'single',requestId:'pic20-last-block-001'},()=>0);
+ assert.equal(last.result.found,true);
+ assert.equal(last.state.completed,20);
+ assert.equal(last.state.tileCount,25);
+ assert.equal(publicIceState(last.state).tilesRequired,25,'finished picture 20 keeps its display');
+ const next=nextIcePicture(last.state,()=>0);
+ assert.equal(next.completed,20);
+ assert.equal(next.finished,false);
+ assert.equal(next.star,null);
+ assert.equal(next.tileCount,30);
+ assert.equal(next.opened.length,0);
+ assert.equal(publicIceState(next).tilesRequired,30);
+ assert.equal(publicIceState(next).tilesRemaining,30);
+ assert.equal(publicIceState(next).requiresFullClear,true);
+ assert.throws(()=>strikeIce(next,{index:30,hammer:'single',requestId:'invalid-30-index-01'}),/INVALID_TILE/);
+});
+
+test('picture 21 completes only after the thirtieth ice field, charging hammers once',()=>{
+ let s={...newIceState(()=>0),completed:20,maxRewarded:20,tileCount:30,star:null,
+  freeHammers:{single:30,double:0,lucky:0}};
+ for(let i=0;i<30;i++){
+  const requestId='pic21-hammer-hit-'+String(i).padStart(4,'0');
+  const hit=strikeIce(s,{index:i,hammer:'single',requestId},()=>0);
+  assert.equal(hit.result.targets.length,1);
+  assert.equal(hit.result.found,i===29,'picture 21 finished early at '+i);
+  assert.equal(hit.state.opened.length,i+1);
+  assert.equal(hit.state.completed,i===29?21:20);
+  assert.equal(hit.state.freeHammers.single,29-i);
+  if(i===29){
+   const replay=strikeIce(hit.state,{index:i,hammer:'single',requestId},()=>{throw Error('must not reroll')});
+   assert.equal(replay.changed,false);
+   assert.equal(replay.result.replayed,true);
+   assert.equal(replay.state.freeHammers.single,0);
+   assert.equal(publicIceState(hit.state).tilesRemaining,0);
+  }
+  s=hit.state;
+ }
+ assert.equal(s.finished,true);
+ assert.equal(nextIcePicture(s,()=>0).tileCount,30);
+});
+
+test('existing picture 21 with 25 saved fields migrates safely to 30',()=>{
+ const old={...newIceState(()=>0),completed:20,maxRewarded:20,tileCount:25,
+  star:null,finished:false,opened:[0,1,24],peekJokers:3,
+  freeHammers:{single:1,double:0,lucky:0},
+  lastActions:[{id:'old-ice-strike-0001',result:{targets:[24],found:false}}]};
+ const normalized=normalizeIceState(old);
+ assert.equal(normalized.tileCount,30);
+ assert.deepEqual(normalized.opened,[0,1,24]);
+ assert.equal(normalized.peekJokers,3);
+ assert.equal(normalized.freeHammers.single,1);
+ assert.equal(normalized.lastActions.length,1);
+ const hit=strikeIce(normalized,{index:29,hammer:'single',requestId:'pic21-new-last-tile'},()=>0);
+ assert.deepEqual(hit.result.targets,[29]);
+ assert.equal(hit.result.found,false);
+ assert.deepEqual(hit.state.opened,[0,1,24,29]);
+ assert.equal(hit.state.freeHammers.single,0);
+ assert.equal(publicIceState(hit.state).tilesRemaining,26);
+});
+
+test('30-field milestone persists after restarting progress and is independent of star cutoff',()=>{
+ const finished20={...newIceState(()=>0),completed:20,maxRewarded:20,
+  tileCount:25,finished:true,peekJokers:6};
+ assert.equal(iceTileCount(finished20),25);
+ assert.equal(nextIceTileCount(finished20),30);
+ const reset=resetIceState(finished20,()=>29);
+ assert.equal(reset.completed,0);
+ assert.equal(reset.maxRewarded,20);
+ assert.equal(reset.peekJokers,6);
+ assert.equal(reset.tileCount,30);
+ assert.equal(reset.star,29,'stars are still usable in replayed pictures 1–16');
+ assert.equal(publicIceState(reset).tilesRequired,30);
+ assert.equal(publicIceState(reset).requiresFullClear,false);
+ const win=strikeIce({...reset,balance:30000000},
+  {index:29,hammer:'single',requestId:'reset30-star-hit-001'},()=>0);
+ assert.equal(win.result.found,true);
+ assert.equal(win.result.gift,null,'old rewards must not be granted twice');
+ assert.equal(win.state.completed,1);
+});
