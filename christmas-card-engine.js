@@ -79,9 +79,16 @@ export function christmasHammerDuplicatesSaved(cards={},jackpots=[]){
  * prizes end at 30; the fourth board's prizes will be configured separately.
  * Rewards are derived from owned card counts; no extra Firestore write.
  */
-export const NORTH_POLE_REWARD_IDS=Object.freeze([
- 'frost-card-frame','aurora-lobby','north-star-dust','royal-north-gallery','north-pole-legend'
+// Consumable rewards must be claimed exactly once on the server. These identifiers
+// describe entitlements; classicChristmasProgress never awards items by itself.
+export const NORTH_POLE_MILESTONES=Object.freeze([
+ Object.freeze({at:22,id:'north-premium-2',name:'2 Premium-Kartenpakete',kind:'pack',packId:'premium',quantity:2}),
+ Object.freeze({at:24,id:'north-gold-hammers-2',name:'2 goldene Hämmer',kind:'hammer',hammer:'lucky',quantity:2}),
+ Object.freeze({at:26,id:'north-jokers-2',name:'2 Kofferblick-Joker',kind:'joker',quantity:2}),
+ Object.freeze({at:28,id:'north-platinum-combo',name:'1 Joker, 1 goldener Hammer und 1 Platin-Kartenpaket',kind:'combo',quantity:1}),
+ Object.freeze({at:30,id:'north-monster-spin-1',name:'1 Monsterdrehung',kind:'monster',quantity:1})
 ]);
+export const NORTH_POLE_REWARD_IDS=Object.freeze(NORTH_POLE_MILESTONES.map(m=>m.id));
 export function classicChristmasProgress(cards={}){
  const owned=CHRISTMAS_CARDS.slice(0,32).map(c=>Number(cards[c.id]||0)>0);
  const thirdOwned=CHRISTMAS_CARDS.slice(64,80).map(c=>Number(cards[c.id]||0)>0);
