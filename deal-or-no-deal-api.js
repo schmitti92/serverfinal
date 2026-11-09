@@ -193,11 +193,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.post('/api/deal-or-no-deal/cards/open',auth,async(req,res)=>{try{const pack=CARD_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CARD_COLLECTION).doc(uid);
  const result=await db.runTransaction(async tx=>{const [wallet,snap]=await Promise.all([tx.get(walletRef),tx.get(cardsRef)]);const previous=snap.exists?snap.data():{};if(previous.lastPurchase?.requestId===requestId){if(previous.lastPurchase.packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...previous.lastPurchase.result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const owned={...(previous.cards||{})};const cards=openPack(pack);for(const card of cards)owned[card.id]=(owned[card.id]||0)+1;const remaining=balance-pack.price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});const purchaseResult={balance:remaining,cards:owned,opened:(previous.opened||0)+1,revealed:cards.map(({id,name,rarity,emoji,series})=>({id,name,rarity,emoji,series}))};tx.set(cardsRef,{cards:owned,opened:purchaseResult.opened,lastPurchase:{requestId,packId:pack.id,result:purchaseResult},updatedAt:Date.now()},{merge:true});return purchaseResult});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
 
- app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards),northPoleClaimed:Object.keys(data.northPoleMilestonesClaimed||{}),northPolePending:NORTH_POLE_MILESTONES.filter(m=>christmasProgress(cards).totalBingos>=m.at&&!data.northPoleMilestonesClaimed?.[m.id]).map(m=>m.id),hammerProgress:hammerBingoProgress(cards,data.hammerBingoClaimed,data.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,data.duplicateReserve,data.monsterWheelTickets),monsterWheel:{durationMs:MONSTER_WHEEL_DURATION_MS,slots:MONSTER_WHEEL_SLOTS,tickets:data.monsterWheelTickets||0,lastSpin:data.monsterWheelLastSpin||null,giftzwergUnlocked:data.monsterGiftzwergUnlocked===true}})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards),northPoleClaimed:Object.keys(data.northPoleMilestonesClaimed||{}),northPolePending:[...NORTH_POLE_MILESTONES.filter(m=>christmasProgress(cards).totalBingos>=m.at&&!data.northPoleMilestonesClaimed?.[m.id]).map(m=>m.id),...(data.northPoleMilestonesClaimed?.['north-premium-2']&&!data.northPolePremiumVouchersIssued?['north-premium-2']:[])],freePacks:{premium:Math.max(0,Number(data.freeChristmasPacks?.premium)||0)},hammerProgress:hammerBingoProgress(cards,data.hammerBingoClaimed,data.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,data.duplicateReserve,data.monsterWheelTickets),monsterWheel:{durationMs:MONSTER_WHEEL_DURATION_MS,slots:MONSTER_WHEEL_SLOTS,tickets:data.monsterWheelTickets||0,lastSpin:data.monsterWheelLastSpin||null,giftzwergUnlocked:data.monsterGiftzwergUnlocked===true}})}catch(e){return fail(res,e)}});
 
  // Claim all reached Nordpol milestones once. This POST never trusts the
  // client to supply a Bingo total, prize type, quantity, or selected cards.
- // Awarded packets draw cards immediately and return them for the pack cinema.
+ // Pack milestones grant persistent vouchers; only the exclusive platinum combo
+ // still reveals its included cards immediately. Legacy 22-Bingo winners receive
+ // a one-time voucher backfill, without removing any previously opened cards.
  app.post('/api/deal-or-no-deal/christmas/north-pole/claim',auth,async(req,res)=>{
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
@@ -210,7 +212,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const claimed={...(album.northPoleMilestonesClaimed||{})};
     const progress=christmasProgress(album.cards||{});
     const pending=NORTH_POLE_MILESTONES.filter(m=>progress.totalBingos>=m.at&&!claimed[m.id]);
-    if(!pending.length)return {claimed:[],packs:[],progress,replayed:true};
+    // Older versions immediately opened the Bingo-22 Premium packs. Give those
+    // players their two advertised shop vouchers once as a compatibility award.
+    const legacyPremium=Boolean(claimed['north-premium-2'])&&!album.northPolePremiumVouchersIssued;
+    if(!pending.length&&!legacyPremium)return {claimed:[],packs:[],progress,replayed:true};
     // Read all affected inventory documents before the first write.
     const needsHammer=pending.some(m=>m.kind==='hammer'||m.kind==='combo');
     const needsJoker=pending.some(m=>m.kind==='joker'||m.kind==='combo');
@@ -219,6 +224,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      needsJoker?tx.get(jokerRef):Promise.resolve(null)
     ]);
     const cards={...(album.cards||{})},packs=[];
+    const freePacks={...(album.freeChristmasPacks||{})};
+    if(legacyPremium)freePacks.premium=checkMonsterBalance(Number(freePacks.premium||0),2);
+    let premiumVouchersIssued=Boolean(album.northPolePremiumVouchersIssued)||legacyPremium;
     let goldHammers=0,jokers=0,monsterTickets=0;
     const grantPack=(pack,drawn)=>{
      const revealed=markChristmasDiscoveries(drawn,cards);
@@ -229,7 +237,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      if(m.kind==='pack'){
       const pack=CHRISTMAS_PACKS.find(p=>p.id===m.packId);
       if(!pack)throw Error('INVALID_BINGO_PACK');
-      for(let n=0;n<m.quantity;n++)grantPack(pack,christmasDraw(pack));
+      freePacks[pack.id]=checkMonsterBalance(Number(freePacks[pack.id]||0),m.quantity);
+      if(m.id==='north-premium-2')premiumVouchersIssued=true;
      }else if(m.kind==='hammer')goldHammers+=m.quantity;
      else if(m.kind==='joker')jokers+=m.quantity;
      else if(m.kind==='combo'){
@@ -254,18 +263,62 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     tx.set(albumRef,{
      cards,opened:checkMonsterBalance(Number(album.opened||0),packs.length),
      monsterWheelTickets:checkMonsterBalance(Number(album.monsterWheelTickets||0),monsterTickets),
+     freeChristmasPacks:freePacks,northPolePremiumVouchersIssued:premiumVouchersIssued,
      northPoleMilestonesClaimed:claimed,updatedAt:now
     },{merge:true});
-    return {claimed:pending.map(({at,id,name})=>({at,id,name})),packs,goldHammers,jokers,monsterTickets,
+    return {claimed:[...pending.map(({at,id,name})=>({at,id,name})),
+      ...(legacyPremium?[{at:22,id:'north-premium-2',name:'2 Premium-Kartenpakete nachgebucht'}]:[])],
+     packs,freePacks,goldHammers,jokers,monsterTickets,
      progress:christmasProgress(cards),replayed:false};
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...result});
   }catch(e){return fail(res,e)}
  });
- app.post('/api/deal-or-no-deal/christmas/open',auth,async(req,res)=>{try{const pack=CHRISTMAS_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CHRISTMAS_COLLECTION).doc(uid),receiptRef=db.collection('deal_or_no_deal_christmas_receipts_v1').doc(uid+'_'+requestId);
- const result=await db.runTransaction(async tx=>{const [wallet,snap,receipt]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(receiptRef)]);if(receipt.exists){if(receipt.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...receipt.data().result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const previous=snap.exists?snap.data():{};const cards={...(previous.cards||{})};const drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;const remaining=balance-pack.price;const result={balance:remaining,cards,opened:(previous.opened||0)+1,revealed:drawn,progress:christmasProgress(cards),hammerProgress:hammerBingoProgress(cards,previous.hammerBingoClaimed,previous.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,previous.duplicateReserve,previous.monsterWheelTickets)};tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});tx.set(cardsRef,{cards,opened:result.opened,updatedAt:Date.now()},{merge:true});tx.create(receiptRef,{packId:pack.id,result,createdAt:Date.now()});return result});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
-
+ app.post('/api/deal-or-no-deal/christmas/open',auth,async(req,res)=>{
+  try{
+   const pack=CHRISTMAS_PACKS.find(p=>p.id===req.body?.packId);
+   if(!pack)throw Error('INVALID_PACK');
+   const requestId=String(req.body?.requestId||'');
+   if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid,now=Date.now();
+   const walletRef=db.collection(walletCollection).doc(uid);
+   const cardsRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const receiptRef=db.collection('deal_or_no_deal_christmas_receipts_v1').doc(uid+'_'+requestId);
+   const result=await db.runTransaction(async tx=>{
+    const [wallet,snap,receipt]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(receiptRef)]);
+    if(receipt.exists){
+     if(receipt.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');
+     return {...receipt.data().result,replayed:true};
+    }
+    const balance=Number(wallet.data()?.balance)||0;
+    if(!Number.isSafeInteger(balance)||balance<0)throw Error('INVALID_WALLET_BALANCE');
+    const previous=snap.exists?snap.data():{};
+    const freePacks={...(previous.freeChristmasPacks||{})};
+    const vouchers=Number(freePacks[pack.id]||0);
+    if(!Number.isSafeInteger(vouchers)||vouchers<0)throw Error('INVALID_FREE_PACKS');
+    const usedFreePack=vouchers>0;
+    if(!usedFreePack&&balance<pack.price)throw Error('INSUFFICIENT_FUNDS');
+    if(usedFreePack)freePacks[pack.id]=vouchers-1;
+    const cards={...(previous.cards||{})};
+    const drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
+    for(const card of drawn)cards[card.id]=checkMonsterBalance(Number(cards[card.id]||0),1);
+    const remaining=usedFreePack?balance:balance-pack.price;
+    const result={balance:remaining,cards,opened:(previous.opened||0)+1,
+     revealed:drawn,usedFreePack,freePacks,progress:christmasProgress(cards),
+     hammerProgress:hammerBingoProgress(cards,previous.hammerBingoClaimed,previous.hammerBingoCycles),
+     duplicates:christmasDuplicateStock(cards,previous.duplicateReserve,previous.monsterWheelTickets)};
+    // Free packages consume only their saved voucher; the wallet is untouched.
+    // Paid purchases still debit the wallet atomically together with the album.
+    if(!usedFreePack)tx.set(walletRef,{balance:remaining,updatedAt:now},{merge:true});
+    tx.set(cardsRef,{cards,opened:result.opened,freeChristmasPacks:freePacks,updatedAt:now},{merge:true});
+    tx.create(receiptRef,{packId:pack.id,result,createdAt:now});
+    return result;
+   });
+   return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
  // Exchange is server-authoritative. This grants a saved Monster-Wheel
  // ticket, NOT a speculative prize; the wheel/reward catalog comes later.
  // An idempotency receipt makes network retries and competing tabs safe.
