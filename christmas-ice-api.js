@@ -50,9 +50,9 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
      if(receiptSnap.data()?.uid!==req.iceUid)throw Error('ALREADY_AWARDED');
      return {hammer:receiptSnap.data().hammer,replayed:true};
     }
-    // Identical 50/35/15 distribution as the existing event hammer draw.
-    const roll=Math.floor(Math.random()*100);
-    const hammer=roll<50?'single':roll<85?'double':'lucky';
+    // Twelve equally likely sectors: 5 single, 5 double, 2 lucky.
+    const sector=Math.floor(Math.random()*12);
+    const hammer=sector<5?'single':sector<10?'double':'lucky';
     const state=progressSnap.exists?normalizeIceState(progressSnap.data()):newIceState();
     const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1},wheelHammers:{...state.wheelHammers,[hammer]:(state.wheelHammers?.[hammer]||0)+1}};
     const wheelStartedAt=Date.now();
