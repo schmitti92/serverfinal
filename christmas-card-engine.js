@@ -22,6 +22,54 @@ export const CHRISTMAS_CARDS=Object.freeze([...ORIGINAL_NAMES,...HAMMER_NAMES].m
  });
 }));
 
+// All 64 Christmas card IDs share one duplicate market. Only copies beyond
+// the first are spendable; a first copy always remains available for Bingo.
+export const MONSTER_WHEEL_EXCHANGE_COST=100;
+const validStock=n=>Number.isSafeInteger(n)&&n>=0?n:0;
+export function christmasDuplicateStock(cards={},reserve=0,tickets=0){
+ let onCards=0;
+ for(const {id} of CHRISTMAS_CARDS){
+  onCards+=Math.max(0,validStock(cards?.[id])-1);
+  if(!Number.isSafeInteger(onCards))throw Error('DUPLICATE_BALANCE_OVERFLOW');
+ }
+ const stored=validStock(reserve),available=onCards+stored;
+ if(!Number.isSafeInteger(available))throw Error('DUPLICATE_BALANCE_OVERFLOW');
+ return {available,onCards,reserve:stored,tickets:validStock(tickets),
+  exchangeCost:MONSTER_WHEEL_EXCHANGE_COST,canExchange:available>=MONSTER_WHEEL_EXCHANGE_COST};
+}
+export function redeemChristmasDuplicates(cards={},reserve=0){
+ const stock=christmasDuplicateStock(cards,reserve);
+ if(!stock.canExchange)throw Error('INSUFFICIENT_DUPLICATES');
+ let due=MONSTER_WHEEL_EXCHANGE_COST;
+ const fromReserve=Math.min(due,stock.reserve);
+ due-=fromReserve;
+ const remainingCards={...cards};
+ for(const {id} of CHRISTMAS_CARDS){
+  if(!due)break;
+  const count=validStock(remainingCards[id]),extra=Math.max(0,count-1);
+  const spent=Math.min(extra,due);
+  if(spent){remainingCards[id]=count-spent;due-=spent}
+ }
+ if(due)throw Error('INSUFFICIENT_DUPLICATES');
+ return {cards:remainingCards,reserve:stock.reserve-fromReserve,cost:MONSTER_WHEEL_EXCHANGE_COST};
+}
+// A completed Hammer board resets all 16 card counts. Save its spare copies
+// in the duplicate reserve so jackpots don't silently destroy player currency.
+export function christmasHammerDuplicatesSaved(cards={},jackpots=[]){
+ let total=0;
+ const visited=new Set();
+ for(const jackpot of jackpots){
+  if(![3,4].includes(jackpot.board)||visited.has(jackpot.board))continue;
+  visited.add(jackpot.board);
+  const start=jackpot.board===3?33:49;
+  for(let n=start;n<start+16;n++){
+   total+=Math.max(0,validStock(cards['christmas-'+String(n).padStart(2,'0')])-1);
+   if(!Number.isSafeInteger(total))throw Error('DUPLICATE_BALANCE_OVERFLOW');
+  }
+ }
+ return total;
+}
+
 // First draw a *rarity* from the published pack weights, then select a card
 // uniformly inside that rarity. This protects the published 65/29/5/1,
 // 55/32/10/3 and 40/35/17/8 odds despite unequal rarity pool sizes.
