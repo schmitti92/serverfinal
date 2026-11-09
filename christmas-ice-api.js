@@ -92,9 +92,11 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
  });
 
  app.post('/api/christmas-ice/action',auth,async(req,res)=>{
-  const {type,index,hammer,requestId}=req.body||{};
+  const {type,index,hammer,requestId,expectedPicture}=req.body||{};
   if(!['start','strike','next','reset','welcome'].includes(type))return res.status(400).json({ok:false,error:'INVALID_ACTION'});
   if(!/^[A-Za-z0-9_-]{12,90}$/.test(String(requestId||'')))return res.status(400).json({ok:false,error:'INVALID_REQUEST_ID'});
+  if(expectedPicture!==undefined&&(!Number.isInteger(expectedPicture)||expectedPicture<1||expectedPicture>70))
+   return res.status(400).json({ok:false,error:'INVALID_PICTURE'});
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const ref=db.collection(collection).doc(req.iceUid);
@@ -133,6 +135,11 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
      tx.set(ref,next);
      return {state:{...publicIceState(next),balance:walletBalance},result,changed:true};
     }
+    // Old clients omit expectedPicture for backward compatibility. New clients
+    // bind each paid/free strike to the original picture, preventing a very old
+    // lost receipt from charging an unrelated later picture.
+    if(expectedPicture!==undefined&&expectedPicture!==state.completed+1)
+     throw Error('PICTURE_CHANGED');
     const strike=strikeIce({...state,balance:walletBalance},{index,hammer,requestId});
     if(!strike.changed)return {state:{...publicIceState(state),balance:walletBalance},result:strike.result,changed:false};
     const next=strike.state;
