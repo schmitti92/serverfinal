@@ -5,6 +5,21 @@ import {randomInt} from 'node:crypto';
 // It is not yet wired to HTTP until server-validated progress is implemented.
 export const ICE_PICTURES=70;
 export const ICE_TILES=20;
+export const ICE_TILES_AFTER_TEN=25;
+export const ICE_FULL_CLEAR_MILESTONE=10;
+
+// The event's difficulty upgrade is permanent after a player's tenth image.
+// A persisted per-picture tile count keeps image 10 on its original 20-tile board.
+export function iceTileCount(state){
+ if(state?.tileCount===ICE_TILES||state?.tileCount===ICE_TILES_AFTER_TEN)return state.tileCount;
+ const completed=Number(state?.completed)||0;
+ const rewarded=Number(state?.maxRewarded)||0;
+ return Math.max(completed,rewarded)>=ICE_FULL_CLEAR_MILESTONE?ICE_TILES_AFTER_TEN:ICE_TILES;
+}
+export function nextIceTileCount(state){
+ return Math.max(Number(state?.completed)||0,Number(state?.maxRewarded)||0)>=ICE_FULL_CLEAR_MILESTONE
+  ?ICE_TILES_AFTER_TEN:ICE_TILES;
+}
 export const HAMMER_PRICES=Object.freeze({single:30000000,double:50000000,lucky:100000000});
 export const MONEY_PRIZES=Object.freeze([100,500,1000,2500,5000,10000,25000,50000,100000,200000,350000,500000,750000,1000000,1500000,2000000]);
 export function giftKind(number){
