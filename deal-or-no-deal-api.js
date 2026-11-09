@@ -1,4 +1,5 @@
 import {create,apply,publicView} from './deal-or-no-deal.js';
+import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
 const SHOP_ITEMS=Object.freeze([{"id":"brille","name":"Goldene Sonnenbrille","price":100000000,"category":"Accessoires","emoji":"🕶️"},{"id":"pirat","name":"Piratenhut","price":150000000,"category":"Accessoires","emoji":"🏴‍☠️"},{"id":"mikro","name":"Show-Mikrofon","price":200000000,"category":"Extras","emoji":"🎙️"},{"id":"silberrahmen","name":"Silberner Profilrahmen","price":300000000,"category":"Rahmen","emoji":"🪞"},{"id":"silberkoffer","name":"Silberkoffer","price":500000000,"category":"Koffer","emoji":"💼"},{"id":"krone","name":"Königskrone","price":750000000,"category":"Accessoires","emoji":"👑"},{"id":"goldrahmen","name":"Goldener Profilrahmen","price":1000000000,"category":"Rahmen","emoji":"🖼️"},{"id":"goldkoffer","name":"Goldkoffer","price":1500000000,"category":"Koffer","emoji":"🧳"},{"id":"vip","name":"VIP-Abzeichen","price":2500000000,"category":"Extras","emoji":"🌟"},{"id":"studio","name":"Exklusives Studio","price":4000000000,"category":"Hintergründe","emoji":"🎬"},{"id":"diamant","name":"Diamantkoffer","price":7500000000,"category":"Koffer","emoji":"💎"},{"id":"trophaee","name":"Legendäre Show-Trophäe","price":10000000000,"category":"Extras","emoji":"🏆"}]);
 import {randomInt} from 'node:crypto';
@@ -363,6 +364,29 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const priorWrite=awardWrite;
     awardWrite=()=>{priorWrite?.();tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
       tx.create(rewardRef,{uid,gameId:after.id,round:lastBefore.round,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
+   }
+  }
+  // The Banker hammer is an extra prize for each player who ACCEPTS this offer.
+  // Record it inside the existing game-action transaction; no polling or extra
+  // database reads when there is no hammer in the offer.
+  const newlyAcceptedHammer=before.phase==='decision'&&req.body?.type==='decide'
+    &&req.body?.deal===true&&lastBefore?.bonusHammer
+    &&!lastBefore.decisions?.some(d=>d.id===req.dealIdentity.uid);
+  if(newlyAcceptedHammer){
+   const hammer=lastBefore.bonusHammer;
+   if(!['single','double','lucky'].includes(hammer))throw Error('INVALID_BONUS_HAMMER');
+   const uid=req.dealIdentity.uid;
+   const hammerReceipt=db.collection('christmas_ice_banker_hammer_v1').doc(after.id+'_'+lastBefore.round+'_'+uid);
+   const progressRef=db.collection('christmas_ice_progress_v1').doc(uid);
+   const [receiptSnap,progressSnap]=await Promise.all([tx.get(hammerReceipt),tx.get(progressRef)]);
+   if(!receiptSnap.exists){
+    const previous=progressSnap.exists?normalizeIceState(progressSnap.data()):newIceState();
+    const next={...previous,
+     freeHammers:{...previous.freeHammers,[hammer]:(previous.freeHammers?.[hammer]||0)+1},
+     wheelHammers:{...previous.wheelHammers,[hammer]:(previous.wheelHammers?.[hammer]||0)+1}};
+    const priorWrite=awardWrite;
+    awardWrite=()=>{priorWrite?.();tx.set(progressRef,next);
+     tx.create(hammerReceipt,{gameId:after.id,round:lastBefore.round,uid,hammer,source:'banker-deal',createdAt:Date.now()})};
    }
   }
   if(before.phase!=='final'&&after.phase==='final'){
