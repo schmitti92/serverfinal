@@ -13,7 +13,7 @@ export function publicIceState(s){
  const tilesRequired=iceTileCount(s);
  return {...visible,star:s.finished&&Number(s.completed)<ICE_NO_STAR_FROM_PICTURE?s.star:null,
   tilesRequired,tilesRemaining:Math.max(0,tilesRequired-(s.opened?.length||0)),
-  requiresFullClear:tilesRequired===ICE_TILES_AFTER_TEN};
+  requiresFullClear:(Number(s.completed)+(s.finished?0:1))>=ICE_NO_STAR_FROM_PICTURE};
 }
 export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  if(!/^[A-Za-z0-9_-]{12,90}$/.test(String(requestId||'')))throw Error('INVALID_REQUEST_ID');
@@ -30,14 +30,17 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  const count=Math.min(closed.length,hammer==='single'?1:hammer==='double'?2:3+random(4));
  const targets=[index],remaining=closed.filter(i=>i!==index);
  while(targets.length<count){const j=random(remaining.length);targets.push(remaining.splice(j,1)[0])}
- // Pictures 1–10: a star can finish early. Pictures 11–14: full-clear,
- // and from picture 15 onwards the star is entirely absent.
- // The server, never the browser, determines when all ice has been removed.
+ // Pictures 1–16: finding the star reveals the whole picture immediately.
+ // Picture 17+: there is no star and every ice tile must be removed.
+ // Restore a hidden star in older 15/16 saves that previously stored null;
+ // choose only from unopened tiles and persist it with this strike.
  const noStar=Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE;
- const found=noStar||tilesRequired===ICE_TILES_AFTER_TEN
+ const validStar=Number.isInteger(s.star)&&s.star>=0&&s.star<tilesRequired&&!s.opened.includes(s.star);
+ const star=noStar?null:validStar?s.star:closed[random(closed.length)];
+ const found=noStar
   ?s.opened.length+targets.length>=tilesRequired
-  :targets.includes(s.star);
- const next={...s,tileCount:tilesRequired,star:noStar?null:s.star,balance:s.balance-price,opened:[...s.opened,...targets],
+  :targets.includes(star)||s.opened.length+targets.length>=tilesRequired;
+ const next={...s,tileCount:tilesRequired,star,balance:s.balance-price,opened:[...s.opened,...targets],
   freeHammers:{...s.freeHammers},wheelHammers:{...s.wheelHammers},prizes:[...s.prizes],lastActions:[...(s.lastActions||[])]};
  if(free){next.freeHammers[hammer]--;if((next.wheelHammers?.[hammer]||0)>0)next.wheelHammers={...next.wheelHammers,[hammer]:next.wheelHammers[hammer]-1};}
  let gift=null;
@@ -72,7 +75,7 @@ export function resetIceState(s,random=randomInt){
 // Old test builds gave 20 free strikes per picture. Discard those test grants
 // while keeping separately recorded winner-wheel prizes and progress.
 export function normalizeIceState(s){
- // Sanitize old persisted sessions at and after picture 15 without
+ // Sanitize persisted sessions at and after picture 17 without
  // resetting progress, replay receipts, inventory, or already-paid rewards.
  const noStar=Number(s.completed)>=ICE_NO_STAR_FROM_PICTURE
   ||(Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE&&!s.finished);
