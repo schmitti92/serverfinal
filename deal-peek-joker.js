@@ -38,22 +38,34 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
     // Validate against the CURRENT match, not the historic 26-case cap.
     if(caseIndex>=game.values.length)throw Error('INVALID_CASE');
     if(!game.players?.some(p=>String(p.id)===req.peekUid))throw Error('NOT_PARTICIPANT');
+    // Only selected personal cases belonging to OTHER players qualify.
+    // The requester's case value is never returned, even during replay.
+    const opponents=game.players.filter(p=>String(p.id)!==req.peekUid);
+    const otherCases=opponents.filter(p=>Number.isInteger(p.case)&&p.case>=0&&p.case<game.values.length)
+     .map(p=>({id:String(p.id),name:String(p.name||'Mitspieler').slice(0,30),case:p.case,amount:game.values[p.case]}));
+    if(!otherCases.length)throw Error('NO_OTHER_PLAYER_CASES');
+    const own=game.players.find(p=>String(p.id)===req.peekUid);
+    if(caseIndex===own?.case)throw Error('OWN_CASE_FORBIDDEN');
+    if(!otherCases.some(p=>p.case===caseIndex))throw Error('NOT_OPPONENT_CASE');
+    if(!otherCases.every(p=>Number.isSafeInteger(p.amount)&&p.amount>=0))throw Error('GAME_INVALID');
+    if(game.opened?.includes(caseIndex)||game.pending?.case===caseIndex||
+       otherCases.some(p=>game.opened?.includes(p.case)||game.pending?.case===p.case))throw Error('CASE_NOT_CLOSED');
     if(receiptSnap.exists){
      const receipt=receiptSnap.data();
      if(receipt.code!==code||receipt.case!==caseIndex||receipt.gameId!==game.id)throw Error('REQUEST_REUSED');
-     return {case:receipt.case,amount:receipt.amount,balance:receipt.balance,replayed:true};
+     // Old single-case receipts are safe to replay using current opponents.
+     const privateCases=Array.isArray(receipt.cases)?receipt.cases:otherCases;
+     return {case:caseIndex,cases:privateCases.filter(p=>p.id!==req.peekUid),balance:receipt.balance,replayed:true};
     }
     if(!game.players.some(p=>String(p.id)===req.peekUid&&p.deal===null))throw Error('NOT_ACTIVE_PLAYER');
     if(!['open','decision','reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
-    if(game.opened?.includes(caseIndex)||game.pending?.case===caseIndex)throw Error('CASE_NOT_CLOSED');
     const balance=Number(invSnap.data()?.balance)||0;
     if(!Number.isSafeInteger(balance)||balance<1)throw Error('NO_JOKERS');
-    const amount=game.values[caseIndex];
-    if(!Number.isSafeInteger(amount)||amount<0)throw Error('GAME_INVALID');
     const nextBalance=balance-1;
     tx.set(invRef,{balance:nextBalance,updatedAt:Date.now()},{merge:true});
-    tx.create(receiptRef,{gameId:game.id,code,case:caseIndex,amount,balance:nextBalance,createdAt:Date.now()});
-    return {case:caseIndex,amount,balance:nextBalance,replayed:false};
+    // One private receipt, one charge, all other participants' case amounts.
+    tx.create(receiptRef,{gameId:game.id,code,case:caseIndex,cases:otherCases,balance:nextBalance,createdAt:Date.now()});
+    return {case:caseIndex,cases:otherCases,balance:nextBalance,replayed:false};
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...result});
