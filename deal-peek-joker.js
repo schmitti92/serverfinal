@@ -21,7 +21,7 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
   const code=String(req.params.code||'').toUpperCase();
   const caseIndex=req.body?.case;
   const requestId=String(req.body?.requestId||'');
-  if(!CODE.test(code)||!Number.isInteger(caseIndex)||caseIndex<0||caseIndex>27||
+  if(!CODE.test(code)||!Number.isInteger(caseIndex)||caseIndex<0||caseIndex>28||
     !/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))return res.status(400).json({ok:false,error:'INVALID_REQUEST'});
   try {
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
@@ -34,7 +34,7 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
     if(!roomSnap.exists||!roomSnap.data()?.players?.some(p=>String(p.uid)===req.peekUid&&!p.testBot&&!p.bot))throw Error('NOT_IN_ROOM');
     if(!gameSnap.exists)throw Error('GAME_NOT_FOUND');
     const game=gameSnap.data()?.game;
-    if(!game||!Array.isArray(game.values)||![26,27,28].includes(game.values.length))throw Error('GAME_INVALID');
+    if(!game||!Array.isArray(game.values)||![26,27,28,29].includes(game.values.length))throw Error('GAME_INVALID');
     // Validate against the CURRENT match, not the historic 26-case cap.
     if(caseIndex>=game.values.length)throw Error('INVALID_CASE');
     if(!game.players?.some(p=>String(p.id)===req.peekUid))throw Error('NOT_PARTICIPANT');

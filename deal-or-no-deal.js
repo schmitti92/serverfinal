@@ -1,6 +1,6 @@
 'use strict';
 import * as crypto from 'node:crypto';
-const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000,500000000];
+const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000,500000000,1000000000];
 const STEPS=[5,4,4,3,2,2,1,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
 const shuffle=(a,rand=crypto.randomInt)=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
 const active=g=>g.players.filter(p=>p.deal===null);
@@ -8,7 +8,7 @@ const locked=g=>new Set(g.players.map(p=>p.case).filter(Number.isInteger));
 const free=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i));
 const publicRemaining=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!g.opened.includes(i)).map(i=>g.values[i]);
 function create(players,random=crypto.randomInt,caseCount=27){
- if(![26,27,28].includes(caseCount))throw Error('INVALID_CASE_COUNT');
+ if(![26,27,28,29].includes(caseCount))throw Error('INVALID_CASE_COUNT');
  if(!Array.isArray(players)||players.length<1||players.length>4)throw Error('PLAYER_COUNT');
  const ids=players.map(p=>String(p.id));if(new Set(ids).size!==ids.length)throw Error('DUPLICATE_PLAYER');
  return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null})),values:shuffle(VALUES.slice(0,caseCount),random),order:shuffle(ids,random),selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};

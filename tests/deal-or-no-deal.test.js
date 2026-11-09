@@ -16,13 +16,20 @@ function simulate(count,allDeal=false){
  }
  assert.equal(g.phase,'final');return g;
 }
-test('28 distinct monetary values including 3 and 5 million euros',()=>{assert.equal(new Set(VALUES).size,28);assert.ok(VALUES.includes(300000000));assert.ok(VALUES.includes(500000000));});
-for(const count of [26,27,28]){
+test('29 distinct monetary values including 3, 5 and 10 million euros',()=>{
+ assert.equal(VALUES.length,29);
+ assert.equal(new Set(VALUES).size,29);
+ assert.equal(VALUES[26],300000000); // 3 Mio. EUR (cents)
+ assert.equal(VALUES[27],500000000); // 5 Mio. EUR (cents)
+ assert.equal(VALUES[28],1000000000); // 10 Mio. EUR (cents)
+});
+for(const count of [26,27,28,29]){
  test(count+' cases contain the correct prizes and reach a final',()=>{
   let game=create([{id:'a',name:'Spieler A'}],rand,count);
   assert.equal(game.values.length,count);
   assert.equal(publicView(game).caseCount,count);
-  assert.equal(game.values.includes(500000000),count===28);
+  assert.equal(game.values.includes(500000000),count>=28);
+  assert.equal(game.values.includes(1000000000),count===29);
   assert.equal(game.values.includes(300000000),count>=27);
   game=send(game,'a','select',{case:0});
   let guard=0;
@@ -36,7 +43,7 @@ for(const count of [26,27,28]){
   assert.equal(game.opened.length,count-1);
  });
 }
-test('invalid case counts are rejected',()=>{for(const n of [25,29,0,26.5])assert.throws(()=>create([{id:'a'}],rand,n),/INVALID_CASE_COUNT/)});
+test('invalid case counts are rejected',()=>{for(const n of [25,30,0,26.5])assert.throws(()=>create([{id:'a'}],rand,n),/INVALID_CASE_COUNT/)});
 
 for(let count=1;count<=4;count++){
  test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,13-count);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
@@ -104,7 +111,7 @@ test('opening event permanently identifies the acting player and exposes it to e
  }
 });
 
-test('banker offer is positive, no higher than fair expected value, and records the valuation',()=>{
+test('banker offer is positive, capped at 115% of fair expected value, and records valuation',()=>{
  for(let count=1;count<=4;count++){
   let g=create(Array.from({length:count},(_,i)=>({id:'p'+i})),rand);
   for(let i=0;i<count;i++)g=send(g,g.order[i],'select',{case:i});
@@ -116,7 +123,8 @@ test('banker offer is positive, no higher than fair expected value, and records 
     const remaining=publicRemaining(g);
     const expected=remaining.reduce((sum,v)=>sum+v,0)/remaining.length;
     assert.equal(g.history.at(-1).expectedValue,expected);
-    assert.ok(g.offer>=1&&g.offer<=Math.round(expected));
+    assert.ok(g.offer>=1&&g.offer<=Math.max(1,Math.round(expected*1.15)),
+     'Banker offers are intentionally permitted up to 115% of expected value');
     checks++;
     const ballot=g.history.at(-1);
     for(const id of ballot.participants)g=send(g,id,'decide',{deal:false});
@@ -132,7 +140,7 @@ test('new matches independently reshuffle every case with no preferred jackpot r
  for(let i=0;i<rounds;i++){
   const game=create([{id:'p1',name:'Spieler'}]);
   assert.equal(game.values.length,27);
-  assert.deepEqual([...game.values].sort((a,b)=>a-b),[...VALUES].sort((a,b)=>a-b));
+  assert.deepEqual([...game.values].sort((a,b)=>a-b),[...VALUES.slice(0,27)].sort((a,b)=>a-b));
   const jackpot=game.values.indexOf(100000000);
   positions[jackpot]++;
   if(previous&&previous.every((value,index)=>value===game.values[index]))identical++;
@@ -182,4 +190,33 @@ test('Banker bonus can be absent with a roll outside the 1-in-10 outcome',()=>{
   else if(g.phase==='reveal')g=command(g.pending.actor,'ack-reveal');
  }
  assert.equal(g.history.at(-1).bonusHammer,null);
+});
+
+test('29-case new 10-million jackpot is shuffled, private and pays correctly in the finale',()=>{
+ const players=[{id:'alice',name:'A'},{id:'bob',name:'B'},{id:'claire',name:'C'}];
+ const positions=new Set();
+ for(let round=0;round<90;round++){
+  const game=create(players,undefined,29);
+  assert.equal(game.values.length,29);
+  assert.equal(game.values.filter(amount=>amount===1000000000).length,1);
+  assert.equal(game.values.filter(amount=>amount===500000000).length,1);
+  positions.add(game.values.indexOf(1000000000));
+  const view=publicView(game);
+  assert.equal(view.caseCount,29);
+  assert.equal(view.values,undefined);
+  assert.ok(!JSON.stringify(view).includes('1000000000'));
+ }
+ assert.ok(positions.size>=15,'10-million prize must move among all cases, not be fixed to 29: '+positions.size);
+ let game=create([{id:'a',name:'A'}], n=>0,29);
+ const jackpotIndex=game.values.indexOf(1000000000);
+ game=send(game,'a','select',{case:jackpotIndex});
+ while(game.phase!=='final'){
+  if(game.phase==='open')game=send(game,'a','open',{case:free(game)[0]});
+  else if(game.phase==='reveal')game=send(game,'a','ack-reveal');
+  else if(game.phase==='decision')game=send(game,'a','decide',{deal:false});
+  else throw Error('Unexpected 29-case phase '+game.phase);
+ }
+ assert.equal(game.opened.length,28);
+ assert.equal(publicView(game).finalValues[0].amount,1000000000);
+ assert.equal(publicView(game).finalValues[0].payout,1000000000);
 });

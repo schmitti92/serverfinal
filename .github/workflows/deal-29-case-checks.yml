@@ -1,0 +1,31 @@
+name: Deal or No Deal 29-case €10m and Joker checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-or-no-deal.js'
+      - 'deal-or-no-deal-api.js'
+      - 'deal-peek-joker.js'
+      - 'tests/deal-or-no-deal.test.js'
+      - 'tests/deal-peek-joker.test.js'
+      - '.github/workflows/deal-29-case-checks.yml'
+  pull_request:
+    paths:
+      - 'deal-or-no-deal.js'
+      - 'deal-or-no-deal-api.js'
+      - 'deal-peek-joker.js'
+      - 'tests/deal-or-no-deal.test.js'
+      - 'tests/deal-peek-joker.test.js'
+      - '.github/workflows/deal-29-case-checks.yml'
+  workflow_dispatch:
+jobs:
+  cases-and-joker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test 26–29 cases, jackpot, finale and private Joker
+        run: node --test tests/deal-or-no-deal.test.js tests/deal-peek-joker.test.js
