@@ -27,7 +27,7 @@ function harness(participants=['a','b']){
  const invoke=async(method,path,uid,body={})=>{
   const handlers=routes.get(method+' '+path);assert.ok(handlers,'route exists');
   const req={params:{code:'123'},body,get:()=> 'Bearer '+uid};
-  const res={statusCode:200,status(code){this.statusCode=code;return this},json(value){this.body=value;return this}};
+  const res={statusCode:200,headers:{},status(code){this.statusCode=code;return this},set(name,value){this.headers[name]=value;return this},json(value){this.body=value;return this}};
   for(const fn of handlers){await new Promise((resolve,reject)=>{let next=false;Promise.resolve(fn(req,res,()=>{next=true;resolve()})).then(()=>{if(!next)resolve()},reject)})}
   return res;
  };
