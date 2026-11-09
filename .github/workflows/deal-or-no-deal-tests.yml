@@ -25,5 +25,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install test dependencies
+        run: npm install --no-audit --no-fund
       - name: Check 1-4 player gameplay and privacy
         run: node --test tests/deal-or-no-deal.test.js tests/deal-websocket.test.js
