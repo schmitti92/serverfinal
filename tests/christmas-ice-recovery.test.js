@@ -179,3 +179,37 @@ test('paid hammer still debits wallet and original receipt is read-only on repla
  assert.deepEqual(f.writes,['deal_or_no_deal_wallets_v1','christmas_ice_progress_v1']);
  assert.equal(f.getWallet(),70000000,'replay never charges twice');
 });
+
+
+test('stale strike cannot be charged to a different picture after its receipt expires',async()=>{
+ const f=iceActionFixture({star:19,free:1});
+ const stale=await f.invoke({type:'strike',index:0,hammer:'single',
+  requestId:'stale-ice-picture-0001',expectedPicture:2});
+ assert.equal(stale.statusCode,409);
+ assert.equal(stale.payload.error,'PICTURE_CHANGED');
+ assert.deepEqual(f.writes,[]);
+ assert.equal(f.getWallet(),100000000);
+ assert.equal(f.getProgress().opened.length,0);
+ const valid=await f.invoke({type:'strike',index:0,hammer:'single',
+  requestId:'fresh-ice-picture-0001',expectedPicture:1});
+ assert.equal(valid.statusCode,200);
+ assert.deepEqual(f.writes,['christmas_ice_progress_v1']);
+});
+
+test('original receipt remains replayable after picture changes',async()=>{
+ const f=iceActionFixture({star:0,free:1});
+ const action={type:'strike',index:0,hammer:'single',
+  requestId:'winning-picture-replay-0001',expectedPicture:1};
+ const first=await f.invoke(action);
+ assert.equal(first.statusCode,200);
+ assert.equal(first.payload.state.completed,1);
+ const afterWin=f.writes.length;
+ const replay=await f.invoke(action);
+ assert.equal(replay.statusCode,200);
+ assert.equal(replay.payload.result.replayed,true);
+ assert.equal(f.writes.length,afterWin,'receipt replay must not spend another hammer or wallet write');
+ const invalid=await f.invoke({...action,requestId:'invalid-picture-id-0001',expectedPicture:0});
+ assert.equal(invalid.statusCode,400);
+ assert.equal(invalid.payload.error,'INVALID_PICTURE');
+ assert.equal(f.writes.length,afterWin);
+});
