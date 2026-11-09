@@ -7,8 +7,8 @@ const packs=[
  {id:'large',count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}},
  {id:'premium',count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}
 ];
-test('80 stable ids, original 64 preserved and North Pole rarity layout correct',()=>{
- assert.equal(CHRISTMAS_CARDS.length,80);
+test('96 stable ids with original 80 preserved and fourth board rarity layout correct',()=>{
+ assert.equal(CHRISTMAS_CARDS.length,96);
  assert.equal(new Set(CHRISTMAS_CARDS.map(c=>c.id)).size,80);
  assert.deepEqual(CHRISTMAS_CARDS.slice(0,32).map(c=>c.id),Array.from({length:32},(_,i)=>'christmas-'+String(i+1).padStart(2,'0')));
  assert.deepEqual(CHRISTMAS_CARDS.slice(32,48).map(c=>c.rarity),Array(16).fill('common'));
@@ -16,7 +16,11 @@ test('80 stable ids, original 64 preserved and North Pole rarity layout correct'
  assert.deepEqual(CHRISTMAS_CARDS.slice(64,80).map(c=>c.rarity),Array.from({length:16},(_,i)=>CHRISTMAS_RARITIES[Math.floor(i/4)]));
  assert.equal(CHRISTMAS_CARDS[64].id,'christmas-65');
  assert.equal(CHRISTMAS_CARDS[79].id,'christmas-80');
- assert.deepEqual(Object.fromEntries(CHRISTMAS_RARITIES.map(r=>[r,CHRISTMAS_CARDS.filter(c=>c.rarity===r).length])),{common:32,rare:16,epic:16,legendary:16});
+ assert.equal(CHRISTMAS_CARDS[80].id,'christmas-81');
+ assert.equal(CHRISTMAS_CARDS[95].id,'christmas-96');
+ assert.deepEqual(CHRISTMAS_CARDS.slice(80,96).map(c=>c.rarity),Array.from({length:16},(_,i)=>CHRISTMAS_RARITIES[Math.floor(i/4)]));
+ assert.ok(CHRISTMAS_CARDS.slice(80,96).every(c=>c.series==='Die lustige Weihnachtswelt'));
+ assert.deepEqual(Object.fromEntries(CHRISTMAS_RARITIES.map(r=>[r,CHRISTMAS_CARDS.filter(c=>c.rarity===r).length])),{common:36,rare:20,epic:20,legendary:20});
 });
 for(const pack of packs){
  test(pack.id+' pack draws exact count and guaranteed rarity minimum',()=>{
@@ -189,7 +193,7 @@ test('field only jackpots when all 16 distinct cards are owned',()=>{
 test('North Pole 4x4 board adds ten unique classic Bingos without changing old rewards',()=>{
  const base=Object.fromEntries(Array.from({length:32},(_,i)=>['christmas-'+String(i+1).padStart(2,'0'),1]));
  const old=classicChristmasProgress(base);
- assert.equal(old.totalBingos,20);assert.equal(old.total,48);
+ assert.equal(old.totalBingos,20);assert.equal(old.total,64);
  assert.equal(old.thirdBingos,0);
  assert.equal(old.rewards.includes('christmas-champion'),true);
  assert.equal(old.rewards.includes(NORTH_POLE_REWARD_IDS[0]),false);
@@ -205,7 +209,7 @@ test('North Pole 4x4 board adds ten unique classic Bingos without changing old r
  assert.equal(next.rewards.includes(NORTH_POLE_REWARD_IDS[0]),true);
  for(let i=73;i<=80;i++)base['christmas-'+i]=1;
  next=classicChristmasProgress(base);
- assert.equal(next.collected,48);assert.equal(next.maxBingos,30);
+ assert.equal(next.collected,48);assert.equal(next.maxBingos,40);
  assert.equal(next.totalBingos,30);
  assert.deepEqual(next.rewards.slice(-5),NORTH_POLE_REWARD_IDS);
  assert.equal(next.nextReward,null);
@@ -227,4 +231,35 @@ test('uploaded Christmas photos preserve the 16 Nordpol card IDs and rarity',()=
  assert.deepEqual(CHRISTMAS_CARDS.slice(64,80).map(c=>c.id),
   Array.from({length:16},(_,i)=>'christmas-'+String(65+i)));
  assert.ok(CHRISTMAS_CARDS.slice(64,80).every(c=>c.series==='Geheimnisse des Nordpols'));
+});
+
+test('fourth classic Bingo board counts ten lines and leaves previous unlocks intact',()=>{
+ const cards={};
+ for(let i=81;i<=84;i++)cards['christmas-'+i]=1;
+ let progress=classicChristmasProgress(cards);
+ assert.equal(progress.fourthBingos,1);
+ assert.deepEqual(progress.fourthBingoLines,[0]);
+ assert.equal(progress.totalBingos,1);
+ assert.equal(progress.collected,4);
+ assert.equal(progress.maxBingos,40);
+ assert.equal(progress.total,64);
+ assert.equal(progress.nextRewardAt,2);
+ // All 16 unique fourth-board cards complete exactly 10 lines.
+ for(let i=85;i<=96;i++)cards['christmas-'+i]=1;
+ progress=classicChristmasProgress(cards);
+ assert.equal(progress.fourthBingos,10);
+ assert.equal(progress.totalBingos,10);
+ assert.equal(progress.collected,16);
+ assert.equal(progress.rewards.includes('collector-frame'),true);
+ // Prior cards and all 30 existing milestones remain usable.
+ for(let i=1;i<=32;i++)cards['christmas-'+String(i).padStart(2,'0')]=1;
+ for(let i=65;i<=80;i++)cards['christmas-'+i]=1;
+ const full=classicChristmasProgress(cards);
+ assert.equal(full.collected,64);
+ assert.equal(full.totalBingos,40);
+ assert.equal(full.nextReward,null);
+ assert.equal(full.rewards.filter(x=>x.startsWith('north-')).length,2);
+ assert.equal(full.rewards.includes('north-pole-legend'),true);
+ for(let i=81;i<=96;i++)cards['christmas-'+i]=2;
+ assert.equal(classicChristmasProgress(cards).totalBingos,40,'Duplicates cannot add extra Bingos');
 });
