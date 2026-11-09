@@ -1,5 +1,6 @@
 'use strict';
 import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState,normalizeIceState} from './christmas-ice-engine.js';
+import {drawHammerFromTwelve} from './deal-or-no-deal.js';
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
@@ -50,9 +51,8 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
      if(receiptSnap.data()?.uid!==req.iceUid)throw Error('ALREADY_AWARDED');
      return {hammer:receiptSnap.data().hammer,replayed:true};
     }
-    // Twelve equally likely sectors: 5 single, 5 double, 2 lucky.
-    const sector=Math.floor(Math.random()*12);
-    const hammer=sector<5?'single':sector<10?'double':'lucky';
+    // Reuse the same twelve-sector distribution as the Banker bonus.
+    const hammer=drawHammerFromTwelve();
     const state=progressSnap.exists?normalizeIceState(progressSnap.data()):newIceState();
     const next={...state,freeHammers:{...state.freeHammers,[hammer]:(state.freeHammers?.[hammer]||0)+1},wheelHammers:{...state.wheelHammers,[hammer]:(state.wheelHammers?.[hammer]||0)+1}};
     const wheelStartedAt=Date.now();
