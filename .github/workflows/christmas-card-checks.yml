@@ -1,0 +1,27 @@
+name: Christmas card and Hammer-Bingo checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'christmas-card-engine.js'
+      - 'deal-or-no-deal-api.js'
+      - 'tests/christmas-card-packs.test.js'
+      - '.github/workflows/christmas-card-checks.yml'
+  pull_request:
+    paths:
+      - 'christmas-card-engine.js'
+      - 'deal-or-no-deal-api.js'
+      - 'tests/christmas-card-packs.test.js'
+      - '.github/workflows/christmas-card-checks.yml'
+  workflow_dispatch:
+jobs:
+  christmas-cards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Christmas pack draws and Hammer-Bingo payout regressions
+        run: node --test tests/christmas-card-packs.test.js
