@@ -16,9 +16,17 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
  const fail=(res,e)=>res.status(409).json({ok:false,error:String(e?.message||'ICE_ERROR')});
  app.get('/api/christmas-ice/me',auth,async(req,res)=>{
   try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const pendingId=String(req.query?.pendingId||'');
+   if(pendingId&&!/^[A-Za-z0-9_-]{12,90}$/.test(pendingId))
+    return res.status(400).json({ok:false,error:'INVALID_REQUEST_ID'});
    const [snap,wallet]=await Promise.all([db.collection(collection).doc(req.iceUid).get(),db.collection(walletCollection).doc(req.iceUid).get()]);
+   const saved=snap.exists?normalizeIceState(snap.data()):null;
+   // A timed-out POST may have committed. Report its existing receipt without
+   // applying another strike or exposing the private action history.
+   const receipt=pendingId?saved?.lastActions?.find(action=>action.id===pendingId):null;
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,started:snap.exists,state:snap.exists?{...publicIceState(normalizeIceState(snap.data())),balance:Number(wallet.data()?.balance)||0}:null});
+   return res.json({ok:true,started:snap.exists,state:saved?{...publicIceState(saved),balance:Number(wallet.data()?.balance)||0}:null,
+    ...(pendingId?{pendingAction:{applied:!!receipt,result:receipt?.result||null}}:{})});
   }catch(e){return fail(res,e)}
  });
  // Lightweight avatar unlock check: one progress read, no wallet access.
