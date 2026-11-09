@@ -289,8 +289,8 @@ test('in-progress legacy 29-case games keep their old offer cadence without a re
 test('29-case matches accepting the first banker deal show the banker only after six opens',()=>{
  const game=create([{id:'a'},{id:'b'}],n=>0,29);
  assert.deepEqual(game.bankerSchedule,[6,5,5,4,3,2,2,1]);
- let next=send(game,'a','select',{case:0});
- next=send(next,'b','select',{case:1});
+ let next=send(game,game.order[0],'select',{case:0});
+ next=send(next,game.order[1],'select',{case:1});
  for(let i=0;i<5;i++){
   next=send(next,nextTurn(next),'open',{case:free(next)[0]});
   next=send(next,next.pending.actor,'ack-reveal');
