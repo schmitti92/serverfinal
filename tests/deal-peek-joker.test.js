@@ -58,8 +58,8 @@ test('not enough jokers does not create a receipt',async()=>{
  assert.equal(t.docs.has('deal_peek_inventory_v1/alice/receipts/'+payload.requestId),false);
 });
 
-test('Joker sees the final closed case in 26, 27 and 28-case matches, with one debit',async()=>{
- for(const caseCount of [26,27,28]){
+test('Joker sees final closed case in 26, 27, 28 and 29-case matches, with one debit',async()=>{
+ for(const caseCount of [26,27,28,29]){
   const t=setup({caseCount,balance:2});
   const picked=caseCount-1;
   const result=await t.request(path,{case:picked,requestId:'peek-last-case-'+caseCount+'-12345'});
@@ -76,11 +76,11 @@ test('Joker sees the final closed case in 26, 27 and 28-case matches, with one d
  }
 });
 test('game-specific index validation prevents outside-case revealing or charging',async()=>{
- for(const [caseCount,index] of [[26,26],[27,27],[28,28],[27,28]]){
+ for(const [caseCount,index] of [[26,26],[27,27],[28,28],[29,29],[28,29],[27,28]]){
   const t=setup({caseCount});
   const result=await t.request(path,{case:index,requestId:'peek-invalid-index-12345'});
   assert.equal(result.value.ok,false);
-  assert.equal(result.value.error,index>27?'INVALID_REQUEST':'INVALID_CASE');
+  assert.equal(result.value.error,index>28?'INVALID_REQUEST':'INVALID_CASE');
   assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,2);
   assert.equal(t.writes.length,0);
  }
@@ -110,6 +110,36 @@ test('accepted banker deal, finished game and stranger are denied without debit'
   const result=await t.request(path,{case:26,requestId:'peek-unauthorized-12345'});
   assert.equal(result.value.ok,false);
   assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,2);
+  assert.equal(t.writes.length,0);
+ }
+});
+
+test('29th case can privately contain 10 million euros without revealing it to others',async()=>{
+ const t=setup({caseCount:29,balance:1});
+ const game=t.docs.get('deal_or_no_deal_matches_v1/123').game;
+ game.values[28]=1000000000;
+ const req={case:28,requestId:'peek-tenth-million-29-123'};
+ const result=await t.request(path,req);
+ assert.equal(result.statusCode,200);
+ assert.equal(result.value.ok,true);
+ assert.equal(result.value.case,28);
+ assert.equal(result.value.amount,1000000000);
+ assert.equal(result.value.balance,0);
+ assert.equal(game.opened.length,0);
+ assert.equal(t.writes.length,2);
+ assert.ok(t.writes.every(path=>path.startsWith('deal_peek_inventory_v1/alice')));
+ const retry=await t.request(path,req);
+ assert.equal(retry.value.replayed,true);
+ assert.equal(retry.value.amount,1000000000);
+ assert.equal(retry.value.balance,0);
+ assert.equal(t.writes.length,2,'retry cannot spend again');
+});
+test('29th pending or opened case is protected from Joker peeks',async()=>{
+ for(const opts of [{opened:[28]},{pending:{case:28,actor:'alice'}}]){
+  const t=setup({caseCount:29,balance:1,...opts});
+  const result=await t.request(path,{case:28,requestId:'peek-29-must-be-closed'});
+  assert.equal(result.value.error,'CASE_NOT_CLOSED');
+  assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,1);
   assert.equal(t.writes.length,0);
  }
 });
