@@ -7,8 +7,8 @@ import {
 
 const id=n=>'christmas-'+String(n).padStart(2,'0');
 
-test('only second and subsequent copies among all 80 cards count as duplicates',()=>{
- assert.equal(CHRISTMAS_CARDS.length,80);
+test('only second and subsequent copies among all 96 cards count as duplicates',()=>{
+ assert.equal(CHRISTMAS_CARDS.length,96);
  assert.equal(christmasDuplicateStock({[id(1)]:1,[id(33)]:2,[id(64)]:4}).available,4);
  assert.equal(christmasDuplicateStock({[id(1)]:1,[id(33)]:2,[id(64)]:4}).canExchange,false);
  assert.equal(christmasDuplicateStock({unknown:999}).available,0);
