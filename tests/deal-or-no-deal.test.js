@@ -1,7 +1,7 @@
 'use strict';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {create,apply,publicView,free,VALUES,publicRemaining,nextTurn,drawHammerFromTwelve} from '../deal-or-no-deal.js';
+import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,publicRemaining,nextTurn,drawHammerFromTwelve} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -219,4 +219,90 @@ test('29-case new 10-million jackpot is shuffled, private and pays correctly in 
  assert.equal(game.opened.length,28);
  assert.equal(publicView(game).finalValues[0].amount,1000000000);
  assert.equal(publicView(game).finalValues[0].payout,1000000000);
+});
+
+function bankerOpenings(caseCount,playerCount,{legacy=false}={}){
+ let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>0,caseCount);
+ if(legacy)delete game.bankerSchedule;
+ const offers=[];
+ for(let i=0;i<playerCount;i++)game=send(game,game.order[i],'select',{case:i});
+ let guard=0;
+ while(game.phase!=='final'&&guard++<200){
+  if(game.phase==='open')game=send(game,nextTurn(game),'open',{case:free(game)[0]});
+  else if(game.phase==='reveal')game=send(game,game.pending.actor,'ack-reveal');
+  else if(game.phase==='decision'){
+   offers.push(game.opened.length);
+   const ballot=game.history.at(-1);
+   for(const actor of ballot.participants){
+    game=send(game,actor,'decide',{deal:false});
+   }
+  }else throw Error('Unexpected phase '+game.phase);
+ }
+ assert.equal(game.phase,'final','all cases must finish');
+ return {game,offers};
+}
+
+test('29-briefcase banker schedule spreads eight offers across 28 opened cases',()=>{
+ assert.deepEqual(STEPS_29,[6,5,5,4,3,2,2,1]);
+ assert.equal(STEPS_29.reduce((a,b)=>a+b,0),28);
+ const {game,offers}=bankerOpenings(29,1);
+ assert.deepEqual(offers,[6,11,16,20,23,25,27,28]);
+ assert.equal(game.history.length,8);
+ assert.equal(game.opened.length,28);
+ assert.deepEqual(publicView(game).bankerSchedule,STEPS_29);
+});
+
+test('29-briefcase multiplayer banker calls are spaced and stop at protected personal cases',()=>{
+ for(const [players,expected] of [
+  [2,[6,11,16,20,23,25,27]],
+  [3,[6,11,16,20,23,25,26]],
+  [4,[6,11,16,20,23,25]],
+ ]){
+  const {game,offers}=bankerOpenings(29,players);
+  assert.deepEqual(offers,expected,players+' players');
+  assert.equal(game.opened.length,29-players);
+  assert.equal(new Set(game.opened).size,game.opened.length);
+  assert.equal(game.players.every(p=>!game.opened.includes(p.case)),true);
+  assert.equal(game.history.length,expected.length);
+ }
+});
+
+test('26, 27 and 28 briefcase matches retain their existing banker thresholds',()=>{
+ assert.deepEqual(STEPS,[5,4,4,3,2,2,1,1]);
+ const base=[5,9,13,16,18,20,21,22];
+ for(const count of [26,27,28]){
+  const {game,offers}=bankerOpenings(count,1);
+  const expected=[...base,...Array.from({length:count-23},(_,i)=>23+i)];
+  assert.deepEqual(offers,expected,count+' cases');
+  assert.equal(game.bankerSchedule,null);
+ }
+});
+
+test('in-progress legacy 29-case games keep their old offer cadence without a reset',()=>{
+ const {game,offers}=bankerOpenings(29,1,{legacy:true});
+ const expected=[5,9,13,16,18,20,21,22,23,24,25,26,27,28];
+ assert.deepEqual(offers,expected);
+ assert.equal(game.bankerSchedule,undefined);
+ assert.equal(game.opened.length,28);
+});
+
+test('29-case matches accepting the first banker deal show the banker only after six opens',()=>{
+ const game=create([{id:'a'},{id:'b'}],n=>0,29);
+ assert.deepEqual(game.bankerSchedule,[6,5,5,4,3,2,2,1]);
+ let next=send(game,'a','select',{case:0});
+ next=send(next,'b','select',{case:1});
+ for(let i=0;i<5;i++){
+  next=send(next,nextTurn(next),'open',{case:free(next)[0]});
+  next=send(next,next.pending.actor,'ack-reveal');
+  assert.equal(next.phase,'open');
+  assert.equal(next.history.length,0,'not yet banker at '+(i+1));
+ }
+ next=send(next,nextTurn(next),'open',{case:free(next)[0]});
+ next=send(next,next.pending.actor,'ack-reveal');
+ assert.equal(next.phase,'decision');
+ assert.equal(next.history.length,1);
+ for(const actor of next.history[0].participants)next=send(next,actor,'decide',{deal:true});
+ assert.equal(next.phase,'final');
+ assert.equal(next.opened.length,6);
+ assert.equal(next.history.length,1);
 });
