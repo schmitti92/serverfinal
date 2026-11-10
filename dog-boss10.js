@@ -111,7 +111,9 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
  const people={...progress.people};
  if(win)for(const member of boss.roster){
   const current=people[member.uid];
-  if(current)people[member.uid]={...current,currentGate:Math.max(11,current.currentGate)};
+  if(current)people[member.uid]={...current,
+   currentGate:Math.max(11,current.currentGate),
+   highestGate:Math.max(11,current.highestGate??1,current.currentGate)};
  }
  return {progress:{...progress,people,boss10:nextBoss,sharedBosses,updatedAt:now},
   result:nextBoss.result};
