@@ -54,6 +54,13 @@ function drawHammerFromTwelve(random=crypto.randomInt){
  const sector=random(12); // 5 single, 5 double, 2 lucky; each sector has probability 1/12.
  return sector<5?'single':sector<10?'double':'lucky';
 }
+// This single 0–99 roll makes the rare special mutually exclusive.
+export const BANKER_SPECIAL_ODDS=Object.freeze({minigame:5,monster:5});
+export function drawBankerSpecial(random=crypto.randomInt){
+ const roll=random(100);
+ if(!Number.isInteger(roll)||roll<0||roll>=100)throw Error('INVALID_BANKER_SPECIAL_ROLL');
+ return roll<5?'minigame':roll<10?'monster':null;
+}
 function offer(g,random){
  const remaining=publicRemaining(g);
  const avg=remaining.reduce((a,b)=>a+b,0)/remaining.length;
@@ -89,8 +96,7 @@ function offer(g,random){
  // New rare exclusive special offer (10% total): 5% minigame voucher
  // for the Christmas Hats mini-game, or 5% Monster Wheel spin.
  // Existing card-pack and hammer draws remain independent and unchanged.
- const bonusSpecialRoll=random(100);
- const bonusSpecial=bonusSpecialRoll<5?'minigame':bonusSpecialRoll<10?'monster':null;
+ const bonusSpecial=drawBankerSpecial(random);
  g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
