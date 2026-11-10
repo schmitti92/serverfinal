@@ -57,7 +57,10 @@ export function dogGateProgress(raw){
 }
 export function dogGateMapView(teamRaw,progressRaw,viewerUid){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
- const members=team.members.map(m=>{
+ const isMember=team.members.some(m=>m.uid===viewerUid);
+ // Only the participating heroes may read each other's names and gate
+ // positions. Visitors can see free capacity, not private player data.
+ const members=(isMember?team.members:[]).map(m=>{
   const p=progress.people[m.uid];
   return {uid:m.uid,name:cleanName(m.name),currentGate:p?.currentGate??1,
    highestGate:p?.highestGate??1,
@@ -65,11 +68,12 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
    lastAttemptAt:p?.lastAttemptAt??0,lastResult:p?.lastResult??null,
    isMe:m.uid===viewerUid};
  });
- return {members,memberCount:members.length,teamReady:members.length===3,
-  isMember:members.some(m=>m.uid===viewerUid),canJoin:members.length<3,
-  sharedBosses:progress.sharedBosses,
-  dogUnlocked:progress.sharedBosses.includes(100), // only trusted server wins may write this
-  progress:progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
+ return {members,memberCount:team.members.length,teamReady:team.members.length===3,
+  isMember,canJoin:!isMember&&team.members.length<3,
+  sharedBosses:isMember?progress.sharedBosses:[],
+  dogUnlocked:isMember&&progress.sharedBosses.includes(100), // trusted server wins only
+  progress:isMember?(progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
+   lastAttemptAt:0,lastResult:null}):{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null},
   availableBossGate:10, // legacy shared arena is still a separate Tor-1 test
   bossArenaIsTest:true,
