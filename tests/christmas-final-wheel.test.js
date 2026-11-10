@@ -28,6 +28,7 @@ test('only the final winner changes; 1-cent and banker rewards retain their rule
  assert.match(api,/import \{drawFinalWinnerPack\} from '\.\/christmas-final-wheel\.js'/);
  const final=api.slice(api.indexOf("if(before.phase!=='final'&&after.phase==='final')"));
  assert.match(final,/const pack=CHRISTMAS_PACKS\.find\(p=>p\.id===drawFinalWinnerPack\(\)\)/);
+ assert.match(final,/packName:pack\.id==='large'\?'Gold-Kartenpaket':pack\.name/);
  assert.doesNotMatch(final,/roll<60\?'large':'small'/);
  const oneCent=api.slice(api.indexOf('const openedOneCent'),api.indexOf('// A Christmas pack is included in a banker offer'));
  assert.match(oneCent,/roll<10\?'premium':roll<60\?'large':'small'/);
