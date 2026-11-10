@@ -35,7 +35,7 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 
 **Aufstiegsschmiede:** `dog-ascension.js` ist für Mitglieder der authentifizierten Dreiergruppe reserviert und nutzt dieselben vorhandenen Hero- und Inventardokumente wie die alte Schmiede, aber mit neuem, boss-gesteuertem Maximallevel. `GET /api/dog/gates/ascension` liefert Lv.-Grenzen und Rohstoffkosten. `POST .../upgrade` führt einen einzigen authentifizierten, wiederholbaren Versuch aus, spendet Materialien und speichert Erfolg oder Misserfolg atomar. Nach Boss 10 lassen sich Waffe und Rüstung **jeweils von 1 auf 2** verbessern; Kosten: 3 Eisenerz bzw. 3 Lebensstaub, Erfolgswahrscheinlichkeit 100 %. Spätere Level bleiben bis zu nachfolgenden Gruppenbossen gesperrt.
 
-**Mini-Boss 15:** Kann nach normalem Tor 14 begonnen werden; Boss-10-Sieg ist keine künstliche Zugangsbedingung. Die neue Ausrüstung (inklusive Rüstung und prozentualen Fähigkeiten) verbessert die Kampfchance deutlich. Die einmaligen Mini-Boss-Belohnungen sind als Erfolg markiert, ihre Gutschrift in andere Spieleökonomien ist noch nicht implementiert.
+**Mini-Boss 15:** Kann nach normalem Tor 14 begonnen werden; Boss-10-Sieg ist keine künstliche Zugangsbedingung. Die neue Ausrüstung (inklusive Rüstung und prozentualen Fähigkeiten) verbessert die Kampfchance deutlich. Der **erste Sieg** über einen Mini-Boss vergibt inzwischen **eine zufällige echte Belohnung** in derselben Firestore-Transaktion wie den Sieg. Scheitert die Gutschrift, wird der Sieg nicht gespeichert.
 
 **Vor Live-Freigabe unbedingt prüfen:**
 1. **Umgehungsschutz ergänzt:** Für Mitglieder der registrierten Dreier-Expedition prüft jetzt auch die bisherige `/api/dog/forge/...`-Schnittstelle die Boss-Freischaltung. Ihre neuen Ausrüstungslimits betragen 10 statt 20; auch die elf Fähigkeitslevel werden nach Bossfortschritt begrenzt. Bereits bestehende höhere Werte werden nicht abgeschnitten oder automatisch herabgestuft. Unbeteiligte Profile bleiben im bisherigen Modus. Dieser Migrationspfad muss trotzdem vor Live-Freigabe mit den realen Altbeständen geprüft werden.
@@ -43,7 +43,7 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 3. **Fünf neue Kistenarten integriert:** In `deal-or-no-deal-api.js` werden neue Expeditionskisten im selben bestätigten Auszahlungs-Receipt gespeichert. Das Inventar unterscheidet fünf neue Kisten und bewahrt ältere `small/medium/large/legacy`-Kisten unverändert auf. **Vor Live-Freigabe** muss diese neue gemischte Inventarstruktur mit echten Altbeständen geprüft werden.
 4. Neues Frontend und neues Backend müssen gemeinsam ausgeliefert und mit echten drei Konten in einem isolierten Testsystem geprüft werden. Alte Boss-Testarena bleibt getrennt.
 5. **Wiederaufnahme ergänzt:** Nach Ablauf der 30 Sekunden kann der authentifizierte `finish`-Aufruf entscheiden. Zusätzlich stellt der erste spätere authentifizierte `GET /api/dog/gates/boss10` einen steckengebliebenen Kampf durch eine Firestore-Transaktion einmalig wieder her. Bei einer Niederlage beginnt die 10-Minuten-Pause zum **ursprünglichen Kampfende**, auch wenn die Spieler erst später zurückkehren. Das ist keine asynchrone Hintergrundaufgabe.
-6. Gemeinsame Bosse 20–100, Belohnungen sowie die endgültige DOG-Freischaltung bleiben ausstehend.
+6. Die gemeinsamen Bosse 20–100, deren Belohnungen und die endgültige DOG-Freischaltung bleiben ausstehend. Die **persönlichen Mini-Boss-Prämien** für Tore 5–95 sind dagegen bereits integriert.
 
 **Kartenpositionen:** Jeder Held hat zwei getrennte Werte: `currentGate` für das aktuell gewählte/zuletzt bekämpfte Tor und `highestGate` für sein höchstes jemals erreichtes Tor. Ältere Mini-Bosse dürfen erneut besucht werden, ohne den Bestwert zurückzusetzen. Andere Profile außerhalb des Dreierteams erhalten aus dem Kartenendpunkt nur eine anonyme Platzanzahl, keine Namen oder Torpositionen.
 
@@ -98,6 +98,22 @@ Die Rohstoff-Seltenheiten sind von der **Kistenmenge getrennt**: Gewöhnlich / U
 Neue Materialien können **vor** dem jeweiligen Gruppenboss selten gefunden werden. Das Schloss für das Waffen- oder Rüstungsupgrade löst sich trotzdem erst nach dem bestätigten gemeinsamen Boss-Sieg.
 
 **Integrierter Entwicklungsstand und Kompatibilität:** `dog-materials.js` verwaltet die fünf neuen Typen in `expeditionChests`, getrennt von `chests.small/medium/large/legacy`. Beim Auszahlen einer bestätigten Deal-Partie werden Mitglieder des registrierten Dreierteams nach ihrem `highestGate` mit einer neuen, beim Erhalt fixierten Kiste belohnt; andere Konten behalten vorerst das alte Vergabemodell. Der bereits vorhandene Deal-Auszahlungsbeleg verhindert doppelte Auszahlungen und doppelte Kisten. `POST /api/dog/materials/open` öffnet neue oder alte Kisten durch eine separate wiederholungssichere Firestore-Transaktion. Das Frontend bietet alle fünf neuen und die alten Kisten getrennt an. Vor dem Merge müssen Altbestände und der parallele Abschluss echter Deal-Partien getestet werden. Kein Live-Rollout durchgeführt.
+
+## Einmalige Mini-Boss-Siegprämien (Tor 5, 15, …, 95)
+
+Die erste erfolgreiche persönliche Mini-Boss-Prüfung wählt **genau eine** der folgenden Belohnungen. Ein weiterer Sieg am selben Tor ist gesperrt; ein Wiederholen derselben Anfrage-ID liefert denselben Sieg und dieselbe zuvor festgelegte Prämie zurück.
+
+| Preis | Chance | Serverseitig gespeicherte Gutschrift |
+|---|---:|---|
+| 📦 Zusätzliche Rohstoffkiste | 35 % | Eine der fünf Expeditionstruhen passend zum höchsten erreichten Tor; die Materialanzahl steht bei der Vergabe fest |
+| 💰 Geldprämie | 30 % | Deal-or-No-Deal-Guthaben; Tor 5 = 50.000 €, Tor 95 = 5.000.000 €, dazwischen quadratisch gestaffelt |
+| 🎴 Kartenpaket-Gutschein | 20 % | Ein kostenloses Weihnachtskartenpaket (`freeChristmasPacks`); anfangs klein, später auch groß oder Premium möglich |
+| 🔨 Hammer | 10 % | Ein Hammer im Eisblock-Inventar; anfangs Einzelhammer, ab Tor 35 auch Doppelhammer, ab Tor 75 auch Goldhammer |
+| 🃏 Koffer-Joker | 5 % | Ein Joker im bestehenden Deal-Joker-Inventar |
+
+**Sicherung:** Der Server berechnet den Mini-Boss-Kampf, entscheidet bei erstem Sieg die Prämie und liest nur das tatsächlich betroffene Spieler-Inventar. Kampffortschritt, Belohnung, persönliche Prämienhistorie und unveränderlicher Anfrage-Beleg werden **zusammen in einer Firestore-Transaktion** geschrieben. Abbrüche verursachen dadurch keine halben Gutschriften. Öffnet der Spieler später die Kartenansicht, kann er seine Prämie am jeweiligen Tor erneut nachlesen; andere Teamspieler sehen nur den Torfortschritt, nicht die fremde Prämie. Es werden keine zusätzlichen Firebase-Reads für die Belohnungshistorie benötigt.
+
+Diese Belohnungen sind im **Entwicklungsbranch** eingebaut, nicht auf Render/GitHub Pages live. Der Preis-Katalog gehört zum Stand dieser Version und kann vor dem Live-Rollout erneut balanciert werden.
 
 ## Mini-Boss-Feinschliff (simulierte Siegquoten)
 
