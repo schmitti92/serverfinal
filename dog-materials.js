@@ -90,7 +90,7 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
    const snap=await firestore().collection(DOG_MATERIALS_COLLECTION).doc(req.dogUid).get();
    res.set('Cache-Control','no-store');
    return res.json({ok:true,inventory:dogInventory(snap.exists?snap.data():null),
-    rules:{resources:DOG_RESOURCES,chestMin:1,chestMax:5,verifiedGames:['barikade','kreuz']}});
+    rules:{resources:DOG_RESOURCES,chestMin:1,chestMax:5,verifiedGames:['deal-or-no-deal']}});
   }catch(e){return error(res,e)}
  });
  app.post('/api/dog/materials/open',auth,async(req,res)=>{
