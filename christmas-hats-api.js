@@ -91,7 +91,7 @@ export function drawHatsRoom(room){
  if(scoreHatsPrize(a)===scoreHatsPrize(b)){
   // A fixed same-tier fallback avoids a sixth prize, duplicate category,
   // or a premium reward appearing in rooms 1–3.
-  a={superLuck:false,items:[reward('pack:small',1)]};
+  a={superLuck:false,items:[reward(room<=3?'pack:small':room<=6?'pack:large':'pack:premium',1)]};
   b=room<=3
    ?{superLuck:false,items:[reward('pack:small',3),reward('hammer:single',3)]}
    :room<=6
