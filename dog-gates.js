@@ -44,6 +44,9 @@ export function dogGateProgress(raw){
  }
  return {version:1,people:result,sharedBosses:positiveUnique(x.sharedBosses,
   gate=>Number.isSafeInteger(gate)&&gate>=10&&gate<=100&&gate%10===0),
+  // Preserve the isolated Tor-10 state while saving normal/mini fights.
+  // Only the Boss-10 API may change this field after authentication.
+  ...(x.boss10?{boss10:obj(x.boss10)}:{}),
   updatedAt:clamp(x.updatedAt,0,10_000_000_000_000,0)};
 }
 export function dogGateMapView(teamRaw,progressRaw,viewerUid){
