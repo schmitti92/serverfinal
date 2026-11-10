@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bossTeam,bossView,bossJoin,bossRestart,bossAction,bossMaxHp,installDogBossApi,
+import {bossTeam,bossView,bossJoin,bossRestart,bossAction,bossMaxHp,bossPhaseOf,DOG_BOSS_PHASES,installDogBossApi,
  DOG_BOSS_HP,DOG_BOSS_COOLDOWN_MS,DOG_BOSS_TEAM_ID,DOG_BOSS_TEAM_COLLECTION,
  DOG_BOSS_RECEIPTS_COLLECTION} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from '../dog-forge.js';
@@ -177,4 +177,90 @@ test('Victory cannot be confused with defeat; the first boss is not automaticall
  assert.equal(x.body.result.victory,true);assert.equal(x.body.phase,'victory');
  assert.equal(x.body.cooldownUntil,0);assert.equal(x.body.gate,1);
  assert.equal((await act(f,'a',2)).body.error,'BOSS_ALREADY_WON');
+});
+
+test('Boss phases change at 50 % and 25 %, with a warning BEFORE the next attack',()=>{
+ const member='player-alpha';
+ let state=bossJoin(null,member,'Testheld',null,1000);
+ assert.equal(DOG_BOSS_PHASES.length,3);
+ assert.equal(bossPhaseOf(6000),1);
+ assert.equal(bossPhaseOf(3001),1);
+ assert.equal(bossPhaseOf(3000),2);
+ assert.equal(bossPhaseOf(1500),3);
+ assert.equal(bossPhaseOf(0),3);
+ state={...state,bossHp:3100,phase:'fighting'};
+ const hit=bossAction(state,member,null,'attack',[5000,5000,5000,5000],1100);
+ assert.equal(hit.result.bossPhase,2);
+ assert.equal(hit.result.phaseChanged,true);
+ assert.equal(hit.state.bossCharged,true);
+ const warning=bossView(hit.state,member,1100);
+ assert.equal(warning.bossPhase,2);
+ assert.match(warning.bossTelegraph,/Flammenexplosion/);
+ assert.equal(warning.bossAttackName,'🔥 Flammenexplosion');
+ assert.ok(warning.log.some(line=>/Bossphase 2/.test(line)));
+});
+test('A warned explosion hits the acting hero, and guarding protects that hero',()=>{
+ const member='player-alpha';
+ let state=bossJoin(null,member,'Testheld',null,1000);
+ state={...state,phase:'fighting',bossHp:2700,bossTurn:2,bossCharged:true};
+ const normal=bossAction(state,member,null,'attack',[5000,5000,5000,5000],1100);
+ const guarding=bossAction(state,member,null,'guard',[5000,5000,5000,5000],1100);
+ assert.equal(normal.result.chargedAttack,true);
+ assert.equal(normal.result.bossAttack,'Flammenexplosion');
+ assert.ok(normal.result.retaliation>40);
+ assert.equal(guarding.result.chargedAttack,true);
+ assert.ok(guarding.result.retaliation<normal.result.retaliation*.5);
+ assert.ok(guarding.result.actorHp>normal.result.actorHp);
+ assert.match(normal.state.log.join(' '),/Flammenexplosion/);
+});
+test('Third phase fires a stronger attack and resets its warning on defeat/retry',()=>{
+ const member='player-alpha';
+ const state={...bossJoin(null,member,'Testheld',null,1000),phase:'fighting',
+  bossHp:1520,bossTurn:1,bossCharged:false};
+ const hit=bossAction(state,member,null,'attack',[5000,5000,5000,5000],1100);
+ assert.equal(hit.result.bossPhase,3);
+ assert.equal(hit.state.bossCharged,true);
+ assert.equal(bossView(hit.state,member).bossPhaseName,'Das letzte Inferno');
+ const losing={...hit.state,phase:'cooldown',bossHp:1200,
+  cooldownUntil:1120+DOG_BOSS_COOLDOWN_MS};
+ losing.heroes[member]={hp:0,maxHp:104,guard:false};
+ const locked=bossView(losing,member,1200);
+ assert.equal(locked.canFight,false);
+ assert.equal(locked.bossTelegraph.includes('Flammenexplosion'),false);
+ const renewed=bossRestart(losing,{[member]:{levels:{weapon:16,armor:12,vitality:10}}},member,
+  losing.cooldownUntil);
+ assert.equal(renewed.bossHp,6000);
+ assert.equal(renewed.bossTurn,0);
+ assert.equal(renewed.bossCharged,false);
+ assert.equal(bossView(renewed,member).bossPhase,1);
+});
+test('Finishing the boss prevents retaliation even when an explosion was queued',()=>{
+ const uid='player-alpha';
+ const state={...bossJoin(null,uid,'Testheld',null,1000),phase:'fighting',
+  bossHp:1,bossTurn:5,bossCharged:true};
+ const result=bossAction(state,uid,null,'attack',[5000,5000,5000,5000],1300);
+ assert.equal(result.result.victory,true);
+ assert.equal(result.result.retaliation,0);
+ assert.equal(result.state.phase,'victory');
+ assert.equal(result.state.cooldownUntil,0);
+ assert.equal(result.state.bossCharged,false);
+});
+test('Boss phase/warning fields survive GET and receipt replay without changing HP',async()=>{
+ const f=fixture();await join(f,'a',100);
+ const state=bossTeam(f.team());state.phase='fighting';state.bossHp=3030;
+ f.inject(state);
+ const done=await act(f,'a',222,'attack');
+ assert.equal(done.statusCode,200);
+ assert.equal(done.body.bossPhase,2);
+ assert.equal(done.body.result.nextAttackCharged,true);
+ const hp=done.body.bossHp;
+ const get=await f.call('GET','/api/dog/boss/me',{},'a');
+ assert.equal(get.body.bossHp,hp);
+ assert.equal(get.body.bossPhase,2);
+ assert.equal(get.body.bossCharged,true);
+ const replay=await act(f,'a',222,'attack');
+ assert.equal(replay.statusCode,200);
+ assert.equal(replay.body.replayed,true);
+ assert.equal(replay.body.bossHp,hp);
+ assert.equal(replay.body.bossCharged,true);
 });
