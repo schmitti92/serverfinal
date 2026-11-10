@@ -85,9 +85,11 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  assert.equal(r.state.room,1);
  assert.ok(!Object.hasOwn(r.state,'layout'),'hats positions must never leak to client');
  const runId=r.state.id;
+ let firstPickIndex=null;
  for(let room=1;room<=3;room++){
   const hidden=docs.get('deal_christmas_hats_v1/player1');
   const index=hidden.layout.findIndex(x=>x.type==='gift');
+  if(room===1)firstPickIndex=index;
   r=await action({type:'pick',index,requestId:'pick_checkpoint_'+room+'xxxxxxx',runId});
   assert.equal(r.result.type,'gift');
  }
@@ -97,7 +99,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  // Replay the FIRST of three picks after two newer picks: never select a
  // second hat in room four or credit a second prize.
  const untouched=structuredClone([...docs.entries()]);
- const oldPick=await action({type:'pick',index:0,
+ const oldPick=await action({type:'pick',index:firstPickIndex,
   requestId:'pick_checkpoint_1xxxxxxx',runId});
  assert.equal(oldPick.replayed,true);
  assert.equal(oldPick.outdated,true);
