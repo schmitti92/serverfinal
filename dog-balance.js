@@ -266,7 +266,10 @@ export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
   const blocked=roll(defense.block),dodged=roll(defense.evasion);
   // Mini-bosses sometimes land a clearly telegraphed heavy strike. This
   // makes armor upgrades matter even when a strong weapon kills in 3 hits.
-  const heavy=roll(gate===5?.08:DOG_MINI_BOSS_HEAVY_CHANCE);
+  // Late bosses already deal larger attacks relative to hero protection.
+  // Reduce heavy-hit frequency there, instead of forcing endless armor grinds.
+  const heavyChance=gate===5?.08:gate>=75?.04:DOG_MINI_BOSS_HEAVY_CHANCE;
+  const heavy=roll(heavyChance);
   const strikeAttack=heavy?
    Math.round(enemyAttack*DOG_MINI_BOSS_HEAVY_MULTIPLIER):enemyAttack;
   const suffered=dogIncomingDamage({armorLevel,enemyAttack:strikeAttack,skills,blocked,dodged});
