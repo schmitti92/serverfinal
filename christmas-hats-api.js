@@ -99,7 +99,7 @@ export function drawHatsRoom(room){
 }
 function fresh(requestId){
  return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1),secured:[],pending:[],lastReveal:null,
-  lastActionId:requestId,lastActionResult:null,updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null};
+  lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:null,updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null};
 }
 function safeView(state){
  if(!state)return null;
@@ -177,7 +177,11 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    const outcome=await db.runTransaction(async tx=>{
     const snap=await tx.get(ref),before=snap.exists?snap.data():null;
     if(before)validStored(before);
-    if(before?.lastActionId===requestId)return {state:safeView(before),result:before.lastActionResult,replayed:true};
+    if(before?.lastActionId===requestId){
+     if(before.lastActionType!==type||(type==='pick'&&before.lastActionIndex!==req.body.index))
+      throw Error('REQUEST_ID_CONFLICT');
+     return {state:safeView(before),result:before.lastActionResult,replayed:true};
+    }
     if(type==='start'){
      if(before?.status==='playing')return {state:safeView(before),result:{resumed:true},replayed:true};
      const next=fresh(requestId),result={started:true};
@@ -189,7 +193,7 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
     if(typeof req.body?.runId!=='string'||req.body.runId!==before.id)throw Error('SESSION_CHANGED');
     const next=type==='pick'?applyPick(before,req.body.index):applyCash(before);
     const result=type==='pick'?next.lastReveal:{cashed:true};
-    next.lastActionId=requestId;next.lastActionResult=result;
+    next.lastActionId=requestId;next.lastActionType=type;next.lastActionIndex=type==='pick'?req.body.index:null;next.lastActionResult=result;
     if(next.status!=='finished'){tx.set(ref,next);return {state:safeView(next),result,replayed:false};}
     // Every finished run settles atomically with its state. No prize is
     // credited at revelation time: secured prizes survive an eventual bomb.
