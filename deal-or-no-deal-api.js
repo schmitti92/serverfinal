@@ -61,14 +61,38 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   for(const ws of listeners)sendSocket(ws,{type:'deal-state',game:view});
  };
  const attachSocket=(ws)=>{
-  let joined=null,authenticated=false;
-  // Force periodic re-authentication and fresh room membership checks.
-  // Do not retain a subscription indefinitely after a player leaves the room.
-  const expiry=setTimeout(()=>{if(ws.readyState===1)ws.close(1000,'REAUTH_REQUIRED')},120000);
-  expiry.unref?.();
+  let joined=null,joinedUid=null,authenticated=false,reauthenticating=false,expiry=null;
+  // Verify the SAME signed-in player and live room membership periodically
+  // without dropping every active game socket after two minutes.
+  // The hard expiry still closes abandoned or failed-to-refresh sessions.
+  const resetExpiry=()=>{
+   clearTimeout(expiry);
+   expiry=setTimeout(()=>{if(ws.readyState===1)ws.close(1000,'REAUTH_REQUIRED')},120000);
+   expiry.unref?.();
+  };
+  resetExpiry();
   ws.on('message',async raw=>{
    let msg;try{msg=JSON.parse(String(raw))}catch{return};
    if(msg?.type==='ping'){if(joined){sendSocket(ws,{type:'pong',serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});if(Number.isSafeInteger(msg.revision)){try{const db=getFirestore();if(db){const latest=await readGame(db,joined);if(ws.readyState===1&&latest&&Number(latest.revision)!==msg.revision)sendSocket(ws,{type:'deal-state',game:latest})}}catch(error){console.warn('[deal-sync-ping]',String(error?.message||error))}}}return}
+   if(msg?.type==='reauth'){
+    if(!joined||!joinedUid||!authenticated||reauthenticating||ws.readyState!==1)return;
+    const token=String(msg.token||'');
+    if(!token||token.length>8192){sendSocket(ws,{type:'deal-error',error:'INVALID_REAUTH'});ws.close(1008,'INVALID_REAUTH');return}
+    reauthenticating=true;
+    try{
+     const identity=await verifyProfile(token);
+     if(!identity||identity.uid!==joinedUid)throw Error('LOGIN_REQUIRED');
+     const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+     await check(db,joined,identity.uid); // Fresh membership check: never use stale room cache.
+     if(ws.readyState!==1)return;
+     resetExpiry();
+     sendSocket(ws,{type:'deal-reauthenticated',serverNow:Date.now()});
+    }catch(error){
+     sendSocket(ws,{type:'deal-error',error:String(error?.message||'REAUTH_FAILED')});
+     if(ws.readyState===1)ws.close(1008,'REAUTH_FAILED');
+    }finally{reauthenticating=false}
+    return;
+   }
    if(msg?.type!=='subscribe'||authenticated)return;
    authenticated=true;
    const code=String(msg.code||'').toUpperCase(),token=String(msg.token||'');
@@ -79,7 +103,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
     await check(db,code,identity.uid);
     if(ws.readyState!==1)return;
-    joined=code;
+    joined=code;joinedUid=identity.uid;
     if(!dealSockets.has(code))dealSockets.set(code,new Set());
     dealSockets.get(code).add(ws);
     sendSocket(ws,{type:'deal-subscribed',code,serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});
