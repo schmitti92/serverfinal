@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_CHEST_STAGES,DOG_BALANCE_MATERIALS,
+ DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_CHEST_STAGES,DOG_CHEST_TYPES,DOG_CHEST_TYPE_IDS,DOG_BALANCE_MATERIALS,
  dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,dogEquipmentSuccessChance,
  dogWeaponBase,dogArmorBase,dogAttackChances,dogStrike,dogExpectedSoloDamage,dogMaxSoloDamage,
  dogMiniBossHp,dogMiniBossAttack,dogAdaptiveMiniBoss,dogNormalGateChance,dogResolveNormalGate,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss,dogMiniBossFeedback
@@ -58,22 +58,23 @@ test('Forge success odds decline gradually, without changing equipment on failur
 test('Chest amount and rarity are frozen at award time, before opening',()=>{
  const first=dogChestOffer(7,()=>0);
  const second=dogChestOffer(87,()=>0);
- assert.deepEqual(first,{version:3,stage:0,count:1});
- assert.deepEqual(dogChestOffer(7,()=>49),{version:3,stage:0,count:1});
- assert.deepEqual(dogChestOffer(7,()=>50),{version:3,stage:0,count:2});
- assert.deepEqual(dogChestOffer(7,()=>84),{version:3,stage:0,count:2});
- assert.deepEqual(dogChestOffer(7,()=>85),{version:3,stage:0,count:3});
- assert.deepEqual(dogChestOffer(7,()=>99),{version:3,stage:0,count:3});
- assert.deepEqual(second,{version:3,stage:8,count:4});
+ assert.deepEqual(first,{version:4,stage:0,tier:'wood',count:1});
+ assert.deepEqual(dogChestOffer(7,()=>49),{version:4,stage:0,tier:'wood',count:1});
+ assert.deepEqual(dogChestOffer(7,()=>50),{version:4,stage:0,tier:'wood',count:2});
+ assert.deepEqual(dogChestOffer(7,()=>84),{version:4,stage:0,tier:'wood',count:2});
+ assert.deepEqual(dogChestOffer(7,()=>85),{version:4,stage:0,tier:'wood',count:3});
+ assert.deepEqual(dogChestOffer(7,()=>99),{version:4,stage:0,tier:'wood',count:3});
+ assert.deepEqual(second,{version:4,stage:8,tier:'wood',count:1});
  assert.equal(DOG_CHEST_STAGES[0].min,1);
  assert.equal(DOG_CHEST_STAGES[0].max,3);
- assert.deepEqual(DOG_CHEST_STAGES[0].countWeights,[50,35,15]);
+ assert.deepEqual(DOG_CHEST_TYPES.wood.countWeights,[50,35,15]);
  assert.equal(dogChestStage(14),1);
  assert.equal(dogChestStage(99),9);
- assert.deepEqual(dogChestOffer(99,()=>0),{version:3,stage:9,count:5});
+ assert.deepEqual(dogChestOffer(99,()=>0),{version:4,stage:9,tier:'wood',count:1});
  const opened=dogChestContents(first,()=>0);
  assert.equal(opened.count,1);
  assert.equal(opened.stage,0);
+ assert.equal(opened.tier,'wood');
  assert.equal(opened.items.focus_dust,1);
  assert.equal(Object.keys(opened.items).length,15);
  assert.equal(Object.values(opened.items).reduce((sum,count)=>sum+count,0),1);
@@ -85,14 +86,13 @@ test('Chest weights add to 100, grow gradually and never grant unconfigured rari
  const seen=new Set();
  for(const [stage,rule] of DOG_CHEST_STAGES.entries()){
   assert.equal(rule.weights.reduce((a,b)=>a+b,0),100);
-  if(rule.countWeights){
-   assert.equal(rule.countWeights.reduce((a,b)=>a+b,0),100);
-   assert.equal(rule.countWeights.length,rule.max-rule.min+1);
-  }
-  assert.ok(rule.min>=1&&rule.max<=5&&rule.min<=rule.max);
+  assert.equal(rule.chestWeights.reduce((a,b)=>a+b,0),100);
+  assert.ok(rule.min>=1&&rule.max<=20&&rule.min<=rule.max);
   for(let i=0;i<300;i++){
    const offered=dogChestOffer(stage*10+1,seeded(i*10000+stage));
-   assert.ok(offered.count>=rule.min&&offered.count<=rule.max);
+   assert.ok(offered.count>=DOG_CHEST_TYPES[offered.tier].min&&
+    offered.count<=DOG_CHEST_TYPES[offered.tier].max);
+   assert.ok(rule.chestWeights[DOG_CHEST_TYPE_IDS.indexOf(offered.tier)]>0);
    const opened=dogChestContents(offered,seeded(i*10000+stage+3));
    assert.equal(Object.values(opened.items).reduce((a,b)=>a+b,0),offered.count);
    for(const [id,quantity] of Object.entries(opened.items)){
@@ -104,6 +104,53 @@ test('Chest weights add to 100, grow gradually and never grant unconfigured rari
   }
  }
  assert.equal(seen.has('iron'),true);
+});
+
+test('Five distinct chest types retain their defined material ranges',()=>{
+ assert.deepEqual(DOG_CHEST_TYPE_IDS,['wood','iron','silver','gold','legendary']);
+ assert.deepEqual(DOG_CHEST_TYPE_IDS.map(id=>{
+  const {min,max}=DOG_CHEST_TYPES[id];return [min,max];
+ }),[[1,3],[2,5],[4,8],[6,12],[10,20]]);
+ assert.equal(DOG_CHEST_TYPES.wood.countWeights.reduce((a,b)=>a+b,0),100);
+ const scenario=(gate,rolls)=>{
+  let i=0;
+  return dogChestOffer(gate,limit=>{
+   const value=rolls[i++];
+   assert.ok(value<limit,'invalid scripted draw '+value+' limit '+limit);
+   return value;
+  });
+ };
+ // Small chest stays 1–3 at the start, independent of later unlocks.
+ assert.deepEqual(scenario(1,[0,85]),{version:4,stage:0,tier:'wood',count:3});
+ // Iron begins at tor 21 (20%); Silver at 31 (5%).
+ assert.equal(scenario(21,[80,0]).tier,'iron');
+ assert.equal(scenario(31,[95,0]).tier,'silver');
+ // Gold at tor 51 (2%); Legendary at tor 81 (3%).
+ assert.equal(scenario(51,[98,0]).tier,'gold');
+ assert.equal(scenario(81,[97,0]).tier,'legendary');
+ assert.deepEqual(scenario(91,[93,0]),{version:4,stage:9,tier:'legendary',count:10});
+ assert.deepEqual(scenario(91,[99,10]),{version:4,stage:9,tier:'legendary',count:20});
+ assert.equal(DOG_CHEST_STAGES[7].chestWeights[4],0,
+  'the biggest chest must not appear before tor 81');
+ const last=dogChestContents(scenario(91,[99,10]),()=>0);
+ assert.equal(last.count,20);
+ assert.equal(last.tier,'legendary');
+ assert.equal(Object.values(last.items).reduce((a,b)=>a+b,0),20);
+});
+
+test('A chest is frozen on award and cannot be promoted by a forged client tier',()=>{
+ const early=dogChestOffer(1,()=>0);
+ assert.throws(()=>dogChestContents({...early,tier:'legendary',count:20},()=>0),
+  /DOG_BALANCE_INVALID_CHEST/);
+ assert.throws(()=>dogChestContents({...early,count:4},()=>0),
+  /DOG_BALANCE_INVALID_CHEST/);
+ assert.throws(()=>dogChestContents({...early,tier:'iron',count:3},()=>0),
+  /DOG_BALANCE_INVALID_CHEST/);
+ // Prior experimental v3 snapshots remain readable after adding five types.
+ const old=dogChestContents({version:3,stage:0,count:3},()=>0);
+ assert.equal(old.count,3);
+ assert.equal(old.stage,0);
+ assert.equal(Object.values(old.items).reduce((a,b)=>a+b,0),3);
 });
 
 test('Weapon and armor base values double exactly through level 10',()=>{
