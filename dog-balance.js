@@ -125,9 +125,9 @@ export function dogMiniBossHp(gate){
  const priorGear=(gate-5)/10;
  const priorSkillCap=priorGear*DOG_SKILLS_PER_BOSS;
  const peakSkills={attack_power:priorSkillCap,destruction:priorSkillCap};
- // 4% beyond prior equipment's absolute luckiest offensive outcome.
- // No hard lock: a future buff/reward or balancing change can still permit an upset.
- return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*1.04);
+ // Slightly below the previous tier's theoretical perfect-hit ceiling.
+ // A maxed-out old build CAN get extremely lucky; ordinary builds struggle.
+ return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*(.76+.009*priorGear));
 }
 export function dogGroupBossHp(gate){
  if(!Number.isSafeInteger(gate)||gate<10||gate>100||gate%10!==0)throw Error('DOG_BALANCE_INVALID_GROUPBOSS');
