@@ -159,15 +159,23 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    req.hatsUid=String(user.uid);next();
   }catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'});}
  };
+ // Restrict early test access to the same verified Firebase UID already used
+ // by the owner-only Chris bonus. Missing configuration denies everyone.
+ const isChris=uid=>Boolean(process.env.DEAL_CHRIS_BONUS_UID&&uid===process.env.DEAL_CHRIS_BONUS_UID);
+ const onlyChris=(req,res,next)=>isChris(req.hatsUid)?next():res.status(403).json({ok:false,error:'TEST_ACCESS_DENIED'});
  const fail=(res,error)=>res.status(409).json({ok:false,error:String(error?.message||'HATS_ERROR')});
- app.get('/api/christmas-hats/me',auth,async(req,res)=>{
+ app.get('/api/christmas-hats/access',auth,(req,res)=>{
+  res.set('Cache-Control','no-store');
+  return res.json({ok:true,allowed:isChris(req.hatsUid)});
+ });
+ app.get('/api/christmas-hats/me',auth,onlyChris,async(req,res)=>{
   try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const snap=await db.collection(SESSION_COLLECTION).doc(req.hatsUid).get();
    res.set('Cache-Control','no-store');
    return res.json({ok:true,state:snap.exists?safeView(snap.data()):null,odds:HATS_SUPER_ODDS});
   }catch(e){return fail(res,e);}
  });
- app.post('/api/christmas-hats/action',auth,async(req,res)=>{
+ app.post('/api/christmas-hats/action',auth,onlyChris,async(req,res)=>{
   const type=req.body?.type,requestId=String(req.body?.requestId||'');
   if(!['start','pick','cash'].includes(type)||!VALID_ACTION_ID.test(requestId))
    return res.status(400).json({ok:false,error:'INVALID_ACTION'});
