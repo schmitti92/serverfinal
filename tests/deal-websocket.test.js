@@ -6,12 +6,18 @@ import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 import {BANKER_30_OPENINGS} from '../deal-or-no-deal.js';
 
 const flush=()=>new Promise(resolve=>setTimeout(resolve,20));
-function harness(participants=['a','b']){
- const routes=new Map(),docs=new Map();
+function harness(participants=['a','b'],{roomReadDelay=0}={}){
+ const routes=new Map(),docs=new Map(),reads=new Map();
  docs.set('spielesammlung_hub_v1/123',{hostUid:'a',revision:1,players:participants.map(uid=>({uid,name:uid.toUpperCase()}))});
  const app={get:(path,...fns)=>routes.set('GET '+path,fns),post:(path,...fns)=>routes.set('POST '+path,fns)};
  const db={collection:name=>({doc:id=>({
-  get:async()=>({exists:docs.has(name+'/'+id),data:()=>docs.get(name+'/'+id)}),
+  get:async()=>{
+   const key=name+'/'+id;
+   reads.set(key,(reads.get(key)||0)+1);
+   if(name==='spielesammlung_hub_v1'&&roomReadDelay)
+    await new Promise(resolve=>setTimeout(resolve,roomReadDelay));
+   return {exists:docs.has(key),data:()=>docs.get(key)};
+  },
   set:async data=>docs.set(name+'/'+id,data)
  })}),runTransaction:async fn=>{
   const pending=[];
@@ -32,8 +38,19 @@ function harness(participants=['a','b']){
   for(const fn of handlers){await new Promise((resolve,reject)=>{let next=false;Promise.resolve(fn(req,res,()=>{next=true;resolve()})).then(()=>{if(!next)resolve()},reject)})}
   return res;
  };
- return {api,Socket,invoke,docs};
+ return {api,Socket,invoke,docs,reads};
 }
+test('Concurrent room checks share one Firestore read but every write gets a fresh membership check',async()=>{
+ const {invoke,reads}=harness(['a','b','c'],{roomReadDelay:35});
+ const path='/api/deal-or-no-deal/:code',key='spielesammlung_hub_v1/123';
+ const requests=await Promise.all(['a','b','c'].map(uid=>invoke('GET',path,uid)));
+ assert.ok(requests.every(r=>r.statusCode===200));
+ assert.equal(reads.get(key),1,'three simultaneous GETs must not repeat the same room document');
+ const start=await invoke('POST',path+'/start','a');
+ assert.equal(start.body.ok,true,JSON.stringify(start.body));
+ assert.equal(reads.get(key),2,'the mutation cannot authorize itself using a stale cached read');
+});
+
 test('Deal socket rejects users who are not room members',async()=>{
  const {api,Socket}=harness();const ws=new Socket();api.attachSocket(ws);
  ws.message({type:'subscribe',code:'123',token:'stranger'});await flush();
