@@ -163,3 +163,95 @@ test('Other North Pole rewards still settle atomically alongside Premium voucher
  assert.equal(f.album().monsterWheelTickets,1);
  assert.equal((await f.request('POST','christmas/north-pole/claim')).replayed,true);
 });
+
+
+const OLD_NORTH_MILESTONE_IDS=['north-premium-2','north-gold-hammers-2','north-jokers-2','north-platinum-combo','north-monster-spin-1'];
+const FOURTH_TIER_CARDS={
+ 32:[0,1,2,3,4,8,12],
+ 34:[0,1,2,3,4,5,6,7,8,9,12],
+ 36:[0,1,2,3,4,5,6,7,8,9,10,11,12,13],
+ 38:[0,1,2,3,4,5,6,7,8,9,10,11,12,13,15],
+ 40:[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+};
+function bingoFourthCards(at){
+ return {...bingoCards(16),...Object.fromEntries(FOURTH_TIER_CARDS[at].map(i=>['christmas-'+(81+i),1]))};
+}
+function existing30(){
+ return {
+  cards:bingoCards(16),opened:0,northPolePremiumVouchersIssued:true,
+  northPoleMilestonesClaimed:Object.fromEntries(OLD_NORTH_MILESTONE_IDS.map(id=>[id,1000]))
+ };
+}
+test('Bingo 32, 34, 36, 38, 40 pay their requested exact prizes, once at each boundary',async()=>{
+ const f=fixture({album:existing30()});
+ const tiers=[
+  {at:32,id:'fourth-monster-spin-1',monster:1,jokers:0,hammers:0,hats:0},
+  {at:34,id:'fourth-jokers-2',monster:1,jokers:2,hammers:0,hats:0},
+  {at:36,id:'fourth-hats-voucher-1',monster:1,jokers:2,hammers:0,hats:1},
+  {at:38,id:'fourth-gold-hammers-3',monster:1,jokers:2,hammers:3,hats:1},
+  {at:40,id:'fourth-grand-combo',monster:1,jokers:5,hammers:6,hats:3}
+ ];
+ const hatsKey='deal_christmas_hats_v1/'+uid;
+ for(const tier of tiers){
+  f.album().cards=bingoFourthCards(tier.at);
+  const preview=await f.request('GET','christmas/me');
+  assert.equal(preview.progress.totalBingos,tier.at);
+  assert.deepEqual(preview.northPolePending,[tier.id]);
+  const claimed=await f.request('POST','christmas/north-pole/claim');
+  assert.equal(claimed.code,200,JSON.stringify(claimed));
+  assert.deepEqual(claimed.claimed.map(m=>m.id),[tier.id]);
+  assert.equal(f.album().monsterWheelTickets,tier.monster);
+  assert.equal(f.documents.get(jokerKey)?.balance||0,tier.jokers);
+  assert.equal(f.documents.get(iceKey)?.freeHammers?.lucky||0,tier.hammers);
+  assert.equal(f.documents.get(iceKey)?.wheelHammers?.lucky||0,tier.hammers);
+  assert.equal(f.documents.get(hatsKey)?.bonusTickets||0,tier.hats);
+  if(tier.hats)assert.equal(f.documents.get(hatsKey).voucherOnly,true);
+  const writes=f.writes.length;
+  const repeat=await f.request('POST','christmas/north-pole/claim');
+  assert.equal(repeat.replayed,true,'no repeated credit at Bingo '+tier.at);
+  assert.equal(f.writes.length,writes);
+ }
+ const completed=await f.request('GET','christmas/me');
+ assert.equal(completed.progress.nextReward,null);
+ assert.equal(completed.northPolePending.length,0);
+ assert.equal(completed.progress.rewards.includes('fourth-grand-combo'),true);
+});
+
+test('Players already at 40 Bingos receive all five new rewards retroactively exactly once',async()=>{
+ const f=fixture({album:{...existing30(),cards:bingoFourthCards(40)}});
+ const first=await f.request('POST','christmas/north-pole/claim');
+ assert.equal(first.code,200,JSON.stringify(first));
+ assert.deepEqual(first.claimed.map(m=>m.at),[32,34,36,38,40]);
+ assert.equal(first.monsterTickets,1);
+ assert.equal(first.jokers,5);
+ assert.equal(first.goldHammers,6);
+ assert.equal(first.hatsVouchers,3);
+ assert.equal(f.album().monsterWheelTickets,1);
+ assert.equal(f.documents.get(jokerKey).balance,5);
+ assert.equal(f.documents.get(iceKey).wheelHammers.lucky,6);
+ assert.equal(f.documents.get('deal_christmas_hats_v1/'+uid).bonusTickets,3);
+ const before=f.writes.length;
+ const replay=await f.request('POST','christmas/north-pole/claim');
+ assert.equal(replay.replayed,true);
+ assert.equal(f.writes.length,before);
+});
+
+test('Bingo 36 and 40 vouchers preserve a player’s existing Hats run',async()=>{
+ const hatsKey='deal_christmas_hats_v1/'+uid;
+ const claimed=Object.fromEntries([...OLD_NORTH_MILESTONE_IDS,
+  'fourth-monster-spin-1','fourth-jokers-2'].map(id=>[id,1000]));
+ const f=fixture({album:{cards:bingoFourthCards(40),opened:0,
+  northPolePremiumVouchersIssued:true,northPoleMilestonesClaimed:claimed}});
+ const game={version:1,id:'hats-party-existing',status:'playing',room:7,
+  freeVoucherUsed:true,bonusTickets:2,checkpoint:3};
+ f.documents.set(hatsKey,structuredClone(game));
+ const settled=await f.request('POST','christmas/north-pole/claim');
+ assert.equal(settled.code,200,JSON.stringify(settled));
+ assert.deepEqual(settled.claimed.map(m=>m.at),[36,38,40]);
+ const saved=f.documents.get(hatsKey);
+ assert.equal(saved.id,game.id);
+ assert.equal(saved.room,game.room);
+ assert.equal(saved.status,'playing');
+ assert.equal(saved.freeVoucherUsed,true);
+ assert.equal(saved.bonusTickets,5,'1 from Bingo 36 and 2 from Bingo 40');
+});
