@@ -205,7 +205,7 @@ export function dogMiniBossAttack(gate){
  if(!Number.isSafeInteger(gate)||gate<5||gate>95||gate%10!==5)
   throw Error('DOG_BALANCE_INVALID_MINIBOSS');
  const tier=(gate-5)/10; // 0 at gate 5, 9 at gate 95
- return Math.round(dogWeaponBase(tier+1)*(.72+.035*tier)*1.23);
+ return Math.round(dogWeaponBase(tier+1)*(.72+.035*tier)*(tier===0?1.2:1.23));
 }
 export const DOG_MINI_BOSS_RETALIATION_CHANCE=.90;
 export const DOG_MINI_BOSS_HEAVY_CHANCE=.20;
@@ -268,7 +268,7 @@ export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
   // makes armor upgrades matter even when a strong weapon kills in 3 hits.
   // Late bosses already deal larger attacks relative to hero protection.
   // Reduce heavy-hit frequency there, instead of forcing endless armor grinds.
-  const heavyChance=gate===5?.08:gate>=75?.04:DOG_MINI_BOSS_HEAVY_CHANCE;
+  const heavyChance=gate===5?.08:DOG_MINI_BOSS_HEAVY_CHANCE;
   const heavy=roll(heavyChance);
   const strikeAttack=heavy?
    Math.round(enemyAttack*DOG_MINI_BOSS_HEAVY_MULTIPLIER):enemyAttack;
