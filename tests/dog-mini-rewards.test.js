@@ -147,6 +147,30 @@ test('Mini-boss 5 winning reward is credited in one transaction and cannot dupli
   assert.deepEqual(progress.people[uid].minis,[5]);
  }
 });
+test('First mini reward remains visible after reload and the next normal battle',async()=>{
+ const f=fixture(0);
+ const first=await f.call('POST','/api/dog/gates/fight',request);
+ assert.equal(first.statusCode,200);
+ const wonReward=first.body.result.miniReward;
+ assert.equal(wonReward.kind,'chest');
+ const after=await f.call('GET','/api/dog/gates/map');
+ assert.equal(after.body.progress.miniRewards.length,1);
+ assert.equal(after.body.progress.miniRewards[0].gate,5);
+ assert.equal(after.body.progress.miniRewards[0].reward.tier,wonReward.tier);
+ assert.equal(after.body.progress.miniRewards[0].reward.count,wonReward.count);
+ assert.equal(after.body.progress.miniRewards[0].reward.granted,true);
+ f.move(3100);
+ const gate6=await f.call('POST','/api/dog/gates/fight',{
+  gate:6,requestId:'gate6-after-mini-000001'});
+ assert.equal(gate6.statusCode,200);
+ assert.equal(gate6.body.map.progress.miniRewards.length,1);
+ assert.equal(gate6.body.map.progress.miniRewards[0].gate,5);
+ const outsider=await f.call('GET','/api/dog/gates/map',{},'b');
+ assert.equal(outsider.body.progress.miniRewards.length,0,
+  'only the winner sees the prize details');
+ assert.equal(outsider.body.members.find(m=>m.uid===uid).wonMinis,1);
+});
+
 test('Wallet, album and joker winnings merge with existing balances and histories',async()=>{
  for(const [roll,kind,collection,initial,expected] of [
   [35,'coins','deal_or_no_deal_wallets_v1',{balance:999,games:12},'balance'],
