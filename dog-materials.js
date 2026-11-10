@@ -16,6 +16,7 @@ export const DOG_DROP_WEIGHTS=Object.freeze([
 export const DOG_RESOURCES=Object.freeze(['iron','crystal','rune']);
 const MAX_INVENTORY=1_000_000;
 const count=n=>Number.isSafeInteger(n)&&n>=0&&n<=MAX_INVENTORY?n:0;
+const timestamp=n=>Number.isSafeInteger(n)&&n>=0&&n<=10_000_000_000_000?n:0;
 const safelyAdd=(a,b)=>{if(!Number.isSafeInteger(a)||!Number.isSafeInteger(b)||a+b>MAX_INVENTORY)throw Error('DOG_MATERIALS_LIMIT');return a+b;};
 export function dogInventory(input={}){
  const d=input&&typeof input==='object'&&!Array.isArray(input)?input:{};
@@ -25,9 +26,9 @@ export function dogInventory(input={}){
   resources:{iron:count(resources.iron),crystal:count(resources.crystal),rune:count(resources.rune)},
   recent:Array.isArray(d.recent)?d.recent.slice(0,6).filter(x=>x&&Number.isSafeInteger(x.count)&&x.count>=1&&x.count<=5).map(x=>({
    count:x.count,items:{iron:count(x.items?.iron),crystal:count(x.items?.crystal),rune:count(x.items?.rune)},
-   openedAt:count(x.openedAt)||0
+   openedAt:timestamp(x.openedAt)
   })):[],
-  updatedAt:count(d.updatedAt)||0
+  updatedAt:timestamp(d.updatedAt)
  };
 }
 /** A completed, server-verified match gives exactly ONE unopened chest per authenticated participant. */
