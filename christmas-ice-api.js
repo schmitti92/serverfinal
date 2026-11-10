@@ -39,7 +39,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
    const state=snap.exists?normalizeIceState(snap.data()):null;
    res.set('Cache-Control','no-store');
    const best=state?Math.max(Number(state.maxRewarded||0),Number(state.completed||0)):0;
-   return res.json({ok:true,janSchlappen:best>=10,kniffelChristmasDice:best>=20});
+   return res.json({ok:true,janSchlappen:best>=10,kniffelChristmasDice:best>=20,dealAutoplay:best>=40});
   }catch(e){return fail(res,e)}
  });
  // Backfill for profiles that finished picture 30 before the milestone existed.
