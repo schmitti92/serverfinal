@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {installChristophSurpriseApi,CHRISTOPH_SURPRISE_ID} from '../christoph-surprise-api.js';
 
 function makeServer(){
@@ -122,4 +123,14 @@ test('each player gets one independent award; authentication prevents claiming a
  assert.equal(h.documents.get('deal_christmas_hats_v1/player-vanessa').bonusTickets,2);
  assert.equal(h.documents.get('deal_christmas_hats_v1/player-david').bonusTickets,2);
  assert.equal(h.writes.length,6);
+});
+
+
+test('cross-origin browser requests can send Firebase Authorization to the surprise endpoints',()=>{
+ const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const cors=source.slice(source.indexOf('app.use((req, res, next) => {'),source.indexOf('app.use(express.json'));
+ assert.match(cors,/req\.path\.startsWith\('\/api\/christoph-surprise'\)/);
+ assert.match(cors,/Access-Control-Allow-Headers', 'Authorization,Content-Type'/);
+ assert.match(cors,/PROFILE_ALLOWED_ORIGINS/);
+ assert.match(cors,/if \(req\.method === "OPTIONS"\) return res\.status\(204\)\.end\(\)/);
 });
