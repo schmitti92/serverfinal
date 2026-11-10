@@ -1,7 +1,7 @@
 'use strict';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS} from '../deal-or-no-deal.js';
+import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -249,9 +249,10 @@ test('29-case new 10-million jackpot is shuffled, private and pays correctly in 
  assert.equal(publicView(game).finalValues[0].payout,1000000000);
 });
 
-function bankerOpenings(caseCount,playerCount,{legacy=false}={}){
- let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>0,caseCount);
+function bankerOpenings(caseCount,playerCount,{legacy=false,legacy30=false,variant=0}={}){
+ let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>n===5?variant:0,caseCount);
  if(legacy)delete game.bankerSchedule;
+ if(legacy30){game.bankerSchedule=[...STEPS_30];delete game.bankerScheduleVariant;}
  const offers=[];
  for(let i=0;i<playerCount;i++)game=send(game,game.order[i],'select',{case:i});
  let guard=0;
@@ -364,26 +365,64 @@ test('30-case new 50-million jackpot is randomly hidden and pays exactly 50 mill
  assert.equal(publicView(game).finalValues[0].payout,jackpot);
 });
 
-test('30-case banker schedule contains 29 openings with eight offers for solo mode',()=>{
+test('30-case banker patterns exactly match all five requested milestone sequences',()=>{
+ const expected=[
+  [7,15,21,24,27],
+  [7,13,16,19,25,26],
+  [10,15,20,25,27],
+  [7,16,19,25,27],
+  [8,14,19,22,24,26]
+ ];
+ assert.deepEqual(BANKER_30_OPENINGS,expected);
+ for(let variant=0;variant<expected.length;variant++){
+  const picked=pick30BankerSchedule(n=>{assert.equal(n,5);return variant});
+  assert.equal(picked.variant,variant+1);
+  assert.deepEqual(picked.steps,expected[variant].map((n,i)=>n-(expected[variant][i-1]||0)));
+  const {game,offers}=bankerOpenings(30,3,{variant});
+  assert.equal(game.bankerScheduleVariant,variant+1);
+  assert.deepEqual(offers,expected[variant], 'variant '+(variant+1)+' with 3 players');
+  assert.equal(game.history.length,expected[variant].length);
+  assert.equal(game.opened.length,27);
+  assert.deepEqual(publicView(game).bankerSchedule,game.bankerSchedule);
+  assert.equal(publicView(game).bankerScheduleVariant,variant+1);
+ }
+});
+
+test('every 30-case variant adapts to 1, 2 and 4 players without inventing extra offers',()=>{
+ for(let variant=0;variant<BANKER_30_OPENINGS.length;variant++){
+  for(const playerCount of [1,2,4]){
+   const {game,offers}=bankerOpenings(30,playerCount,{variant});
+   const expected=BANKER_30_OPENINGS[variant].filter(opened=>opened<=30-playerCount);
+   assert.deepEqual(offers,expected,'variant '+(variant+1)+' with '+playerCount+' players');
+   assert.equal(game.history.length,expected.length);
+   assert.equal(game.opened.length,30-playerCount);
+   assert.equal(new Set(game.opened).size,30-playerCount);
+   assert.ok(game.players.every(p=>!game.opened.includes(p.case)));
+  }
+ }
+});
+
+test('once selected, a 30-case pattern stays stable through gameplay and vote',()=>{
+ let game=create([{id:'a'},{id:'b'},{id:'c'}],n=>n===5?4:0,30);
+ const schedule=[...game.bankerSchedule];
+ assert.equal(game.bankerScheduleVariant,5);
+ for(let i=0;i<3;i++)game=send(game,game.order[i],'select',{case:i});
+ for(let i=0;i<8;i++){
+  game=send(game,nextTurn(game),'open',{case:free(game)[0]});
+  game=send(game,game.pending.actor,'ack-reveal');
+ }
+ assert.equal(game.phase,'decision');
+ for(const id of game.history.at(-1).participants)game=send(game,id,'decide',{deal:false});
+ assert.deepEqual(game.bankerSchedule,schedule);
+ assert.equal(game.bankerScheduleVariant,5);
+});
+
+test('already started 30-case games keep the preexisting eight-offer rhythm',()=>{
  assert.deepEqual(STEPS_30,[6,5,5,4,3,3,2,1]);
- assert.equal(STEPS_30.reduce((a,b)=>a+b,0),29);
- const {game,offers}=bankerOpenings(30,1);
+ const {game,offers}=bankerOpenings(30,1,{legacy30:true});
  assert.deepEqual(offers,[6,11,16,20,23,26,28,29]);
  assert.equal(game.opened.length,29);
  assert.equal(game.history.length,8);
  assert.deepEqual(publicView(game).bankerSchedule,STEPS_30);
-});
-
-test('30-case shared banker board respects each player\'s protected case',()=>{
- for(const [count,expected] of [
-  [2,[6,11,16,20,23,26,28]],
-  [3,[6,11,16,20,23,26,27]],
-  [4,[6,11,16,20,23,26]]
- ]){
-  const {game,offers}=bankerOpenings(30,count);
-  assert.deepEqual(offers,expected,count+' participants');
-  assert.equal(game.opened.length,30-count);
-  assert.equal(new Set(game.opened).size,30-count);
-  assert.ok(game.players.every(p=>!game.opened.includes(p.case)));
- }
+ assert.equal(game.bankerScheduleVariant,undefined);
 });
