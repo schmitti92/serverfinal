@@ -1,20 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HATS_MAX_ROOM,HATS_SUPER_ODDS,drawHatsRoom,scoreHatsPrize,installChristmasHatsApi} from '../christmas-hats-api.js';
+import {HATS_MAX_ROOM,HATS_SUPER_ODDS,HATS_BOMB_ODDS,HATS_CHECKPOINTS,drawHatsRoom,scoreHatsPrize,installChristmasHatsApi} from '../christmas-hats-api.js';
 
 test('ten rooms and escalating Superglück chances',()=>{
  assert.equal(HATS_MAX_ROOM,10);
  assert.deepEqual(HATS_SUPER_ODDS,[2,2,2,5,5,5,10,10,15,15]);
+ assert.deepEqual(HATS_BOMB_ODDS,[10,12,14,16,18,20,23,26,29,32]);
+ assert.deepEqual(HATS_CHECKPOINTS,[3,5,7,9]);
 });
 
-test('one bomb, normal and strictly better gift in every room',()=>{
+test('each room has at most one bomb and the super hat is best',()=>{
  for(let room=1;room<=10;room++)for(let i=0;i<500;i++){
   const hats=drawHatsRoom(room);
   assert.equal(hats.length,3);
-  assert.deepEqual(hats.map(h=>h.type).sort(),['bomb','gift','super']);
-  const ordinary=hats.find(h=>h.type==='gift'),better=hats.find(h=>h.type==='super');
-  assert.ok(scoreHatsPrize(better)>scoreHatsPrize(ordinary),'better must be worth more');
-  for(const h of [ordinary,better]){
+  assert.ok(hats.filter(h=>h.type==='bomb').length<=1);
+  assert.equal(hats.filter(h=>h.type==='super').length,1);
+  assert.ok(hats.some(h=>h.type==='gift'));
+  const ordinary=hats.filter(h=>h.type==='gift'),better=hats.find(h=>h.type==='super');
+  for(const gift of ordinary)assert.ok(scoreHatsPrize(better)>scoreHatsPrize(gift),'better must be worth more');
+  for(const h of [...ordinary,better]){
    assert.ok(h.items.length>=1&&h.items.length<=5);
    const distinct=new Set();
    for(const item of h.items){
@@ -40,6 +44,20 @@ test('one bomb, normal and strictly better gift in every room',()=>{
       'jackpot rooms use only medium/high packs');
    }
   }
+ }
+});
+
+test('probability of the chosen hat containing a bomb matches each advertised room chance',()=>{
+ for(const room of [1,3,5,6,8,10]){
+  const trials=3000;let pickedBombs=0,zeroBombRooms=0;
+  for(let i=0;i<trials;i++){
+   const layout=drawHatsRoom(room);
+   if(layout[0].type==='bomb')pickedBombs++;
+   if(!layout.some(h=>h.type==='bomb'))zeroBombRooms++;
+  }
+  const actual=pickedBombs/trials*100;
+  assert.ok(Math.abs(actual-HATS_BOMB_ODDS[room-1])<3.5,'room '+room+' advertised odds '+HATS_BOMB_ODDS[room-1]+'% actual '+actual.toFixed(2)+'%');
+  if(room===1)assert.ok(zeroBombRooms>1500,'most first rooms contain no bombs');
  }
 });
 
@@ -91,6 +109,8 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const action=(body)=>request('POST','/api/christmas-hats/action',body);
  let r=await action({type:'start',requestId:'start_test_0000000001'});
  assert.equal(r.state.room,1);
+ assert.equal(r.state.bombOdds,10);
+ assert.equal(r.state.rulesVersion,2);
  assert.equal(r.vouchers.total,0,'first start consumes the one-time free voucher');
  assert.ok(!Object.hasOwn(r.state,'layout'),'hats positions must never leak to client');
  const runId=r.state.id;
@@ -118,7 +138,10 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  assert.equal(recovered.pendingAction.applied,true);
  assert.equal(recovered.pendingAction.result.room,1);
  const fourth=docs.get('deal_christmas_hats_v1/player1');
- const bomb=fourth.layout.findIndex(x=>x.type==='bomb');
+ let bomb=fourth.layout.findIndex(x=>x.type==='bomb');
+ // With favorable probabilities, some rooms have no bomb. Force one only
+ // in this server fixture to verify correct failure/receipt behavior.
+ if(bomb<0){bomb=0;fourth.layout[0]={type:'bomb',items:[]};docs.set('deal_christmas_hats_v1/player1',fourth);}
  const bombAction={type:'pick',index:bomb,requestId:'bomb_checkpoint_xxx1',runId};
  r=await action(bombAction);
  assert.equal(r.state.status,'finished');
