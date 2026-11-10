@@ -81,14 +81,6 @@ test('Different chests use different rarity odds (one roll per category and mate
   const cuts=rarities.reduce((acc,n)=>{acc.push((acc.at(-1)||0)+n);return acc},[]);
   for(let rarity=0;rarity<5;rarity++){
    const roll=rarity===0?0:cuts[rarity-1];
-   let step=0;
-   const chest=rollDogMaterialChest(tier,limit=>{
-    const phase=step++%3;
-    if(phase===0)return 0; // quantity draw first, then category, then rarity
-    if(phase===1)return 0;
-    return roll;
-   });
-   // Explicitly drive rarity by call type so the quantity call is independent.
    let calls=0;
    const exact=rollDogMaterialChest(tier,limit=>{
     if(calls++===0)return 0;
