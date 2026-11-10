@@ -718,6 +718,34 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      tx.create(hammerReceipt,{gameId:after.id,round:lastBefore.round,uid,hammer,source:'banker-deal',createdAt:Date.now()})};
    }
   }
+  // Rare Banker specials are credited only after an authenticated DEAL.
+  // Replays never pay twice: both the receipt and the permanent entitlement
+  // are settled in this same game action transaction.
+  const newlyAcceptedSpecial=before.phase==='decision'&&req.body?.type==='decide'
+    &&req.body?.deal===true&&lastBefore?.bonusSpecial
+    &&!lastBefore.decisions?.some(d=>d.id===req.dealIdentity.uid);
+  if(newlyAcceptedSpecial){
+   const kind=lastBefore.bonusSpecial;
+   if(!['minigame','monster'].includes(kind))throw Error('INVALID_BONUS_SPECIAL');
+   const uid=req.dealIdentity.uid;
+   const specialReceipt=db.collection('deal_banker_special_receipts_v1').doc(after.id+'_'+lastBefore.round+'_'+uid);
+   const inventoryRef=kind==='minigame'
+    ?db.collection('deal_christmas_hats_v1').doc(uid)
+    :db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const [receiptSnap,inventorySnap]=await Promise.all([tx.get(specialReceipt),tx.get(inventoryRef)]);
+   if(!receiptSnap.exists){
+    const previous=inventorySnap.exists?inventorySnap.data():{};
+    const now=Date.now();
+    const update=kind==='minigame'
+     ?{bonusTickets:checkMonsterBalance(Number(previous.bonusTickets||0),1,1000000),
+       ...(inventorySnap.exists?{}:{voucherOnly:true}),updatedAt:now}
+     :{monsterWheelTickets:checkMonsterBalance(Number(previous.monsterWheelTickets||0),1,1000000),
+       updatedAt:now};
+    const priorWrite=awardWrite;
+    awardWrite=()=>{priorWrite?.();tx.set(inventoryRef,update,{merge:true});
+     tx.create(specialReceipt,{gameId:after.id,round:lastBefore.round,uid,kind,createdAt:now})};
+   }
+  }
   if(before.phase!=='final'&&after.phase==='final'){
    const payouts=after.players.map(p=>({id:p.id,payout:p.deal??after.values[p.case]}));
    const max=Math.max(...payouts.map(p=>p.payout));
