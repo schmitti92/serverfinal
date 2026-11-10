@@ -82,12 +82,21 @@ test('historical single-case receipts reconstitute only opponent results at no e
  assert.ok(!('amount' in res.value));
  assert.equal(t.writes.length,0);
 });
-test('own case is denied without any reads of amounts or consumption',async()=>{
+test('one Joker can privately reveal only your own personal case, hiding every opponent',async()=>{
  const t=setup();
- const res=await t.request(path,{case:0,requestId:'peek-own-denied-12345'});
- assert.equal(res.value.error,'OWN_CASE_FORBIDDEN');
- assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,2);
- assert.equal(t.writes.length,0);
+ const action={case:0,requestId:'peek-own-case-123456789'};
+ const res=await t.request(path,action);
+ assert.equal(res.statusCode,200);
+ assert.equal(res.value.mode,'own');
+ assert.deepEqual(res.value.cases,[{id:'alice',name:'Alice',case:0,amount:1}]);
+ assert.equal(res.value.balance,1);
+ assert.equal(t.writes.length,2);
+ assert.equal(t.docs.get('deal_or_no_deal_matches_v1/123').game.opened.length,0);
+ const replay=await t.request(path,action);
+ assert.equal(replay.value.replayed,true);
+ assert.deepEqual(replay.value.cases,res.value.cases);
+ assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,1);
+ assert.equal(t.writes.length,2,'retry never consumes another Joker');
 });
 test('arbitrary non-personal case is denied without a Joker debit',async()=>{
  const t=setup();
@@ -95,11 +104,17 @@ test('arbitrary non-personal case is denied without a Joker debit',async()=>{
  assert.equal(res.value.error,'NOT_OPPONENT_CASE');
  assert.equal(t.writes.length,0);
 });
-test('single-player matches do not spend Joker or disclose own value',async()=>{
- const t=setup({playerCount:1});
- const res=await t.request(path,payload);
- assert.equal(res.value.error,'NO_OTHER_PLAYER_CASES');
+test('single-player matches can inspect their own case for one Joker but not arbitrary cases',async()=>{
+ const t=setup({playerCount:1,balance:1});
+ const invalid=await t.request(path,payload);
+ assert.equal(invalid.value.error,'NOT_OPPONENT_CASE');
  assert.equal(t.writes.length,0);
+ const own=await t.request(path,{case:0,requestId:'peek-solo-own-123456789'});
+ assert.equal(own.statusCode,200);
+ assert.equal(own.value.mode,'own');
+ assert.deepEqual(own.value.cases.map(p=>p.id),['alice']);
+ assert.equal(own.value.balance,0);
+ assert.equal(t.writes.length,2);
 });
 test('two-, three- and four-player matches include exactly the other players',async()=>{
  for(const playerCount of [2,3,4]){
@@ -180,4 +195,40 @@ test('inventory remains a user-only read, never a shared room mutation',async()=
  assert.equal(r.value.balance,2);
  assert.equal(r.headers['Cache-Control'],'no-store');
  assert.equal(t.writes.length,0);
+});
+
+test('all 26-29 modes let players choose own case or opponents without mixing results',async()=>{
+ for(const count of [26,27,28,29]){
+  const t=setup({caseCount:count,balance:2});
+  const own=await t.request(path,{case:0,requestId:'peek-own-'+count+'-test-0001'});
+  assert.equal(own.statusCode,200);
+  assert.equal(own.value.mode,'own');
+  assert.equal(own.value.cases.length,1);
+  assert.equal(own.value.cases[0].id,'alice');
+  const others=await t.request(path,{case:count-1,requestId:'peek-other-'+count+'-test-0002'});
+  assert.equal(others.statusCode,200);
+  assert.equal(others.value.mode,'opponents');
+  assert.deepEqual(others.value.cases.map(p=>p.id),['bob','carol','dave']);
+  assert.equal(others.value.cases.some(p=>p.id==='alice'),false);
+  assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,0);
+  assert.equal(t.writes.length,4,'exactly two transactions; each only 2 writes');
+ }
+});
+
+test('a personal case already pending reveal cannot be inspected or consume a Joker',async()=>{
+ const t=setup({pending:{case:0,actor:'bob'}});
+ const res=await t.request(path,{case:0,requestId:'peek-pending-own-000123'});
+ assert.equal(res.value.error,'CASE_NOT_CLOSED');
+ assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,2);
+ assert.equal(t.writes.length,0);
+});
+
+test('a previously used Joker receipt cannot be replayed with a different mode or case',async()=>{
+ const t=setup({balance:2});
+ const own={case:0,requestId:'peek-mode-lock-000123'};
+ await t.request(path,own);
+ const hijack=await t.request(path,{...own,case:4});
+ assert.equal(hijack.value.error,'REQUEST_REUSED');
+ assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,1);
+ assert.equal(t.writes.length,2);
 });
