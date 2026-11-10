@@ -13,6 +13,12 @@ export const DOG_BOSS_COOLDOWN_MS=10*60*1000;
 export const DOG_BOSS_MAX_MEMBERS=3;
 export const DOG_BOSS_GATE=1;
 export const DOG_BOSS_HP=6000;
+export const DOG_BOSS_PHASES=Object.freeze([
+ {number:1,name:'Der erwachte Wächter',threshold:1,attack:'Steinhieb'},
+ {number:2,name:'Die Glut erwacht',threshold:.5,attack:'Gluthieb'},
+ {number:3,name:'Das letzte Inferno',threshold:.25,attack:'Infernoschlag'}
+]);
+export const bossPhaseOf=hp=>hp<=DOG_BOSS_HP*.25?3:hp<=DOG_BOSS_HP*.5?2:1;
 const MAX_TIME=10_000_000_000_000;
 const num=(v,lo,hi,defaultValue)=>Number.isSafeInteger(v)?Math.max(lo,Math.min(hi,v)):defaultValue;
 const object=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
@@ -37,13 +43,24 @@ export function bossTeam(raw){
  return {version:1,gate:DOG_BOSS_GATE,boss:'Der Aschewächter',
   phase,bossHp:num(d.bossHp,0,DOG_BOSS_HP,DOG_BOSS_HP),bossMaxHp:DOG_BOSS_HP,
   attempt:num(d.attempt,1,1_000_000,1),
+  bossTurn:num(d.bossTurn,0,1_000_000,0),
+  bossCharged:d.bossCharged===true&&phase==='fighting',
   cooldownUntil:phase==='cooldown'?num(d.cooldownUntil,0,MAX_TIME,0):0,
   members,heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
    .map(x=>x.slice(0,140)):[],updatedAt:num(d.updatedAt,0,MAX_TIME,0)};
 }
 export function bossView(raw,uid,now=Date.now()){
  const state=bossTeam(raw);
+ const phaseNumber=bossPhaseOf(state.bossHp);
+ const bossPhase=DOG_BOSS_PHASES[phaseNumber-1];
  return {...state,serverNow:now,cooldownMs:DOG_BOSS_COOLDOWN_MS,
+  bossPhase:phaseNumber,bossPhaseName:bossPhase.name,
+  bossAttackName:state.bossCharged?'🔥 Flammenexplosion':bossPhase.attack,
+  bossTelegraph:state.bossCharged&&state.phase==='fighting'?
+   '⚠️ Achtung: Eine Flammenexplosion trifft den nächsten handelnden Helden! Verteidigen reduziert den Schaden.':
+   phaseNumber===3?'🔥 Das Inferno tobt! Der nächste Angriff könnte eine neue Explosion vorbereiten.':
+   phaseNumber===2?'🔥 Der Wächter ist erwacht. Achte auf sein nächstes Flammenzeichen.':
+   '⚔️ Der Wächter sammelt Glut. Bringe seinen Lebensbalken unter 50 %.' ,
   cooldownRemainingMs:state.phase==='cooldown'?Math.max(0,state.cooldownUntil-now):0,
   isMember:state.members.some(x=>x.uid===uid),
   canJoin:state.members.length<DOG_BOSS_MAX_MEMBERS,
@@ -73,7 +90,7 @@ export function bossRestart(raw,heroByUid,uid,now=Date.now()){
   const maxHp=bossMaxHp(heroByUid?.[member.uid]);
   heroes[member.uid]={hp:maxHp,maxHp,guard:false};
  }
- return {...state,heroes,phase:'ready',bossHp:DOG_BOSS_HP,
+ return {...state,heroes,phase:'ready',bossHp:DOG_BOSS_HP,bossTurn:0,bossCharged:false,
   attempt:state.attempt+1,cooldownUntil:0,
   log:['Versuch '+(state.attempt+1)+': Der Aschewächter ist zurück – volle Lebenspunkte.',
    ...state.log].slice(0,10),updatedAt:now};
@@ -105,10 +122,15 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
  damage=Math.max(1,Math.floor(damage));
  const bossHp=Math.max(0,state.bossHp-damage);
  const victory=bossHp===0;
- const bossPhase=state.bossHp<=DOG_BOSS_HP*.5?2:1;
- // The Aschewächter retaliates against the acting hero, with one telegraphed
- // stronger hit in phase 2. Guarding can prevent most of it.
- let retaliation=victory?0:(bossPhase===2?35:24)+Math.floor(roll(3)/1000)*2;
+ const beforePhase=bossPhaseOf(state.bossHp);
+ const afterPhase=bossPhaseOf(bossHp);
+ const bossTurn=state.bossTurn+1;
+ const chargedAttack=state.bossCharged&&!victory;
+ // Special attacks are advertised before the next action and only resolved by
+ // the server. A defending player can cut most incoming explosion damage.
+ // No extra network action or Firestore read is needed for the warning.
+ let retaliation=victory?0:([0,24,35,46][beforePhase]+
+  (chargedAttack?45:0))+Math.floor(roll(3)/1000)*2;
  retaliation=Math.max(1,retaliation-2*levels.armor-Math.floor(levels.resilience*.5));
  if(actor.guard)retaliation=Math.max(1,Math.ceil(retaliation*.45));
  if(move==='guard')retaliation=Math.max(0,Math.ceil(retaliation*.22));
@@ -125,16 +147,30 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
  const allDown=state.members.length>0&&state.members.every(m=>heroes[m.uid]?.hp<=0);
  const phase=victory?'victory':allDown?'cooldown':'fighting';
  const cooldownUntil=phase==='cooldown'?now+DOG_BOSS_COOLDOWN_MS:0;
+ // Thresholds announce phase changes immediately. Every third team action
+ // while in phase 2/3 prepares another blast for the following player's move.
+ const bossCharged=phase==='fighting'&&
+  (afterPhase>beforePhase&&afterPhase>=2||
+   afterPhase>=2&&bossTurn%3===0);
+ const bossAttack=chargedAttack?'Flammenexplosion':
+  DOG_BOSS_PHASES[beforePhase-1].attack;
  const log=[
   member.name+': '+(move==='guard'?'🛡️ Verteidigung':move==='power'?'🔥 Kraftschlag':
    move==='special'?'✨ Spezialangriff':'⚔️ Angriff')+' – '+damage+' Schaden'+
    (retaliation?' · '+retaliation+' Gegenschaden':'')+'.',
+  ...(chargedAttack?['🔥 Flammenexplosion! '+member.name+' erhält '+retaliation+' Gegenschaden.']:[]),
+  ...(afterPhase>beforePhase&&!victory?
+   ['🔥 Bossphase '+afterPhase+': '+DOG_BOSS_PHASES[afterPhase-1].name+'!']:[]),
+  ...(bossCharged?['⚠️ Der Aschewächter lädt eine Flammenexplosion auf – Verteidigung empfohlen!']:[]),
   ...(victory?['🏆 Der Aschewächter wurde besiegt – Tor 1 geschafft!']:
     phase==='cooldown'?['💀 Alle Helden sind gefallen. 10 Minuten Pause – Tor 1 bleibt erhalten.']:[]),
   ...state.log].slice(0,10);
- return {state:{...state,heroes,bossHp,phase,cooldownUntil,log,updatedAt:now},
+ return {state:{...state,heroes,bossHp,phase,cooldownUntil,log,updatedAt:now,
+   bossTurn,bossCharged},
   result:{type:'combat',move,damage,retaliation,critical,doubleStrike,dodged,
-   defeated:phase==='cooldown',victory,actorHp:hp,bossHp}};
+   defeated:phase==='cooldown',victory,actorHp:hp,bossHp,bossAttack,chargedAttack,
+   bossPhase:afterPhase,phaseChanged:afterPhase>beforePhase,
+   nextAttackCharged:bossCharged}};
 }
 const ERRORS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  INVALID_BOSS_MOVE:400,INVALID_BOSS_COMMAND:400,BOSS_TEAM_FULL:409,
