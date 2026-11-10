@@ -7,17 +7,22 @@ export const ICE_PICTURES=70;
 export const ICE_TILES=50;
 export const ICE_TILES_FROM_PICTURE_30=100;
 export const ICE_HUNDRED_TILE_FROM_PICTURE=30;
+export const ICE_TILES_FROM_PICTURE_40=150;
+export const ICE_HUNDRED_FIFTY_TILE_FROM_PICTURE=40;
 
-// 1–29: 50 tiles (10×5), 30–70: 100 tiles (10×10).
+// 1–29: 50 tiles (10×5), 30–39: 100 tiles (10×10), 40–70: 150 tiles (15×10).
 // Every picture has one secret star; finding it reveals the entire picture.
 // The currently finished picture keeps its own grid until "next" is pressed.
 export function iceTileCount(state){
  const completed=Number(state?.completed)||0;
  const currentPicture=state?.finished&&completed>0?completed:completed+1;
- return currentPicture>=ICE_HUNDRED_TILE_FROM_PICTURE?ICE_TILES_FROM_PICTURE_30:ICE_TILES;
+ return currentPicture>=ICE_HUNDRED_FIFTY_TILE_FROM_PICTURE?ICE_TILES_FROM_PICTURE_40:
+  currentPicture>=ICE_HUNDRED_TILE_FROM_PICTURE?ICE_TILES_FROM_PICTURE_30:ICE_TILES;
 }
 export function nextIceTileCount(state){
- return Number(state?.completed||0)+1>=ICE_HUNDRED_TILE_FROM_PICTURE?ICE_TILES_FROM_PICTURE_30:ICE_TILES;
+ const nextPicture=Number(state?.completed||0)+1;
+ return nextPicture>=ICE_HUNDRED_FIFTY_TILE_FROM_PICTURE?ICE_TILES_FROM_PICTURE_40:
+  nextPicture>=ICE_HUNDRED_TILE_FROM_PICTURE?ICE_TILES_FROM_PICTURE_30:ICE_TILES;
 }
 export const HAMMER_PRICES=Object.freeze({single:30000000,double:50000000,lucky:100000000});
 export const MONEY_PRIZES=Object.freeze([100,500,1000,2500,5000,10000,25000,50000,100000,200000,350000,500000,750000,1000000,1500000,2000000]);
