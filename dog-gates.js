@@ -121,6 +121,7 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
   highestGate:Math.max(player.highestGate??player.currentGate,success?nextGate:1),
   normals:normal(gate)&&success?[...player.normals,gate].sort((a,b)=>a-b):player.normals,
   minis:mini(gate)&&success?[...player.minis,gate].sort((a,b)=>a-b):player.minis,
+  miniRewards:player.miniRewards||[],
   lastAttemptAt:now,lastResult:success?'win':'loss'};
  const next={...state,people:{...state.people,[uid]:nextPlayer},updatedAt:now};
  const result={gate,type:mini(gate)?'mini':'normal',win:success,
