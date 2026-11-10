@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - dog-balance.js
+      - dog-gates.js
       - tests/dog-balance.test.js
+      - tests/dog-gates.test.js
       - .github/workflows/dog-balance-check.yml
   pull_request:
     paths:
       - dog-balance.js
+      - dog-gates.js
       - tests/dog-balance.test.js
+      - tests/dog-gates.test.js
       - .github/workflows/dog-balance-check.yml
   workflow_dispatch:
 
@@ -25,6 +29,7 @@ jobs:
       - name: Check balance syntax
         run: |
           node --check dog-balance.js
+          node --check dog-gates.js
           node --check tests/dog-balance.test.js
       - name: Run balance simulations and unit tests
-        run: node --test tests/dog-balance.test.js
+        run: node --test tests/dog-balance.test.js tests/dog-gates.test.js
