@@ -170,12 +170,25 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   try{const result=await promise;if((avatarCacheGenerations.get(code)||0)!==generation)return readAvatars(db,code);return result}catch(error){if(avatarReadCache.get(code)?.promise===promise)avatarReadCache.delete(code);throw error}
  };
  const roomReadCache=new Map();
+ // In-flight requests for the same hub room are one Firestore read even when
+ // three players act at nearly the same moment. The promise is discarded as
+ // soon as it settles: write operations still check fresh room membership.
+ const roomReadsInFlight=new Map();
+ const freshRoomSnapshot=(db,code)=>{
+  const running=roomReadsInFlight.get(code);
+  if(running){firestoreUsage.roomCacheHits++;return running}
+  firestoreUsage.roomReads++;
+  const promise=db.collection(hubCollection).doc(code).get();
+  roomReadsInFlight.set(code,promise);
+  const clear=()=>{if(roomReadsInFlight.get(code)===promise)roomReadsInFlight.delete(code)};
+  promise.then(clear,clear);
+  return promise;
+ };
  const check=async(db,code,uid,allowCache=false)=>{
   const now=Date.now();
   let entry=allowCache?roomReadCache.get(code):null;
   if(!entry||entry.expires<=now){
-   firestoreUsage.roomReads++;
-   const promise=db.collection(hubCollection).doc(code).get();
+   const promise=freshRoomSnapshot(db,code);
    entry={promise,expires:now+2000};
    if(allowCache){
     roomReadCache.set(code,entry);
