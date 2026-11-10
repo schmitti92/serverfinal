@@ -1,0 +1,181 @@
+/** Personal expedition map: secure team positions and solo gate attempts.
+ * Each shared boss team's roster is the only allowed 3-player roster.
+ * This module does not award loot, unlock DOG or alter the legacy boss arena.
+ */
+import {randomInt} from 'node:crypto';
+import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam} from './dog-boss.js';
+import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
+import {dogNormalGateChance,dogResolveNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
+
+export const DOG_GATE_PROGRESS_COLLECTION='dog_gate_progress_v1';
+export const DOG_GATE_PROGRESS_ID='first-three-heroes';
+export const DOG_GATE_RECEIPTS_COLLECTION='dog_gate_fight_receipts_v1';
+export const DOG_GATE_COOLDOWN_MS=3000;
+
+const obj=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+const cleanName=value=>String(value||'Held').replace(/[<>\r\n\t]/g,'').trim().slice(0,32)||'Held';
+const clamp=(n,min,max,fallback=min)=>Number.isSafeInteger(n)?Math.max(min,Math.min(max,n)):fallback;
+const validUid=uid=>typeof uid==='string'&&uid.length>=1&&uid.length<=200;
+const validGate=gate=>Number.isSafeInteger(gate)&&gate>=1&&gate<=99&&gate%10!==0;
+const normal=gate=>validGate(gate)&&gate%10!==5;
+const mini=gate=>validGate(gate)&&gate%10===5;
+const positiveUnique=(numbers,pred)=>Array.isArray(numbers)?
+ Array.from(new Set(numbers.filter(pred))).sort((a,b)=>a-b):[];
+const previousNormal=gate=>{
+ for(let previous=gate-1;previous>0;previous--)
+  if(normal(previous))return previous;
+ return null;
+};
+
+/** Saved only after server-authoritative fights. A selected gate never advances
+ * another player's progress. Unknown/legacy data cannot fabricate wins. */
+export function dogGateProgress(raw){
+ const x=obj(raw),people=obj(x.people),result={};
+ for(const [uid,value] of Object.entries(people).slice(0,3)){
+  if(!validUid(uid))continue;
+  const p=obj(value);
+  result[uid]={
+   currentGate:clamp(p.currentGate,1,100,1),
+   normals:positiveUnique(p.normals,normal),
+   minis:positiveUnique(p.minis,mini),
+   lastAttemptAt:clamp(p.lastAttemptAt,0,10_000_000_000_000,0),
+   lastResult:p.lastResult==='win'?'win':p.lastResult==='loss'?'loss':null
+  };
+ }
+ return {version:1,people:result,sharedBosses:positiveUnique(x.sharedBosses,
+  gate=>Number.isSafeInteger(gate)&&gate>=10&&gate<=100&&gate%10===0),
+  updatedAt:clamp(x.updatedAt,0,10_000_000_000_000,0)};
+}
+export function dogGateMapView(teamRaw,progressRaw,viewerUid){
+ const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
+ const members=team.members.map(m=>{
+  const p=progress.people[m.uid];
+  return {uid:m.uid,name:cleanName(m.name),currentGate:p?.currentGate??1,
+   wonNormals:p?.normals.length??0,wonMinis:p?.minis.length??0,
+   lastAttemptAt:p?.lastAttemptAt??0,lastResult:p?.lastResult??null,
+   isMe:m.uid===viewerUid};
+ });
+ return {members,memberCount:members.length,teamReady:members.length===3,
+  isMember:members.some(m=>m.uid===viewerUid),canJoin:members.length<3,
+  sharedBosses:progress.sharedBosses,
+  dogUnlocked:progress.sharedBosses.includes(100), // only trusted server wins may write this
+  progress:progress.people[viewerUid]||{currentGate:1,normals:[],minis:[],
+   lastAttemptAt:0,lastResult:null},
+  availableBossGate:10, // legacy shared arena is still a separate Tor-1 test
+  bossArenaIsTest:true,
+  cacheSeconds:30};
+}
+export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Date.now()){
+ if(!validUid(uid))throw Error('LOGIN_REQUIRED');
+ if(!validGate(gate))throw Error('DOG_GATE_INVALID');
+ const state=dogGateProgress(progressRaw);
+ const player=state.people[uid]||{currentGate:1,normals:[],minis:[],
+  lastAttemptAt:0,lastResult:null};
+ const wins=mini(gate)?player.minis:player.normals;
+ if(wins.includes(gate))throw Error('DOG_GATE_ALREADY_WON');
+ const needed=previousNormal(gate);
+ if(needed!==null&&!player.normals.includes(needed))throw Error('DOG_GATE_PREVIOUS_REQUIRED');
+ if(player.lastAttemptAt&&now-player.lastAttemptAt<DOG_GATE_COOLDOWN_MS)
+  throw Error('DOG_GATE_COOLDOWN');
+ const levels=dogHero(heroRaw).levels;
+ const gear={weaponLevel:Math.min(10,levels.weapon),armorLevel:Math.min(10,levels.armor),
+  skills:levels};
+ const fight=mini(gate)?
+  dogSimulateMiniBoss({gate,...gear,rand}):
+  dogResolveNormalGate({gate,...gear},rand);
+ const success=mini(gate)?fight.victory:fight.win;
+ const nextPlayer={currentGate:success?Math.min(100,gate+1):gate,
+  normals:normal(gate)&&success?[...player.normals,gate].sort((a,b)=>a-b):player.normals,
+  minis:mini(gate)&&success?[...player.minis,gate].sort((a,b)=>a-b):player.minis,
+  lastAttemptAt:now,lastResult:success?'win':'loss'};
+ const next={...state,people:{...state.people,[uid]:nextPlayer},updatedAt:now};
+ const result={gate,type:mini(gate)?'mini':'normal',win:success,
+  ...(mini(gate)?{combat:fight,miniRewardPending:success}:{
+   chancePercent:fight.chancePercent,roll:fight.roll}),
+  currentGate:nextPlayer.currentGate};
+ return {progress:next,result};
+}
+const ERRORS={LOGIN_REQUIRED:401,DOG_GATE_INVALID:400,INVALID_REQUEST_ID:400,
+ DOG_GATE_RECEIPT_CONFLICT:409,DOG_GATE_PREVIOUS_REQUIRED:409,
+ DOG_GATE_ALREADY_WON:409,DOG_GATE_COOLDOWN:429,
+ DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403};
+export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
+ const auth=async(req,res,next)=>{
+  try{
+   const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
+   if(!match)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
+   const p=await verifyProfile(match[1]);
+   if(!p?.uid)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
+   req.dogGateProfile={uid:p.uid,name:cleanName(p.name||p.displayName)};
+   next();
+  }catch{return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});}
+ };
+ const error=(res,e)=>{
+  const reason=String(e?.message||'');
+  return res.status(ERRORS[reason]||500).json({
+   ok:false,error:ERRORS[reason]?reason:'DOG_GATE_UNAVAILABLE'});
+ };
+ const refs=()=>{
+  const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+  return {db,teamRef:db.collection(DOG_BOSS_TEAM_COLLECTION).doc(DOG_BOSS_TEAM_ID),
+   progressRef:db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID)};
+ };
+ app.get('/api/dog/gates/map',auth,async(req,res)=>{
+  try{
+   const {teamRef,progressRef}=refs();
+   const [team,progress]=await Promise.all([teamRef.get(),progressRef.get()]);
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...dogGateMapView(team.exists?team.data():null,
+    progress.exists?progress.data():null,req.dogGateProfile.uid)});
+  }catch(e){return error(res,e);}
+ });
+ app.post('/api/dog/gates/join',auth,async(req,res)=>{
+  try{
+   const {db,teamRef,progressRef}=refs(),{uid,name}=req.dogGateProfile;
+   const value=await db.runTransaction(async tx=>{
+    const [teamSnap,progressSnap]=await Promise.all([tx.get(teamRef),tx.get(progressRef)]);
+    const team=bossTeam(teamSnap.exists?teamSnap.data():null);
+    if(team.members.some(m=>m.uid===uid))
+     return dogGateMapView(team,progressSnap.exists?progressSnap.data():null,uid);
+    if(team.members.length>=3)throw Error('DOG_GATE_TEAM_FULL');
+    const next=bossJoin(team,uid,name,null,clock());
+    tx.set(teamRef,next);
+    return dogGateMapView(next,progressSnap.exists?progressSnap.data():null,uid);
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...value});
+  }catch(e){return error(res,e);}
+ });
+ app.post('/api/dog/gates/fight',auth,async(req,res)=>{
+  try{
+   const requestId=req.body?.requestId,gate=req.body?.gate;
+   if(typeof requestId!=='string'||!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))
+    throw Error('INVALID_REQUEST_ID');
+   if(!validGate(gate))throw Error('DOG_GATE_INVALID');
+   const {db,teamRef,progressRef}=refs(),uid=req.dogGateProfile.uid;
+   const heroRef=db.collection(DOG_HERO_COLLECTION).doc(uid);
+   const receiptRef=db.collection(DOG_GATE_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
+   const response=await db.runTransaction(async tx=>{
+    const [receipt,team,progress,hero]=await Promise.all([
+     tx.get(receiptRef),tx.get(teamRef),tx.get(progressRef),tx.get(heroRef)
+    ]);
+    const teamData=bossTeam(team.exists?team.data():null);
+    if(!teamData.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
+    const saved=dogGateProgress(progress.exists?progress.data():null);
+    if(receipt.exists){
+     const before=receipt.data();
+     if(before.gate!==gate)throw Error('DOG_GATE_RECEIPT_CONFLICT');
+     return {result:before.result,map:dogGateMapView(teamData,saved,uid),replayed:true};
+    }
+    const outcome=dogGateFight(saved,uid,gate,hero.exists?hero.data():null,rand,clock());
+    const map=dogGateMapView(teamData,outcome.progress,uid);
+    // Store both result and progressed map atomically.
+    tx.set(progressRef,outcome.progress);
+    tx.create(receiptRef,{uid,gate,requestId,createdAt:clock(),result:outcome.result});
+    return {result:outcome.result,map,replayed:false};
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...response});
+  }catch(e){return error(res,e);}
+ });
+}
