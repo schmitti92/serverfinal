@@ -93,6 +93,27 @@ test('20 finished Christmas pictures unlock Kniffel dice permanently, without gr
 });
 
 
+test('40 completed Christmas pictures unlock Deal autoplay for all player profiles and persist through resets',async()=>{
+ const {invokeUnlocks,state}=build(false);
+ state.completed=39;state.maxRewarded=39;
+ let response=await invokeUnlocks();
+ assert.equal(response.statusCode,200);
+ assert.equal(response.payload.dealAutoplay,false,'39 pictures cannot unlock Autoplay');
+ state.completed=40;state.maxRewarded=40;
+ response=await invokeUnlocks();
+ assert.equal(response.payload.dealAutoplay,true);
+ assert.equal(response.payload.kniffelChristmasDice,true);
+ assert.equal(response.headers['Cache-Control'],'no-store');
+ state.completed=0;state.maxRewarded=40;
+ response=await invokeUnlocks();
+ assert.equal(response.payload.dealAutoplay,true,'reset preserves the verified milestone');
+ state.completed=0;state.maxRewarded=39;
+ response=await invokeUnlocks();
+ assert.equal(response.payload.dealAutoplay,false);
+ assert.equal(state.freeHammers.single,0,'autoplay milestone gives no free hammers');
+});
+
+
 // End-to-end route-level tests with an in-memory Firestore transaction double.
 // They count writes while exercising the same authenticated action handler.
 function iceActionFixture({star=19,free=0,balance=100000000}={}){
