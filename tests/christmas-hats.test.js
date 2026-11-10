@@ -160,17 +160,27 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const recovered=await request('GET','/api/christmas-hats/me',{}, {pendingId:'pick_checkpoint_1xxxxxxx'});
  assert.equal(recovered.pendingAction.applied,true);
  assert.equal(recovered.pendingAction.result.room,1);
- const fourth=docs.get('deal_christmas_hats_v1/player1');
- let bomb=fourth.layout.findIndex(x=>x.type==='bomb');
- // With favorable probabilities, some rooms have no bomb. Force one only
- // in this server fixture to verify correct failure/receipt behavior.
- if(bomb<0){bomb=0;fourth.layout[0]={type:'bomb',items:[]};docs.set('deal_christmas_hats_v1/player1',fourth);}
+ // Room 6 is guaranteed safe. Gain a prize there, then verify that
+ // room 7 can explode without touching the five checkpoint-secured rooms.
+ const safeSix=docs.get('deal_christmas_hats_v1/player1');
+ assert.equal(safeSix.room,6);
+ assert.equal(safeSix.layout.some(h=>h.type==='bomb'),false);
+ const giftSix=safeSix.layout.findIndex(h=>h.type==='gift');
+ const safeSixResult=await action({type:'pick',index:giftSix,requestId:'safe_room_six_pick_xxx',runId});
+ assert.equal(safeSixResult.state.room,7);
+ assert.equal(safeSixResult.state.checkpoint,5);
+ assert.equal(safeSixResult.state.pending.length,1);
+ const seventh=docs.get('deal_christmas_hats_v1/player1');
+ let bomb=seventh.layout.findIndex(x=>x.type==='bomb');
+ // A non-bonus room can also be bomb-free; force the jackpot failure only
+ // inside this server test fixture to exercise payout and exact-once retries.
+ if(bomb<0){bomb=0;seventh.layout[0]={type:'bomb',items:[]};docs.set('deal_christmas_hats_v1/player1',seventh);}
  const bombAction={type:'pick',index:bomb,requestId:'bomb_checkpoint_xxx1',runId};
  r=await action(bombAction);
  assert.equal(r.state.status,'finished');
  assert.equal(r.state.summary.reason,'bomb');
  assert.equal(r.state.summary.awarded.length,5);
- assert.equal(r.state.summary.lost.length,0);
+ assert.equal(r.state.summary.lost.length,1);
  const after=structuredClone([...docs.entries()]);
  const replay=await action(bombAction);
  assert.equal(replay.replayed,true);
