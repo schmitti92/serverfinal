@@ -257,8 +257,7 @@ export function cancelSeven(original,seat){
   if(original.phase!=='seven'||original.current!==seat)throw Error('CANNOT_CANCEL');
   const s=clone(original);s.pieces=s.seven.snapshot;s.seven=null;s.phase='play';s.revision++;return s;
 }
-function score(s,action){
-  const player=s.current;
+function score(s,action,player=s.current){
   if(action.type==='exchange'){
     const card=s.hands[player].find(c=>c.id===action.cardId);
     const partner=(player+2)%4;
@@ -281,7 +280,7 @@ function score(s,action){
 export function botAction(s,seat=s.current){
   const opts=legalActions(s,seat);
   if(!opts.length)return null;
-  return [...opts].sort((a,b)=>score(s,b)-score(s,a))[0];
+  return [...opts].sort((a,b)=>score(s,b,seat)-score(s,a,seat))[0];
 }
 export function publicState(s,seat=null){
   const t=clone(s);t.deckCount=t.deck.length;delete t.deck;t.discardCount=t.discard.length;delete t.discard;
