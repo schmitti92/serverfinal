@@ -9,7 +9,7 @@ import {ascensionView,ascensionUpgrade,installDogAscensionApi} from '../dog-asce
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_MATERIALS_COLLECTION} from '../dog-materials.js';
-import {DOG_HERO_COLLECTION} from '../dog-forge.js';
+import {DOG_HERO_COLLECTION,forgeQuote,forgeUpgrade,forgeView,installDogForgeApi} from '../dog-forge.js';
 
 const now=1_800_000_000_000;
 const normals=[1,2,3,4,6,7,8,9];
@@ -127,6 +127,29 @@ test('Boss-gated forge will not spend materials before group victory',()=>{
  assert.throws(()=>ascensionUpgrade(first.hero,first.inventory,p,'weapon',2,0,now),/BOSS_REQUIRED/);
 });
 
+test('The existing forge is also boss-gated for expedition members',()=>{
+ const inv=bag(),hero={levels:{weapon:1,armor:1,attack_power:5}};
+ const locked={sharedBosses:[]};
+ const q=forgeQuote('weapon',1,inv.resources,locked);
+ assert.equal(q.unlockedMaxLevel,1);
+ assert.equal(q.maxLevel,10);
+ assert.equal(q.locked,true);
+ assert.deepEqual(q.cost,{iron:3});
+ assert.throws(()=>forgeUpgrade(hero,inv,'weapon',1,0,now,locked),
+  /DOG_FORGE_BOSS_REQUIRED/);
+ assert.equal(forgeQuote('attack_power',5,inv.resources,locked).locked,true);
+ const unlocked={sharedBosses:[10]};
+ assert.equal(forgeQuote('weapon',1,inv.resources,unlocked).locked,false);
+ assert.equal(forgeQuote('attack_power',5,inv.resources,unlocked).locked,false);
+ const upgrade=forgeUpgrade(hero,inv,'weapon',1,0,now,unlocked);
+ assert.equal(upgrade.hero.levels.weapon,2);
+ assert.equal(upgrade.inventory.resources.iron,37);
+ assert.throws(()=>forgeUpgrade(upgrade.hero,upgrade.inventory,'weapon',2,0,now,unlocked),
+  /DOG_FORGE_BOSS_REQUIRED/);
+ assert.equal(forgeQuote('weapon',13,inv.resources,unlocked).maxed,true);
+ assert.equal(forgeView({levels:{weapon:13}},inv,unlocked).hero.levels.weapon,13);
+});
+
 test('Existing weapon levels beyond 10 remain saved but cannot be forged higher',()=>{
  const p=progress();p.sharedBosses=[10];
  const h={levels:{weapon:13,armor:1}};
@@ -165,6 +188,7 @@ function fixture(){
   rand:max=>Math.min(dice,max-1)});
  installDogAscensionApi(app,{verifyProfile:identity,getFirestore:()=>db,clock:()=>time,
   rand:max=>Math.min(dice,max-1)});
+ installDogForgeApi(app,{verifyProfile:identity,getFirestore:()=>db,rand:max=>Math.min(dice,max-1)});
  async function call(method,route,body={},token='a'){
   const handlers=routes.get(method+' '+route);assert.ok(handlers,'missing '+method+' '+route);
   const req={body,get:header=>header==='authorization'?'Bearer '+token:''};
@@ -183,6 +207,30 @@ function fixture(){
  }
  return {docs,call,advance:ms=>time+=ms,roll:n=>dice=n};
 }
+
+test('Legacy forge endpoint cannot bypass the boss-10 limit',async()=>{
+ const f=fixture();
+ const blocked=await f.call('GET','/api/dog/forge/me');
+ assert.equal(blocked.body.ok,true);
+ assert.equal(blocked.body.forgeLevel,1);
+ assert.equal(blocked.body.quotes.find(q=>q.itemId==='weapon').locked,true);
+ const upgradeBefore=await f.call('POST','/api/dog/forge/upgrade',{
+  requestId:'legacy-bypass-try-0001',itemId:'weapon',expectedLevel:1});
+ assert.equal(upgradeBefore.statusCode,409);
+ assert.equal(upgradeBefore.body.error,'DOG_FORGE_BOSS_REQUIRED');
+ const p=f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID);
+ p.sharedBosses=[10];f.docs.set(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID,p);
+ const allowed=await f.call('POST','/api/dog/forge/upgrade',{
+  requestId:'legacy-forge-after-win-0001',itemId:'weapon',expectedLevel:1});
+ assert.equal(allowed.body.ok,true);
+ assert.equal(allowed.body.result.success,true);
+ assert.equal(allowed.body.hero.levels.weapon,2);
+ assert.equal(allowed.body.inventory.resources.iron,37);
+ const repeat=await f.call('POST','/api/dog/forge/upgrade',{
+  requestId:'legacy-forge-after-win-0001',itemId:'weapon',expectedLevel:1});
+ assert.equal(repeat.body.replayed,true);
+ assert.equal(repeat.body.inventory.resources.iron,37);
+});
 
 test('Authenticated API completes ready/fight/forge cycle without double claims',async()=>{
  const f=fixture();
