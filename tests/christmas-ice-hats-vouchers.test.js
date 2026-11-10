@@ -25,7 +25,13 @@ function setup({completed=2,maxRewarded=completed,hats=null}={}){
   post:(url,...handlers)=>routes.set('POST '+url,handlers)
  };
  const db={
-  collection:name=>({doc:key=>({path:name+'/'+key})}),
+  collection:name=>({doc:key=>{
+   const path=name+'/'+key;
+   return {path,async get(){
+    const value=docs.get(path);
+    return {exists:value!==undefined,data:()=>structuredClone(value)};
+   }};
+  }}),
   async runTransaction(fn){
    const queued=[];
    let wrote=false;
