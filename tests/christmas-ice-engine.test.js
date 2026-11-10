@@ -213,3 +213,31 @@ test('restarting progress resets to 50 tiles without duplicating earned items',(
  assert.equal(won.result.gift,null);
  assert.equal(won.state.completed,1);
 });
+
+
+test('old player ice profiles with missing optional arrays still load without losing earned milestones',()=>{
+ const old={...newIceState(()=>9),version:2,completed:24,maxRewarded:27,
+  star:21,freeHammers:{single:2,double:3,lucky:1},peekJokers:7,
+  goldenHammerGift2026:true};
+ delete old.opened;delete old.prizes;delete old.lastActions;
+ const before=structuredClone(old);
+ const restored=normalizeIceState(old);
+ assert.deepEqual(restored.opened,[]);
+ assert.deepEqual(restored.prizes,[]);
+ assert.deepEqual(restored.lastActions,[]);
+ assert.equal(restored.completed,24);
+ assert.equal(restored.maxRewarded,27);
+ assert.equal(restored.peekJokers,7);
+ assert.deepEqual(restored.freeHammers,{single:2,double:3,lucky:1});
+ assert.equal(restored.goldenHammerGift2026,true);
+ assert.equal(publicIceState(restored).tilesRequired,50);
+ assert.deepEqual(old,before,'read-time repair must never change the original Firestore document');
+ const hit=strikeIce(restored,{index:0,hammer:'single',requestId:'legacy-david-open-0001'},()=>0);
+ assert.equal(hit.state.freeHammers.single,1);
+ assert.equal(hit.state.completed,24);
+ assert.deepEqual(hit.state.opened,[0]);
+});
+test('a structurally invalid saved field is not silently discarded',()=>{
+ const s={...newIceState(()=>1),opened:{'0':true}};
+ assert.throws(()=>normalizeIceState(s),/INVALID_ICE_OPENED/);
+});
