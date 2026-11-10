@@ -64,6 +64,29 @@ test('Personal map defaults are not fabricated and contain no DOG unlock',()=>{
  assert.deepEqual(sanitized.sharedBosses,[10]);
 });
 
+test('Unaffiliated signed-in players see team capacity, never private gate locations',()=>{
+ const team={members:[
+  {uid:'hero-a',name:'Christoph'},{uid:'hero-b',name:'David'}
+ ]};
+ const progress={people:{
+  'hero-a':{currentGate:32,highestGate:40,normals:[1,2,3],minis:[]},
+  'hero-b':{currentGate:29,highestGate:30,normals:[1,2,3],minis:[]}
+ },sharedBosses:[10,20,30]};
+ const stranger=dogGateMapView(team,progress,'outside-account');
+ assert.equal(stranger.isMember,false);
+ assert.equal(stranger.memberCount,2);
+ assert.equal(stranger.canJoin,true);
+ assert.deepEqual(stranger.members,[]);
+ assert.deepEqual(stranger.sharedBosses,[]);
+ assert.equal(stranger.dogUnlocked,false);
+ const joined=dogGateMapView(team,progress,'hero-b');
+ assert.equal(joined.isMember,true);
+ assert.equal(joined.members.length,2);
+ assert.equal(joined.members[0].highestGate,40);
+ assert.equal(joined.members[1].currentGate,29);
+ assert.equal(joined.canJoin,false);
+});
+
 test('All three hero positions show on a shared map; fourth cannot enroll',async()=>{
  const f=fixture();
  for(const token of ['a','b','c']){
