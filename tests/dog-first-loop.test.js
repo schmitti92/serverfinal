@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- boss10State,boss10View,boss10Ready,boss10React,boss10Finish,
+ boss10State,boss10View,boss10Ready,boss10Start,boss10React,boss10Finish,
+ boss10ResolveCombat,boss10DamagePotential,
  installDogBoss10Api,DOG_BOSS10_RECEIPTS_COLLECTION,
  DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS
 } from '../dog-boss10.js';
@@ -20,19 +21,83 @@ const progress=()=>({people:Object.fromEntries(team.members.map(m=>
  [m.uid,{currentGate:10,normals,minis:[],lastAttemptAt:0}])),
  sharedBosses:[],updatedAt:0});
 const heroes=()=>Object.fromEntries(team.members.map(m=>[m.uid,{levels:{
- weapon:1,armor:1,attack_power:2,vitality:2}}]));
+ weapon:1,armor:1,attack_power:5,destruction:5,vitality:5,blocking:5}}]));
 const bag=()=>({resources:{
  iron:40,forge_coal:10,steel_core:5,mithril:2,dragonsteel:1,
  life_dust:40,guard_crystal:10,life_essence:5,guardian_rune:2,phoenix_feather:1
  }});
 
-test('Prerequisite: all three need the normal 9 but NOT miniboss 5',()=>{
+test('Only participating heroes must clear Tor 9; others may prepare later',()=>{
  let p=progress();p.people['hero-b'].normals=p.people['hero-b'].normals.filter(x=>x!==9);
- assert.throws(()=>boss10Ready(p,team,'hero-a',heroes(),now),/DOG_BOSS10_PREREQUISITES/);
+ const first=boss10Ready(p,team,'hero-a',heroes(),now);
+ assert.deepEqual(first.boss10.ready,['hero-a']);
+ assert.throws(()=>boss10Ready(first,team,'hero-b',heroes(),now),/DOG_BOSS10_PREREQUISITES/);
+ const solo=boss10Start(first,team,'hero-a',heroes(),now);
+ assert.equal(solo.boss10.roster.length,1);
  assert.equal(boss10State(null).phase,'waiting');
  assert.equal(boss10View(team,progress(),'hero-a').teamReady,true);
  assert.equal(boss10View(team,progress(),'hero-a').eligible,true);
  assert.equal(boss10View(team,progress(),'hero-z').isMember,false);
+});
+
+test('Solo starts immediately on explicit Start but cannot win under any luck roll',()=>{
+ const p=boss10Ready(progress(),team,'hero-a',heroes(),now);
+ assert.equal(p.boss10.phase,'waiting');
+ assert.throws(()=>boss10Start(p,team,'hero-c',heroes(),now),/NOT_READY/);
+ const started=boss10Start(p,team,'hero-a',heroes(),now);
+ assert.equal(started.boss10.phase,'fighting');
+ assert.deepEqual(started.boss10.ready,['hero-a']);
+ assert.deepEqual(started.boss10.roster.map(m=>m.uid),['hero-a']);
+ const reacted=boss10React(started,'hero-a',now+1000);
+ for(const roll of [0,50,5000,9999]){
+  const out=boss10Finish(reacted,now+30001,()=>roll);
+  assert.equal(out.result.win,false);
+  assert.equal(out.result.participants,1);
+  assert.ok(out.result.damage<out.result.bossHp);
+  assert.deepEqual(out.progress.sharedBosses,[]);
+ }
+ assert.throws(()=>boss10React(started,'hero-c',now+1000),/NOT_PARTICIPANT/);
+});
+
+test('Two maxed heroes can win a very rare special attack; ordinary luck is insufficient',()=>{
+ let p=progress();
+ p=boss10Ready(p,team,'hero-a',heroes(),now);
+ p=boss10Ready(p,team,'hero-b',heroes(),now);
+ const started=boss10Start(p,team,'hero-a',heroes(),now);
+ assert.equal(started.boss10.roster.length,2);
+ assert.equal(started.boss10.phase,'fighting');
+ p=boss10React(started,'hero-a',now+2000);
+ p=boss10React(p,'hero-b',now+2000);
+ const ordinary=boss10Finish(p,now+30001,()=>9999);
+ assert.equal(ordinary.result.win,false);
+ const extremelyLucky=boss10Finish(p,now+30001,()=>0);
+ assert.equal(extremelyLucky.result.win,true);
+ assert.equal(extremelyLucky.result.rareCritical,true);
+ assert.equal(extremelyLucky.result.participants,2);
+ assert.ok(extremelyLucky.result.damage>=extremelyLucky.result.bossHp);
+ const noRare=boss10Finish(p,now+30001,((n)=>{let count=0;
+  return ()=>++count===1?0:9999;
+ })());
+ assert.equal(noRare.result.win,false);
+ assert.equal(noRare.result.rareCritical,false);
+ assert.equal(noRare.result.participants,2);
+});
+
+test('Three well prepared heroes deal enough damage to win without rare duo luck',()=>{
+ let p=progress();
+ for(const member of team.members)p=boss10Ready(p,team,member.uid,heroes(),now);
+ assert.equal(p.boss10.phase,'fighting');
+ const result=boss10Finish(p,now+30001,()=>0);
+ assert.equal(result.result.win,true);
+ assert.equal(result.result.participants,3);
+ assert.equal(result.result.rareCritical,false);
+ assert.ok(result.result.damage>=result.result.bossHp);
+ const bad=boss10Finish(p,now+30001,()=>9999);
+ assert.equal(bad.result.win,false,'very poor luck can still defeat a strong trio');
+ const weak=team.members.map(m=>({uid:m.uid,weaponLevel:1,armorLevel:1,
+  skillPower:0,skillDestruction:0,skillDefense:0,skillGuard:0}));
+ assert.ok(boss10DamagePotential(weak,[])<boss10DamagePotential(p.boss10.roster,[]));
+ assert.equal(boss10ResolveCombat(weak,[],()=>0).win,false);
 });
 
 test('Three ready commands start exactly one 30-second encounter',()=>{
@@ -70,6 +135,8 @@ test('Reaction is one per player; shared boss success unlocks forge level 2',()=
    'highest gate is also advanced by the shared win');
  }
  assert.equal(won.progress.boss10.phase,'victory');
+ assert.ok(won.progress.boss10.result.damage>=won.progress.boss10.result.bossHp);
+ assert.equal(boss10View(team,won.progress,'hero-a').result.participants,3);
  assert.equal(ascensionView(null,bag(),won.progress).forgeLevel,2);
  assert.equal(ascensionView(null,bag(),won.progress).skillsCap,10);
  assert.throws(()=>boss10Ready(won.progress,team,'hero-a',heroes(),now+30002),/ALREADY_WON/);
