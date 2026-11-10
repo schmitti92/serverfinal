@@ -88,13 +88,25 @@ test('Defeat triggers a group-wide cooldown and resets only after expiry',()=>{
  assert.equal(loss.result.win,false);
  assert.equal(loss.progress.sharedBosses.length,0);
  assert.equal(loss.progress.boss10.phase,'cooldown');
- assert.equal(loss.progress.boss10.cooldownUntil,now+30001+DOG_BOSS10_COOLDOWN_MS);
+ assert.equal(loss.progress.boss10.cooldownUntil,now+DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS);
  assert.throws(()=>boss10Ready(loss.progress,team,'hero-a',heroes(),now+50000),/COOLDOWN/);
  const retry=boss10Ready(loss.progress,team,'hero-a',heroes(),
   now+30001+DOG_BOSS10_COOLDOWN_MS+1);
  assert.equal(retry.boss10.phase,'waiting');
  assert.deepEqual(retry.boss10.ready,['hero-a']);
  assert.equal(retry.boss10.attempt,2);
+});
+
+test('Late reconnect does not restart an already elapsed ten-minute defeat cooldown',()=>{
+ let p=progress();
+ for(const member of team.members)p=boss10Ready(p,team,member.uid,heroes(),now);
+ const recovered=boss10Finish(p,now+DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS+50000,()=>9999);
+ assert.equal(recovered.result.win,false);
+ assert.equal(recovered.progress.boss10.cooldownUntil,
+  now+DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS);
+ const retry=boss10Ready(recovered.progress,team,'hero-a',heroes(),
+  now+DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS+50001);
+ assert.equal(retry.boss10.phase,'waiting');
 });
 
 test('Normal gate saves never delete an ongoing shared boss state',()=>{
@@ -207,6 +219,47 @@ function fixture(){
  }
  return {docs,call,advance:ms=>time+=ms,roll:n=>dice=n};
 }
+
+test('After everyone disconnects, a later boss view settles the fight exactly once',async()=>{
+ const f=fixture();
+ for(const [i,t] of ['a','b','c'].entries()){
+  const r=await f.call('POST','/api/dog/gates/boss10/ready',
+   {requestId:'resume-ready-'+i+'-00001'},t);
+  assert.equal(r.statusCode,200);
+ }
+ f.advance(DOG_BOSS10_DURATION_MS+5000);
+ const recovered=await f.call('GET','/api/dog/gates/boss10',{},'b');
+ assert.equal(recovered.body.phase,'victory');
+ assert.equal(recovered.body.won,true);
+ assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
+  .sharedBosses,[10]);
+ const other=await f.call('GET','/api/dog/gates/boss10',{},'c');
+ assert.equal(other.body.phase,'victory');
+ assert.equal(other.body.result.roll,recovered.body.result.roll);
+ assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
+  .sharedBosses,[10]);
+ const laterAttempt=await f.call('POST','/api/dog/gates/boss10/finish',
+  {requestId:'after-recovery-finish-0001'});
+ assert.equal(laterAttempt.statusCode,409);
+ assert.equal(laterAttempt.body.error,'DOG_BOSS10_NOT_RUNNING');
+});
+
+test('Expired fight reconciles to loss with cooldown measured from original deadline',async()=>{
+ const f=fixture();f.roll(9999);
+ for(const [i,t] of ['a','b','c'].entries()){
+  const r=await f.call('POST','/api/dog/gates/boss10/ready',
+   {requestId:'late-loss-ready-'+i+'-00001'},t);
+  assert.equal(r.statusCode,200);
+ }
+ f.advance(DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS+20000);
+ const view=await f.call('GET','/api/dog/gates/boss10',{},'a');
+ assert.equal(view.body.phase,'cooldown');
+ assert.equal(view.body.cooldownRemainingMs,0);
+ assert.equal(view.body.won,false);
+ const retry=await f.call('POST','/api/dog/gates/boss10/ready',
+  {requestId:'retry-after-late-loss-00001'},'a');
+ assert.equal(retry.body.phase??retry.body.view?.phase,'waiting');
+});
 
 test('Legacy forge endpoint cannot bypass the boss-10 limit',async()=>{
  const f=fixture();
