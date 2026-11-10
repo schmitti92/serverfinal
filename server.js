@@ -4341,8 +4341,8 @@ const profileStatsV8=installProfileStats(app,{
   admin,isReady:()=>profileProjectMatches,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
-// Phase 1 DOG expedition: secure crafting inventory and chest-opening only.
-// Match completion grants are made exclusively inside profileStatsV8.book().
+// DOG expedition: inventory and chest opening stay server-authoritative.
+// Only Deal-or-No-Deal's verified final payout credits new chests.
 installDogMaterialsApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
