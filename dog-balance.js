@@ -17,7 +17,8 @@ export const DOG_BALANCE_MATERIALS=Object.freeze({
  equipment:Object.freeze(['iron','forge_coal','steel_core','mithril','dragonsteel'])
 });
 
-// Each stage begins when the player reaches its own ten-gate chapter. These
+// Each stage begins when the player reaches its own ten-gate chapter.
+// A chest contains 1–5 materials at ANY stage; later worlds improve rarity. These
 // preview drops arrive BEFORE the corresponding shared boss is beaten.
 // Weight indices: common, uncommon, rare, epic, legendary. Sum = 100.
 export const DOG_CHEST_STAGES=Object.freeze([
@@ -26,11 +27,11 @@ export const DOG_CHEST_STAGES=Object.freeze([
  {min:2,max:3,weights:[73,24,3,0,0]},
  {min:2,max:4,weights:[62,32,6,0,0]},
  {min:3,max:5,weights:[55,32,12,1,0]},
- {min:3,max:6,weights:[47,32,18,3,0]},
- {min:4,max:7,weights:[40,30,23,6,1]},
- {min:5,max:8,weights:[32,28,25,13,2]},
- {min:6,max:9,weights:[26,26,27,17,4]},
- {min:7,max:10,weights:[22,23,28,21,6]}
+ {min:3,max:5,weights:[47,32,18,3,0]},
+ {min:3,max:5,weights:[40,30,23,6,1]},
+ {min:4,max:5,weights:[32,28,25,13,2]},
+ {min:4,max:5,weights:[26,26,27,17,4]},
+ {min:5,max:5,weights:[22,23,28,21,6]}
 ].map(x=>Object.freeze({...x,weights:Object.freeze(x.weights)})));
 
 const integer=(value,min,max,fallback=min)=>Number.isSafeInteger(value)?Math.max(min,Math.min(max,value)):fallback;
