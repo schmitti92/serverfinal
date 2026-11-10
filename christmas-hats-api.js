@@ -110,6 +110,13 @@ function fresh(requestId){
   lastActions:[{id:requestId,type:'start',runId:null,index:null,result:{started:true}}],
   updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null};
 }
+// Each authenticated profile receives exactly one free starter voucher.
+ // Additional vouchers can be granted by a future trusted reward flow.
+function availableHatsVouchers(state){
+ const free=state?.freeVoucherUsed?0:1;
+ const extras=Number.isSafeInteger(state?.bonusTickets)&&state.bonusTickets>0?state.bonusTickets:0;
+ return {free,bonus:extras,total:free+extras,used:!!state?.freeVoucherUsed,active:state?.status==='playing'};
+}
 function safeView(state){
  if(!state)return null;
  return {id:state.id,status:state.status,room:state.room,checkpoint:state.checkpoint,
@@ -168,16 +175,14 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    req.hatsUid=String(user.uid);next();
   }catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'});}
  };
- // Restrict early test access to the same verified Firebase UID already used
- // by the owner-only Chris bonus. Missing configuration denies everyone.
- const isChris=uid=>Boolean(process.env.DEAL_CHRIS_BONUS_UID&&uid===process.env.DEAL_CHRIS_BONUS_UID);
- const onlyChris=(req,res,next)=>isChris(req.hatsUid)?next():res.status(403).json({ok:false,error:'TEST_ACCESS_DENIED'});
+ // Public event chapter; authentication still verifies the actual Firebase UID.
+ // Availability and voucher consumption are always checked on the server.
  const fail=(res,error)=>res.status(409).json({ok:false,error:String(error?.message||'HATS_ERROR')});
  app.get('/api/christmas-hats/access',auth,(req,res)=>{
   res.set('Cache-Control','no-store');
-  return res.json({ok:true,allowed:isChris(req.hatsUid)});
+  return res.json({ok:true,allowed:true});
  });
- app.get('/api/christmas-hats/me',auth,onlyChris,async(req,res)=>{
+ app.get('/api/christmas-hats/me',auth,async(req,res)=>{
   try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const pendingId=String(req.query?.pendingId||'');
    if(pendingId&&!VALID_ACTION_ID.test(pendingId))return res.status(400).json({ok:false,error:'INVALID_REQUEST_ID'});
@@ -186,11 +191,11 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    const action=saved?.lastActions?.find(a=>a.id===pendingId)
     ||(saved?.lastActionId===pendingId?{result:saved.lastActionResult}:null);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,state:saved?safeView(saved):null,odds:HATS_SUPER_ODDS,
+   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:HATS_SUPER_ODDS,
     ...(pendingId?{pendingAction:{applied:!!action,result:action?.result||null}}:{})});
   }catch(e){return fail(res,e);}
  });
- app.post('/api/christmas-hats/action',auth,onlyChris,async(req,res)=>{
+ app.post('/api/christmas-hats/action',auth,async(req,res)=>{
   const type=req.body?.type,requestId=String(req.body?.requestId||'');
   if(!['start','pick','cash'].includes(type)||!VALID_ACTION_ID.test(requestId))
    return res.status(400).json({ok:false,error:'INVALID_ACTION'});
@@ -207,15 +212,21 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
      if(previous.type!==type||(type==='pick'&&previous.index!==req.body.index)
       ||(type!=='start'&&previous.runId!==req.body.runId))
       throw Error('REQUEST_ID_CONFLICT');
-     return {state:safeView(before),result:previous.result,replayed:true,
+     return {state:safeView(before),vouchers:availableHatsVouchers(before),result:previous.result,replayed:true,
       outdated:before.lastActionId!==requestId};
     }
     if(type==='start'){
-     if(before?.status==='playing')return {state:safeView(before),result:{resumed:true},replayed:true};
-     const next=fresh(requestId),result={started:true};
+     if(before?.status==='playing')return {state:safeView(before),vouchers:availableHatsVouchers(before),result:{resumed:true},replayed:true};
+     const coupons=availableHatsVouchers(before);
+     if(!coupons.total)throw Error('NO_HATS_VOUCHERS');
+     const next=fresh(requestId),result={started:true,voucherConsumed:coupons.free>0?'free':'bonus'};
+     next.freeVoucherUsed=true;
+     next.bonusTickets=coupons.bonus-(coupons.free?0:1);
+     next.runsStarted=(Number.isSafeInteger(before?.runsStarted)&&before.runsStarted>0?before.runsStarted:0)+1;
      next.lastActionResult=result;
+     next.lastActions=[{id:requestId,type:'start',runId:null,index:null,result}];
      tx.set(ref,next);
-     return {state:safeView(next),result,replayed:false};
+     return {state:safeView(next),vouchers:availableHatsVouchers(next),result,replayed:false};
     }
     if(!before||before.status!=='playing')throw Error('START_REQUIRED');
     if(typeof req.body?.runId!=='string'||req.body.runId!==before.id)throw Error('SESSION_CHANGED');
@@ -224,7 +235,7 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
     next.lastActionId=requestId;next.lastActionType=type;next.lastActionIndex=type==='pick'?req.body.index:null;next.lastActionResult=result;
     next.lastActions=[...(before.lastActions||[]),
      {id:requestId,type,runId:before.id,index:type==='pick'?req.body.index:null,result}].slice(-16);
-    if(next.status!=='finished'){tx.set(ref,next);return {state:safeView(next),result,replayed:false};}
+    if(next.status!=='finished'){tx.set(ref,next);return {state:safeView(next),vouchers:availableHatsVouchers(next),result,replayed:false};}
     // Every finished run settles atomically with its state. No prize is
     // credited at revelation time: secured prizes survive an eventual bomb.
     const totals=next.summary.totals,now=Date.now();
@@ -278,7 +289,7 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
     next.summary.settledAt=now;
     // The state itself is the exact-once settlement receipt.
     tx.set(ref,next);
-    return {state:safeView(next),result,replayed:false};
+    return {state:safeView(next),vouchers:availableHatsVouchers(next),result,replayed:false};
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...outcome});
