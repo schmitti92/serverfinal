@@ -89,7 +89,14 @@ export function drawHatsRoom(room){
  // advertise itself as "better". Compare actual item values, not animations.
  for(let i=0;scoreHatsPrize(a)===scoreHatsPrize(b)&&i<12;i++)b=drawGift(room);
  if(scoreHatsPrize(a)===scoreHatsPrize(b)){
-  b={...b,items:[...b.items,reward('pack:premium',1)]};
+  // A fixed same-tier fallback avoids a sixth prize, duplicate category,
+  // or a premium reward appearing in rooms 1–3.
+  a={superLuck:false,items:[reward('pack:small',1)]};
+  b=room<=3
+   ?{superLuck:false,items:[reward('pack:small',3),reward('hammer:single',3)]}
+   :room<=6
+    ?{superLuck:false,items:[reward('pack:premium',3),reward('hammer:double',3),reward('joker',3)]}
+    :{superLuck:false,items:[cash(5000000),reward('pack:platinum',3),reward('hammer:lucky',3),reward('joker',3),reward('pack:premium',3)]};
  }
  const normal=scoreHatsPrize(a)<scoreHatsPrize(b)?a:b;
  const better=normal===a?b:a;
@@ -99,7 +106,9 @@ export function drawHatsRoom(room){
 }
 function fresh(requestId){
  return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1),secured:[],pending:[],lastReveal:null,
-  lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:null,updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null};
+  lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:{started:true},
+  lastActions:[{id:requestId,type:'start',runId:null,index:null,result:{started:true}}],
+  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null};
 }
 function safeView(state){
  if(!state)return null;
@@ -170,9 +179,15 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
  });
  app.get('/api/christmas-hats/me',auth,onlyChris,async(req,res)=>{
   try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const pendingId=String(req.query?.pendingId||'');
+   if(pendingId&&!VALID_ACTION_ID.test(pendingId))return res.status(400).json({ok:false,error:'INVALID_REQUEST_ID'});
    const snap=await db.collection(SESSION_COLLECTION).doc(req.hatsUid).get();
+   const saved=snap.exists?snap.data():null;
+   const action=saved?.lastActions?.find(a=>a.id===pendingId)
+    ||(saved?.lastActionId===pendingId?{result:saved.lastActionResult}:null);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,state:snap.exists?safeView(snap.data()):null,odds:HATS_SUPER_ODDS});
+   return res.json({ok:true,state:saved?safeView(saved):null,odds:HATS_SUPER_ODDS,
+    ...(pendingId?{pendingAction:{applied:!!action,result:action?.result||null}}:{})});
   }catch(e){return fail(res,e);}
  });
  app.post('/api/christmas-hats/action',auth,onlyChris,async(req,res)=>{
@@ -185,10 +200,15 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    const outcome=await db.runTransaction(async tx=>{
     const snap=await tx.get(ref),before=snap.exists?snap.data():null;
     if(before)validStored(before);
-    if(before?.lastActionId===requestId){
-     if(before.lastActionType!==type||(type==='pick'&&before.lastActionIndex!==req.body.index))
+    const previous=before?.lastActions?.find(a=>a.id===requestId)
+     ||(before?.lastActionId===requestId?{id:requestId,type:before.lastActionType,
+       index:before.lastActionIndex,runId:before.id,result:before.lastActionResult}:null);
+    if(previous){
+     if(previous.type!==type||(type==='pick'&&previous.index!==req.body.index)
+      ||(type!=='start'&&previous.runId!==req.body.runId))
       throw Error('REQUEST_ID_CONFLICT');
-     return {state:safeView(before),result:before.lastActionResult,replayed:true};
+     return {state:safeView(before),result:previous.result,replayed:true,
+      outdated:before.lastActionId!==requestId};
     }
     if(type==='start'){
      if(before?.status==='playing')return {state:safeView(before),result:{resumed:true},replayed:true};
@@ -202,6 +222,8 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
     const next=type==='pick'?applyPick(before,req.body.index):applyCash(before);
     const result=type==='pick'?next.lastReveal:{cashed:true};
     next.lastActionId=requestId;next.lastActionType=type;next.lastActionIndex=type==='pick'?req.body.index:null;next.lastActionResult=result;
+    next.lastActions=[...(before.lastActions||[]),
+     {id:requestId,type,runId:before.id,index:type==='pick'?req.body.index:null,result}].slice(-16);
     if(next.status!=='finished'){tx.set(ref,next);return {state:safeView(next),result,replayed:false};}
     // Every finished run settles atomically with its state. No prize is
     // credited at revelation time: secured prizes survive an eventual bomb.
