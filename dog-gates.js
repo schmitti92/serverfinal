@@ -41,10 +41,27 @@ export function dogGateProgress(raw){
   // A previous attempt at an older mini-boss can move the current marker
   // backwards, but can never erase the furthest earned gate.
   const furthestWin=Math.max(1,...normals.map(n=>n+1),...minis.map(n=>n+1));
+  // Only signed-in owners receive their reward history via dogGateMapView.
+  // Old progress documents without a history still normalize to an empty list.
+  const miniRewards=Array.isArray(p.miniRewards)?p.miniRewards
+   .filter(item=>mini(item?.gate)&&item?.reward?.granted===true&&
+    ['chest','coins','cards','hammer','joker'].includes(item.reward.kind))
+   .slice(-10).map(item=>{
+    const prize=item.reward,kind=prize.kind;
+    const reward={kind,granted:true};
+    if(kind==='chest'){
+     reward.tier=String(prize.tier||'wood').slice(0,20);
+     reward.count=clamp(prize.count,1,20);
+    }else if(kind==='coins')reward.amount=clamp(prize.amount,1,10_000_000);
+    else if(kind==='cards')reward.packId=String(prize.packId||'small').slice(0,12);
+    else if(kind==='hammer')reward.hammer=String(prize.hammer||'single').slice(0,12);
+    else reward.quantity=1;
+    return {gate:item.gate,reward,awardedAt:clamp(item.awardedAt,0,10_000_000_000_000,0)};
+   }):[];
   result[uid]={
    currentGate,
    highestGate:Math.max(currentGate,clamp(p.highestGate,1,100,1),furthestWin),
-   normals,minis,
+   normals,minis,miniRewards,
    lastAttemptAt:clamp(p.lastAttemptAt,0,10_000_000_000_000,0),
    lastResult:p.lastResult==='win'?'win':p.lastResult==='loss'?'loss':null
   };
@@ -74,8 +91,8 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
   sharedBosses:isMember?progress.sharedBosses:[],
   dogUnlocked:isMember&&progress.sharedBosses.includes(100), // trusted server wins only
   progress:isMember?(progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
-   lastAttemptAt:0,lastResult:null}):{currentGate:1,highestGate:1,normals:[],minis:[],
-   lastAttemptAt:0,lastResult:null},
+   lastAttemptAt:0,lastResult:null,miniRewards:[]}):{currentGate:1,highestGate:1,normals:[],minis:[],
+   lastAttemptAt:0,lastResult:null,miniRewards:[]},
   availableBossGate:10, // dedicated team arena now exists for Tor 10
   bossArenaIsTest:false,
   cacheSeconds:30};
@@ -85,7 +102,7 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
  if(!validGate(gate))throw Error('DOG_GATE_INVALID');
  const state=dogGateProgress(progressRaw);
  const player=state.people[uid]||{currentGate:1,normals:[],minis:[],
-  lastAttemptAt:0,lastResult:null};
+  lastAttemptAt:0,lastResult:null,miniRewards:[]};
  const wins=mini(gate)?player.minis:player.normals;
  if(wins.includes(gate))throw Error('DOG_GATE_ALREADY_WON');
  const needed=previousNormal(gate);
@@ -187,6 +204,7 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
     const now=clock();
     const outcome=dogGateFight(saved,uid,gate,hero.exists?hero.data():null,rand,now);
     let result=outcome.result;
+    let nextProgress=outcome.progress;
     // A first mini-boss victory fixes ONE reward in this exact transaction.
     // All prize data is server-generated; the browser cannot request its type,
     // amount, or recipient. A lost response replays the same receipt.
@@ -201,10 +219,14 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
      prizeWrite={ref:prizeRef,credit};
      result={...result,miniRewardPending:false,miniReward:{
       ...prize,granted:true}};
+     const winner=nextProgress.people[uid];
+     nextProgress={...nextProgress,people:{...nextProgress.people,
+      [uid]:{...winner,miniRewards:[...(winner.miniRewards||[]),
+       {gate,reward:result.miniReward,awardedAt:now}].slice(-10)}}};
     }
-    const map=dogGateMapView(teamData,outcome.progress,uid);
-    // The victory, mini prize and immutable receipt share one commit.
-    tx.set(progressRef,outcome.progress);
+    const map=dogGateMapView(teamData,nextProgress,uid);
+    // The victory, mini prize, private history and receipt share one commit.
+    tx.set(progressRef,nextProgress);
     if(prizeWrite)tx.set(prizeWrite.ref,prizeWrite.credit.data,
      ...(prizeWrite.credit.merge?[{merge:true}]:[]));
     tx.create(receiptRef,{uid,gate,requestId,createdAt:now,result});
