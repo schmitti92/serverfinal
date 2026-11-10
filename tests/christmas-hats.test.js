@@ -221,6 +221,50 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const cashAgain=await action({type:'cash',runId:thirdId,requestId:'cash_after_seven_roomx'});
  assert.equal(cashAgain.replayed,true);
  assert.deepEqual([...docs.entries()],beforeCashReplay);
+ // Full jackpot path, without spending extra user tickets: the fixture
+ // credits a trusted bonus voucher, then uses the real action endpoint to
+ // win all twenty rooms and verify final settlement stays exactly once.
+ const played=docs.get('deal_christmas_hats_v1/player1');
+ docs.set('deal_christmas_hats_v1/player1',{...played,bonusTickets:1});
+ const completeStart=await action({type:'start',requestId:'start_twenty_room_run_x'});
+ assert.equal(completeStart.state.rulesVersion,5);
+ assert.equal(completeStart.state.maxRoom,20);
+ assert.equal(completeStart.vouchers.total,0,'final bonus ticket consumed once');
+ const fullRunId=completeStart.state.id;
+ let complete=completeStart;
+ let selectedLast=null;
+ for(let room=1;room<=20;room++){
+  const serverState=docs.get('deal_christmas_hats_v1/player1');
+  assert.equal(serverState.room,room);
+  const chosen=serverState.layout.findIndex(h=>h.type==='gift');
+  assert.ok(chosen>=0,'at least one winning hat in every room');
+  if([3,6,9,12,15,18].includes(room)){
+   assert.equal(serverState.layout.filter(h=>h.type==='bomb').length,0,
+    'all three hats must win in bonus room '+room);
+  }
+  const req={type:'pick',index:chosen,runId:fullRunId,requestId:'full_twenty_pick_'+String(room).padStart(2,'0')+'_receipt'};
+  complete=await action(req);
+  selectedLast=req;
+  assert.equal(complete.result.type,'gift');
+  if([5,10,15].includes(room)){
+   assert.equal(complete.state.checkpoint,room,'prizes secured at checkpoint '+room);
+   assert.equal(complete.state.secured.length,room);
+   assert.equal(complete.state.pending.length,0);
+  }
+  if(room===20)assert.equal(complete.state.status,'finished');
+  else assert.equal(complete.state.room,room+1);
+ }
+ assert.equal(complete.state.summary.reason,'completed');
+ assert.equal(complete.state.summary.awarded.length,20);
+ assert.equal(complete.state.summary.lost.length,0);
+ assert.equal(complete.state.summary.settledAt>0,true);
+ const finalSnapshot=structuredClone([...docs.entries()]);
+ const replayFinal=await action(selectedLast);
+ assert.equal(replayFinal.replayed,true);
+ assert.deepEqual([...docs.entries()],finalSnapshot,
+  'replaying the final hat must never credit duplicate prizes');
+ assert.equal(complete.state.secured.length,20);
+ assert.equal(complete.state.pending.length,0);
  const access=await request('GET','/api/christmas-hats/access');
  assert.equal(access.allowed,true);
  const finished=await request('GET','/api/christmas-hats/me');
