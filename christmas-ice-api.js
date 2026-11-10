@@ -1,11 +1,13 @@
 'use strict';
 import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {drawHammerFromTwelve} from './deal-or-no-deal.js';
+import {checkMonsterBalance} from './monster-wheel.js';
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
 export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDealGameChanged}){
  const collection='christmas_ice_progress_v1',inventoryCollection='deal_peek_inventory_v1',walletCollection='deal_or_no_deal_wallets_v1';
+ const albumCollection='deal_or_no_deal_christmas_v1',picture30Spins=3;
  const auth=async(req,res,next)=>{
   try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];
    const identity=await verifyProfile(token);
@@ -39,6 +41,38 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
    return res.json({ok:true,janSchlappen:best>=10,kniffelChristmasDice:best>=20});
   }catch(e){return fail(res,e)}
  });
+ // Backfill for profiles that finished picture 30 before the milestone existed.
+ // Atomic marker in the album prevents a second credit even after resets/retries.
+ app.post('/api/christmas-ice/claim-picture30',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const progressRef=db.collection(collection).doc(req.iceUid);
+   const albumRef=db.collection(albumCollection).doc(req.iceUid);
+   const result=await db.runTransaction(async tx=>{
+    const [progressSnap,albumSnap]=await Promise.all([tx.get(progressRef),tx.get(albumRef)]);
+    if(!progressSnap.exists)throw Error('START_REQUIRED');
+    const progress=normalizeIceState(progressSnap.data());
+    const reached=Math.max(Number(progress.completed)||0,Number(progress.maxRewarded)||0)>=30;
+    if(!reached)throw Error('PICTURE_30_NOT_REACHED');
+    const album=albumSnap.exists?albumSnap.data():{};
+    const already=!!(album.icePicture30MonsterSpinsGranted||progress.picture30MonsterSpinsClaimed);
+    if(already){
+     // Restore the visible progress flag if an older client wrote a partial state.
+     if(!progress.picture30MonsterSpinsClaimed)
+      tx.set(progressRef,{picture30MonsterSpinsClaimed:true},{merge:true});
+     return {granted:false,amount:0,tickets:Number(album.monsterWheelTickets)||0,claimed:true};
+    }
+    const tickets=checkMonsterBalance(Number(album.monsterWheelTickets||0),picture30Spins);
+    const now=Date.now();
+    tx.set(albumRef,{monsterWheelTickets:tickets,icePicture30MonsterSpinsGranted:true,updatedAt:now},{merge:true});
+    tx.set(progressRef,{picture30MonsterSpinsClaimed:true},{merge:true});
+    return {granted:true,amount:picture30Spins,tickets,claimed:true};
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+
  // A single winner click starts the pack wheel and later the hammer wheel.
  // The hammer award is stored exactly once and broadcast to the room.
  app.post('/api/christmas-ice/final-hammer',auth,async(req,res)=>{
@@ -142,7 +176,22 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
      throw Error('PICTURE_CHANGED');
     const strike=strikeIce({...state,balance:walletBalance},{index,hammer,requestId});
     if(!strike.changed)return {state:{...publicIceState(state),balance:walletBalance},result:strike.result,changed:false};
-    const next=strike.state;
+    let next=strike.state;
+    // Only a server-confirmed complete picture 30 earns three Monster-Wheel spins.
+    // Read the album only on this single winning strike, not on every ice click.
+    const picture30Completed=strike.result.found&&next.completed===30;
+    const albumRef=db.collection(albumCollection).doc(req.iceUid);
+    const albumSnap=picture30Completed?await tx.get(albumRef):null;
+    const album=albumSnap?.exists?albumSnap.data():{};
+    const grantPicture30=picture30Completed&&!album.icePicture30MonsterSpinsGranted&&!state.picture30MonsterSpinsClaimed;
+    let newMonsterTickets=0;
+    if(grantPicture30)
+     newMonsterTickets=checkMonsterBalance(Number(album.monsterWheelTickets||0),picture30Spins);
+    if(picture30Completed){
+     const resultWithBonus={...strike.result,monsterSpinsGranted:grantPicture30?picture30Spins:0};
+     next={...next,picture30MonsterSpinsClaimed:true,
+      lastActions:(next.lastActions||[]).map(a=>a.id===requestId?{...a,result:resultWithBonus}:a)};
+    }
     if(strike.result.gift?.kind==='joker'){
      const invSnap=await tx.get(inventory);
      const old=Number(invSnap.data()?.balance)||0;
@@ -152,10 +201,13 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
     // A free hammer usually changes only ice progress. Avoid a redundant
     // wallet write unless a paid hit or a money prize changed the balance.
     // The entire strike (and any money prize) stays atomic in this transaction.
+    if(grantPicture30)
+     tx.set(albumRef,{monsterWheelTickets:newMonsterTickets,icePicture30MonsterSpinsGranted:true,updatedAt:Date.now()},{merge:true});
     if(next.balance!==walletBalance)
      tx.set(walletRef,{balance:next.balance,updatedAt:Date.now()},{merge:true});
     tx.set(ref,next);
-    return {state:{...publicIceState(next),balance:next.balance},result:strike.result,changed:true};
+    const finalReceipt=picture30Completed?next.lastActions?.find(a=>a.id===requestId)?.result:strike.result;
+    return {state:{...publicIceState(next),balance:next.balance},result:finalReceipt,changed:true};
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...result});
