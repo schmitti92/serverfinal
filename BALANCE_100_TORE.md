@@ -51,7 +51,7 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 
 | Tore | Kisteninhalt | Gewöhnlich | Ungewöhnlich | Selten | Episch | Legendär |
 |---|---:|---:|---:|---:|---:|---:|
-| 1–10 | 1–2 | 95% | 5% | 0% | 0% | 0% |
+| 1–10 | 1–3 | 95% | 5% | 0% | 0% | 0% |
 | 11–20 | 1–3 | 82% | 17% | 1% | 0% | 0% |
 | 21–30 | 2–3 | 73% | 24% | 3% | 0% | 0% |
 | 31–40 | 2–4 | 62% | 32% | 6% | 0% | 0% |
@@ -62,7 +62,7 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 | 81–90 | 4–5 | 26% | 26% | 27% | 17% | 4% |
 | 91–99 | 5 | 22% | 23% | 28% | 21% | 6% |
 
-Alle Kisten enthalten **mindestens einen und höchstens fünf Rohstoffe**, auch in der letzten Welt. Höhere Tore erhöhen vor allem die Seltenheitschancen, nicht die maximale Anzahl.
+**Bei Tor 1–10** enthalten Kisten **1–3 Rohstoffe**: 50 % Wahrscheinlichkeit für einen, 35 % für zwei und 15 % für drei Rohstoffe. Ab Tor 11 gelten die stufenweisen Grenzen der Tabelle. Insgesamt bleiben es maximal fünf Rohstoffe pro Kiste. Höhere Tore erhöhen zusätzlich die Chance auf seltene Materialien.
 
 Neue Materialien erscheinen schon **vor** dem gemeinsamen Boss, dessen Sieg das zugehörige Upgrade freischaltet. Kistengröße und Gewichtung müssen beim Erhalt auf dem Server eingefroren werden, damit spätere Levelaufstiege alte Kisten nicht nachträglich vergrößern.
 
