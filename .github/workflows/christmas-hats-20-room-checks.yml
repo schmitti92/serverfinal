@@ -1,0 +1,29 @@
+name: Christmas Hats 20-room and checkpoint checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'christmas-hats-api.js'
+      - 'tests/christmas-hats.test.js'
+      - '.github/workflows/christmas-hats-20-room-checks.yml'
+  pull_request:
+    paths:
+      - 'christmas-hats-api.js'
+      - 'tests/christmas-hats.test.js'
+      - '.github/workflows/christmas-hats-20-room-checks.yml'
+  workflow_dispatch:
+jobs:
+  christmas-hats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --check christmas-hats-api.js
+          node --check tests/christmas-hats.test.js
+      - name: Probability, all-safe bonus room, protection and settlement tests
+        run: node --test tests/christmas-hats.test.js tests/christmas-hats-cors.test.js
