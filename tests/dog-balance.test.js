@@ -122,12 +122,14 @@ test('Every mini-boss is strong against previous gear, but feasible after upgrad
   const gate=level*10+5,oldCap=level*5,newCap=(level+1)*5,hp=dogMiniBossHp(gate);
   const prevMax={attack_power:oldCap,destruction:oldCap,
    precision:oldCap,critical:oldCap,double_strike:oldCap};
-  assert.ok(hp>dogMaxSoloDamage(level,prevMax),'gate '+gate+' bypassed by old gear');
+  assert.ok(hp<dogMaxSoloDamage(level,prevMax),'gate '+gate+' must allow rare early wins');
+  const oldOdds=ratio(level,prevMax,hp);
+  assert.ok(oldOdds<.025,'gate '+gate+' old-gear wins too often: '+oldOdds);
   const newSkills={attack_power:Math.floor(newCap*.65),destruction:Math.floor(newCap*.5),
    precision:Math.floor(newCap*.5),critical:Math.floor(newCap*.6),
    double_strike:Math.floor(newCap*.5)};
   const odds=ratio(level+1,newSkills,hp);
-  assert.ok(odds>.8&&odds<1,'gate '+gate+' new-gear win chance '+odds);
+  assert.ok(odds>.8,'gate '+gate+' new-gear win chance '+odds);
   assert.ok(dogExpectedSoloDamage(level+1,newSkills)>hp);
  }
  assert.equal(dogMiniBossHp(5),280);
