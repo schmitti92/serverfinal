@@ -106,7 +106,14 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
   cooldownUntil:win?0:now+DOG_BOSS10_COOLDOWN_MS,
   result:{win,roll,chancePercent:percent,bossHp:dogGroupBossHp(10)}};
  const sharedBosses=win?[...new Set([...progress.sharedBosses,10])].sort((a,b)=>a-b):progress.sharedBosses;
- return {progress:{...progress,boss10:nextBoss,sharedBosses,updatedAt:now},
+ // Team victory opens gate 11 for all three, but never rewinds a hero
+ // who has already managed to proceed farther without the forge ascent.
+ const people={...progress.people};
+ if(win)for(const member of boss.roster){
+  const current=people[member.uid];
+  if(current)people[member.uid]={...current,currentGate:Math.max(11,current.currentGate)};
+ }
+ return {progress:{...progress,people,boss10:nextBoss,sharedBosses,updatedAt:now},
   result:nextBoss.result};
 }
 const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,DOG_BOSS10_NEEDS_THREE:409,
