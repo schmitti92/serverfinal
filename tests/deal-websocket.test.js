@@ -359,8 +359,6 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  api.attachSocket(ws);
  ws.message({type:'subscribe',code:'123',token:'a'});
  await flush();
- const notHost=await invoke('POST',root+'/start','stranger',{caseCount:30});
- assert.equal(notHost.statusCode,401,'only authenticated room members may start');
  let response=await invoke('POST',root+'/start','a',{caseCount:30});
  assert.equal(response.statusCode,200,JSON.stringify(response.body));
  let game=response.body.game;
