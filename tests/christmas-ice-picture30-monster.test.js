@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {installChristmasIceApi} from '../christmas-ice-api.js';
 import {newIceState,resetIceState} from '../christmas-ice-engine.js';
 
-function fixture({completed=29,maxRewarded=completed,opened=Array.from({length:29},(_,i)=>i),tickets=0,claimed=false}={}){
+function fixture({completed=29,maxRewarded=completed,opened=Array.from({length:completed>=29?99:49},(_,i)=>i),tickets=0,claimed=false}={}){
  const uid='picture30-player';
- const ice={...newIceState(()=>0),completed,maxRewarded,opened:[...opened],tileCount:30,star:null,
+ const ice={...newIceState(()=>0),completed,maxRewarded,opened:[...opened],tileCount:completed>=29?100:50,star:null,
   freeHammers:{single:1,double:0,lucky:0},finished:false,
   ...(claimed?{picture30MonsterSpinsClaimed:true}:{})};
  const docs=new Map([
@@ -58,7 +58,7 @@ function fixture({completed=29,maxRewarded=completed,opened=Array.from({length:2
   album:()=>docs.get('deal_or_no_deal_christmas_v1/'+uid),
   ice:()=>docs.get('christmas_ice_progress_v1/'+uid)};
 }
-const action={type:'strike',index:29,hammer:'single',requestId:'last-tile-picture-30-0001',expectedPicture:30};
+const action={type:'strike',index:99,hammer:'single',requestId:'last-tile-picture-30-0001',expectedPicture:30};
 test('picture 30 final ice block atomically awards 3 Monster-Wheel spins and the ordinary joker',async()=>{
  const f=fixture();
  const result=await f.invoke('/api/christmas-ice/action',action);
@@ -112,11 +112,11 @@ test('players who finished picture 30 before the update receive one retroactive 
 });
 
 test('picture 29 never grants Monster-Wheel tickets, including a forged claim',async()=>{
- const f=fixture({completed:28,maxRewarded:28,opened:Array.from({length:29},(_,i)=>i)});
+ const f=fixture({completed:28,maxRewarded:28,opened:Array.from({length:49},(_,i)=>i)});
  const rejected=await f.invoke('/api/christmas-ice/claim-picture30',{completed:70,amount:3});
  assert.equal(rejected.statusCode,409);
  assert.equal(rejected.body.error,'PICTURE_30_NOT_REACHED');
- const strike=await f.invoke('/api/christmas-ice/action',{...action,expectedPicture:29,requestId:'last-tile-picture-29-0001'});
+ const strike=await f.invoke('/api/christmas-ice/action',{...action,index:49,expectedPicture:29,requestId:'last-tile-picture-29-0001'});
  assert.equal(strike.statusCode,200);
  assert.equal(strike.body.state.completed,29);
  assert.equal(f.album().monsterWheelTickets,0);
