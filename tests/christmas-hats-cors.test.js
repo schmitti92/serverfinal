@@ -8,8 +8,8 @@ test('authenticated Christmas Hats voucher endpoints accept cross-origin token p
  const code=readFileSync(file,'utf8');
  const cors=code.slice(code.indexOf('// CORS for GitHub Pages'),code.indexOf('app.use(express.json('));
  assert.ok(cors.length>300);
- const conditional=cors.match(/if\s*\(([\s\S]*?)\)\s*\{\s*const origin=/)?.[1]||'';
- assert.match(conditional,/req\.path\.startsWith\('\/api\/christmas-hats'\)/);
+ const middlewareBeforeOrigin=cors.slice(0,cors.indexOf('const origin ='));
+ assert.match(middlewareBeforeOrigin,/req\.path\.startsWith\('\/api\/christmas-hats'\)/);
  assert.match(cors,/Access-Control-Allow-Headers', 'Authorization,Content-Type'/);
  assert.match(cors,/Access-Control-Allow-Methods', 'GET,PUT,POST,OPTIONS'/);
  assert.match(cors,/if \(req\.method === "OPTIONS"\) return res\.status\(204\)\.end\(\)/);
