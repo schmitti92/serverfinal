@@ -207,6 +207,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const albumRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
    const iceRef=db.collection('christmas_ice_progress_v1').doc(uid);
    const jokerRef=db.collection('deal_peek_inventory_v1').doc(uid);
+   const hatsRef=db.collection('deal_christmas_hats_v1').doc(uid);
    const result=await db.runTransaction(async tx=>{
     const albumSnap=await tx.get(albumRef),album=albumSnap.exists?albumSnap.data():{};
     const claimed={...(album.northPoleMilestonesClaimed||{})};
@@ -217,17 +218,19 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const legacyPremium=Boolean(claimed['north-premium-2'])&&!album.northPolePremiumVouchersIssued;
     if(!pending.length&&!legacyPremium)return {claimed:[],packs:[],progress,replayed:true};
     // Read all affected inventory documents before the first write.
-    const needsHammer=pending.some(m=>m.kind==='hammer'||m.kind==='combo');
-    const needsJoker=pending.some(m=>m.kind==='joker'||m.kind==='combo');
-    const [iceSnap,jokerSnap]=await Promise.all([
+    const needsHammer=pending.some(m=>['hammer','combo','grand'].includes(m.kind));
+    const needsJoker=pending.some(m=>['joker','combo','grand'].includes(m.kind));
+    const needsHats=pending.some(m=>['hats','grand'].includes(m.kind));
+    const [iceSnap,jokerSnap,hatsSnap]=await Promise.all([
      needsHammer?tx.get(iceRef):Promise.resolve(null),
-     needsJoker?tx.get(jokerRef):Promise.resolve(null)
+     needsJoker?tx.get(jokerRef):Promise.resolve(null),
+     needsHats?tx.get(hatsRef):Promise.resolve(null)
     ]);
     const cards={...(album.cards||{})},packs=[];
     const freePacks={...(album.freeChristmasPacks||{})};
     if(legacyPremium)freePacks.premium=checkMonsterBalance(Number(freePacks.premium||0),2);
     let premiumVouchersIssued=Boolean(album.northPolePremiumVouchersIssued)||legacyPremium;
-    let goldHammers=0,jokers=0,monsterTickets=0;
+    let goldHammers=0,jokers=0,monsterTickets=0,hatsVouchers=0;
     const grantPack=(pack,drawn)=>{
      const revealed=markChristmasDiscoveries(drawn,cards);
      for(const card of revealed)cards[card.id]=checkMonsterBalance(Number(cards[card.id]||0),1);
@@ -245,7 +248,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
       goldHammers+=1;jokers+=1;
       grantPack(BINGO_PLATINUM_PACK,drawBingoPlatinumPack());
      }else if(m.kind==='monster')monsterTickets+=m.quantity;
-     else throw Error('INVALID_BINGO_REWARD');
+     else if(m.kind==='hats')hatsVouchers+=m.quantity;
+     else if(m.kind==='grand'){
+      goldHammers+=m.hammers;jokers+=m.jokers;hatsVouchers+=m.hatsVouchers;
+     }else throw Error('INVALID_BINGO_REWARD');
      claimed[m.id]=now;
     }
     if(needsHammer){
@@ -260,6 +266,16 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      const balance=Number(jokerSnap?.data()?.balance)||0;
      tx.set(jokerRef,{balance:checkMonsterBalance(balance,jokers,1000000),updatedAt:now},{merge:true});
     }
+    if(needsHats){
+     const previous=hatsSnap?.exists?hatsSnap.data():{};
+     const bonusTickets=checkMonsterBalance(Number(previous.bonusTickets||0),hatsVouchers,1000000);
+     // Grant into the player's existing Hats account without starting a game.
+     // First-time players keep their free starter voucher too.
+     tx.set(hatsRef,{
+      ...(hatsSnap?.exists?{}:{voucherOnly:true}),
+      bonusTickets,updatedAt:now
+     },{merge:true});
+    }
     tx.set(albumRef,{
      cards,opened:checkMonsterBalance(Number(album.opened||0),packs.length),
      monsterWheelTickets:checkMonsterBalance(Number(album.monsterWheelTickets||0),monsterTickets),
@@ -268,7 +284,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     },{merge:true});
     return {claimed:[...pending.map(({at,id,name})=>({at,id,name})),
       ...(legacyPremium?[{at:22,id:'north-premium-2',name:'2 Premium-Kartenpakete nachgebucht'}]:[])],
-     packs,freePacks,goldHammers,jokers,monsterTickets,
+     packs,freePacks,goldHammers,jokers,monsterTickets,hatsVouchers,
      progress:christmasProgress(cards),replayed:false};
    });
    res.set('Cache-Control','no-store');
