@@ -136,6 +136,22 @@ test('Miniboss can be attempted after previous normal without group-boss victory
  assert.throws(()=>dogGateFight({people:{}},'a',100),/DOG_GATE_INVALID/);
 });
 
+test('Revisiting a previously skipped mini-boss never erases the highest gate',()=>{
+ const p={people:{a:{currentGate:14,highestGate:14,
+  normals:[1,2,3,4,6,7,8,9,11,12,13],
+  minis:[],lastAttemptAt:0}}};
+ const fight=dogGateFight(p,'a',5,null,()=>9999,1_800_000_000_000);
+ assert.equal(fight.progress.people.a.currentGate,fight.result.win?6:5);
+ assert.equal(fight.progress.people.a.highestGate,14);
+ const shown=dogGateMapView({members:[{uid:'a',name:'A'}]},fight.progress,'a');
+ assert.equal(shown.members[0].highestGate,14);
+ assert.equal(shown.members[0].currentGate,fight.result.win?6:5);
+ // Legacy documents without highestGate can reconstruct it from cleared
+ // ordinary gates, even after the current marker moved backwards.
+ const old={people:{a:{currentGate:5,normals:[1,2,3,4,6,7,8,9,11,12,13],minis:[]}}};
+ assert.equal(dogGateProgress(old).people.a.highestGate,14);
+});
+
 test('An unauthenticated visitor cannot read team positions or fight',async()=>{
  const f=fixture();
  const notSigned=await f.call('GET','/api/dog/gates/map',{},'unknown');
