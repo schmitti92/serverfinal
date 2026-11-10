@@ -146,7 +146,7 @@ test('Wins and losses update only own current position; retries replay exactly o
  assert.deepEqual(p.people['hero-a'].normals,[1,2]);
 });
 
-test('Miniboss can be attempted after previous normal without group-boss victory',()=>{
+test('Miniboss five remains optional but gate eleven and miniboss fifteen require boss ten',()=>{
  const now=1_800_000_000_000;
  const p={people:{a:{currentGate:5,normals:[1,2,3,4],minis:[],lastAttemptAt:0}}};
  const result=dogGateFight(p,'a',5,null,()=>0,now);
@@ -156,8 +156,15 @@ test('Miniboss can be attempted after previous normal without group-boss victory
  assert.equal(result.progress.sharedBosses.length,0);
  const skip={people:{a:{currentGate:15,normals:[
   1,2,3,4,6,7,8,9,11,12,13,14],minis:[],lastAttemptAt:0}}};
- const next=dogGateFight(skip,'a',15,null,()=>0,now);
- assert.equal(next.result.gate,15,'Boss 10 is not a hard lock for solo combat');
+ assert.throws(()=>dogGateFight(skip,'a',15,null,()=>0,now),/DOG_GATE_BOSS_REQUIRED/);
+ assert.throws(()=>dogGateFight(skip,'a',11,null,()=>0,now),/DOG_GATE_BOSS_REQUIRED/);
+ const bossWon={...skip,sharedBosses:[10]};
+ const next=dogGateFight(bossWon,'a',15,null,()=>0,now);
+ assert.equal(next.result.gate,15,'Mini-boss five is never required before mini-boss fifteen');
+ const world21={people:{a:{currentGate:21,normals:[19],minis:[],lastAttemptAt:0}},
+  sharedBosses:[10]};
+ assert.throws(()=>dogGateFight(world21,'a',21,null,()=>0,now),
+  /DOG_GATE_BOSS_REQUIRED/);
  assert.throws(()=>dogGateFight({people:{}},'a',100),/DOG_GATE_INVALID/);
 });
 
