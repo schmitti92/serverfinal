@@ -120,8 +120,8 @@ test('picture 29 never grants Monster-Wheel tickets, including a forged claim',a
  assert.equal(strike.statusCode,200);
  assert.equal(strike.body.state.completed,29);
  assert.equal(f.album().monsterWheelTickets,0);
- assert.equal(f.reads.filter(x=>x.startsWith('deal_or_no_deal_christmas_v1')).length,2,
-  'one album read for claim, but no album read for ordinary picture 29 completion');
+ assert.equal(f.reads.filter(x=>x.startsWith('deal_or_no_deal_christmas_v1')).length,1,
+  'one album read for the attempted claim, none for ordinary picture 29 completion');
 });
 
 test('preexisting album award marker prevents duplicate backfill if the visible progress flag was lost',async()=>{
