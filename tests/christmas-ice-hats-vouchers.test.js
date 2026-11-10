@@ -161,7 +161,7 @@ test('overflow of hats-ticket inventory aborts the whole gift transaction',async
  const before=structuredClone(f.ice());
  const r=await f.strike();
  assert.equal(r.statusCode,409);
- assert.equal(r.body.error,'INVALID_MONSTER_BALANCE');
+ assert.equal(r.body.error,'MONSTER_BALANCE_OVERFLOW');
  assert.deepEqual(f.ice(),before);
  assert.equal(f.inventory().balance,0);
  assert.equal(f.hats().bonusTickets,1000000);
