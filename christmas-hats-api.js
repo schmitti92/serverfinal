@@ -118,7 +118,9 @@ function availableHatsVouchers(state){
  return {free,bonus:extras,total:free+extras,used:!!state?.freeVoucherUsed,active:state?.status==='playing'};
 }
 function safeView(state){
- if(!state)return null;
+ // Ice-joker gifts can grant a voucher before a player's first hats run.
+ // The voucher-only document has no active/finished game to display.
+ if(!state?.status)return null;
  return {id:state.id,status:state.status,room:state.room,checkpoint:state.checkpoint,
   secured:state.secured||[],pending:state.pending||[],lastReveal:state.lastReveal||null,
   summary:state.summary||null,updatedAt:state.updatedAt};
@@ -134,6 +136,11 @@ function payoutTotals(rewards){
  return {amountCents:amountOf(items,'cash'),jokers:amountOf(items,'joker'),packs,hammers};
 }
 function validStored(state){
+ // A genuine server-created voucher-only stub is permitted before the first run.
+ // This document must never be interpreted as a finished game.
+ if(state?.voucherOnly===true&&!state.status&&Number.isSafeInteger(state.bonusTickets)
+  &&state.bonusTickets>=0&&state.bonusTickets<=1000000
+  &&(state.freeVoucherUsed===undefined||typeof state.freeVoucherUsed==='boolean'))return;
  if(!state||state.version!==1||!['playing','finished'].includes(state.status)||!Number.isInteger(state.room)
   ||state.room<1||state.room>10||!Array.isArray(state.secured)||!Array.isArray(state.pending))throw Error('INVALID_SESSION');
  if(state.status==='playing'&&(!Array.isArray(state.layout)||state.layout.length!==3))throw Error('INVALID_SESSION');
