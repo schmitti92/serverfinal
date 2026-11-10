@@ -130,10 +130,9 @@ export function dogMiniBossHp(gate){
  const priorGear=(gate-5)/10;
  const priorSkillCap=priorGear*DOG_SKILLS_PER_BOSS;
  const peakSkills={attack_power:priorSkillCap,destruction:priorSkillCap};
- // A boss is a meaningful milestone; weapon upgrades alone are NOT sufficient.
- // No explicit level lock. Earlier gear can still enter and fight.
- const factor=priorGear<=4?1.10:1.04;
- return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*factor);
+ // Near the upper bound of the previous tier: an extraordinarily lucky
+ // veteran can still win early. New weapon + armor greatly improve the odds.
+ return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*(.84+.009*priorGear));
 }
 export function dogGroupBossHp(gate){
  if(!Number.isSafeInteger(gate)||gate<10||gate>100||gate%10!==0)throw Error('DOG_BALANCE_INVALID_GROUPBOSS');
@@ -145,11 +144,66 @@ export function dogGroupBossHp(gate){
 }
 /** A mini-boss scales its attacks with the armor level newly unlocked by the
  * prior shared boss. 80% telegraphed retaliation probability, not certainty. */
+/** Server-owned outcomes for ordinary, non-boss gates. The chances are a
+ * smooth 30–80% scale. Skills contribute ONLY through percentage-based
+ * mastery, not arbitrary absolute damage thresholds. */
+export function dogNormalGateChance({gate,weaponLevel=1,armorLevel=1,skills={}}={}){
+ if(!Number.isSafeInteger(gate)||gate<1||gate>99||gate%5===0)
+  throw Error('DOG_BALANCE_INVALID_NORMAL_GATE');
+ const stage=Math.floor((gate-1)/10);
+ const recommendedEquipment=stage+1;
+ const recommendedSkillCap=Math.min(50,recommendedEquipment*DOG_SKILLS_PER_BOSS);
+ const top2=keys=>keys.map(k=>skill(skills,k)).sort((a,b)=>b-a).slice(0,2)
+  .reduce((sum,n)=>sum+n,0)/(recommendedSkillCap*2);
+ const attackMastery=Math.min(1,top2([
+  'attack_power','destruction','precision','critical','double_strike']));
+ const defenseMastery=Math.min(1,top2([
+  'vitality','resilience','regeneration','blocking','evasion','last_stand']));
+ const mastery=(attackMastery+defenseMastery)/2;
+ // The first chapter starts at gear 1; only mastery can improve its odds.
+ // In later chapters the upgrade from gear N-1 to N adds at most 20 points.
+ const weaponReady=stage===0?0:Math.max(0,Math.min(1,gearLevel(weaponLevel)-(recommendedEquipment-1)));
+ const armorReady=stage===0?0:Math.max(0,Math.min(1,gearLevel(armorLevel)-(recommendedEquipment-1)));
+ const equipmentReady=(weaponReady+armorReady)/2;
+ const chancePercent=Math.max(30,Math.min(80,Math.round(30+20*equipmentReady+30*mastery)));
+ return {gate,chancePercent,equipmentReady,mastery,
+  recommendedEquipment,recommendedSkillCap};
+}
+export function dogResolveNormalGate(options={},rand=randomInt){
+ const calculation=dogNormalGateChance(options);
+ const roll=randomDraw(rand,10000);
+ return {...calculation,win:roll<calculation.chancePercent*100,roll};
+}
+
+const topTwoMastery=(skills,ids,cap)=>{
+ const sum=ids.map(id=>skill(skills,id)).sort((a,b)=>b-a).slice(0,2)
+  .reduce((acc,n)=>acc+n,0);
+ return Math.min(1,sum/(2*cap));
+};
+
+/** Mini-bosses have a fixed gate baseline, with only up to +10% adaptation
+ * for over-geared heroes. NEVER scale down against weak heroes or match
+ * their power 1:1; grinding equipment must remain rewarding. */
+export function dogAdaptiveMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={}}={}){
+ const baseHp=dogMiniBossHp(gate),baseAttack=dogMiniBossAttack(gate);
+ const recommended=(gate+5)/10,skillCap=Math.min(50,recommended*5);
+ const attackMastery=topTwoMastery(skills,
+  ['attack_power','destruction','precision','critical','double_strike'],skillCap);
+ const defenseMastery=topTwoMastery(skills,
+  ['vitality','resilience','regeneration','blocking','evasion','last_stand'],skillCap);
+ const weaponExcess=Math.max(0,gearLevel(weaponLevel)-recommended);
+ const armorExcess=Math.max(0,gearLevel(armorLevel)-recommended);
+ const hpBonus=Math.min(.10,weaponExcess*.05+Math.max(0,attackMastery-.7)*.10);
+ const attackBonus=Math.min(.10,armorExcess*.05+Math.max(0,defenseMastery-.7)*.10);
+ return {gate,bossHp:Math.round(baseHp*(1+hpBonus)),
+  bossAttack:Math.round(baseAttack*(1+attackBonus)),hpBonus,attackBonus};
+}
+
 export function dogMiniBossAttack(gate){
  if(!Number.isSafeInteger(gate)||gate<5||gate>95||gate%10!==5)
   throw Error('DOG_BALANCE_INVALID_MINIBOSS');
  const tier=(gate-5)/10; // 0 at gate 5, 9 at gate 95
- return Math.round(dogWeaponBase(tier+1)*(.72+.045*tier));
+ return Math.round(dogWeaponBase(tier+1)*(.72+.045*tier)*1.2);
 }
 export const DOG_MINI_BOSS_RETALIATION_CHANCE=.80;
 
@@ -180,9 +234,10 @@ export function dogDefenseChances(skills={}){
  */
 export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
  reaction=false,rand=randomInt}={}){
- const bossMaxHp=dogMiniBossHp(gate);
+ const opponent=dogAdaptiveMiniBoss({gate,weaponLevel,armorLevel,skills});
+ const bossMaxHp=opponent.bossHp;
  const maxHeroHp=dogHeroHp(skills,armorLevel);
- const enemyAttack=dogMiniBossAttack(gate);
+ const enemyAttack=opponent.bossAttack;
  const offense=dogAttackChances(skills),defense=dogDefenseChances(skills);
  let bossHp=bossMaxHp,heroHp=maxHeroHp,damageDealt=0;
  let lastStandUsed=false,turns=0,attacksReceived=0;
