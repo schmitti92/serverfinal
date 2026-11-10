@@ -129,6 +129,9 @@ test('Two players finish a banker round and receive exactly one wallet payout',a
   const wallet=docs.get('deal_or_no_deal_wallets_v1/'+uid);
   assert.equal(wallet?.games,1);
   assert.ok(docs.has('deal_or_no_deal_payouts_v1/'+game.id+'_'+uid));
+  const materials=docs.get('dog_material_inventory_v1/'+uid);
+  assert.equal(materials?.unopened,1,'a finished Deal match gives one chest');
+  assert.equal(materials?.earned,1);
  }
  const final=a.sent.filter(m=>m.type==='deal-state').at(-1).game;
  assert.equal(final.finalValues.length,2);
@@ -172,12 +175,16 @@ test('Three players share case selections and a simultaneous banker vote',async(
   assert.equal(balances.get(payout.id)?.balance,payout.payout);
   assert.equal(balances.get(payout.id)?.games,1);
   assert.equal(docs.get('deal_or_no_deal_payouts_v1/'+game.id+'_'+payout.id)?.amount,payout.payout);
+  const materials=docs.get('dog_material_inventory_v1/'+payout.id);
+  assert.equal(materials?.unopened,1);
+  assert.equal(materials?.earned,1);
  }
  const second=await invoke('GET','/api/deal-or-no-deal/:code/balances','b');
  assert.equal(second.body.ok,true);
  for(const p of second.body.players){
   assert.equal(p.balance,balances.get(p.id).balance);
   assert.equal(p.games,1);
+  assert.equal(docs.get('dog_material_inventory_v1/'+p.id)?.earned,1,'repeated settlement must not grant a second chest');
  }
  for(const ws of sockets)ws.close();
 });
