@@ -4,12 +4,27 @@
 
 ## Regeln
 - 80 normale persönliche Kämpfe, 10 Solo-Mini-Bosse bei 5, 15, …, 95 und 10 gemeinsame Bosse bei 10, 20, …, 100.
-- Persönliche Tore bleiben erreichbar, auch wenn die Gruppe einen Boss noch nicht besiegt hat.
+- Persönliche Tore dürfen **fünf Tore über einen noch nicht besiegten Gruppenboss hinaus** weitergespielt werden: Ohne Boss 10 bis Tor 15 (inklusive Mini-Boss 15), Tor 16 erfordert Boss 10; ohne Boss 20 bis Tor 25, Tor 26 erfordert Boss 20. Mini-Bosse sind eigene, anspruchsvolle Ausrüstungsprüfungen und müssen für die normalen Tore nicht zwingend besiegt werden.
 - Gemeinsame Boss-Siege schalten zusätzliche Schmiedestufen frei: Waffen/Rüstung max. 10, Fähigkeiten max. 50.
 - Waffen-/Rüstungsgrundwert: 100 × 2^(Level−1). Fähigkeiten wirken prozentual; die höchste mögliche Reaktion bleibt +10 %.
 - Normale persönliche Tore (außer Mini-Boss und Gruppenboss) haben eine Server-Siegchance von 30–80 %, die aus relativem Waffen-/Rüstungslevel (bis +20 Prozentpunkte) sowie den jeweils zwei höchsten Angriffs- und Verteidigungsfähigkeiten (+30 Prozentpunkte) berechnet wird. Ein Held mit alter Ausrüstung kann die Tore 11–14 trotzdem mit etwa 30–45 % bestehen.
 
 Mini-Bosse sind echte Solo-Kämpfe mit maximal vier Spielerangriffen, **ohne unfairen Gegner-Erstschlag**, aber mit Gegenangriffen, gelegentlichen schweren Treffern und Überlebensprüfung. Jeder Versuch liefert einen kleinen Animationsablauf und eine konkrete Empfehlung nach einer Niederlage. Sie bekommen LP passend zur vorherigen Ausrüstungsstufe. Mit passender Waffe **und** Rüstung sind sie deutlich besser schaffbar, aber nicht automatisch gewonnen (Beispielstufe 15: ca. 58 % unter dem definierten mittleren Build). Ein überdurchschnittlich entwickelter Held erhöht ihre LP und Gegenangriffe nur leicht um höchstens 10 %; ein schwacher Held erhält keinen künstlich leichteren Boss. Große Bosse werden separat anhand von drei Spielern über je sechs Angriffe in 30 Sekunden skaliert.
+
+## Gewichtung und Boss-System: Absprachen vs. Balancing-Entwurf
+
+**Verbindliche Spielprinzipien aus der Planung:**
+
+1. Die Solo-Kämpfe folgen der Karte. An Mini-Bossen 5, 15, …, 95 sind Waffe **und** Rüstung entscheidend. Ein Held kann Tor 15 schon vor dem gemeinsamen Sieg über Boss 10 erreichen und herausfordern, hat dann aber eine sehr geringe Chance auf Erfolg. Die harte Schranke beginnt erst bei Tor 16. Das gleiche Prinzip gilt für Tor 25/26 und weitere Zehnerabschnitte.
+2. Die 10 gemeinsamen Gruppenbosse (10,20,…,100) werden **von genau drei Helden gemeinsam** bestritten, nachdem alle „Bereit“ gewählt haben. Die Kampfzeit beträgt **30 Sekunden**; nach einer Niederlage folgt eine **10-Minuten-Gruppensperre**. Rüstung und Waffe geben den maßgeblichen Vorteil; der Reaktionsknopf soll das Resultat nur um bis zu **10 Prozentpunkte** verbessern, nicht die Ausrüstung ersetzen.
+3. Gemeinsame Bosssiege schalten zusätzliche persönliche Schmiedestufen frei. Die Helden besitzen eigene Waffen/Rüstungen, eigene Materialien und Fähigkeiten; nur der Bossfortschritt wird gemeinsam gespeichert.
+4. **Endziel:** Das DOG-Spiel wird erst nach dem bestätigten Sieg über den **letzten gemeinsamen Boss bei Tor 100** für alle drei freigeschaltet; die Route darf keinen unautorisierten Direktzugang erlauben.
+
+**Nur vorläufig kalibriert, nicht als endgültige Nutzerentscheidung behandeln:**
+- Normale Kämpfe: 30–80 % Server-Siegchance, derzeit 30 Punkte Ausgangswert + bis zu 20 Prozentpunkte für Ausrüstungsbereitschaft + bis zu 30 für Fähigkeiten-Mastery. Diese **Gewichtung macht Fähigkeiten rechnerisch stärker als den direkten Ausrüstungsanteil** und muss vor der Live-Freigabe auf das Prinzip „Ausrüstung als Hauptfaktor“ geprüft werden.
+- Solo-Mini-Bosse: Vier eigene Angriffe mit Gegenangriffen. Das skalierte Bossprofil wird höchstens um 10 % wegen überdurchschnittlicher Ausrüstung/Fähigkeiten verstärkt. Die repräsentativen 4.500er-Simulationen weiter unten illustrieren, dass nur Waffe plus Rüstung verlässlich helfen.
+- Boss 10: Die aktuelle Implementierung berechnet eine serverseitige Siegchance aus Ausrüstung, zwei Fähigkeitswerten und je maximal einer Reaktion pro Held. **Die ausgewiesenen Boss-LP entscheiden den Ausgang aktuell noch nicht über tatsächlichen Schaden**. Hier fehlen die geplante LP-basierte Gegenwehr und der auf Ausrüstung fokussierte 30-Sekunden-Kampf. Die Prozent-/LP-Werte dürfen nicht als endgültig austariert bezeichnet werden. Ein Reaktionsbonus von derzeit 3 Prozentpunkten je Held (maximal 9) ist nur ein begrenzter Zusatz.
+- Folgebosse 20–100 sind noch nicht implementiert. Deren LP und Schwierigkeit müssen erst mit einer allgemeinen, auf den Waffen-/Rüstungs-Grundwerten basierenden Kampffunktion simuliert werden, **bevor** endgültige Prozentgewichte festgelegt werden.
 
 ## Drei Spieler auf derselben Karte (neuer API-Entwurf)
 
