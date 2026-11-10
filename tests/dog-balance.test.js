@@ -176,6 +176,7 @@ test('Mini-boss wins reward better weapon AND armor, with no artificial level lo
     armorLevel:tier,skills,rand:randWeak}).victory);
   }
   const rate=full/trials,weakRate=onlyWeapon/trials;
+  console.log('Mini-Boss-Balance',gate,'voll',rate.toFixed(3),'nur Waffe',weakRate.toFixed(3));
   assert.ok(rate>.20&&rate<.85,'boss '+gate+' should be challenging, got '+rate);
   assert.ok(rate>weakRate+.12,'boss '+gate+' must reward improved armor: '+rate+' vs '+weakRate);
   assert.ok(dogMiniBossAttack(gate)>0);
