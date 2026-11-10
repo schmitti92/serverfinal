@@ -364,7 +364,7 @@ test('Defeat advice is persistent after GET and cleared when a new attempt begin
  assert.equal(f.writes.length,before,'receipt retry causes no second accounting');
  const refreshed=await f.call('GET','/api/dog/boss/me',{},'a');
  assert.equal(refreshed.body.defeatAnalysis.bossRemaining,last.body.bossHp);
- assert.equal(refreshed.body.defeatAnalysis.teamActions,last.body.bossTurn);
+ assert.equal(refreshed.body.defeatAnalysis.teamActions,last.body.combatStats.actions);
  assert.equal(refreshed.body.cooldownRemainingMs,600000);
  f.advance(DOG_BOSS_COOLDOWN_MS);
  const restarted=await restart(f,'a',778);
