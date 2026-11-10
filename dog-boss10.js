@@ -39,7 +39,12 @@ export function boss10State(raw){
   result:x.result?.win===true||x.result?.win===false?
    {win:x.result.win,chancePercent:bounded(x.result.chancePercent,0,95,0),
     roll:bounded(x.result.roll,0,9999,0),
-    bossHp:dogGroupBossHp(10)}:null};
+    bossHp:dogGroupBossHp(10),
+    damage:bounded(x.result.damage,0,100_000_000,0),
+    hpRemaining:bounded(x.result.hpRemaining,0,100_000_000,dogGroupBossHp(10)),
+    participants:bounded(x.result.participants,1,3,3),
+    reactionCount:bounded(x.result.reactionCount,0,3,0),
+    rareCritical:x.result.rareCritical===true}:null};
  return out;
 }
 const eligible=p=>REQUIRED_NORMALS.every(g=>p?.normals?.includes(g));
@@ -176,13 +181,13 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
  if(now<boss.endsAt)throw Error('DOG_BOSS10_STILL_FIGHTING');
  if(boss.roster.length<1||boss.roster.length>3)throw Error('DOG_BOSS10_INVALID_ROSTER');
  const combat=boss10ResolveCombat(boss.roster,boss.reactions,rand);
- const {win,roll}=combat;
+ const {win}=combat;
  const nextBoss={...boss,phase:win?'victory':'cooldown',
   cooldownUntil:win?0:boss.endsAt+DOG_BOSS10_COOLDOWN_MS,
   result:{...combat,chancePercent:boss.chancePercent}};
  const sharedBosses=win?[...new Set([...progress.sharedBosses,10])].sort((a,b)=>a-b):progress.sharedBosses;
- // Team victory opens gate 11 for all three, but never rewinds a hero
- // who has already managed to proceed farther without the forge ascent.
+ // Shared victory opens forge level 2 for the team. Advance only actual
+ // participants' map markers without moving anyone backwards.
  const people={...progress.people};
  if(win)for(const member of boss.roster){
   const current=people[member.uid];
