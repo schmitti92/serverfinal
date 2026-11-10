@@ -60,7 +60,9 @@ export function dogChestContents(offer,rand=randomInt){
   throw Error('DOG_BALANCE_INVALID_CHEST');
  const rule=DOG_CHEST_STAGES[stage];
  const groups=Object.values(DOG_BALANCE_MATERIALS);
- const items={};
+ // Keep all fifteen material IDs present (including zero counts), because
+ // the existing inventory validator checks the full set on chest opening.
+ const items=Object.fromEntries(groups.flat().map(id=>[id,0]));
  for(let i=0;i<count;i++){
   const group=groups[randomDraw(rand,groups.length)];
   let r=randomDraw(rand,100),rarity=0;
@@ -229,9 +231,23 @@ export function dogDefenseChances(skills={}){
 
 /** Pure full fight. The server must authorize any player reaction before passing
  * reaction=true, and must settle one receipt per completed personal gate.
- * Enemy opens with a counterattack, then responds after each nonlethal strike.
+ * Enemy responds to each nonlethal player strike; no pre-emptive instant KO.
  * Death/success are determined entirely on the server, never by the client.
  */
+/** One concise, server-derived recommendation after an attempt. The client
+ * never gets to choose whether it lost by damage or by survival. */
+export function dogMiniBossFeedback(fight){
+ if(!fight||typeof fight!=='object'||!Number.isSafeInteger(fight.gate))
+  throw Error('DOG_BALANCE_INVALID_FIGHT_REPORT');
+ if(fight.victory)return {reason:'victory',
+  title:'Mini-Boss besiegt!',message:'Deine Ausrüstung hat sich bewährt.'};
+ if(fight.heroHp<=0)return {reason:'defense',
+  title:'Deine Rüstung reicht noch nicht aus',
+  message:'Verbessere Rüstung, Lebensenergie, Blocken oder Widerstandskraft.'};
+ return {reason:'attack',title:'Dir fehlt noch Angriffskraft',
+  message:'Verbessere deine Waffe, Angriffskraft oder Vernichtungsschlag.'};
+}
+
 export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
  reaction=false,rand=randomInt}={}){
  const opponent=dogAdaptiveMiniBoss({gate,weaponLevel,armorLevel,skills});
@@ -241,28 +257,39 @@ export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
  const offense=dogAttackChances(skills),defense=dogDefenseChances(skills);
  let bossHp=bossMaxHp,heroHp=maxHeroHp,damageDealt=0;
  let lastStandUsed=false,turns=0,attacksReceived=0;
+ const timeline=[];
  const roll=chance=>randomDraw(rand,1_000_000)<Math.round(chance*1_000_000);
  const retaliate=()=>{
   if(heroHp<=0||bossHp<=0||!roll(DOG_MINI_BOSS_RETALIATION_CHANCE))return;
   const blocked=roll(defense.block),dodged=roll(defense.evasion);
-  heroHp=Math.max(0,heroHp-dogIncomingDamage({armorLevel,enemyAttack,skills,blocked,dodged}));
+  const suffered=dogIncomingDamage({armorLevel,enemyAttack,skills,blocked,dodged});
+  heroHp=Math.max(0,heroHp-suffered);
   attacksReceived++;
   if(heroHp===0&&!lastStandUsed&&roll(defense.lastStand)){
    heroHp=1;lastStandUsed=true;
+   timeline.push({type:'last-stand',heroHp});
   }
+  timeline.push({type:'counterattack',damage:suffered,blocked,dodged,heroHp});
  };
- retaliate(); // the boss opens
+ // Telegraph first, then let the player actually make the opening strike.
+ // An instant KO before the first hit makes an otherwise fair fight frustrating.
  for(let i=0;i<DOG_SOLO_ATTACKS&&heroHp>0&&bossHp>0;i++){
   turns++;
+  const cleanHit=roll(offense.cleanHit);
+  const critical=roll(offense.critical),doubleStrike=roll(offense.doubleStrike);
   const damage=dogStrike({weaponLevel,skills,special:i===0,
-   reaction:i===0&&reaction,cleanHit:roll(offense.cleanHit),
-   critical:roll(offense.critical),doubleStrike:roll(offense.doubleStrike)});
+   reaction:i===0&&reaction,cleanHit,critical,doubleStrike});
   const applied=Math.min(bossHp,damage);
   damageDealt+=applied;bossHp-=applied;
+  timeline.push({type:'hero-attack',damage:applied,bossHp,cleanHit,
+   critical,doubleStrike,special:i===0});
   if(bossHp===0)break;
-  heroHp=Math.min(maxHeroHp,heroHp+dogRegenerationPerAction(skills,armorLevel));
+  const healed= Math.min(maxHeroHp-heroHp,dogRegenerationPerAction(skills,armorLevel));
+  heroHp+=healed;
+  if(healed)timeline.push({type:'regeneration',amount:healed,heroHp});
   retaliate();
  }
- return {gate,victory:bossHp===0&&heroHp>0,bossHp,bossMaxHp,heroHp,maxHeroHp,
-  enemyAttack,turns,damageDealt,attacksReceived};
+ const result={gate,victory:bossHp===0&&heroHp>0,bossHp,bossMaxHp,heroHp,maxHeroHp,
+  enemyAttack,turns,damageDealt,attacksReceived,timeline};
+ return {...result,feedback:dogMiniBossFeedback(result)};
 }
