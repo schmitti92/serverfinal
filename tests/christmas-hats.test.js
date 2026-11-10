@@ -31,6 +31,14 @@ test('one bomb, normal and strictly better gift in every room',()=>{
     assert.ok(h.items.every(item=>item.kind==='hammer'&&item.hammer==='single'||item.kind==='pack'&&item.packId==='small'),
      'rooms 1–3 are limited to ordinary packs and simple hammers');
    }
+   if(room>=4&&!h.superLuck){
+    assert.ok(h.items.every(item=>item.kind!=='pack'||item.packId!=='small'),'no tiny packs from room 4 onward');
+    assert.ok(h.items.every(item=>item.kind!=='hammer'||item.hammer!=='single'),'no weak hammer from room 4 onward');
+   }
+   if(room>=7&&!h.superLuck){
+    assert.ok(h.items.every(item=>item.kind!=='pack'||['large','premium','platinum'].includes(item.packId)),
+      'jackpot rooms use only medium/high packs');
+   }
   }
  }
 });
