@@ -130,8 +130,8 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
  // the server. A defending player can cut most incoming explosion damage.
  // No extra network action or Firestore read is needed for the warning.
  let retaliation=victory?0:([0,24,35,46][beforePhase]+
-  (chargedAttack?45:0))+Math.floor(roll(3)/1000)*2;
- retaliation=Math.max(1,retaliation-2*levels.armor-Math.floor(levels.resilience*.5));
+  (chargedAttack?45:0)+Math.floor(roll(3)/1000)*2);
+ retaliation=victory?0:Math.max(1,retaliation-2*levels.armor-Math.floor(levels.resilience*.5));
  if(actor.guard)retaliation=Math.max(1,Math.ceil(retaliation*.45));
  if(move==='guard')retaliation=Math.max(0,Math.ceil(retaliation*.22));
  const healing=Math.ceil(levels.regeneration*.4)+(move==='special'?Math.min(18,4+levels.vitality):0);
