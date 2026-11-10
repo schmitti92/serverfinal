@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import crypto from 'node:crypto';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
+import {BANKER_30_OPENINGS} from '../deal-or-no-deal.js';
 
 const flush=()=>new Promise(resolve=>setTimeout(resolve,20));
 function harness(participants=['a','b']){
@@ -363,7 +364,9 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  assert.equal(response.statusCode,200,JSON.stringify(response.body));
  let game=response.body.game;
  assert.equal(game.caseCount,30);
- assert.deepEqual(game.bankerSchedule,[6,5,5,4,3,3,2,1]);
+ assert.ok(Number.isInteger(game.bankerScheduleVariant)&&game.bankerScheduleVariant>=1&&game.bankerScheduleVariant<=5);
+ const targets=BANKER_30_OPENINGS[game.bankerScheduleVariant-1];
+ assert.deepEqual(game.bankerSchedule,targets.map((n,i)=>n-(targets[i-1]||0)),'the server selects one of the five valid patterns');
  assert.equal(game.values,undefined,'private case amounts never enter multiplayer updates');
  const stored=docs.get('deal_or_no_deal_matches_v1/123').game;
  assert.equal(stored.values.length,30);
