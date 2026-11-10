@@ -43,6 +43,22 @@ export const DOG_FORGE_TUNING=Object.freeze({
  ],
  skillBonusPercentPerLevel:1
 });
+// Bounded journal lives in the existing hero document; no extra Firestore reads.
+const FORGE_JOURNAL_LIMIT=10;
+function normalizeJournal(value){
+ if(!Array.isArray(value))return [];
+ return value.slice(0,FORGE_JOURNAL_LIMIT).flatMap(entry=>{
+  const e=object(entry),at=bounded(e.at,0,10_000_000_000_000,0);
+  if(e.type==='upgrade'&&DOG_FORGE_ITEM_BY_ID[e.itemId]){
+   const item=DOG_FORGE_ITEM_BY_ID[e.itemId];
+   return [{type:'upgrade',itemId:e.itemId,success:e.success===true,
+    level:bounded(e.level,item.baseLevel,item.maxLevel,item.baseLevel),at}];
+  }
+  if(e.type==='exchange'&&DOG_RESOURCES.includes(e.from)&&DOG_RESOURCES.includes(e.to))
+   return [{type:'exchange',from:e.from,to:e.to,at}];
+  return [];
+ });
+}
 export function dogHero(raw){
  const d=object(raw),levels=object(d.levels),result={};
  for(const i of DOG_FORGE_ITEMS)result[i.id]=bounded(levels[i.id],i.baseLevel,i.maxLevel,i.baseLevel);
@@ -50,6 +66,7 @@ export function dogHero(raw){
   successes:bounded(d.successes,0,1_000_000,0),
   failures:bounded(d.failures,0,1_000_000,0),
   exchanges:bounded(d.exchanges,0,1_000_000,0),
+  recent:normalizeJournal(d.recent),
   updatedAt:bounded(d.updatedAt,0,10_000_000_000_000,0)};
 }
 const costFor=(group,next)=>{
@@ -113,7 +130,10 @@ export function forgeUpgrade(heroRaw,inventoryRaw,itemId,expectedLevel,roll=0,no
  const success=roll<quote.successChance*100;
  const nextHero={...hero,levels:{...hero.levels,[itemId]:success?quote.nextLevel:hero.levels[itemId]},
   crafts:hero.crafts+1,successes:hero.successes+(success?1:0),
-  failures:hero.failures+(success?0:1),updatedAt:now};
+  failures:hero.failures+(success?0:1),
+  recent:[{type:'upgrade',itemId,success,
+   level:success?quote.nextLevel:hero.levels[itemId],at:now},...hero.recent]
+   .slice(0,FORGE_JOURNAL_LIMIT),updatedAt:now};
  const nextInventory={...inventory,resources:spend(inventory.resources,quote.cost),updatedAt:now};
  return {hero:nextHero,inventory:nextInventory,
   result:{type:'upgrade',itemId,success,oldLevel:quote.level,newLevel:nextHero.levels[itemId],
@@ -130,7 +150,9 @@ export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now()){
   [resourceId]:inventory.resources[resourceId]-DOG_FORGE_TUNING.exchangeRate,
   [nextResource]:inventory.resources[nextResource]+1};
  return {inventory:{...inventory,resources,updatedAt:now},
-  hero:{...hero,exchanges:hero.exchanges+1,updatedAt:now},
+  hero:{...hero,exchanges:hero.exchanges+1,
+   recent:[{type:'exchange',from:resourceId,to:nextResource,at:now},...hero.recent]
+    .slice(0,FORGE_JOURNAL_LIMIT),updatedAt:now},
   result:{type:'exchange',from:resourceId,to:nextResource,
    spent:DOG_FORGE_TUNING.exchangeRate,received:1}};
 }
