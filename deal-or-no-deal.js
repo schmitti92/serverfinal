@@ -1,10 +1,25 @@
 'use strict';
 import * as crypto from 'node:crypto';
 const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000,500000000,1000000000,5000000000];
-// Original modes and 29-case cadence remain stable. A new 30-case match gets
-// 29 openable suitcases (one reserved for a player in solo mode) across 8 offers.
+// Legacy schedules are frozen to preserve already running games.
 const STEPS=[5,4,4,3,2,2,1,1],STEPS_29=[6,5,5,4,3,2,2,1],
  STEPS_30=[6,5,5,4,3,3,2,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
+// Five equally likely 30-case cadences, expressed as TOTAL opened cases when
+// the Banker calls. These milestones are exact for a three-player match,
+// which has 27 openable cases. No unscheduled calls after the final milestone.
+const BANKER_30_OPENINGS=Object.freeze([
+ Object.freeze([7,15,21,24,27]),
+ Object.freeze([7,13,16,19,25,26]),
+ Object.freeze([10,15,20,25,27]),
+ Object.freeze([7,16,19,25,27]),
+ Object.freeze([8,14,19,22,24,26])
+]);
+const openingToSteps=targets=>targets.map((count,i)=>count-(i?targets[i-1]:0));
+function pick30BankerSchedule(random=crypto.randomInt){
+ const index=random(BANKER_30_OPENINGS.length);
+ if(!Number.isInteger(index)||index<0||index>=BANKER_30_OPENINGS.length)throw Error('INVALID_BANKER_VARIANT_ROLL');
+ return {variant:index+1,steps:openingToSteps(BANKER_30_OPENINGS[index])};
+}
 const shuffle=(a,rand=crypto.randomInt)=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
 const active=g=>g.players.filter(p=>p.deal===null);
 const locked=g=>new Set(g.players.map(p=>p.case).filter(Number.isInteger));
@@ -14,7 +29,11 @@ function create(players,random=crypto.randomInt,caseCount=27){
  if(![26,27,28,29,30].includes(caseCount))throw Error('INVALID_CASE_COUNT');
  if(!Array.isArray(players)||players.length<1||players.length>4)throw Error('PLAYER_COUNT');
  const ids=players.map(p=>String(p.id));if(new Set(ids).size!==ids.length)throw Error('DUPLICATE_PLAYER');
- return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null})),values:shuffle(VALUES.slice(0,caseCount),random),order:shuffle(ids,random),selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerSchedule:caseCount===30?[...STEPS_30]:caseCount===29?[...STEPS_29]:null,offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
+ const values=shuffle(VALUES.slice(0,caseCount),random),order=shuffle(ids,random);
+ // Draw ONCE when creating the game, then persist the chosen cadence.
+ // Existing games keep their saved schedule and are never rerolled.
+ const thirty=caseCount===30?pick30BankerSchedule(random):null;
+ return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerSchedule:thirty?thirty.steps:caseCount===29?[...STEPS_29]:null,...(thirty?{bankerScheduleVariant:thirty.variant}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
 }
 function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnIndex+i)%g.order.length];if(g.players.some(p=>p.id===id&&p.deal===null))return id}return null}
 function apply(g,actor,command,random=crypto.randomInt){
@@ -34,10 +53,16 @@ function apply(g,actor,command,random=crypto.randomInt){
   next.opened.push(next.pending.case);next.roundOpened++;
   next.events.push({type:'opened',case:next.pending.case,amount:next.values[next.pending.case],playerId:p.id,eventId:next.pending.eventId});
   next.turnIndex=(next.order.indexOf(p.id)+1)%next.order.length;next.pending=null;
-  // Snapshot the 29-case cadence when the game is created: old matches
-  // without bankerSchedule continue under their original rules on deploy.
+  // Server-saved schedules are authoritative. Only NEW 30-case variants
+  // have a fixed final offer: after it, remaining cases open without another
+  // phone call. Old running matches retain their original fallback cadence.
   const steps=Array.isArray(next.bankerSchedule)?next.bankerSchedule:STEPS;
-  if(next.roundOpened>=(steps[next.round]||1)||free(next).length===0)offer(next,random);else next.phase='open';
+  if(next.bankerScheduleVariant){
+   const scheduled=steps[next.round];
+   if(Number.isInteger(scheduled)&&next.roundOpened>=scheduled)offer(next,random);
+   else next.phase=free(next).length===0?'final':'open';
+  }else if(next.roundOpened>=(steps[next.round]||1)||free(next).length===0)offer(next,random);
+  else next.phase='open';
  }else if(next.phase==='decision'){
   const ballot=next.history[next.history.length-1];
   if(command.type!=='decide'||typeof command.deal!=='boolean'||!ballot.participants.includes(p.id)||ballot.decisions.some(d=>d.id===p.id))throw Error('INVALID_DECISION');
@@ -101,4 +126,4 @@ function offer(g,random){
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
-export {drawHammerFromTwelve,VALUES,STEPS,STEPS_29,STEPS_30,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
+export {drawHammerFromTwelve,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
