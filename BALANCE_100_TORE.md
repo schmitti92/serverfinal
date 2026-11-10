@@ -42,8 +42,10 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 2. Vorhandene Ausrüstung über Level 10 darf niemals stillschweigend herabgestuft oder überschrieben werden.
 3. Bestehende Kisten (5–40 Rohstoffe) sind noch nicht auf die neuen Kapitelmengen umgestellt.
 4. Neues Frontend und neues Backend müssen gemeinsam ausgeliefert und mit echten drei Konten in einem isolierten Testsystem geprüft werden. Alte Boss-Testarena bleibt getrennt.
-5. Die Bestätigung nach Ablauf der 30 Sekunden erfolgt durch einen nachfolgenden authentifizierten `finish`-Aufruf; wenn alle drei offline sind, verbleibt das Ergebnis bis zum nächsten Aufruf ausstehend. Keine angebliche Hintergrundverarbeitung.
+5. **Wiederaufnahme ergänzt:** Nach Ablauf der 30 Sekunden kann der authentifizierte `finish`-Aufruf entscheiden. Zusätzlich stellt der erste spätere authentifizierte `GET /api/dog/gates/boss10` einen steckengebliebenen Kampf durch eine Firestore-Transaktion einmalig wieder her. Bei einer Niederlage beginnt die 10-Minuten-Pause zum **ursprünglichen Kampfende**, auch wenn die Spieler erst später zurückkehren. Das ist keine asynchrone Hintergrundaufgabe.
 6. Gemeinsame Bosse 20–100, Belohnungen sowie die endgültige DOG-Freischaltung bleiben ausstehend.
+
+**Kartenpositionen:** Jeder Held hat zwei getrennte Werte: `currentGate` für das aktuell gewählte/zuletzt bekämpfte Tor und `highestGate` für sein höchstes jemals erreichtes Tor. Ältere Mini-Bosse dürfen erneut besucht werden, ohne den Bestwert zurückzusetzen. Andere Profile außerhalb des Dreierteams erhalten aus dem Kartenendpunkt nur eine anonyme Platzanzahl, keine Namen oder Torpositionen.
 
 ## Rohstoffe je persönlichem Kapitel
 
@@ -54,11 +56,13 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 | 21–30 | 2–3 | 73% | 24% | 3% | 0% | 0% |
 | 31–40 | 2–4 | 62% | 32% | 6% | 0% | 0% |
 | 41–50 | 3–5 | 55% | 32% | 12% | 1% | 0% |
-| 51–60 | 3–6 | 47% | 32% | 18% | 3% | 0% |
-| 61–70 | 4–7 | 40% | 30% | 23% | 6% | 1% |
-| 71–80 | 5–8 | 32% | 28% | 25% | 13% | 2% |
-| 81–90 | 6–9 | 26% | 26% | 27% | 17% | 4% |
-| 91–99 | 7–10 | 22% | 23% | 28% | 21% | 6% |
+| 51–60 | 3–5 | 47% | 32% | 18% | 3% | 0% |
+| 61–70 | 3–5 | 40% | 30% | 23% | 6% | 1% |
+| 71–80 | 4–5 | 32% | 28% | 25% | 13% | 2% |
+| 81–90 | 4–5 | 26% | 26% | 27% | 17% | 4% |
+| 91–99 | 5 | 22% | 23% | 28% | 21% | 6% |
+
+Alle Kisten enthalten **mindestens einen und höchstens fünf Rohstoffe**, auch in der letzten Welt. Höhere Tore erhöhen vor allem die Seltenheitschancen, nicht die maximale Anzahl.
 
 Neue Materialien erscheinen schon **vor** dem gemeinsamen Boss, dessen Sieg das zugehörige Upgrade freischaltet. Kistengröße und Gewichtung müssen beim Erhalt auf dem Server eingefroren werden, damit spätere Levelaufstiege alte Kisten nicht nachträglich vergrößern.
 
