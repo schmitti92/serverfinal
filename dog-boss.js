@@ -13,6 +13,9 @@ export const DOG_BOSS_COOLDOWN_MS=10*60*1000;
 export const DOG_BOSS_MAX_MEMBERS=3;
 export const DOG_BOSS_GATE=1;
 export const DOG_BOSS_HP=6000;
+export const DOG_REACTION_DURATION_MS=3000;
+export const DOG_REACTION_TARGET_MS=1700;
+export const DOG_REACTION_MAX_BONUS_PCT=10;
 export const DOG_BOSS_PHASES=Object.freeze([
  {number:1,name:'Der erwachte Wächter',threshold:1,attack:'Steinhieb'},
  {number:2,name:'Die Glut erwacht',threshold:.5,attack:'Gluthieb'},
@@ -24,6 +27,17 @@ const num=(v,lo,hi,defaultValue)=>Number.isSafeInteger(v)?Math.max(lo,Math.min(h
 const object=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
 const cleanName=x=>String(x||'Held').replace(/[<>\r\n\t]/g,'').trim().slice(0,32)||'Held';
 const validUid=x=>typeof x==='string'&&x.length>=1&&x.length<=200;
+const challengeData=(data,turn,attempt)=>{
+ const out={};
+ for(const [uid,v] of Object.entries(object(data))){
+  if(!validUid(uid)||!Number.isSafeInteger(v?.startAt)||v.startAt<0||
+    v.startAt>MAX_TIME||v?.turn!==turn||v?.attempt!==attempt)continue;
+  out[uid]={turn,attempt,startAt:v.startAt,
+   targetAt:v.startAt+DOG_REACTION_TARGET_MS,
+   expiresAt:v.startAt+DOG_REACTION_DURATION_MS};
+ }
+ return out;
+};
 const bossStats=raw=>{
  const x=object(raw);
  return {actions:num(x.actions,0,1000000,0),
@@ -86,6 +100,8 @@ export function bossTeam(raw){
   attempt:num(d.attempt,1,1_000_000,1),
   bossTurn:num(d.bossTurn,0,1_000_000,0),
   bossCharged:d.bossCharged===true&&phase==='fighting',
+  reactionChallenges:challengeData(d.reactionChallenges,
+   num(d.bossTurn,0,1_000_000,0),num(d.attempt,1,1_000_000,1)),
   combatStats:bossStats(d.combatStats),
   cooldownUntil:phase==='cooldown'?num(d.cooldownUntil,0,MAX_TIME,0):0,
   members,heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
@@ -93,9 +109,13 @@ export function bossTeam(raw){
 }
 export function bossView(raw,uid,now=Date.now()){
  const state=bossTeam(raw);
+ const {reactionChallenges,...safeState}=state;
  const phaseNumber=bossPhaseOf(state.bossHp);
  const bossPhase=DOG_BOSS_PHASES[phaseNumber-1];
- return {...state,serverNow:now,cooldownMs:DOG_BOSS_COOLDOWN_MS,
+ return {...safeState,serverNow:now,cooldownMs:DOG_BOSS_COOLDOWN_MS,
+  reactionChallenge:reactionChallenges[uid]||null,
+  reactionRules:{durationMs:DOG_REACTION_DURATION_MS,targetMs:DOG_REACTION_TARGET_MS,
+   maxBonusPct:DOG_REACTION_MAX_BONUS_PCT},
   defeatAnalysis:bossDefeatAnalysis(state),
   bossPhase:phaseNumber,bossPhaseName:bossPhase.name,
   bossAttackName:state.bossCharged?'🔥 Flammenexplosion':bossPhase.attack,
@@ -134,12 +154,28 @@ export function bossRestart(raw,heroByUid,uid,now=Date.now()){
   heroes[member.uid]={hp:maxHp,maxHp,guard:false};
  }
  return {...state,heroes,phase:'ready',bossHp:DOG_BOSS_HP,bossTurn:0,bossCharged:false,
-  combatStats:bossStats(null),
+  combatStats:bossStats(null),reactionChallenges:{},
   attempt:state.attempt+1,cooldownUntil:0,
   log:['Versuch '+(state.attempt+1)+': Der Aschewächter ist zurück – volle Lebenspunkte.',
    ...state.log].slice(0,10),updatedAt:now};
 }
-const MOVES=Object.freeze(['attack','power','guard','special']);
+/** Server-issued, one challenge per hero and boss turn. A repeated start
+ * never extends the timing window. The next boss turn invalidates old tickets. */
+export function bossReactionStart(raw,uid,now=Date.now()){
+ const state=bossTeam(raw);
+ if(!state.members.some(x=>x.uid===uid))throw Error('NOT_BOSS_MEMBER');
+ if(state.phase==='cooldown')throw Error('BOSS_COOLDOWN_ACTIVE');
+ if(state.phase==='victory')throw Error('BOSS_ALREADY_WON');
+ if(!state.heroes[uid]||state.heroes[uid].hp<=0)throw Error('BOSS_HERO_DOWN');
+ const existing=state.reactionChallenges[uid];
+ if(existing)return {state,challenge:existing};
+ const challenge={turn:state.bossTurn,attempt:state.attempt,startAt:now,
+  targetAt:now+DOG_REACTION_TARGET_MS,
+  expiresAt:now+DOG_REACTION_DURATION_MS};
+ return {state:{...state,reactionChallenges:{...state.reactionChallenges,[uid]:challenge},
+  updatedAt:now},challenge};
+}
+const MOVES=Object.freeze(['attack','power','guard','special','reaction']);
 export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],now=Date.now()){
  if(!MOVES.includes(move))throw Error('INVALID_BOSS_MOVE');
  const state=bossTeam(raw),member=state.members.find(x=>x.uid===uid);
@@ -148,6 +184,16 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
  if(state.phase==='victory')throw Error('BOSS_ALREADY_WON');
  const actor=state.heroes[uid];
  if(!actor||actor.hp<=0)throw Error('BOSS_HERO_DOWN');
+ const challenge=move==='reaction'?state.reactionChallenges[uid]:null;
+ if(move==='reaction'&&(!challenge||challenge.turn!==state.bossTurn||
+   challenge.attempt!==state.attempt))throw Error('BOSS_REACTION_NOT_READY');
+ // Timing is measured entirely by the server clock; the client sends no score.
+ const timingDiff=challenge?Math.abs(now-challenge.targetAt):Infinity;
+ const reactionBonusPct=move!=='reaction'?0:
+  timingDiff<=300?10:timingDiff<=700?6:timingDiff<=1100?3:0;
+ const reactionGrade=move!=='reaction'?null:
+  reactionBonusPct===10?'perfekt':reactionBonusPct===6?'gut':
+  reactionBonusPct===3?'knapp':'verpasst';
  const levels=dogHero(heroRaw).levels;
  const maxHp=bossMaxHp(heroRaw);
  const currentHp=Math.min(maxHp,actor.hp+(maxHp>actor.maxHp?maxHp-actor.maxHp:0));
@@ -163,6 +209,7 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
  if(!hit&&move!=='guard')damage=Math.round(damage*.65);
  if(critical&&move!=='guard')damage=Math.round(damage*1.4);
  if(doubleStrike&&move!=='guard')damage=Math.round(damage*1.55);
+ if(reactionBonusPct)damage=Math.round(damage*(100+reactionBonusPct)/100);
  damage=Math.max(1,Math.floor(damage));
  const bossHp=Math.max(0,state.bossHp-damage);
  const victory=bossHp===0;
@@ -207,7 +254,9 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
   phase,bossHp,combatStats,bossTurn}):null;
  const log=[
   member.name+': '+(move==='guard'?'🛡️ Verteidigung':move==='power'?'🔥 Kraftschlag':
-   move==='special'?'✨ Spezialangriff':'⚔️ Angriff')+' – '+damage+' Schaden'+
+   move==='special'?'✨ Spezialangriff':move==='reaction'?'⚡ Reaktion':'⚔️ Angriff')+
+   (move==='reaction'?' ('+reactionGrade+' · +'+reactionBonusPct+' %)':'')+
+   ' – '+damage+' Schaden'+
    (retaliation?' · '+retaliation+' Gegenschaden':'')+'.',
   ...(chargedAttack?['🔥 Flammenexplosion! '+member.name+' erhält '+retaliation+' Gegenschaden.']:[]),
   ...(afterPhase>beforePhase&&!victory?
@@ -218,16 +267,17 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
      lossReport.title+' · '+lossReport.bossProgressPct+' % Boss-Schaden.']:[]),
   ...state.log].slice(0,10);
  return {state:{...state,heroes,bossHp,phase,cooldownUntil,log,updatedAt:now,
-   bossTurn,bossCharged,combatStats},
+   bossTurn,bossCharged,combatStats,reactionChallenges:{}},
   result:{type:'combat',move,damage,retaliation,critical,doubleStrike,dodged,
    defeatAnalysis:lossReport,
    defeated:phase==='cooldown',victory,actorHp:hp,bossHp,bossAttack,chargedAttack,
    bossPhase:afterPhase,phaseChanged:afterPhase>beforePhase,
+   reactionBonusPct,reactionGrade,
    nextAttackCharged:bossCharged}};
 }
 const ERRORS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  INVALID_BOSS_MOVE:400,INVALID_BOSS_COMMAND:400,BOSS_TEAM_FULL:409,
- BOSS_STATE_STALE:409,
+ BOSS_STATE_STALE:409,BOSS_REACTION_NOT_READY:409,
  NOT_BOSS_MEMBER:403,BOSS_NO_RESTART:409,BOSS_COOLDOWN_ACTIVE:409,
  BOSS_ALREADY_WON:409,BOSS_HERO_DOWN:409,BOSS_RECEIPT_CONFLICT:409});
 export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
@@ -277,7 +327,11 @@ export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt
     }
     let next,result;
     const now=clock();
-    if(command==='join'){
+    if(command==='reaction-start'){
+     const created=bossReactionStart(state,uid,now);
+     next=created.state;
+     result={type:'reaction-start',...created.challenge};
+    }else if(command==='join'){
      const h=await tx.get(heroRef);
      next=bossJoin(state,uid,req.bossProfile.name,h.exists?h.data():null,now);
      result={type:'join'};
@@ -316,6 +370,7 @@ export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt
   }catch(e){return fail(res,e);}
  }];
  app.post('/api/dog/boss/join',...act('join'));
+ app.post('/api/dog/boss/reaction-start',...act('reaction-start'));
  app.post('/api/dog/boss/act',...act('act'));
  app.post('/api/dog/boss/restart',...act('restart'));
 }
