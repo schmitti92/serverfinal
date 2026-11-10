@@ -18,11 +18,12 @@ export const DOG_BALANCE_MATERIALS=Object.freeze({
 });
 
 // Each stage begins when the player reaches its own ten-gate chapter.
-// A chest contains 1–5 materials at ANY stage; later worlds improve rarity. These
+// At gates 1–10 chests contain 1–3 materials (50/35/15 %); later
+// worlds may increase to a maximum of 5. Rarity also improves. These
 // preview drops arrive BEFORE the corresponding shared boss is beaten.
 // Weight indices: common, uncommon, rare, epic, legendary. Sum = 100.
 export const DOG_CHEST_STAGES=Object.freeze([
- {min:1,max:2,weights:[95,5,0,0,0]},
+ {min:1,max:3,countWeights:[50,35,15],weights:[95,5,0,0,0]},
  {min:1,max:3,weights:[82,17,1,0,0]},
  {min:2,max:3,weights:[73,24,3,0,0]},
  {min:2,max:4,weights:[62,32,6,0,0]},
@@ -32,7 +33,8 @@ export const DOG_CHEST_STAGES=Object.freeze([
  {min:4,max:5,weights:[32,28,25,13,2]},
  {min:4,max:5,weights:[26,26,27,17,4]},
  {min:5,max:5,weights:[22,23,28,21,6]}
-].map(x=>Object.freeze({...x,weights:Object.freeze(x.weights)})));
+].map(x=>Object.freeze({...x,weights:Object.freeze(x.weights),
+ ...(x.countWeights?{countWeights:Object.freeze(x.countWeights)}:{})})));
 
 const integer=(value,min,max,fallback=min)=>Number.isSafeInteger(value)?Math.max(min,Math.min(max,value)):fallback;
 const level=(value,max)=>integer(value,0,max,0);
@@ -50,7 +52,21 @@ export function dogChestStage(personalGate=0){
 }
 export function dogChestOffer(personalGate=0,rand=randomInt){
  const stage=dogChestStage(personalGate),rule=DOG_CHEST_STAGES[stage];
- return {version:3,stage,count:rule.min+randomDraw(rand,rule.max-rule.min+1)};
+ let count;
+ if(rule.countWeights){
+  // More single-material chests at the start, while three remains possible.
+  // Late-game chapters retain their existing uniform quantity rolls.
+  let roll=randomDraw(rand,100);
+  let idx=0;
+  for(;idx<rule.countWeights.length-1;idx++){
+   roll-=rule.countWeights[idx];
+   if(roll<0)break;
+  }
+  count=rule.min+idx;
+ }else{
+  count=rule.min+randomDraw(rand,rule.max-rule.min+1);
+ }
+ return {version:3,stage,count};
 }
 export function dogChestContents(offer,rand=randomInt){
  // Only server-issued/stored offers must be accepted by the real API.
