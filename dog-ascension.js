@@ -64,7 +64,8 @@ export function ascensionUpgrade(heroRaw,inventoryRaw,progressRaw,type,expectedL
 const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,DOG_ASCENSION_INVALID_TYPE:400,
  DOG_ASCENSION_LEVEL_STALE:409,DOG_ASCENSION_LEGACY_LEVEL:409,
  DOG_ASCENSION_BOSS_REQUIRED:409,DOG_ASCENSION_MATERIALS_MISSING:409,
- DOG_ASCENSION_BAD_RANDOM:500,DOG_ASCENSION_RECEIPT_CONFLICT:409};
+ DOG_ASCENSION_BAD_RANDOM:500,DOG_ASCENSION_RECEIPT_CONFLICT:409,
+ NOT_DOG_TEAM_MEMBER:403};
 export function installDogAscensionApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
  const auth=async(req,res,next)=>{
   try{const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -81,13 +82,17 @@ export function installDogAscensionApi(app,{verifyProfile,getFirestore,rand=rand
  const refs=uid=>{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
   return {db,heroRef:db.collection(DOG_HERO_COLLECTION).doc(uid),
    inventoryRef:db.collection(DOG_MATERIALS_COLLECTION).doc(uid),
-   progressRef:db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID)};
+   progressRef:db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID),
+   teamRef:db.collection('dog_boss_team_v1').doc('first-three-heroes')};
  };
  app.get('/api/dog/gates/ascension',auth,async(req,res)=>{
   try{
-   const {heroRef,inventoryRef,progressRef}=refs(req.dogAscensionUid);
-   const [hero,inventory,progress]=await Promise.all([
-    heroRef.get(),inventoryRef.get(),progressRef.get()]);
+   const {heroRef,inventoryRef,progressRef,teamRef}=refs(req.dogAscensionUid);
+   const [hero,inventory,progress,team]=await Promise.all([
+    heroRef.get(),inventoryRef.get(),progressRef.get(),teamRef.get()]);
+   if(!team.exists||!Array.isArray(team.data()?.members)||
+    !team.data().members.some(m=>m?.uid===req.dogAscensionUid))
+    throw Error('NOT_DOG_TEAM_MEMBER');
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...ascensionView(hero.exists?hero.data():null,
     inventory.exists?inventory.data():null,progress.exists?progress.data():null)});
@@ -97,12 +102,16 @@ export function installDogAscensionApi(app,{verifyProfile,getFirestore,rand=rand
   try{
    const {requestId,type,expectedLevel}=obj(req.body);
    if(!validId(requestId))throw Error('INVALID_REQUEST_ID');
-   const uid=req.dogAscensionUid,{db,heroRef,inventoryRef,progressRef}=refs(uid);
+   const uid=req.dogAscensionUid,{db,heroRef,inventoryRef,progressRef,teamRef}=refs(uid);
    const receiptRef=db.collection(DOG_ASCENSION_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
    const response=await db.runTransaction(async tx=>{
-    const [receipt,heroSnap,inventorySnap,progressSnap]=await Promise.all([
-     tx.get(receiptRef),tx.get(heroRef),tx.get(inventoryRef),tx.get(progressRef)
+    const [receipt,heroSnap,inventorySnap,progressSnap,teamSnap]=await Promise.all([
+     tx.get(receiptRef),tx.get(heroRef),tx.get(inventoryRef),
+     tx.get(progressRef),tx.get(teamRef)
     ]);
+    if(!teamSnap.exists||!Array.isArray(teamSnap.data()?.members)||
+     !teamSnap.data().members.some(m=>m?.uid===uid))
+     throw Error('NOT_DOG_TEAM_MEMBER');
     const hero=heroSnap.exists?heroSnap.data():null,
      inventory=inventorySnap.exists?inventorySnap.data():null,
      progress=progressSnap.exists?progressSnap.data():null;
