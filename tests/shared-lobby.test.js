@@ -994,3 +994,52 @@ test('Hub shares one Firestore watch between sockets and releases it after last 
  c.close();
  assert.equal(h.watchStats().stops,2);
 });
+
+
+test('DOG online: same shared room, four seats with bots, private card projections and guarded moves',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ const start=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ assert.equal(start.status,200);
+ assert.equal(start.room.phase,'playing');
+ assert.equal(start.room.match.game,'dog');
+ const match=start.room.match;
+ assert.equal(match.dog.players.length,4);
+ assert.equal(match.dog.players.filter(p=>p.bot).length,3);
+ assert.equal(match.dogSeat,0);
+ assert.equal(match.dog.ruleset,'classic-dog');
+ assert.equal(match.dog.hands[0].length,6);
+ for(let i=1;i<4;i++)assert.equal(typeof match.dog.hands[i].count,'number');
+ assert.equal(match.dog.deck,undefined);
+ assert.equal(match.dog.discard,undefined);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/dog/action','bob',{matchId:match.id,action:{type:'exchange',cardId:1},actionId:'test-unauth-001',expectedRevision:match.dog.revision})).status,403);
+ const initialRevision=match.dog.revision;
+ const cardId=match.dog.hands[0][0].id;
+ const payload={matchId:match.id,action:{type:'exchange',cardId},expectedRevision:initialRevision,actionId:'dog-action-00000001'};
+ const accepted=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',payload);
+ assert.equal(accepted.status,200);
+ assert.equal(accepted.room.match.dog.hands[0].length,6);
+ assert.ok(accepted.room.match.dog.revision>initialRevision);
+ const repeated=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',payload);
+ assert.equal(repeated.status,200);
+ assert.equal(repeated.room.match.dog.revision,accepted.room.match.dog.revision);
+ const stale=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{...payload,actionId:'dog-action-00000002'});
+ assert.equal(stale.status,409);
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code,'alice')).room.match.dog.hands[1].count>=0,true);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/finish','alice')).status,409);
+});
+test('DOG four-human lobby hides each opponent hand',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const p of ['bob','cara','dana'])await h.api('POST','/api/hub/rooms/'+code+'/join',p);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ for(const p of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',p,{ready:true});
+ const last=(await h.api('POST','/api/hub/rooms/'+code+'/ready','dana',{ready:true})).room;
+ assert.equal(last.match.dog.players.filter(p=>p.bot).length,0);
+ assert.equal(last.match.dog.phase,'exchange');
+ for(let i=0;i<4;i++){
+  const p=['alice','bob','cara','dana'][i],view=(await h.api('GET','/api/hub/rooms/'+code,p)).room;
+  assert.equal(view.match.dogSeat,i);
+  assert.equal(view.match.dog.hands[i].length,6);
+  for(let j=0;j<4;j++)if(j!==i)assert.equal(view.match.dog.hands[j].count,6);
+ }
+});
