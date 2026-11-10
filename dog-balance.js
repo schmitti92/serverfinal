@@ -1,3 +1,4 @@
+import {randomInt} from 'node:crypto';
 /** Die 100 Tore — isolated balance model (not wired into live endpoints yet).
  * All probabilities, upgrade costs and damage calculations are server-side rules.
  * A chest freezes its size and material table when awarded, not when opened.
@@ -46,11 +47,11 @@ export function dogChestStage(personalGate=0){
  // The personal path can continue beyond an unbeaten shared boss.
  return Math.min(9,Math.floor(Math.max(0,integer(personalGate,0,99,0)-1)/10));
 }
-export function dogChestOffer(personalGate=0,rand=n=>Math.floor(Math.random()*n)){
+export function dogChestOffer(personalGate=0,rand=randomInt){
  const stage=dogChestStage(personalGate),rule=DOG_CHEST_STAGES[stage];
  return {version:3,stage,count:rule.min+randomDraw(rand,rule.max-rule.min+1)};
 }
-export function dogChestContents(offer,rand=n=>Math.floor(Math.random()*n)){
+export function dogChestContents(offer,rand=randomInt){
  // Only server-issued/stored offers must be accepted by the real API.
  const stage=offer?.stage,count=offer?.count;
  if(!Number.isSafeInteger(stage)||stage<0||stage>=DOG_CHEST_STAGES.length||
@@ -78,6 +79,10 @@ const UPGRADE_RECIPE=Object.freeze({
  5:[0,2,1,0,0],6:[0,0,3,0,0],7:[0,0,2,1,0],
  8:[0,0,0,2,0],9:[0,0,0,3,0],10:[0,0,0,2,1]
 });
+export function dogEquipmentSuccessChance(nextLevel){
+ if(!Number.isSafeInteger(nextLevel)||nextLevel<2||nextLevel>10)throw Error('DOG_BALANCE_INVALID_LEVEL');
+ return [0,0,100,95,90,85,75,65,55,45,35][nextLevel];
+}
 export function dogEquipmentCost(type,nextLevel){
  if(type!=='weapon'&&type!=='armor')throw Error('DOG_BALANCE_INVALID_EQUIPMENT');
  if(!Number.isSafeInteger(nextLevel)||nextLevel<2||nextLevel>10)throw Error('DOG_BALANCE_INVALID_LEVEL');
