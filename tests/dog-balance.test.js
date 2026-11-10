@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
  DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_CHEST_STAGES,DOG_BALANCE_MATERIALS,
- dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,
+ dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,dogEquipmentSuccessChance,
  dogWeaponBase,dogArmorBase,dogAttackChances,dogStrike,dogExpectedSoloDamage,dogMaxSoloDamage,
  dogMiniBossHp,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances
 } from '../dog-balance.js';
@@ -47,6 +47,12 @@ test('Every new material is obtainable BEFORE its first relevant tier upgrade',(
  }
  assert.deepEqual(sampleCosts['weapon-2'],{iron:3});
  assert.deepEqual(sampleCosts['weapon-10'],{mithril:2,dragonsteel:1});
+});
+
+test('Forge success odds decline gradually, without changing equipment on failure',()=>{
+ assert.deepEqual(Array.from({length:9},(_,i)=>dogEquipmentSuccessChance(i+2)),
+  [100,95,90,85,75,65,55,45,35]);
+ assert.throws(()=>dogEquipmentSuccessChance(11));
 });
 
 test('Chest amount and rarity are frozen at award time, before opening',()=>{
