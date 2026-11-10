@@ -14,6 +14,7 @@ import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
 import { installChristmasIceApi } from "./christmas-ice-api.js";
 import { installChristmasHatsApi } from "./christmas-hats-api.js";
+import { installChristophSurpriseApi } from "./christoph-surprise-api.js";
 import { installEngine2Api } from "./engine2/api.js";
 import { installHubBusiness } from "./business-hub.js";
 import { installEisstockOnline } from "./eisstock-online.js";
@@ -4362,6 +4363,8 @@ installPeekJoker(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if
 installChristmasIceApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},notifyDealGameChanged:dealOrNoDealOnline.notifyGameChanged});
 // Independent 10-room Christmas hats jackpot (no effect on core Deal matches).
 installChristmasHatsApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
+// One-time Christmas gift from Christoph, shared across all signed-in players.
+installChristophSurpriseApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
