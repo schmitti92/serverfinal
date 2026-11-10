@@ -6,7 +6,9 @@ on:
       - 'deal-or-no-deal.js'
       - 'deal-or-no-deal-api.js'
       - 'dog-materials.js'
+      - 'dog-forge.js'
       - 'tests/dog-materials.test.js'
+      - 'tests/dog-forge.test.js'
       - 'tests/deal-or-no-deal.test.js'
       - 'tests/deal-websocket.test.js'
       - '.github/workflows/deal-or-no-deal-tests.yml'
@@ -15,7 +17,9 @@ on:
       - 'deal-or-no-deal.js'
       - 'deal-or-no-deal-api.js'
       - 'dog-materials.js'
+      - 'dog-forge.js'
       - 'tests/dog-materials.test.js'
+      - 'tests/dog-forge.test.js'
       - 'tests/deal-or-no-deal.test.js'
       - 'tests/deal-websocket.test.js'
       - '.github/workflows/deal-or-no-deal-tests.yml'
@@ -32,4 +36,4 @@ jobs:
       - name: Install test dependencies
         run: npm install --no-audit --no-fund
       - name: Check 1-4 player gameplay and privacy
-        run: node --test tests/dog-materials.test.js tests/deal-or-no-deal.test.js tests/deal-websocket.test.js
+        run: node --test tests/dog-materials.test.js tests/dog-forge.test.js tests/deal-or-no-deal.test.js tests/deal-websocket.test.js
