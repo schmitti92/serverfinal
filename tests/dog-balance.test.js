@@ -4,7 +4,7 @@ import {
  DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_CHEST_STAGES,DOG_BALANCE_MATERIALS,
  dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,dogEquipmentSuccessChance,
  dogWeaponBase,dogArmorBase,dogAttackChances,dogStrike,dogExpectedSoloDamage,dogMaxSoloDamage,
- dogMiniBossHp,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances
+ dogMiniBossHp,dogMiniBossAttack,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss
 } from '../dog-balance.js';
 
 const seeded=(initial=987321)=>{let seed=initial>>>0;return max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor((seed/2**32)*max)};};
@@ -111,28 +111,69 @@ test('Abilities add percentage effects rather than flat 50-level overpowering',(
  assert.ok(dogIncomingDamage({armorLevel:10,enemyAttack:900})>0);
  assert.ok(dogIncomingDamage({armorLevel:4,enemyAttack:900,skills:{resilience:50}})<
   dogIncomingDamage({armorLevel:4,enemyAttack:900}));
- assert.equal(dogHeroHp({vitality:50}),225);
+ assert.equal(dogHeroHp({vitality:50}),218);
+ assert.equal(dogHeroHp({vitality:50},2),435);
  assert.deepEqual(dogDefenseChances({blocking:50,evasion:50,last_stand:50}),{
   block:.2,evasion:.1,lastStand:.2
  });
 });
 
-test('Every mini-boss is strong against previous gear, but feasible after upgrade',()=>{
- for(let level=1;level<=9;level++){
-  const gate=level*10+5,oldCap=level*5,newCap=(level+1)*5,hp=dogMiniBossHp(gate);
-  const prevMax={attack_power:oldCap,destruction:oldCap,
-   precision:oldCap,critical:oldCap,double_strike:oldCap};
-  assert.ok(hp<dogMaxSoloDamage(level,prevMax),'gate '+gate+' must allow rare early wins');
-  const oldOdds=ratio(level,prevMax,hp);
-  assert.ok(oldOdds<.025,'gate '+gate+' old-gear wins too often: '+oldOdds);
-  const newSkills={attack_power:Math.floor(newCap*.65),destruction:Math.floor(newCap*.5),
-   precision:Math.floor(newCap*.5),critical:Math.floor(newCap*.6),
-   double_strike:Math.floor(newCap*.5)};
-  const odds=ratio(level+1,newSkills,hp);
-  assert.ok(odds>.8,'gate '+gate+' new-gear win chance '+odds);
-  assert.ok(dogExpectedSoloDamage(level+1,newSkills)>hp);
+test('All eleven skill bonuses are additive on weapon/armor base',()=>{
+ // Stacking two bonuses changes the result by the sum, not their product.
+ const base=dogWeaponBase(4);
+ const one=dogStrike({weaponLevel:4,skills:{attack_power:50}});
+ const both=dogStrike({weaponLevel:4,skills:{attack_power:50,destruction:50},
+  special:true,critical:true,doubleStrike:true,reaction:true});
+ assert.equal(one,base*1.25);
+ assert.equal(both,Math.floor(base*(1+.25+.20+.25+.20+.10)));
+ const attack=dogMiniBossAttack(35);
+ const armor=dogArmorBase(4);
+ const raw=(bonus=0)=>Math.ceil(attack*(1-Math.min(.65,
+  armor*(1+bonus)/(armor*(1+bonus)+1.5*attack))));
+ assert.equal(dogIncomingDamage({armorLevel:4,enemyAttack:attack,
+  skills:{resilience:50},blocked:true}),raw(.15+.6));
+});
+
+test('First mini-boss is a real challenge, not an automatic first-attempt win',()=>{
+ const trials=6000,rand=seeded(84010);let wins=0;
+ for(let i=0;i<trials;i++){
+  const result=dogSimulateMiniBoss({gate:5,weaponLevel:1,armorLevel:1,
+   skills:{attack_power:2,critical:1,precision:1,vitality:2},rand});
+  assert.ok(result.turns<=4);assert.ok(result.damageDealt>=0);
+  if(result.victory)wins++;
  }
- assert.equal(dogMiniBossHp(5),280);
+ assert.ok(wins/trials>.2 && wins/trials<.75,'tor 5 chance '+(wins/trials));
+});
+
+test('Mini-boss wins reward better weapon AND armor, with no artificial level lock',()=>{
+ const trials=4500;
+ for(let tier=1;tier<=9;tier++){
+  const gate=tier*10+5,cap=(tier+1)*5,prevCap=tier*5;
+  const oldMax={attack_power:prevCap,destruction:prevCap,
+   precision:prevCap,critical:prevCap,double_strike:prevCap};
+  const hp=dogMiniBossHp(gate);
+  assert.ok(hp>dogMaxSoloDamage(tier,oldMax),'old gear cannot cheese boss '+gate);
+  const skills={
+   attack_power:Math.floor(cap*.65),destruction:Math.floor(cap*.5),
+   precision:Math.floor(cap*.5),critical:Math.floor(cap*.6),
+   double_strike:Math.floor(cap*.5),vitality:Math.floor(cap*.5),
+   resilience:Math.floor(cap*.5),regeneration:Math.floor(cap*.4),
+   blocking:Math.floor(cap*.4),evasion:Math.floor(cap*.3),last_stand:Math.floor(cap*.3)
+  };
+  const randFull=seeded(gate*2020),randWeak=seeded(gate*2020);
+  let full=0,onlyWeapon=0;
+  for(let i=0;i<trials;i++){
+   full+=Number(dogSimulateMiniBoss({gate,weaponLevel:tier+1,
+    armorLevel:tier+1,skills,rand:randFull}).victory);
+   onlyWeapon+=Number(dogSimulateMiniBoss({gate,weaponLevel:tier+1,
+    armorLevel:tier,skills,rand:randWeak}).victory);
+  }
+  const rate=full/trials,weakRate=onlyWeapon/trials;
+  assert.ok(rate>.16&&rate<.9,'boss '+gate+' should be challenging, got '+rate);
+  assert.ok(rate>weakRate+.12,'boss '+gate+' must reward improved armor: '+rate+' vs '+weakRate);
+  assert.ok(dogMiniBossAttack(gate)>0);
+ }
+ assert.equal(dogMiniBossHp(5),370);
  assert.throws(()=>dogMiniBossHp(13));
 });
 
