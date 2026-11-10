@@ -78,6 +78,37 @@ test('personal cases stay protected and only the actor confirms reveal',()=>{
  g=send(g,actor,'ack-reveal');
  assert.equal(g.phase,'open');
 });
+test('every briefcase reveal has one server-defined start clock for all spectators',()=>{
+ let game=create([{id:'a'},{id:'b'},{id:'c'}],rand,30);
+ for(let i=0;i<3;i++)game=send(game,game.order[i],'select',{case:i});
+ const actor=nextTurn(game),before=Date.now();
+ game=send(game,actor,'open',{case:free(game)[0]});
+ const after=Date.now(),publicGame=publicView(game);
+ assert.equal(game.phase,'reveal');
+ assert.equal(publicGame.pending.eventId,game.pending.eventId);
+ assert.equal(publicGame.pending.startedAt,game.pending.startedAt);
+ assert.ok(publicGame.pending.startedAt>=before+350&&publicGame.pending.startedAt<=after+350);
+ assert.equal(publicGame.openedAmounts.length,0,'no secret amount before acknowledgement');
+ const snapshot=structuredClone(publicGame.pending);
+ const wrong=game.players.find(p=>p.id!==actor);
+ assert.throws(()=>send(game,wrong.id,'ack-reveal'),/INVALID_REVEAL_ACK/);
+ assert.deepEqual(publicView(game).pending,snapshot);
+ game=send(game,actor,'ack-reveal');
+ assert.equal(game.opened.length,1);
+ assert.equal(game.pending,null);
+ assert.equal(game.events.filter(e=>e.type==='opened').length,1,'exactly one reveal event');
+});
+
+test('legacy reveals without start time remain playable',()=>{
+ let game=create([{id:'a'}],rand);
+ game=send(game,'a','select',{case:0});
+ game=send(game,'a','open',{case:1});
+ delete game.pending.startedAt;
+ assert.equal(publicView(game).pending.startedAt,undefined);
+ game=send(game,'a','ack-reveal');
+ assert.equal(game.opened.length,1);
+});
+
 test('banker votes remain hidden until all participants have responded',()=>{
  let g=create([{id:'a'},{id:'b'}],rand);
  for(let i=0;i<2;i++)g=send(g,g.order[i],'select',{case:i});
