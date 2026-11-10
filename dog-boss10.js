@@ -1,5 +1,6 @@
 /** Shared boss at gate 10.
- * Durable three-hero readiness, 30-second encounter and atomic forge unlock.
+ * Start with 1–3 heroes: solo is unwinnable, two maxed heroes have a tiny
+ * critical chance, three prepared heroes are the intended route.
  * Legacy dog-boss.js test arena is intentionally left untouched.
  */
 import {randomInt} from 'node:crypto';
@@ -12,6 +13,8 @@ export const DOG_BOSS10_DURATION_MS=30_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
 export const DOG_BOSS10_RECEIPTS_COLLECTION='dog_gate_boss10_receipts_v1';
 const REQUIRED_NORMALS=Object.freeze([1,2,3,4,6,7,8,9]);
+export const DOG_BOSS10_ATTACKS_PER_HERO=6;
+export const DOG_BOSS10_RARE_TWO_HERO_CRITICAL_BP=200; // 2 %
 const validId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{12,90}$/.test(id);
 const obj=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
 const bounded=(x,min,max,otherwise=min)=>Number.isSafeInteger(x)?Math.max(min,Math.min(max,x)):otherwise;
@@ -29,7 +32,9 @@ export function boss10State(raw){
    safeUid(m?.uid)?[{uid:m.uid,weaponLevel:bounded(m.weaponLevel,1,10,1),
    armorLevel:bounded(m.armorLevel,1,10,1),
    skillPower:bounded(m.skillPower,0,50,0),
-   skillDefense:bounded(m.skillDefense,0,50,0)}]:[]):[],
+   skillDefense:bounded(m.skillDefense,0,50,0),
+   skillDestruction:bounded(m.skillDestruction,0,50,0),
+   skillGuard:bounded(m.skillGuard,0,50,0)}]:[]):[],
   chancePercent:bounded(x.chancePercent,0,95,0),
   result:x.result?.win===true||x.result?.win===false?
    {win:x.result.win,chancePercent:bounded(x.result.chancePercent,0,95,0),
@@ -45,51 +50,123 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   eligible:eligible(progress.people[m.uid])}));
  return {gate:10,name:'Der Aschewächter',bossHp:dogGroupBossHp(10),
   teamReady:team.members.length===3,isMember:team.members.some(m=>m.uid===uid),
+  participantCount:boss.phase==='fighting'||boss.phase==='victory'||boss.phase==='cooldown'?boss.roster.length:boss.ready.length,
+  canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&boss.ready.length>=1,
   eligible:eligible(progress.people[uid]),members,
   ...boss,won:progress.sharedBosses.includes(10),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
   cooldownRemainingMs:boss.phase==='cooldown'?Math.max(0,boss.cooldownUntil-now):0};
 }
+/** Freeze the participating team at the exact moment the fight starts.
+ * Three ready heroes auto-start; one or two require an explicit start request. */
+const qualifiedRoster=(ready,team,heroByUid)=>{
+ const members=bossTeam(team).members;
+ const uids=new Set(members.map(m=>m.uid));
+ return ready.filter(uid=>uids.has(uid)).map(uid=>{
+  const levels=dogHero(heroByUid[uid]).levels;
+  // Old over-leveled equipment must not bypass the first boss.
+  return {uid,weaponLevel:Math.min(1,levels.weapon),armorLevel:Math.min(1,levels.armor),
+   skillPower:Math.min(5,levels.attack_power),skillDestruction:Math.min(5,levels.destruction),
+   skillDefense:Math.min(5,levels.vitality),skillGuard:Math.min(5,levels.blocking)};
+ });
+};
+const startEncounter=(progress,team,ready,heroByUid,now)=>{
+ if(!ready.length||ready.length>3)throw Error('DOG_BOSS10_NOT_READY');
+ const roster=qualifiedRoster(ready,team,heroByUid);
+ if(roster.length!==ready.length)throw Error('DOG_BOSS10_NOT_READY');
+ const forecast=boss10DamagePotential(roster,[]);
+ const hp=dogGroupBossHp(10);
+ const chancePercent=roster.length===1?0:roster.length===2?
+  (roster.every(fullyPrepared)?2:0):
+  Math.max(5,Math.min(95,Math.round(40+75*(forecast/hp-0.85))));
+ return {...progress,boss10:{...boss10State(progress.boss10),
+  ready:[...ready],phase:'fighting',roster,startedAt:now,
+  endsAt:now+DOG_BOSS10_DURATION_MS,chancePercent,reactions:[]},updatedAt:now};
+};
 export function boss10Ready(progressRaw,teamRaw,uid,heroByUid={},now=Date.now()){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
- if(team.members.length!==3||!team.members.some(m=>m.uid===uid))throw Error('DOG_BOSS10_NEEDS_THREE');
+ if(!team.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
  if(progress.sharedBosses.includes(10))throw Error('DOG_BOSS10_ALREADY_WON');
- if(!team.members.every(m=>eligible(progress.people[m.uid])))
-  throw Error('DOG_BOSS10_PREREQUISITES');
+ if(!eligible(progress.people[uid]))throw Error('DOG_BOSS10_PREREQUISITES');
  let boss=boss10State(progress.boss10);
  if(boss.phase==='fighting')throw Error('DOG_BOSS10_RUNNING');
+ if(boss.phase==='victory')throw Error('DOG_BOSS10_ALREADY_WON');
  if(boss.phase==='cooldown'){
   if(now<boss.cooldownUntil)throw Error('DOG_BOSS10_COOLDOWN');
   boss={...starter(),attempt:boss.attempt+1};
  }
  if(boss.ready.includes(uid))return progress;
  const ready=[...boss.ready,uid];
- boss={...boss,ready};
- if(ready.length===3){
-  const roster=team.members.map(m=>{
-   const levels=dogHero(heroByUid[m.uid]).levels;
-   return {uid:m.uid,weaponLevel:Math.min(10,levels.weapon),
-    armorLevel:Math.min(10,levels.armor),
-    skillPower:Math.min(50,levels.attack_power),
-    skillDefense:Math.min(50,levels.vitality)};
-  });
-  // Equipment drives the chance. Skills and reaction timing add only
-  // small bounded percentages; no client-supplied combat numbers.
-  const attack=roster.reduce((s,m)=>s+Math.min(10,Math.max(0,
-   (dogWeaponBase(m.weaponLevel)/dogWeaponBase(1)-1)*8)),0)/3;
-  const defense=roster.reduce((s,m)=>s+Math.min(10,Math.max(0,
-   (dogArmorBase(m.armorLevel)/dogArmorBase(1)-1)*8)),0)/3;
-  const skills=roster.reduce((s,m)=>s+(m.skillPower+m.skillDefense)/2,0)/3;
-  const chancePercent=Math.min(75,Math.round(40+attack+defense+skills*1.2));
-  boss={...boss,phase:'fighting',roster,startedAt:now,
-   endsAt:now+DOG_BOSS10_DURATION_MS,chancePercent,reactions:[]};
+ const next={...progress,boss10:{...boss,ready},updatedAt:now};
+ // Preserve the original "all three clicked ready" shortcut.
+ if(team.members.length===3&&ready.length===3)
+  return startEncounter(next,team,ready,heroByUid,now);
+ return next;
+}
+export function boss10Start(progressRaw,teamRaw,uid,heroByUid={},now=Date.now()){
+ const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
+ const boss=boss10State(progress.boss10);
+ if(!team.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
+ if(progress.sharedBosses.includes(10)||boss.phase==='victory')
+  throw Error('DOG_BOSS10_ALREADY_WON');
+ if(boss.phase==='fighting')throw Error('DOG_BOSS10_RUNNING');
+ if(boss.phase==='cooldown')throw Error('DOG_BOSS10_COOLDOWN');
+ if(!boss.ready.includes(uid)||!boss.ready.length)
+  throw Error('DOG_BOSS10_NOT_READY');
+ if(!boss.ready.every(id=>eligible(progress.people[id])))
+  throw Error('DOG_BOSS10_PREREQUISITES');
+ return startEncounter(progress,team,boss.ready,heroByUid,now);
+}
+/** Base damage is driven by weapon strength and the two offensive skills;
+ * armor/defensive skills determine how much damage the hero survives to deal.
+ * One reaction per participating hero adds at most 10% to team damage. */
+export function boss10DamagePotential(roster=[],reacted=[]){
+ if(!roster.length||roster.length>3)return 0;
+ const reacting=new Set(reacted);
+ return roster.reduce((sum,m)=>{
+  const attack=Math.min(1,(m.skillPower+m.skillDestruction)/10);
+  const defense=Math.min(1,(m.skillDefense+m.skillGuard)/10);
+  const armorBase=dogArmorBase(m.armorLevel)/dogArmorBase(1);
+  const armorReadiness=Math.min(1,armorBase);
+  const survival=(.8+.2*defense)*(.75+.25*armorReadiness);
+  const reaction=reacting.has(m.uid)?1.1:1;
+  return sum+DOG_BOSS10_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
+   (.67+.21*attack)*survival*reaction;
+ },0);
+}
+const fullyPrepared=m=>m.weaponLevel>=1&&m.armorLevel>=1&&
+ m.skillPower>=5&&m.skillDestruction>=5&&m.skillDefense>=5&&m.skillGuard>=5;
+/** 30s damage, not a fixed party-count coin toss.
+ * Rare last-chance blow is possible ONLY for two max-prepared heroes, both
+ * reacting during the fight, and only in 2% of battles. Solo can never win. */
+export function boss10ResolveCombat(roster,reactions=[],rand=randomInt){
+ if(!Array.isArray(roster)||roster.length<1||roster.length>3)
+  throw Error('DOG_BOSS10_INVALID_ROSTER');
+ const bossHp=dogGroupBossHp(10);
+ const roll=rand(10000);
+ if(!Number.isSafeInteger(roll)||roll<0||roll>=10000)
+  throw Error('DOG_BOSS10_RANDOM_INVALID');
+ const luckFactor=1.15-.25*(roll/10000);
+ const reactionUids=roster.filter(m=>reactions.includes(m.uid)).map(m=>m.uid);
+ let damage=boss10DamagePotential(roster,reactionUids)*luckFactor;
+ let rareCritical=false;
+ if(roster.length===2&&roster.every(fullyPrepared)&&reactionUids.length===2){
+  const bonusRoll=rand(10000);
+  if(!Number.isSafeInteger(bonusRoll)||bonusRoll<0||bonusRoll>=10000)
+   throw Error('DOG_BOSS10_RANDOM_INVALID');
+  rareCritical=bonusRoll<DOG_BOSS10_RARE_TWO_HERO_CRITICAL_BP;
+  if(rareCritical)damage*=1.5;
  }
- return {...progress,boss10:boss,updatedAt:now};
+ const dealt=Math.max(0,Math.round(damage));
+ const win=roster.length>=2&&dealt>=bossHp;
+ return {win,bossHp,damage:dealt,hpRemaining:Math.max(0,bossHp-dealt),
+  participants:roster.length,rareCritical,roll,
+  reactionCount:reactionUids.length};
 }
 export function boss10React(progressRaw,uid,now=Date.now()){
  const progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
  if(boss.phase!=='fighting'||now>=boss.endsAt||now<boss.startedAt)throw Error('DOG_BOSS10_NOT_RUNNING');
- if(!boss.ready.includes(uid))throw Error('NOT_DOG_TEAM_MEMBER');
+ if(!boss.roster.some(m=>m.uid===uid))throw Error('DOG_BOSS10_NOT_PARTICIPANT');
  if(boss.reactions.includes(uid))return progress;
  return {...progress,boss10:{...boss,reactions:[...boss.reactions,uid]},updatedAt:now};
 }
@@ -97,14 +174,12 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
  const progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
  if(boss.phase!=='fighting')throw Error('DOG_BOSS10_NOT_RUNNING');
  if(now<boss.endsAt)throw Error('DOG_BOSS10_STILL_FIGHTING');
- if(boss.roster.length!==3||boss.ready.length!==3)throw Error('DOG_BOSS10_NEEDS_THREE');
- const percent=Math.min(85,boss.chancePercent+boss.reactions.length*3);
- const roll=rand(10000);
- if(!Number.isSafeInteger(roll)||roll<0||roll>=10000)throw Error('DOG_BOSS10_RANDOM_INVALID');
- const win=roll<percent*100;
+ if(boss.roster.length<1||boss.roster.length>3)throw Error('DOG_BOSS10_INVALID_ROSTER');
+ const combat=boss10ResolveCombat(boss.roster,boss.reactions,rand);
+ const {win,roll}=combat;
  const nextBoss={...boss,phase:win?'victory':'cooldown',
   cooldownUntil:win?0:boss.endsAt+DOG_BOSS10_COOLDOWN_MS,
-  result:{win,roll,chancePercent:percent,bossHp:dogGroupBossHp(10)}};
+  result:{...combat,chancePercent:boss.chancePercent}};
  const sharedBosses=win?[...new Set([...progress.sharedBosses,10])].sort((a,b)=>a-b):progress.sharedBosses;
  // Team victory opens gate 11 for all three, but never rewinds a hero
  // who has already managed to proceed farther without the forge ascent.
@@ -118,7 +193,8 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
  return {progress:{...progress,people,boss10:nextBoss,sharedBosses,updatedAt:now},
   result:nextBoss.result};
 }
-const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,DOG_BOSS10_NEEDS_THREE:409,
+const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
+ DOG_BOSS10_NOT_READY:409,DOG_BOSS10_NOT_PARTICIPANT:403,DOG_BOSS10_INVALID_ROSTER:409,
  DOG_BOSS10_PREREQUISITES:409,DOG_BOSS10_ALREADY_WON:409,
  DOG_BOSS10_RUNNING:409,DOG_BOSS10_COOLDOWN:409,
  DOG_BOSS10_NOT_RUNNING:409,DOG_BOSS10_STILL_FIGHTING:409,
@@ -167,7 +243,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
    return res.json({ok:true,...boss10View(team,progress,uid,clock())});
   }catch(e){return fail(res,e);}
  });
- for(const command of ['ready','react','finish']){
+ for(const command of ['ready','start','react','finish']){
   app.post('/api/dog/gates/boss10/'+command,auth,async(req,res)=>{
    try{
     const {requestId}=obj(req.body);
@@ -187,16 +263,18 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      }
      const now=clock();
      let next,result;
-     if(command==='ready'){
+     if(command==='ready'||command==='start'){
       const heroes={};
-      // To avoid a read after transaction writes, take all three snapshots
-      // whenever the ready command is issued. Read-only if not starting yet.
+      // Read all possible participant builds before writes; only ready
+      // participants are frozen into the encounter when it starts.
       const roster=bossTeam(team).members;
       const snapshots=await Promise.all(roster.map(m=>tx.get(
        db.collection(DOG_HERO_COLLECTION).doc(m.uid))));
       roster.forEach((m,i)=>{heroes[m.uid]=snapshots[i].exists?snapshots[i].data():null;});
-      next=boss10Ready(progress,team,uid,heroes,now);
-      result={type:'ready',started:boss10State(next.boss10).phase==='fighting'};
+      next=command==='ready'?
+       boss10Ready(progress,team,uid,heroes,now):
+       boss10Start(progress,team,uid,heroes,now);
+      result={type:command,started:boss10State(next.boss10).phase==='fighting'};
      }else if(command==='react'){
       next=boss10React(progress,uid,now);
       result={type:'reaction',accepted:true};
