@@ -17,24 +17,57 @@ export const DOG_BALANCE_MATERIALS=Object.freeze({
  equipment:Object.freeze(['iron','forge_coal','steel_core','mithril','dragonsteel'])
 });
 
-// Each stage begins when the player reaches its own ten-gate chapter.
-// At gates 1–10 chests contain 1–3 materials (50/35/15 %); later
-// worlds may increase to a maximum of 5. Rarity also improves. These
-// preview drops arrive BEFORE the corresponding shared boss is beaten.
-// Weight indices: common, uncommon, rare, epic, legendary. Sum = 100.
-export const DOG_CHEST_STAGES=Object.freeze([
- {min:1,max:3,countWeights:[50,35,15],weights:[95,5,0,0,0]},
- {min:1,max:3,weights:[82,17,1,0,0]},
- {min:2,max:3,weights:[73,24,3,0,0]},
- {min:2,max:4,weights:[62,32,6,0,0]},
- {min:3,max:5,weights:[55,32,12,1,0]},
- {min:3,max:5,weights:[47,32,18,3,0]},
- {min:3,max:5,weights:[40,30,23,6,1]},
- {min:4,max:5,weights:[32,28,25,13,2]},
- {min:4,max:5,weights:[26,26,27,17,4]},
- {min:5,max:5,weights:[22,23,28,21,6]}
-].map(x=>Object.freeze({...x,weights:Object.freeze(x.weights),
- ...(x.countWeights?{countWeights:Object.freeze(x.countWeights)}:{})})));
+// Five visually distinct expedition boxes. Quantity is determined by
+// the awarded box type, not by the player's later gate when opening it.
+export const DOG_CHEST_TYPES=Object.freeze({
+ wood:Object.freeze({label:'Holzkiste',min:1,max:3,countWeights:Object.freeze([50,35,15])}),
+ iron:Object.freeze({label:'Eisenkiste',min:2,max:5}),
+ silver:Object.freeze({label:'Silberkiste',min:4,max:8}),
+ gold:Object.freeze({label:'Goldkiste',min:6,max:12}),
+ legendary:Object.freeze({label:'Legendäre Truhe',min:10,max:20})
+});
+export const DOG_CHEST_TYPE_IDS=Object.freeze(Object.keys(DOG_CHEST_TYPES));
+
+// Personal ten-gate chapters determine (a) the chance of each box type and
+// (b) the rarity weights of each material. Every row sums to 100.
+// Chest types: wood, iron, silver, gold, legendary.
+// Material rarity: common, uncommon, rare, epic, legendary.
+// More prestigious boxes first appear rarely; late-game size is NOT guaranteed.
+const CHEST_STAGE_RULES=[
+ {chestWeights:[100,0,0,0,0], weights:[95,5,0,0,0]},
+ {chestWeights:[100,0,0,0,0], weights:[82,17,1,0,0]},
+ {chestWeights:[80,20,0,0,0],weights:[73,24,3,0,0]},
+ {chestWeights:[65,30,5,0,0],weights:[62,32,6,0,0]},
+ {chestWeights:[45,40,15,0,0],weights:[55,32,12,1,0]},
+ {chestWeights:[35,45,18,2,0],weights:[47,32,18,3,0]},
+ {chestWeights:[25,40,28,7,0],weights:[40,30,23,6,1]},
+ {chestWeights:[15,33,37,15,0],weights:[32,28,25,13,2]},
+ {chestWeights:[10,28,38,21,3],weights:[26,26,27,17,4]},
+ {chestWeights:[5,20,37,31,7],weights:[22,23,28,21,6]}
+];
+export const DOG_CHEST_STAGES=Object.freeze(CHEST_STAGE_RULES.map(rule=>{
+ const eligible=DOG_CHEST_TYPE_IDS.filter((id,i)=>rule.chestWeights[i]>0);
+ return Object.freeze({
+  min:Math.min(...eligible.map(id=>DOG_CHEST_TYPES[id].min)),
+  max:Math.max(...eligible.map(id=>DOG_CHEST_TYPES[id].max)),
+  chestWeights:Object.freeze(rule.chestWeights),
+  weights:Object.freeze(rule.weights)
+ });
+}));
+
+// Version-3 draft offers can still be opened after updating the experiment.
+// The original 3-tier live inventory has entirely separate receipts/storage.
+const OLD_CHEST_STAGE_RANGES=Object.freeze([
+ [1,3],[1,3],[2,3],[2,4],[3,5],[3,5],[3,5],[4,5],[4,5],[5,5]
+]);
+const weightedHundred=(weights,rand)=>{
+ let value=randomDraw(rand,100);
+ for(let i=0;i<weights.length;i++){
+  value-=weights[i];
+  if(value<0)return i;
+ }
+ throw Error('DOG_BALANCE_INVALID_WEIGHTS');
+};
 
 const integer=(value,min,max,fallback=min)=>Number.isSafeInteger(value)?Math.max(min,Math.min(max,value)):fallback;
 const level=(value,max)=>integer(value,0,max,0);
@@ -52,43 +85,41 @@ export function dogChestStage(personalGate=0){
 }
 export function dogChestOffer(personalGate=0,rand=randomInt){
  const stage=dogChestStage(personalGate),rule=DOG_CHEST_STAGES[stage];
- let count;
- if(rule.countWeights){
-  // More single-material chests at the start, while three remains possible.
-  // Late-game chapters retain their existing uniform quantity rolls.
-  let roll=randomDraw(rand,100);
-  let idx=0;
-  for(;idx<rule.countWeights.length-1;idx++){
-   roll-=rule.countWeights[idx];
-   if(roll<0)break;
-  }
-  count=rule.min+idx;
- }else{
-  count=rule.min+randomDraw(rand,rule.max-rule.min+1);
- }
- return {version:3,stage,count};
+ const tier=DOG_CHEST_TYPE_IDS[weightedHundred(rule.chestWeights,rand)];
+ const def=DOG_CHEST_TYPES[tier];
+ const count=def.countWeights?
+  def.min+weightedHundred(def.countWeights,rand):
+  def.min+randomDraw(rand,def.max-def.min+1);
+ // Store the stage, type and amount at AWARD time, not at OPEN time.
+ return {version:4,stage,tier,count};
 }
 export function dogChestContents(offer,rand=randomInt){
- // Only server-issued/stored offers must be accepted by the real API.
+ // Only trusted, server-issued/stored offers may be accepted by the real API.
  const stage=offer?.stage,count=offer?.count;
  if(!Number.isSafeInteger(stage)||stage<0||stage>=DOG_CHEST_STAGES.length||
-    !Number.isSafeInteger(count)||count<DOG_CHEST_STAGES[stage].min||
-    count>DOG_CHEST_STAGES[stage].max||offer?.version!==3)
-  throw Error('DOG_BALANCE_INVALID_CHEST');
+    !Number.isSafeInteger(count))throw Error('DOG_BALANCE_INVALID_CHEST');
  const rule=DOG_CHEST_STAGES[stage];
+ const legacy=offer?.version===3;
+ const tier=offer?.tier;
+ if(legacy){
+  const [min,max]=OLD_CHEST_STAGE_RANGES[stage];
+  if(count<min||count>max)throw Error('DOG_BALANCE_INVALID_CHEST');
+ }else{
+  const index=DOG_CHEST_TYPE_IDS.indexOf(tier);
+  const def=DOG_CHEST_TYPES[tier];
+  if(offer?.version!==4||index<0||rule.chestWeights[index]===0||
+     count<def.min||count>def.max)
+   throw Error('DOG_BALANCE_INVALID_CHEST');
+ }
  const groups=Object.values(DOG_BALANCE_MATERIALS);
- // Keep all fifteen material IDs present (including zero counts), because
- // the existing inventory validator checks the full set on chest opening.
+ // Existing inventory validator requires all 15 resource keys, even zeros.
  const items=Object.fromEntries(groups.flat().map(id=>[id,0]));
  for(let i=0;i<count;i++){
   const group=groups[randomDraw(rand,groups.length)];
-  let r=randomDraw(rand,100),rarity=0;
-  for(;rarity<rule.weights.length-1;rarity++){
-   r-=rule.weights[rarity];if(r<0)break;
-  }
-  const id=group[rarity];items[id]=(items[id]||0)+1;
+  const rarity=weightedHundred(rule.weights,rand);
+  const id=group[rarity];items[id]++;
  }
- return {count,items,stage};
+ return legacy?{count,items,stage}:{count,items,stage,tier};
 }
 
 // One weapon/armor tier per won boss. Materials are already available in small
