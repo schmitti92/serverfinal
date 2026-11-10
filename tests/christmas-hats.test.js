@@ -69,10 +69,10 @@ test('server checkpoint and exact-once cash settlement',async()=>{
   }
  };
  installChristmasHatsApi(app,{getFirestore:()=>db,verifyProfile:async token=>token==='test' ? {uid:'player1'} : null});
- async function request(method,path,body={}){
+ async function request(method,path,body={},query={}){
   const handlers=routes.get(method+' '+path);
   assert.ok(handlers,'route must be registered: '+path);
-  const req={body,get(name){return name==='authorization'?'Bearer test':null;}};
+  const req={body,query,get(name){return name==='authorization'?'Bearer test':null;}};
   const res={code:200,body:null,status(n){this.code=n;return this;},set(){return this;},json(b){this.body=b;return this;}};
   for(let i=0;i<handlers.length-1;i++)await new Promise(resolve=>handlers[i](req,res,resolve));
   await handlers.at(-1)(req,res);
@@ -83,6 +83,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const action=(body)=>request('POST','/api/christmas-hats/action',body);
  let r=await action({type:'start',requestId:'start_test_0000000001'});
  assert.equal(r.state.room,1);
+ assert.ok(!Object.hasOwn(r.state,'layout'),'hats positions must never leak to client');
  const runId=r.state.id;
  for(let room=1;room<=3;room++){
   const hidden=docs.get('deal_christmas_hats_v1/player1');
@@ -93,6 +94,18 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  assert.equal(r.state.checkpoint,3);
  assert.equal(r.state.secured.length,3);
  assert.equal(r.state.pending.length,0);
+ // Replay the FIRST of three picks after two newer picks: never select a
+ // second hat in room four or credit a second prize.
+ const untouched=structuredClone([...docs.entries()]);
+ const oldPick=await action({type:'pick',index:0,
+  requestId:'pick_checkpoint_1xxxxxxx',runId});
+ assert.equal(oldPick.replayed,true);
+ assert.equal(oldPick.outdated,true);
+ assert.equal(oldPick.state.room,4);
+ assert.deepEqual([...docs.entries()],untouched,'late pick cannot open a new room');
+ const recovered=await request('GET','/api/christmas-hats/me',{}, {pendingId:'pick_checkpoint_1xxxxxxx'});
+ assert.equal(recovered.pendingAction.applied,true);
+ assert.equal(recovered.pendingAction.result.room,1);
  const fourth=docs.get('deal_christmas_hats_v1/player1');
  const bomb=fourth.layout.findIndex(x=>x.type==='bomb');
  const bombAction={type:'pick',index:bomb,requestId:'bomb_checkpoint_xxx1',runId};
@@ -110,6 +123,25 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const zero=await action({type:'cash',runId:newRun.state.id,requestId:'cash_out_without_prize_x'});
  assert.equal(zero.state.status,'finished');
  assert.equal(zero.state.summary.awarded.length,0);
+ const thirdRun=await action({type:'start',requestId:'start_seven_checkpoint_001'});
+ let current=thirdRun;
+ const thirdId=thirdRun.state.id;
+ for(let i=1;i<=7;i++){
+  const saved=docs.get('deal_christmas_hats_v1/player1');
+  const gift=saved.layout.findIndex(h=>h.type==='gift');
+  current=await action({type:'pick',runId:thirdId,index:gift,requestId:'seven_checkpoint_'+i+'_actionxxx'});
+ }
+ assert.equal(current.state.checkpoint,7);
+ assert.equal(current.state.secured.length,7);
+ assert.equal(current.state.pending.length,0);
+ const resultCash=await action({type:'cash',runId:thirdId,requestId:'cash_after_seven_roomx'});
+ assert.equal(resultCash.state.status,'finished');
+ assert.equal(resultCash.state.summary.reason,'cash');
+ assert.equal(resultCash.state.summary.awarded.length,7);
+ const beforeCashReplay=structuredClone([...docs.entries()]);
+ const cashAgain=await action({type:'cash',runId:thirdId,requestId:'cash_after_seven_roomx'});
+ assert.equal(cashAgain.replayed,true);
+ assert.deepEqual([...docs.entries()],beforeCashReplay);
  const access=await request('GET','/api/christmas-hats/access');
  assert.equal(access.allowed,true);
  if(previousChrisUid===undefined)delete process.env.DEAL_CHRIS_BONUS_UID;
