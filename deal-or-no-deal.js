@@ -47,7 +47,10 @@ function apply(g,actor,command,random=crypto.randomInt){
   p.case=command.case;next.selectionIndex++;if(next.selectionIndex===next.players.length)next.phase='open';
  }else if(next.phase==='open'){
   if(command.type!=='open'||nextTurn(next)!==p.id||!free(next).includes(command.case))throw Error('INVALID_OPEN');
-  next.pending={case:command.case,actor:p.id,eventId:crypto.randomUUID()};next.phase='reveal';
+  // One authoritative reveal clock for ALL players; the future start gives
+  // spectators a short network buffer before the briefcase animation begins.
+  // Existing games remain compatible because startedAt is optional.
+  next.pending={case:command.case,actor:p.id,eventId:crypto.randomUUID(),startedAt:Date.now()+350};next.phase='reveal';
  }else if(next.phase==='reveal'){
   if(command.type!=='ack-reveal'||next.pending?.actor!==p.id)throw Error('INVALID_REVEAL_ACK');
   next.opened.push(next.pending.case);next.roundOpened++;
@@ -125,5 +128,5 @@ function offer(g,random){
  g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
-function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
+function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId,...(Number.isFinite(g.pending.startedAt)?{startedAt:g.pending.startedAt}:{})}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
 export {drawHammerFromTwelve,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
