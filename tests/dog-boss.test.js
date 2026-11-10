@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bossTeam,bossView,bossJoin,bossRestart,bossAction,bossMaxHp,bossDefeatAnalysis,bossPhaseOf,DOG_BOSS_PHASES,installDogBossApi,
+import {bossTeam,bossView,bossJoin,bossRestart,bossAction,bossReactionStart,bossMaxHp,bossDefeatAnalysis,bossPhaseOf,DOG_BOSS_PHASES,DOG_REACTION_DURATION_MS,DOG_REACTION_TARGET_MS,installDogBossApi,
  DOG_BOSS_HP,DOG_BOSS_COOLDOWN_MS,DOG_BOSS_TEAM_ID,DOG_BOSS_TEAM_COLLECTION,
  DOG_BOSS_RECEIPTS_COLLECTION} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from '../dog-forge.js';
@@ -373,4 +373,104 @@ test('Defeat advice is persistent after GET and cleared when a new attempt begin
  assert.equal(restarted.body.combatStats.actions,0);
  assert.equal(restarted.body.combatStats.damageTaken,0);
  assert.equal(restarted.body.bossHp,6000);
+});
+
+test('Reaction starts a single server-timed 3-second challenge per player and boss turn',()=>{
+ const uid='player-alpha';
+ const team=bossJoin(null,uid,'Testheld',null,1000);
+ const first=bossReactionStart(team,uid,2000);
+ assert.equal(DOG_REACTION_DURATION_MS,3000);
+ assert.equal(DOG_REACTION_TARGET_MS,1700);
+ assert.equal(first.challenge.startAt,2000);
+ assert.equal(first.challenge.targetAt,3700);
+ assert.equal(first.challenge.expiresAt,5000);
+ assert.equal(first.challenge.turn,0);
+ assert.equal(first.state.bossTurn,0);
+ const retry=bossReactionStart(first.state,uid,2800);
+ assert.equal(retry.challenge.targetAt,3700,'cannot extend the same timed challenge');
+ assert.equal(retry.state.updatedAt,first.state.updatedAt,'no extra team mutation on repeat');
+ const publicView=bossView(first.state,uid,2100);
+ assert.equal(publicView.reactionChallenge.targetAt,3700);
+ assert.equal(publicView.reactionRules.maxBonusPct,10);
+ assert.equal(publicView.reactionChallenges,undefined,'other players’ tickets remain private');
+});
+test('Reaction adds no more than ten percent to the server-calculated equipment damage',()=>{
+ const uid='player-alpha';
+ const team=bossJoin(null,uid,'Testheld',null,1000);
+ const started=bossReactionStart(team,uid,2000).state;
+ const rolls=[5000,5000,5000,5000];
+ const normal=bossAction(team,uid,null,'attack',rolls,3700);
+ const perfect=bossAction(started,uid,null,'reaction',rolls,3700);
+ assert.equal(perfect.result.reactionBonusPct,10);
+ assert.equal(perfect.result.reactionGrade,'perfekt');
+ assert.equal(perfect.result.damage,Math.round(normal.result.damage*1.10));
+ assert.ok(perfect.result.damage<normal.result.damage*1.11);
+ const good=bossAction(started,uid,null,'reaction',rolls,4200);
+ assert.equal(good.result.reactionBonusPct,6);
+ const close=bossAction(started,uid,null,'reaction',rolls,4700);
+ assert.equal(close.result.reactionBonusPct,3);
+ const late=bossAction(started,uid,null,'reaction',rolls,5100);
+ assert.equal(late.result.reactionBonusPct,0);
+ assert.equal(late.result.damage,normal.result.damage);
+ assert.equal(late.result.reactionGrade,'verpasst');
+ assert.throws(()=>bossAction(team,uid,null,'reaction',rolls,3700),
+  /BOSS_REACTION_NOT_READY/);
+});
+test('Other heroes can join a reaction but cannot reuse another player ticket',()=>{
+ const a='player-alpha',b='player-bravo';
+ let team=bossJoin(null,a,'Held A',null,1000);
+ team=bossJoin(team,b,'Held B',null,1000);
+ const start=bossReactionStart(team,a,2000).state;
+ assert.equal(bossView(start,b).reactionChallenge,null);
+ assert.throws(()=>bossAction(start,b,null,'reaction',[5000,5000,5000,5000],3700),
+  /BOSS_REACTION_NOT_READY/);
+ const joined=bossReactionStart(start,b,2400).state;
+ assert.equal(joined.reactionChallenges[a].targetAt,3700);
+ assert.equal(joined.reactionChallenges[b].targetAt,4100);
+ const action=bossAction(joined,a,null,'reaction',[5000,5000,5000,5000],3700).state;
+ assert.equal(action.bossTurn,1);
+ assert.deepEqual(action.reactionChallenges,{});
+ assert.throws(()=>bossAction(action,b,null,'reaction',[5000,5000,5000,5000],4100),
+  /BOSS_REACTION_NOT_READY/);
+});
+test('Reaction issue and strike use idempotent receipts across retries',async()=>{
+ const f=fixture();await join(f,'a',800);
+ const start={requestId:'reaction-start-000001'};
+ const first=await f.call('POST','/api/dog/boss/reaction-start',start,'a');
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.result.type,'reaction-start');
+ const target=first.body.reactionChallenge.targetAt;
+ assert.equal(target,f.now()+1700);
+ const written=f.writes.length;
+ f.advance(1200);
+ const duplicate=await f.call('POST','/api/dog/boss/reaction-start',start,'a');
+ assert.equal(duplicate.body.replayed,true);
+ assert.equal(duplicate.body.reactionChallenge.targetAt,target);
+ assert.equal(f.writes.length,written);
+ f.advance(500);
+ const attack={requestId:'reaction-attack-000001',move:'reaction',expectedTurn:0};
+ const hit=await f.call('POST','/api/dog/boss/act',attack,'a');
+ assert.equal(hit.statusCode,200);
+ assert.equal(hit.body.result.reactionBonusPct,10);
+ assert.equal(hit.body.reactionChallenge,null);
+ const damage=hit.body.bossHp,after=f.writes.length;
+ const again=await f.call('POST','/api/dog/boss/act',attack,'a');
+ assert.equal(again.body.replayed,true);
+ assert.equal(again.body.bossHp,damage);
+ assert.equal(f.writes.length,after);
+ const noTicket=await f.call('POST','/api/dog/boss/act',
+  {requestId:'reaction-attack-000002',move:'reaction',expectedTurn:1},'a');
+ assert.equal(noTicket.statusCode,409);
+ assert.equal(noTicket.body.error,'BOSS_REACTION_NOT_READY');
+});
+test('Cooldown rejects new reaction start; retry resets challenge tickets',()=>{
+ const uid='player-alpha';
+ const joined=bossJoin(null,uid,'Testheld',null,1000);
+ const issued=bossReactionStart(joined,uid,2000).state;
+ const losing={...issued,phase:'cooldown',cooldownUntil:2000+600000};
+ assert.throws(()=>bossReactionStart(losing,uid,2200),/BOSS_COOLDOWN_ACTIVE/);
+ const next=bossRestart(losing,{[uid]:null},uid,602000);
+ assert.equal(next.phase,'ready');
+ assert.deepEqual(next.reactionChallenges,{});
+ assert.equal(bossView(next,uid).reactionChallenge,null);
 });
