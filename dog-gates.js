@@ -75,8 +75,8 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
   progress:isMember?(progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null}):{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null},
-  availableBossGate:10, // legacy shared arena is still a separate Tor-1 test
-  bossArenaIsTest:true,
+  availableBossGate:10, // dedicated team arena now exists for Tor 10
+  bossArenaIsTest:false,
   cacheSeconds:30};
 }
 export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Date.now()){
