@@ -24,6 +24,47 @@ const num=(v,lo,hi,defaultValue)=>Number.isSafeInteger(v)?Math.max(lo,Math.min(h
 const object=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
 const cleanName=x=>String(x||'Held').replace(/[<>\r\n\t]/g,'').trim().slice(0,32)||'Held';
 const validUid=x=>typeof x==='string'&&x.length>=1&&x.length<=200;
+const bossStats=raw=>{
+ const x=object(raw);
+ return {actions:num(x.actions,0,1000000,0),
+  damageDealt:num(x.damageDealt,0,1000000000,0),
+  damageTaken:num(x.damageTaken,0,1000000000,0),
+  defendedActions:num(x.defendedActions,0,1000000,0),
+  flameHits:num(x.flameHits,0,1000000,0)};
+};
+const german=n=>Math.max(0,Number(n)||0).toLocaleString('de-DE');
+
+/** Based on actual team damage and survivability, not guessed equipment levels.
+ * Estimates assume an unchanged average damage per team action; no random
+ * reward or prediction of the outcome is implied.
+ */
+export function bossDefeatAnalysis(raw){
+ const state=object(raw);
+ if(state.phase!=='cooldown')return null;
+ const stats=bossStats(state.combatStats);
+ const hp=Math.max(0,Math.min(DOG_BOSS_HP,Number(state.bossHp)||0));
+ const dealt=DOG_BOSS_HP-hp;
+ const percent=Math.round(dealt*100/DOG_BOSS_HP);
+ const actions=Math.max(stats.actions,num(state.bossTurn,0,1000000,0));
+ const average=actions?Math.round(dealt/actions):0;
+ const more=average>0?Math.ceil(hp/average):null;
+ const category=percent<60?'attack':percent>=85?'defense':'balanced';
+ const title=category==='attack'?'⚔️ Eure Angriffskraft reicht noch nicht':
+  category==='defense'?'🛡️ Eure Abwehr muss länger durchhalten':
+  '⚒️ Mehr Angriffskraft und Widerstandskraft nötig';
+ const summary='Ihr habt '+german(dealt)+' von '+german(DOG_BOSS_HP)+
+  ' Boss-LP abgezogen ('+percent+' %). '+german(hp)+' LP blieben übrig.';
+ const recommendation=category==='attack'?
+  'Verbessert vor allem Waffen, Angriffskraft und Zerstörung in der Schmiede.':
+  category==='defense'?
+  'Ihr wart nahe am Sieg! Verbessert Rüstung, Vitalität und Widerstandskraft, damit ihr länger durchhaltet.':
+  'Verbessert Waffen und Rüstung gemeinsam. Mehr Schaden und bessere Verteidigung bringen euch zum nächsten Tor.';
+ return {category,title,summary,recommendation,
+  bossDamage:dealt,bossRemaining:hp,bossProgressPct:percent,
+  teamActions:actions,averageDamage:average,estimatedMoreActions:more,
+  receivedDamage:stats.damageTaken,guardedActions:stats.defendedActions,
+  flameHits:stats.flameHits};
+}
 
 export function bossMaxHp(heroRaw){
  const l=dogHero(heroRaw).levels;
@@ -45,6 +86,7 @@ export function bossTeam(raw){
   attempt:num(d.attempt,1,1_000_000,1),
   bossTurn:num(d.bossTurn,0,1_000_000,0),
   bossCharged:d.bossCharged===true&&phase==='fighting',
+  combatStats:bossStats(d.combatStats),
   cooldownUntil:phase==='cooldown'?num(d.cooldownUntil,0,MAX_TIME,0):0,
   members,heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
    .map(x=>x.slice(0,140)):[],updatedAt:num(d.updatedAt,0,MAX_TIME,0)};
@@ -54,6 +96,7 @@ export function bossView(raw,uid,now=Date.now()){
  const phaseNumber=bossPhaseOf(state.bossHp);
  const bossPhase=DOG_BOSS_PHASES[phaseNumber-1];
  return {...state,serverNow:now,cooldownMs:DOG_BOSS_COOLDOWN_MS,
+  defeatAnalysis:bossDefeatAnalysis(state),
   bossPhase:phaseNumber,bossPhaseName:bossPhase.name,
   bossAttackName:state.bossCharged?'🔥 Flammenexplosion':bossPhase.attack,
   bossTelegraph:state.bossCharged&&state.phase==='fighting'?
@@ -91,6 +134,7 @@ export function bossRestart(raw,heroByUid,uid,now=Date.now()){
   heroes[member.uid]={hp:maxHp,maxHp,guard:false};
  }
  return {...state,heroes,phase:'ready',bossHp:DOG_BOSS_HP,bossTurn:0,bossCharged:false,
+  combatStats:bossStats(null),
   attempt:state.attempt+1,cooldownUntil:0,
   log:['Versuch '+(state.attempt+1)+': Der Aschewächter ist zurück – volle Lebenspunkte.',
    ...state.log].slice(0,10),updatedAt:now};
@@ -154,6 +198,13 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
    afterPhase>=2&&bossTurn%3===0);
  const bossAttack=chargedAttack?'Flammenexplosion':
   DOG_BOSS_PHASES[beforePhase-1].attack;
+ const combatStats={actions:state.combatStats.actions+1,
+  damageDealt:state.combatStats.damageDealt+Math.min(state.bossHp,damage),
+  damageTaken:state.combatStats.damageTaken+retaliation,
+  defendedActions:state.combatStats.defendedActions+(move==='guard'?1:0),
+  flameHits:state.combatStats.flameHits+(chargedAttack?1:0)};
+ const lossReport=phase==='cooldown'?bossDefeatAnalysis({
+  phase,bossHp,combatStats,bossTurn}):null;
  const log=[
   member.name+': '+(move==='guard'?'🛡️ Verteidigung':move==='power'?'🔥 Kraftschlag':
    move==='special'?'✨ Spezialangriff':'⚔️ Angriff')+' – '+damage+' Schaden'+
@@ -163,11 +214,13 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
    ['🔥 Bossphase '+afterPhase+': '+DOG_BOSS_PHASES[afterPhase-1].name+'!']:[]),
   ...(bossCharged?['⚠️ Der Aschewächter lädt eine Flammenexplosion auf – Verteidigung empfohlen!']:[]),
   ...(victory?['🏆 Der Aschewächter wurde besiegt – Tor 1 geschafft!']:
-    phase==='cooldown'?['💀 Alle Helden sind gefallen. 10 Minuten Pause – Tor 1 bleibt erhalten.']:[]),
+    phase==='cooldown'?['💀 Alle Helden sind gefallen. 10 Minuten Pause – Tor 1 bleibt erhalten.',
+     lossReport.title+' · '+lossReport.bossProgressPct+' % Boss-Schaden.']:[]),
   ...state.log].slice(0,10);
  return {state:{...state,heroes,bossHp,phase,cooldownUntil,log,updatedAt:now,
-   bossTurn,bossCharged},
+   bossTurn,bossCharged,combatStats},
   result:{type:'combat',move,damage,retaliation,critical,doubleStrike,dodged,
+   defeatAnalysis:lossReport,
    defeated:phase==='cooldown',victory,actorHp:hp,bossHp,bossAttack,chargedAttack,
    bossPhase:afterPhase,phaseChanged:afterPhase>beforePhase,
    nextAttackCharged:bossCharged}};
