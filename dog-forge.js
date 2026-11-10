@@ -176,7 +176,8 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
    const receiptRef=database.collection(DOG_FORGE_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
    const response=await database.runTransaction(async tx=>{
     const [receipt,heroSnap,bagSnap]=await Promise.all([tx.get(receiptRef),tx.get(heroRef),tx.get(bagRef)]);
-    if(receipt.exists)return {...receipt.data().response,replayed:true};
+    if(receipt.exists)return {...forgeView(heroSnap.exists?heroSnap.data():null,bagSnap.exists?bagSnap.data():null),
+     result:receipt.data().result,replayed:true};
     const hero=heroSnap.exists?heroSnap.data():null,bag=bagSnap.exists?bagSnap.data():null;
     const now=Date.now();
     let next;
@@ -187,7 +188,8 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
     const view=forgeView(next.hero,next.inventory);
     const payload={...view,result:next.result,replayed:false};
     tx.set(heroRef,next.hero);tx.set(bagRef,next.inventory);
-    tx.create(receiptRef,{uid,requestId,createdAt:now,response:payload});
+    // Keep receipts compact: current snapshots are read on retries.
+    tx.create(receiptRef,{uid,requestId,createdAt:now,result:next.result});
     return payload;
    });
    res.set('Cache-Control','no-store');
