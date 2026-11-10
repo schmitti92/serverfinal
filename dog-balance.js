@@ -102,16 +102,21 @@ export function dogAttackChances(skills={}){
 export function dogStrike({weaponLevel=1,skills={},special=false,cleanHit=true,critical=false,doubleStrike=false,reaction=false}={}){
  const power=skill(skills,'attack_power'),destruction=skill(skills,'destruction');
  const base=dogWeaponBase(weaponLevel);
- const raw=base*(1+.005*power)*(special?(1+.004*destruction):1)*
-  (cleanHit?1:.65)*(critical?1.25:1)*(doubleStrike?1.20:1)*(reaction?1.10:1);
+ // Every ability adds a percentage OF THE UNMODIFIED WEAPON BASE.
+ // No multiplicative stacking of skill, critical, double strike or reaction.
+ const bonus=.005*power+(special?.004*destruction:0)+
+  (critical?.25:0)+(doubleStrike?.20:0)+(reaction?.10:0)-(cleanHit?0:.35);
+ const raw=base*(1+bonus);
  return Math.max(1,Math.floor(raw));
 }
 export function dogExpectedSoloDamage(weaponLevel=1,skills={}){
  const {cleanHit,critical,doubleStrike}=dogAttackChances(skills);
- const base=dogWeaponBase(weaponLevel)*(1+.005*skill(skills,'attack_power'));
- const average=base*(.65+.35*cleanHit)*(1+.25*critical)*(1+.2*doubleStrike);
- // Four actions, one special strike, one maximum +10% reaction on that strike.
- return average*(3+1.1*(1+.004*skill(skills,'destruction')));
+ const base=dogWeaponBase(weaponLevel);
+ // Four actions; the single special adds its bonus on the same weapon base.
+ // The displayed estimate assumes a successful single reaction (10% once).
+ return base*(4*(1+.005*skill(skills,'attack_power')-
+  .35*(1-cleanHit)+.25*critical+.20*doubleStrike)+
+  .004*skill(skills,'destruction')+.10);
 }
 export function dogMaxSoloDamage(weaponLevel=1,skills={}){
  // Strict bound: four full critical/double hits and one perfect reaction.
@@ -121,13 +126,14 @@ export function dogMaxSoloDamage(weaponLevel=1,skills={}){
 }
 export function dogMiniBossHp(gate){
  if(!Number.isSafeInteger(gate)||gate<5||gate>95||gate%10!==5)throw Error('DOG_BALANCE_INVALID_MINIBOSS');
- if(gate===5)return 280;
+ if(gate===5)return 370; // teaching mini-boss: challenging even on gear 1
  const priorGear=(gate-5)/10;
  const priorSkillCap=priorGear*DOG_SKILLS_PER_BOSS;
  const peakSkills={attack_power:priorSkillCap,destruction:priorSkillCap};
- // Slightly below the previous tier's theoretical perfect-hit ceiling.
- // A maxed-out old build CAN get extremely lucky; ordinary builds struggle.
- return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*(.76+.009*priorGear));
+ // A boss is a meaningful milestone; weapon upgrades alone are NOT sufficient.
+ // No explicit level lock. Earlier gear can still enter and fight.
+ const factor=priorGear<=4?1.10:1.04;
+ return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*factor);
 }
 export function dogGroupBossHp(gate){
  if(!Number.isSafeInteger(gate)||gate<10||gate>100||gate%10!==0)throw Error('DOG_BALANCE_INVALID_GROUPBOSS');
@@ -137,18 +143,71 @@ export function dogGroupBossHp(gate){
  // 3 players, each 6 attacks in 30s. 85% of expected team output.
  return Math.ceil(3*6*(dogExpectedSoloDamage(gear,skills)/DOG_SOLO_ATTACKS)*.85);
 }
+/** A mini-boss scales its attacks with the armor level newly unlocked by the
+ * prior shared boss. 80% telegraphed retaliation probability, not certainty. */
+export function dogMiniBossAttack(gate){
+ if(!Number.isSafeInteger(gate)||gate<5||gate>95||gate%10!==5)
+  throw Error('DOG_BALANCE_INVALID_MINIBOSS');
+ const tier=(gate-5)/10; // 0 at gate 5, 9 at gate 95
+ return Math.round(dogWeaponBase(tier+1)*(.72+.045*tier));
+}
+export const DOG_MINI_BOSS_RETALIATION_CHANCE=.80;
+
 export function dogIncomingDamage({armorLevel=1,enemyAttack=100,skills={},blocked=false,dodged=false}={}){
  if(dodged)return 0;
  const strike=Math.max(0,Number(enemyAttack)||0);
+ // Resilience and a successful block ADD protection to the original armor base.
  const armor=dogArmorBase(armorLevel);
- const mitigation=Math.min(.65,armor/(armor+1.5*strike));
- const resilience=.003*skill(skills,'resilience');
- const taken=strike*(1-mitigation)*(1-resilience)*(blocked?.60:1);
- return Math.max(0,Math.ceil(taken));
+ const rating=armor*(1+.003*skill(skills,'resilience')+(blocked?.60:0));
+ const mitigation=Math.min(.65,rating/(rating+1.5*strike));
+ return Math.max(0,Math.ceil(strike*(1-mitigation)));
 }
-export function dogHeroHp(skills={}){return Math.round(150*(1+.01*skill(skills,'vitality')));}
-export function dogRegenerationPerAction(skills={}){return Math.round(dogHeroHp(skills)*.001*skill(skills,'regeneration'));}
+export function dogHeroHp(skills={},armorLevel=1){
+ return Math.round(1.45*dogArmorBase(armorLevel)*(1+.01*skill(skills,'vitality')));
+}
+export function dogRegenerationPerAction(skills={},armorLevel=1){
+ return Math.round(dogHeroHp(skills,armorLevel)*.001*skill(skills,'regeneration'));
+}
 export function dogDefenseChances(skills={}){
  return {block:.004*skill(skills,'blocking'),evasion:.002*skill(skills,'evasion'),
   lastStand:.004*skill(skills,'last_stand')};
+}
+
+/** Pure full fight. The server must authorize any player reaction before passing
+ * reaction=true, and must settle one receipt per completed personal gate.
+ * Enemy opens with a counterattack, then responds after each nonlethal strike.
+ * Death/success are determined entirely on the server, never by the client.
+ */
+export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
+ reaction=false,rand=randomInt}={}){
+ const bossMaxHp=dogMiniBossHp(gate);
+ const maxHeroHp=dogHeroHp(skills,armorLevel);
+ const enemyAttack=dogMiniBossAttack(gate);
+ const offense=dogAttackChances(skills),defense=dogDefenseChances(skills);
+ let bossHp=bossMaxHp,heroHp=maxHeroHp,damageDealt=0;
+ let lastStandUsed=false,turns=0,attacksReceived=0;
+ const roll=chance=>randomDraw(rand,1_000_000)<Math.round(chance*1_000_000);
+ const retaliate=()=>{
+  if(heroHp<=0||bossHp<=0||!roll(DOG_MINI_BOSS_RETALIATION_CHANCE))return;
+  const blocked=roll(defense.block),dodged=roll(defense.evasion);
+  heroHp=Math.max(0,heroHp-dogIncomingDamage({armorLevel,enemyAttack,skills,blocked,dodged}));
+  attacksReceived++;
+  if(heroHp===0&&!lastStandUsed&&roll(defense.lastStand)){
+   heroHp=1;lastStandUsed=true;
+  }
+ };
+ retaliate(); // the boss opens
+ for(let i=0;i<DOG_SOLO_ATTACKS&&heroHp>0&&bossHp>0;i++){
+  turns++;
+  const damage=dogStrike({weaponLevel,skills,special:i===0,
+   reaction:i===0&&reaction,cleanHit:roll(offense.cleanHit),
+   critical:roll(offense.critical),doubleStrike:roll(offense.doubleStrike)});
+  const applied=Math.min(bossHp,damage);
+  damageDealt+=applied;bossHp-=applied;
+  if(bossHp===0)break;
+  heroHp=Math.min(maxHeroHp,heroHp+dogRegenerationPerAction(skills,armorLevel));
+  retaliate();
+ }
+ return {gate,victory:bossHp===0&&heroHp>0,bossHp,bossMaxHp,heroHp,maxHeroHp,
+  enemyAttack,turns,damageDealt,attacksReceived};
 }
