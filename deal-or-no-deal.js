@@ -86,7 +86,12 @@ function offer(g,random){
  const bonusPack=bonusRoll<100?(bonusRoll<10?'premium':bonusRoll<60?'large':'small'):null;
  // Independent 10% chance for an extra hammer; draw the type from the actual 12-field wheel.
  const bonusHammer=random(10)===0?drawHammerFromTwelve(random):null;
- g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,participants:active(g).map(p=>p.id),decisions:[]});
+ // New rare exclusive special offer (10% total): 5% minigame voucher
+ // for the Christmas Hats mini-game, or 5% Monster Wheel spin.
+ // Existing card-pack and hammer draws remain independent and unchanged.
+ const bonusSpecialRoll=random(100);
+ const bonusSpecial=bonusSpecialRoll<5?'minigame':bonusSpecialRoll<10?'monster':null;
+ g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
