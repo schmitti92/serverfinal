@@ -174,6 +174,7 @@ export function bossAction(raw,uid,heroRaw,move,randoms=[5000,5000,5000,5000],no
 }
 const ERRORS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  INVALID_BOSS_MOVE:400,INVALID_BOSS_COMMAND:400,BOSS_TEAM_FULL:409,
+ BOSS_STATE_STALE:409,
  NOT_BOSS_MEMBER:403,BOSS_NO_RESTART:409,BOSS_COOLDOWN_ACTIVE:409,
  BOSS_ALREADY_WON:409,BOSS_HERO_DOWN:409,BOSS_RECEIPT_CONFLICT:409});
 export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
@@ -216,7 +217,8 @@ export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt
     const state=bossTeam(stateSnap.exists?stateSnap.data():null);
     if(receiptSnap.exists){
      const prior=receiptSnap.data();
-     if(prior.command!==command||(command==='act'&&prior.move!==req.body.move))
+     if(prior.command!==command||(command==='act'&&prior.move!==req.body.move)||
+       (command==='act'&&prior.expectedTurn!==req.body.expectedTurn))
       throw Error('BOSS_RECEIPT_CONFLICT');
      return {team:state,result:prior.result,replayed:true};
     }
@@ -237,6 +239,12 @@ export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt
      next=bossRestart(state,Object.fromEntries(profiles),uid,now);
      result={type:'restart',attempt:next.attempt};
     }else{
+     // A hero must see the current warning before triggering a boss retaliation.
+     // Legacy clients lacking expectedTurn are accepted until all pages deploy.
+     // A receipt replay bypasses this check above, never repeating a hit.
+     if(req.body?.expectedTurn!==undefined&&
+       (!Number.isSafeInteger(req.body.expectedTurn)||
+        req.body.expectedTurn!==state.bossTurn))throw Error('BOSS_STATE_STALE');
      const h=await tx.get(heroRef);
      const rolls=[rand(10000),rand(10000),rand(10000),rand(10000)];
      const combat=bossAction(state,uid,h.exists?h.data():null,req.body.move,rolls,now);
@@ -244,7 +252,9 @@ export function installDogBossApi(app,{verifyProfile,getFirestore,rand=randomInt
     }
     tx.set(teamRef,next);
     tx.create(receiptRef,{uid,requestId:id,command,
-     ...(command==='act'?{move:req.body.move}:{}),result,createdAt:now});
+     ...(command==='act'?{move:req.body.move,
+       ...(req.body.expectedTurn===undefined?{}:{expectedTurn:req.body.expectedTurn})}:{}),
+     result,createdAt:now});
     return {team:next,result,replayed:false};
    });
    res.set('Cache-Control','no-store');
