@@ -211,8 +211,9 @@ test('North Pole 4x4 board adds ten unique classic Bingos without changing old r
  next=classicChristmasProgress(base);
  assert.equal(next.collected,48);assert.equal(next.maxBingos,40);
  assert.equal(next.totalBingos,30);
- assert.deepEqual(next.rewards.slice(-5),NORTH_POLE_REWARD_IDS);
- assert.equal(next.nextReward,null);
+ assert.deepEqual(next.rewards.slice(-5),NORTH_POLE_REWARD_IDS.slice(0,5));
+ assert.equal(next.nextReward,'fourth-monster-spin-1');
+ assert.equal(next.nextRewardAt,32);
 });
 test('Hammer jackpot never resets the North Pole collection',()=>{
  const cards=Object.fromEntries(Array.from({length:48},(_,i)=>['christmas-'+String(i+33),1]));
@@ -260,6 +261,8 @@ test('fourth classic Bingo board counts ten lines and leaves previous unlocks in
  assert.equal(full.nextReward,null);
  assert.equal(full.rewards.filter(x=>x.startsWith('north-')).length,5);
  assert.equal(full.rewards.includes('north-monster-spin-1'),true);
+ assert.deepEqual(full.rewards.slice(-5),NORTH_POLE_REWARD_IDS.slice(-5));
+ assert.equal(full.rewards.includes('fourth-grand-combo'),true);
  for(let i=81;i<=96;i++)cards['christmas-'+i]=2;
  assert.equal(classicChristmasProgress(cards).totalBingos,40,'Duplicates cannot add extra Bingos');
 });
