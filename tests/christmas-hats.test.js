@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {HATS_MAX_ROOM,HATS_SUPER_ODDS,HATS_BOMB_ODDS,HATS_CHECKPOINTS,drawHatsRoom,scoreHatsPrize,installChristmasHatsApi} from '../christmas-hats-api.js';
 
-test('ten rooms and escalating Superglück chances',()=>{
- assert.equal(HATS_MAX_ROOM,10);
- assert.deepEqual(HATS_SUPER_ODDS,[2,2,2,5,5,5,10,10,15,15]);
- assert.deepEqual(HATS_BOMB_ODDS,[10,12,14,16,18,20,23,26,29,32]);
- assert.deepEqual(HATS_CHECKPOINTS,[3,5,7,9]);
+test('twenty rooms with escalating Superglück and bomb probabilities',()=>{
+ assert.equal(HATS_MAX_ROOM,20);
+ assert.deepEqual(HATS_SUPER_ODDS,[2,2,2,5,5,5,10,10,15,15,16,16,17,17,18,18,19,19,20,22]);
+ assert.deepEqual(HATS_BOMB_ODDS,[10,11,12,13,14,15,17,19,21,23,25,26,27,28,29,30,31,32,33,33]);
+ assert.deepEqual(HATS_CHECKPOINTS,[3,5,7,9,12,15,18]);
 });
 
 test('each room has at most one bomb and the super hat is best',()=>{
- for(let room=1;room<=10;room++)for(let i=0;i<500;i++){
+ for(let room=1;room<=20;room++)for(let i=0;i<250;i++){
   const hats=drawHatsRoom(room);
   assert.equal(hats.length,3);
   assert.ok(hats.filter(h=>h.type==='bomb').length<=1);
@@ -48,7 +48,7 @@ test('each room has at most one bomb and the super hat is best',()=>{
 });
 
 test('probability of the chosen hat containing a bomb matches each advertised room chance',()=>{
- for(const room of [1,3,5,6,8,10]){
+ for(const room of [1,3,5,6,8,10,12,15,18,20]){
   const trials=3000;let pickedBombs=0,zeroBombRooms=0;
   for(let i=0;i<trials;i++){
    const layout=drawHatsRoom(room);
@@ -61,8 +61,18 @@ test('probability of the chosen hat containing a bomb matches each advertised ro
  }
 });
 
+test('new 20-room sessions remain independent of still-active 10-room legacy sessions',()=>{
+ const old2=drawHatsRoom(10,2),old1=drawHatsRoom(10,1);
+ assert.equal(old1.filter(h=>h.type==='bomb').length,1);
+ assert.ok(old2.filter(h=>h.type==='bomb').length<=1);
+ assert.throws(()=>drawHatsRoom(11,1),/INVALID_ROOM/);
+ assert.throws(()=>drawHatsRoom(11,2),/INVALID_ROOM/);
+ assert.equal(drawHatsRoom(11,3).length,3);
+ assert.equal(drawHatsRoom(20,3).length,3);
+});
+
 test('rejects invalid rooms',()=>{
- for(const number of [0,11,-5,1.5,'7'])assert.throws(()=>drawHatsRoom(number),/INVALID_ROOM/);
+ for(const number of [0,21,-5,1.5,'7'])assert.throws(()=>drawHatsRoom(number),/INVALID_ROOM/);
 });
 
 test('Superglück is reachable even in the first room',()=>{
@@ -110,7 +120,9 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  let r=await action({type:'start',requestId:'start_test_0000000001'});
  assert.equal(r.state.room,1);
  assert.equal(r.state.bombOdds,10);
- assert.equal(r.state.rulesVersion,2);
+ assert.equal(r.state.rulesVersion,3);
+ assert.equal(r.state.maxRoom,20);
+ assert.deepEqual(r.state.checkpoints,[3,5,7,9,12,15,18]);
  assert.equal(r.vouchers.total,0,'first start consumes the one-time free voucher');
  assert.ok(!Object.hasOwn(r.state,'layout'),'hats positions must never leak to client');
  const runId=r.state.id;
