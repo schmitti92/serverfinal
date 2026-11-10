@@ -1,0 +1,29 @@
+name: DOG shared boss and cooldown checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-boss.js'
+      - 'server.js'
+      - 'tests/dog-boss.test.js'
+      - '.github/workflows/dog-boss-check.yml'
+  pull_request:
+    paths:
+      - 'dog-boss.js'
+      - 'server.js'
+      - 'tests/dog-boss.test.js'
+      - '.github/workflows/dog-boss-check.yml'
+  workflow_dispatch:
+jobs:
+  boss:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check backend syntax and common boss cooldown
+        run: |
+          node --check dog-boss.js
+          node --test tests/dog-boss.test.js
