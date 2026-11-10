@@ -68,9 +68,12 @@ export function dogGateProgress(raw){
  }
  return {version:1,people:result,sharedBosses:positiveUnique(x.sharedBosses,
   gate=>Number.isSafeInteger(gate)&&gate>=10&&gate<=100&&gate%10===0),
-  // Preserve the isolated Tor-10 state while saving normal/mini fights.
-  // Only the Boss-10 API may change this field after authentication.
+  // Preserve the Tor-10 state and all later group-boss encounters across
+  // personal fights, mini-boss rewards and shared boss transactions.
   ...(x.boss10?{boss10:obj(x.boss10)}:{}),
+  groupBosses:Object.fromEntries(Array.from({length:9},(_,i)=>(i+2)*10)
+   .filter(gate=>Object.hasOwn(obj(x.groupBosses),String(gate)))
+   .map(gate=>[String(gate),obj(x.groupBosses[String(gate)])])),
   updatedAt:clamp(x.updatedAt,0,10_000_000_000_000,0)};
 }
 export function dogGateMapView(teamRaw,progressRaw,viewerUid){
@@ -93,7 +96,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
   progress:isMember?(progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null,miniRewards:[]}):{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null,miniRewards:[]},
-  availableBossGate:10, // dedicated team arena now exists for Tor 10
+  availableBossGate:100, // real group-boss arenas now span every ten-gate milestone
   bossArenaIsTest:false,
   cacheSeconds:30};
 }
