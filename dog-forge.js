@@ -214,7 +214,8 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
     if(type==='upgrade'){
      const {itemId,expectedLevel}=object(req.body);
      next=forgeUpgrade(hero,bag,itemId,expectedLevel,rand(10000),now);
-    }else next=forgeExchange(hero,bag,req.body?.resourceId,now,req.body?.count??1);
+    }else next=forgeExchange(hero,bag,req.body?.resourceId,now,
+     req.body?.count===undefined?1:req.body.count);
     const view=forgeView(next.hero,next.inventory);
     const payload={...view,result:next.result,replayed:false};
     tx.set(heroRef,next.hero);tx.set(bagRef,next.inventory);
