@@ -263,9 +263,9 @@ test('D3 batch exchange converts 1, 5 and 100 in one atomic transaction',async()
 });
 test('D3 reject invalid batch counts and preserve source inventory',async()=>{
  const f=fixture();f.seed({iron:1200,forge_coal:3});
- for(const count of [0,-1,1.5,101,1000,'5',null]){
+ for(const [i,count] of [0,-1,1.5,101,1000,'5',null].entries()){
   const p=await f.request('POST','/api/dog/forge/exchange',
-   {requestId:'invalid-forge-batch-'+String(count),resourceId:'iron',count});
+   {requestId:'invalid-forge-batch-'+i,resourceId:'iron',count});
   assert.equal(p.statusCode,400,'count '+count);
   assert.equal(p.body.error,'INVALID_EXCHANGE_COUNT');
  }
