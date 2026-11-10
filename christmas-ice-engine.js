@@ -1,6 +1,6 @@
 'use strict';
 import {randomInt} from 'node:crypto';
-import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES,ICE_NO_STAR_FROM_PICTURE,iceTileCount,nextIceTileCount} from './christmas-ice-prizes.js';
+import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES,iceTileCount,nextIceTileCount} from './christmas-ice-prizes.js';
 // Pure reducer. One state document per player; no reads during animation.
 // The star position never goes to a public response until it has been found.
 export function newIceState(random=randomInt){
@@ -11,9 +11,9 @@ export function newIceState(random=randomInt){
 export function publicIceState(s){
  const {star,lastActions,...visible}=s;
  const tilesRequired=iceTileCount(s);
- return {...visible,star:s.finished&&Number(s.completed)<ICE_NO_STAR_FROM_PICTURE?s.star:null,
+ return {...visible,star:s.finished?s.star:null,
   tilesRequired,tilesRemaining:Math.max(0,tilesRequired-(s.opened?.length||0)),
-  requiresFullClear:(Number(s.completed)+(s.finished?0:1))>=ICE_NO_STAR_FROM_PICTURE};
+  requiresFullClear:false};
 }
 export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  if(!/^[A-Za-z0-9_-]{12,90}$/.test(String(requestId||'')))throw Error('INVALID_REQUEST_ID');
@@ -30,16 +30,12 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  const count=Math.min(closed.length,hammer==='single'?1:hammer==='double'?2:3+random(4));
  const targets=[index],remaining=closed.filter(i=>i!==index);
  while(targets.length<count){const j=random(remaining.length);targets.push(remaining.splice(j,1)[0])}
- // Pictures 1–22: finding the star reveals the whole picture immediately.
- // Picture 23+: there is no star and every ice tile must be removed.
- // Restore a hidden star in existing picture 17–22 saves that previously
- // stored null. Choose from unopened tiles and persist with the strike.
- const noStar=Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE;
+ // All pictures contain a hidden star. Recover older 23+ saves with no
+ // star (or a now-invalid position) from unopened tiles on the first strike.
+ // This avoids a separate Firestore write just to migrate the game board.
  const validStar=Number.isInteger(s.star)&&s.star>=0&&s.star<tilesRequired&&!s.opened.includes(s.star);
- const star=noStar?null:validStar?s.star:closed[random(closed.length)];
- const found=noStar
-  ?s.opened.length+targets.length>=tilesRequired
-  :targets.includes(star)||s.opened.length+targets.length>=tilesRequired;
+ const star=validStar?s.star:closed[random(closed.length)];
+ const found=targets.includes(star)||s.opened.length+targets.length>=tilesRequired;
  const next={...s,tileCount:tilesRequired,star,balance:s.balance-price,opened:[...s.opened,...targets],
   freeHammers:{...s.freeHammers},wheelHammers:{...s.wheelHammers},prizes:[...s.prizes],lastActions:[...(s.lastActions||[])]};
  if(free){next.freeHammers[hammer]--;if((next.wheelHammers?.[hammer]||0)>0)next.wheelHammers={...next.wheelHammers,[hammer]:next.wheelHammers[hammer]-1};}
@@ -63,25 +59,23 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
 export function nextIcePicture(s,random=randomInt){
  if(!s.finished||s.completed>=ICE_PICTURES)throw Error('PICTURE_NOT_READY');
  const tileCount=nextIceTileCount(s);
- return {...s,tileCount,star:Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE?null:random(tileCount),opened:[],finished:false,freeHammers:{...s.freeHammers}};
+ return {...s,tileCount,star:random(tileCount),opened:[],finished:false,freeHammers:{...s.freeHammers}};
 }
 
 export function resetIceState(s,random=randomInt){
  const fresh=newIceState(random);
- const tileCount=nextIceTileCount(s);
- return {...fresh,tileCount,star:tileCount===ICE_TILES?fresh.star:random(tileCount),wheelHammers:{...s.wheelHammers},goldenHammerGift2026:!!s.goldenHammerGift2026,picture30MonsterSpinsClaimed:!!s.picture30MonsterSpinsClaimed,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0,freeHammers:{single:Math.max(0,s.freeHammers?.single||0),double:Math.max(0,s.freeHammers?.double||0),lucky:Math.max(0,s.freeHammers?.lucky||0)}};
+ const tileCount=ICE_TILES;
+ return {...fresh,tileCount,star:fresh.star,wheelHammers:{...s.wheelHammers},goldenHammerGift2026:!!s.goldenHammerGift2026,picture30MonsterSpinsClaimed:!!s.picture30MonsterSpinsClaimed,maxRewarded:Math.max(s.maxRewarded||0,s.completed||0),peekJokers:s.peekJokers||0,freeHammers:{single:Math.max(0,s.freeHammers?.single||0),double:Math.max(0,s.freeHammers?.double||0),lucky:Math.max(0,s.freeHammers?.lucky||0)}};
 }
 
 // Old test builds gave 20 free strikes per picture. Discard those test grants
 // while keeping separately recorded winner-wheel prizes and progress.
 export function normalizeIceState(s){
- // Upgrade old picture-21+ saves from 25 to 30 tiles without discarding
- // opened tiles, receipts, prizes, inventory or progress. A finished picture 20
- // keeps 25 tiles until the next image is started.
- const noStar=Number(s.completed)>=ICE_NO_STAR_FROM_PICTURE
-  ||(Number(s.completed)+1>=ICE_NO_STAR_FROM_PICTURE&&!s.finished);
+ // Upgrade historical 20/25/30-tile saves to 50/100, preserving opened
+ // tiles, receipts, prizes, inventory and progress. Missing stars in old
+ // 23+ pictures are safely regenerated when the next strike is processed.
  const tilesRequired=iceTileCount(s);
- const clean={...s,tileCount:tilesRequired,...(noStar?{star:null}:{})};
+ const clean={...s,tileCount:tilesRequired};
  if((clean.version||1)>=2)return clean;
  const wheel=clean.wheelHammers||{};
  return {...clean,version:2,freeHammers:{single:Math.max(0,wheel.single||0),double:Math.max(0,wheel.double||0),lucky:Math.max(0,wheel.lucky||0)},wheelHammers:{single:Math.max(0,wheel.single||0),double:Math.max(0,wheel.double||0),lucky:Math.max(0,wheel.lucky||0)}};
