@@ -25,6 +25,26 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 
 **Wichtig:** Diese API ist Bestandteil von Draft-PR #19 und nicht automatisch live, solange Server und Frontend auf ihrem Entwicklungsbranch stehen. Karten-PR #90 benötigt diese Server-API.
 
+## Erster geschlossener Kreislauf: Tore 1–9 → Boss 10 → Schmiede 2 → Mini-Boss 15
+
+**Status:** Im Entwicklungsbranch implementiert und mit 29 speziellen DOG-Tests grün geprüft; **noch nicht auf dem Live-Server/auf Pages veröffentlicht**.
+
+**Persönliche Kämpfe:** `POST /api/dog/gates/fight` berechnet Tor 1–9 und danach weitere Solo-Tore. Für die Teilnahme an Boss 10 zählen die acht normalen Tore 1–4 und 6–9. Mini-Boss 5 bleibt optional und kann nach einer Niederlage wiederholt werden. Alle persönlichen Siege und Teamstände sind serverseitig persistent und idempotent.
+
+**Tor-10-Arena:** `dog-boss10.js` führt getrennt von der alten Tor-1-Testarena einen 30-Sekunden-Kampf. Endpunkte: `GET /api/dog/gates/boss10`, `POST .../ready`, `POST .../react`, `POST .../finish`. Alle drei müssen die normalen Vor-Tore geschafft haben und persönlich auf „Bereit“ drücken. Die Startzeit und Kampfantworten liegen auf dem Server. Pro Held gibt es höchstens einen Reaktionsbonus. Nach 30 Sekunden kann ein Gruppenmitglied den Kampf auf dem Server abschließen (der Webclient löst dies automatisch aus, solange geöffnet). Ein verlorener Kampf ergibt zehn Minuten gemeinsame Sperre. Ein Sieg wird atomar in `sharedBosses` gespeichert, schaltet gemeinsam Lv. 2 frei und setzt die aktuelle Kartenposition **mindestens auf Tor 11**, ohne bereits weiter fortgeschrittene Spieler zurückzusetzen.
+
+**Aufstiegsschmiede:** `dog-ascension.js` nutzt dieselben vorhandenen Hero- und Inventardokumente wie die alte Schmiede, aber mit neuem, boss-gesteuertem Maximallevel. `GET /api/dog/gates/ascension` liefert Lv.-Grenzen und Rohstoffkosten. `POST .../upgrade` führt einen einzigen authentifizierten, wiederholbaren Versuch aus, spendet Materialien und speichert Erfolg oder Misserfolg atomar. Nach Boss 10 lassen sich Waffe und Rüstung **jeweils von 1 auf 2** verbessern; Kosten: 3 Eisenerz bzw. 3 Lebensstaub, Erfolgswahrscheinlichkeit 100 %. Spätere Level bleiben bis zu nachfolgenden Gruppenbossen gesperrt.
+
+**Mini-Boss 15:** Kann nach normalem Tor 14 begonnen werden; Boss-10-Sieg ist keine künstliche Zugangsbedingung. Die neue Ausrüstung (inklusive Rüstung und prozentualen Fähigkeiten) verbessert die Kampfchance deutlich. Die einmaligen Mini-Boss-Belohnungen sind als Erfolg markiert, ihre Gutschrift in andere Spieleökonomien ist noch nicht implementiert.
+
+**Vor Live-Freigabe unbedingt prüfen:**
+1. Getrennte alte Schmiede ist derzeit weiterhin auf Level 20 ausgelegt und könnte neue Aufstiegsgrenzen umgehen. Entweder migrieren und dort dieselben Regeln erzwingen oder die alte Route für aktive Expeditionsteilnehmer vorübergehend sperren. **Nicht ohne diese Sperre veröffentlichen.**
+2. Vorhandene Ausrüstung über Level 10 darf niemals stillschweigend herabgestuft oder überschrieben werden.
+3. Bestehende Kisten (5–40 Rohstoffe) sind noch nicht auf die neuen Kapitelmengen umgestellt.
+4. Neues Frontend und neues Backend müssen gemeinsam ausgeliefert und mit echten drei Konten in einem isolierten Testsystem geprüft werden. Alte Boss-Testarena bleibt getrennt.
+5. Die Bestätigung nach Ablauf der 30 Sekunden erfolgt durch einen nachfolgenden authentifizierten `finish`-Aufruf; wenn alle drei offline sind, verbleibt das Ergebnis bis zum nächsten Aufruf ausstehend. Keine angebliche Hintergrundverarbeitung.
+6. Gemeinsame Bosse 20–100, Belohnungen sowie die endgültige DOG-Freischaltung bleiben ausstehend.
+
 ## Rohstoffe je persönlichem Kapitel
 
 | Tore | Kisteninhalt | Gewöhnlich | Ungewöhnlich | Selten | Episch | Legendär |
