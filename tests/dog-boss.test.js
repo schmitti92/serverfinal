@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bossTeam,bossView,bossJoin,bossRestart,bossAction,bossMaxHp,bossPhaseOf,DOG_BOSS_PHASES,installDogBossApi,
+import {bossTeam,bossView,bossJoin,bossRestart,bossAction,bossMaxHp,bossDefeatAnalysis,bossPhaseOf,DOG_BOSS_PHASES,installDogBossApi,
  DOG_BOSS_HP,DOG_BOSS_COOLDOWN_MS,DOG_BOSS_TEAM_ID,DOG_BOSS_TEAM_COLLECTION,
  DOG_BOSS_RECEIPTS_COLLECTION} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from '../dog-forge.js';
@@ -302,4 +302,75 @@ test('Replaying a confirmed attack ignores later turn changes but rejects altere
   {...cmd,expectedTurn:1},'a');
  assert.equal(conflict.statusCode,409);
  assert.equal(conflict.body.error,'BOSS_RECEIPT_CONFLICT');
+});
+
+test('Defeat diagnosis calculates an attack shortage from actual boss HP and combat actions',()=>{
+ const state={...bossTeam(null),phase:'cooldown',bossHp:4800,bossTurn:6,
+  combatStats:{actions:6,damageDealt:1200,damageTaken:250,defendedActions:0,flameHits:1}};
+ const result=bossDefeatAnalysis(state);
+ assert.equal(result.category,'attack');
+ assert.match(result.title,/Angriffskraft/);
+ assert.equal(result.bossDamage,1200);
+ assert.equal(result.bossRemaining,4800);
+ assert.equal(result.bossProgressPct,20);
+ assert.equal(result.teamActions,6);
+ assert.equal(result.averageDamage,200);
+ assert.equal(result.estimatedMoreActions,24);
+ assert.equal(result.receivedDamage,250);
+ assert.match(result.recommendation,/Waffen/);
+ assert.equal(bossView(state,'observer',1234).defeatAnalysis.category,'attack');
+});
+test('Nearly completed fight recommends defense rather than higher weapon damage',()=>{
+ const state={...bossTeam(null),phase:'cooldown',bossHp:300,bossTurn:10,
+  combatStats:{actions:10,damageDealt:5700,damageTaken:510,
+   defendedActions:2,flameHits:2}};
+ const result=bossDefeatAnalysis(state);
+ assert.equal(result.category,'defense');
+ assert.match(result.title,/Abwehr/);
+ assert.equal(result.bossProgressPct,95);
+ assert.equal(result.averageDamage,570);
+ assert.equal(result.estimatedMoreActions,1);
+ assert.equal(result.guardedActions,2);
+ assert.match(result.recommendation,/Rüstung/);
+});
+test('Middle progress suggests weapons and armor together; no advice during battle or victory',()=>{
+ const state={...bossTeam(null),phase:'cooldown',bossHp:2100,
+  combatStats:{actions:8,damageDealt:3900,damageTaken:320,
+   defendedActions:2,flameHits:3}};
+ const report=bossDefeatAnalysis(state);
+ assert.equal(report.category,'balanced');
+ assert.equal(report.bossProgressPct,65);
+ assert.match(report.recommendation,/Waffen und Rüstung/);
+ assert.equal(bossDefeatAnalysis({...state,phase:'fighting'}),null);
+ assert.equal(bossView({...state,phase:'victory',bossHp:0},'observer').defeatAnalysis,null);
+});
+test('Defeat advice is persistent after GET and cleared when a new attempt begins',async()=>{
+ const f=fixture();await join(f,'a',777);
+ const losing=bossTeam(f.team());
+ losing.phase='fighting';losing.bossHp=5900;losing.heroes[f.uids.a].hp=1;
+ losing.combatStats={actions:2,damageDealt:100,damageTaken:40,
+  defendedActions:0,flameHits:0};
+ f.inject(losing);
+ const last=await act(f,'a',778,'attack');
+ assert.equal(last.statusCode,200);
+ assert.equal(last.body.phase,'cooldown');
+ assert.equal(last.body.defeatAnalysis.category,'attack');
+ assert.ok(last.body.result.defeatAnalysis);
+ assert.ok(last.body.combatStats.actions>=3);
+ const before=f.writes.length;
+ const repeat=await act(f,'a',778,'attack');
+ assert.equal(repeat.body.replayed,true);
+ assert.equal(repeat.body.defeatAnalysis.category,'attack');
+ assert.equal(f.writes.length,before,'receipt retry causes no second accounting');
+ const refreshed=await f.call('GET','/api/dog/boss/me',{},'a');
+ assert.equal(refreshed.body.defeatAnalysis.bossRemaining,last.body.bossHp);
+ assert.equal(refreshed.body.defeatAnalysis.teamActions,last.body.bossTurn);
+ assert.equal(refreshed.body.cooldownRemainingMs,600000);
+ f.advance(DOG_BOSS_COOLDOWN_MS);
+ const restarted=await restart(f,'a',778);
+ assert.equal(restarted.statusCode,200);
+ assert.equal(restarted.body.defeatAnalysis,null);
+ assert.equal(restarted.body.combatStats.actions,0);
+ assert.equal(restarted.body.combatStats.damageTaken,0);
+ assert.equal(restarted.body.bossHp,6000);
 });
