@@ -208,6 +208,8 @@ export function dogMiniBossAttack(gate){
  return Math.round(dogWeaponBase(tier+1)*(.72+.045*tier)*(1.2+.02*tier));
 }
 export const DOG_MINI_BOSS_RETALIATION_CHANCE=.90;
+export const DOG_MINI_BOSS_HEAVY_CHANCE=.20;
+export const DOG_MINI_BOSS_HEAVY_MULTIPLIER=1.75;
 
 export function dogIncomingDamage({armorLevel=1,enemyAttack=100,skills={},blocked=false,dodged=false}={}){
  if(dodged)return 0;
@@ -262,14 +264,19 @@ export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
  const retaliate=()=>{
   if(heroHp<=0||bossHp<=0||!roll(DOG_MINI_BOSS_RETALIATION_CHANCE))return;
   const blocked=roll(defense.block),dodged=roll(defense.evasion);
-  const suffered=dogIncomingDamage({armorLevel,enemyAttack,skills,blocked,dodged});
+  // Mini-bosses sometimes land a clearly telegraphed heavy strike. This
+  // makes armor upgrades matter even when a strong weapon kills in 3 hits.
+  const heavy=roll(gate===5?.08:DOG_MINI_BOSS_HEAVY_CHANCE);
+  const strikeAttack=heavy?
+   Math.round(enemyAttack*DOG_MINI_BOSS_HEAVY_MULTIPLIER):enemyAttack;
+  const suffered=dogIncomingDamage({armorLevel,enemyAttack:strikeAttack,skills,blocked,dodged});
   heroHp=Math.max(0,heroHp-suffered);
   attacksReceived++;
   if(heroHp===0&&!lastStandUsed&&roll(defense.lastStand)){
    heroHp=1;lastStandUsed=true;
    timeline.push({type:'last-stand',heroHp});
   }
-  timeline.push({type:'counterattack',damage:suffered,blocked,dodged,heroHp});
+  timeline.push({type:'counterattack',damage:suffered,blocked,dodged,heavy,heroHp});
  };
  // Telegraph first, then let the player actually make the opening strike.
  // An instant KO before the first hit makes an otherwise fair fight frustrating.
