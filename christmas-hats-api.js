@@ -160,14 +160,14 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
   }catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'});}
  };
  const fail=(res,error)=>res.status(409).json({ok:false,error:String(error?.message||'HATS_ERROR')});
- app.get('/api/deal-or-no-deal/hats/me',auth,async(req,res)=>{
+ app.get('/api/christmas-hats/me',auth,async(req,res)=>{
   try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const snap=await db.collection(SESSION_COLLECTION).doc(req.hatsUid).get();
    res.set('Cache-Control','no-store');
    return res.json({ok:true,state:snap.exists?safeView(snap.data()):null,odds:HATS_SUPER_ODDS});
   }catch(e){return fail(res,e);}
  });
- app.post('/api/deal-or-no-deal/hats/action',auth,async(req,res)=>{
+ app.post('/api/christmas-hats/action',auth,async(req,res)=>{
   const type=req.body?.type,requestId=String(req.body?.requestId||'');
   if(!['start','pick','cash'].includes(type)||!VALID_ACTION_ID.test(requestId))
    return res.status(400).json({ok:false,error:'INVALID_ACTION'});
