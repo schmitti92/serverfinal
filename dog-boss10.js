@@ -103,7 +103,7 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
  if(!Number.isSafeInteger(roll)||roll<0||roll>=10000)throw Error('DOG_BOSS10_RANDOM_INVALID');
  const win=roll<percent*100;
  const nextBoss={...boss,phase:win?'victory':'cooldown',
-  cooldownUntil:win?0:now+DOG_BOSS10_COOLDOWN_MS,
+  cooldownUntil:win?0:boss.endsAt+DOG_BOSS10_COOLDOWN_MS,
   result:{win,roll,chancePercent:percent,bossHp:dogGroupBossHp(10)}};
  const sharedBosses=win?[...new Set([...progress.sharedBosses,10])].sort((a,b)=>a-b):progress.sharedBosses;
  // Team victory opens gate 11 for all three, but never rewinds a hero
@@ -138,11 +138,31 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
    progressRef:db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID)};};
  app.get('/api/dog/gates/boss10',auth,async(req,res)=>{
   try{
-   const {teamRef,progressRef}=refs();
-   const [team,progress]=await Promise.all([teamRef.get(),progressRef.get()]);
+   const {db,teamRef,progressRef}=refs(),uid=req.dogBoss10Uid;
+   const [teamSnap,progressSnap]=await Promise.all([teamRef.get(),progressRef.get()]);
+   const team=teamSnap.exists?teamSnap.data():null;
+   let progress=progressSnap.exists?progressSnap.data():null;
+   if(!bossTeam(team).members.some(m=>m.uid===uid))
+    throw Error('NOT_DOG_TEAM_MEMBER');
+   const existing=boss10State(dogGateProgress(progress).boss10);
+   // Reconcile only after the 30-second deadline. If all three browsers
+   // disconnected, opening this view settles the missed result atomically.
+   // A transaction re-reads the authoritative state before any write, so
+   // concurrent reconnects can never roll or award the shared victory twice.
+   if(existing.phase==='fighting'&&existing.endsAt>0&&clock()>=existing.endsAt){
+    progress=await db.runTransaction(async tx=>{
+     const currentSnap=await tx.get(progressRef);
+     const current=currentSnap.exists?currentSnap.data():null;
+     const battle=boss10State(dogGateProgress(current).boss10);
+     if(battle.phase!=='fighting'||battle.endsAt===0||clock()<battle.endsAt)
+      return current;
+     const updated=boss10Finish(current,clock(),rand).progress;
+     tx.set(progressRef,updated);
+     return updated;
+    });
+   }
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,...boss10View(team.exists?team.data():null,
-    progress.exists?progress.data():null,req.dogBoss10Uid,clock())});
+   return res.json({ok:true,...boss10View(team,progress,uid,clock())});
   }catch(e){return fail(res,e);}
  });
  for(const command of ['ready','react','finish']){
