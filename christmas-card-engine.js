@@ -86,7 +86,15 @@ export const NORTH_POLE_MILESTONES=Object.freeze([
  Object.freeze({at:24,id:'north-gold-hammers-2',name:'2 goldene Hämmer',kind:'hammer',hammer:'lucky',quantity:2}),
  Object.freeze({at:26,id:'north-jokers-2',name:'2 Kofferblick-Joker',kind:'joker',quantity:2}),
  Object.freeze({at:28,id:'north-platinum-combo',name:'1 Joker, 1 goldener Hammer und 1 Platin-Kartenpaket',kind:'combo',quantity:1}),
- Object.freeze({at:30,id:'north-monster-spin-1',name:'1 Monsterdrehung',kind:'monster',quantity:1})
+ Object.freeze({at:30,id:'north-monster-spin-1',name:'1 Monsterdrehung',kind:'monster',quantity:1}),
+ // Fourth classic Bingo board: every two additional total Bingos earns one
+ // permanent, server-verified reward (not a cosmetic unlock).
+ Object.freeze({at:32,id:'fourth-monster-spin-1',name:'1 Monster-Glücksrad-Drehung',kind:'monster',quantity:1}),
+ Object.freeze({at:34,id:'fourth-jokers-2',name:'2 Kofferblick-Joker',kind:'joker',quantity:2}),
+ Object.freeze({at:36,id:'fourth-hats-voucher-1',name:'1 Weihnachtsmützen-Spielgutschein',kind:'hats',quantity:1}),
+ Object.freeze({at:38,id:'fourth-gold-hammers-3',name:'3 goldene Hammer',kind:'hammer',hammer:'lucky',quantity:3}),
+ Object.freeze({at:40,id:'fourth-grand-combo',name:'3 goldene Hammer + 3 Joker + 2 Weihnachtsmützen-Spielgutscheine',
+  kind:'grand',hammers:3,jokers:3,hatsVouchers:2})
 ]);
 export const NORTH_POLE_REWARD_IDS=Object.freeze(NORTH_POLE_MILESTONES.map(m=>m.id));
 export function classicChristmasProgress(cards={}){
