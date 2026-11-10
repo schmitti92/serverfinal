@@ -12,14 +12,19 @@ export const HATS_SUPER_ODDS=Object.freeze([2,2,2,5,5,5,10,10,15,15,16,16,17,17,
 // Each v3 room has either one bomb or none, so all 3 hats can be safe.
 // The last chance cannot exceed 33.33% with three hats and at most one bomb.
 // Active legacy v1 and v2 sessions retain their original 10-room length.
-export const HATS_BOMB_ODDS=Object.freeze([10,11,12,13,14,15,17,19,21,23,25,26,27,28,29,30,31,32,33,33]);
-export const HATS_CHECKPOINTS=Object.freeze([3,5,7,9,12,15,18]);
+// v4: Rooms 1–3 are guaranteed winners under all three hats.
+// First bomb chance is 10% in room 4; rises gradually to 33% in room 20.
+export const HATS_BOMB_ODDS=Object.freeze([0,0,0,10,12,14,16,18,20,22,24,25,26,27,28,29,30,31,32,33]);
+export const HATS_CHECKPOINTS=Object.freeze([5,10,15]);
+// v3 remains fixed for any already started 20-room session.
+const LEGACY_V3_BOMB_ODDS=[10,11,12,13,14,15,17,19,21,23,25,26,27,28,29,30,31,32,33,33];
+const LEGACY_V3_CHECKPOINTS=[3,5,7,9,12,15,18];
 const LEGACY_V2_BOMB_ODDS=[10,12,14,16,18,20,23,26,29,32];
 const LEGACY_V2_CHECKPOINTS=[3,5,7,9];
 const LEGACY_V1_CHECKPOINTS=[3,7];
-const rulesVersion=state=>state?.rulesVersion===3?3:state?.rulesVersion===2?2:1;
-const maxRoom=state=>rulesVersion(state)===3?HATS_MAX_ROOM:10;
-const checkpoints=state=>rulesVersion(state)===3?HATS_CHECKPOINTS:rulesVersion(state)===2?LEGACY_V2_CHECKPOINTS:LEGACY_V1_CHECKPOINTS;
+const rulesVersion=state=>state?.rulesVersion===4?4:state?.rulesVersion===3?3:state?.rulesVersion===2?2:1;
+const maxRoom=state=>rulesVersion(state)>=3?HATS_MAX_ROOM:10;
+const checkpoints=state=>rulesVersion(state)===4?HATS_CHECKPOINTS:rulesVersion(state)===3?LEGACY_V3_CHECKPOINTS:rulesVersion(state)===2?LEGACY_V2_CHECKPOINTS:LEGACY_V1_CHECKPOINTS;
 const SESSION_COLLECTION='deal_christmas_hats_v1';
 const WALLET_COLLECTION='deal_or_no_deal_wallets_v1';
 const ALBUM_COLLECTION='deal_or_no_deal_christmas_v1';
@@ -94,8 +99,8 @@ function drawSuper(){
  return {superLuck:true,items};
 }
 function drawGift(room){return randomInt(100)<HATS_SUPER_ODDS[room-1]?drawSuper():drawRegular(room);}
-export function drawHatsRoom(room,version=3){
- if(!Number.isInteger(room)||room<1||room>(version===3?HATS_MAX_ROOM:10)||![1,2,3].includes(version))throw Error('INVALID_ROOM');
+export function drawHatsRoom(room,version=4){
+ if(!Number.isInteger(room)||room<1||room>(version>=3?HATS_MAX_ROOM:10)||![1,2,3,4].includes(version))throw Error('INVALID_ROOM');
  let a=drawGift(room),b=drawGift(room);
  // A rare exceptional gift should not make the other winning hat falsely
  // advertise itself as "better". Compare actual item values, not animations.
@@ -114,7 +119,9 @@ export function drawHatsRoom(room,version=3){
  const better=normal===a?b:a;
  // 10–32% odds per hat are mathematically incompatible with an obligatory
  // one-bomb/three-hat board. Make the bomb optional and tell players clearly.
- const hasBomb=version===1||randomInt(100)<3*(version===2?LEGACY_V2_BOMB_ODDS[room-1]:HATS_BOMB_ODDS[room-1]);
+ const chance=version===2?LEGACY_V2_BOMB_ODDS[room-1]
+  :version===3?LEGACY_V3_BOMB_ODDS[room-1]:HATS_BOMB_ODDS[room-1];
+ const hasBomb=version===1||randomInt(100)<3*chance;
  let extra=null;
  if(!hasBomb){
   extra=drawRegular(room);
@@ -126,10 +133,10 @@ export function drawHatsRoom(room,version=3){
  return layout;
 }
 function fresh(requestId){
- return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1,3),secured:[],pending:[],lastReveal:null,
+ return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1,4),secured:[],pending:[],lastReveal:null,
   lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:{started:true},
   lastActions:[{id:requestId,type:'start',runId:null,index:null,result:{started:true}}],
-  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:3};
+  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:4};
 }
 // Each authenticated profile receives exactly one free starter voucher.
  // Additional vouchers can be granted by a future trusted reward flow.
@@ -145,7 +152,7 @@ function safeView(state){
  return {id:state.id,status:state.status,room:state.room,checkpoint:state.checkpoint,
   secured:state.secured||[],pending:state.pending||[],lastReveal:state.lastReveal||null,
   summary:state.summary||null,updatedAt:state.updatedAt,
-  bombOdds:state.status==='playing'?(rulesVersion(state)===3?HATS_BOMB_ODDS[state.room-1]:rulesVersion(state)===2?LEGACY_V2_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
+  bombOdds:state.status==='playing'?(rulesVersion(state)===4?HATS_BOMB_ODDS[state.room-1]:rulesVersion(state)===3?LEGACY_V3_BOMB_ODDS[state.room-1]:rulesVersion(state)===2?LEGACY_V2_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
   maxRoom:maxRoom(state),checkpoints:checkpoints(state),rulesVersion:rulesVersion(state)};
 }
 function totalItems(rewards){return rewards.flatMap(g=>g.items||[]);}
