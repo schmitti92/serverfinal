@@ -38,8 +38,10 @@ function fixture(random=()=>0){
   const req={body,get:name=>name==='authorization'?'Bearer '+token:''};
   const res={statusCode:200,headers:{},set(k,v){this.headers[k]=v;return this},status(n){this.statusCode=n;return this},json(value){this.body=value;return value}};
   for(const fn of handlers){
-   if(fn.length===3)await new Promise((resolve,reject)=>{Promise.resolve(fn(req,res,resolve)).catch(reject)});
-   else await fn(req,res);
+   if(fn.length===3)await new Promise((resolve,reject)=>{
+    Promise.resolve(fn(req,res,resolve)).then(()=>{if(res.body)resolve()}).catch(reject);
+   });
+   else if(!res.body)await fn(req,res);
   }
   return res;
  }
