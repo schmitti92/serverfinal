@@ -234,3 +234,63 @@ test('Forge journal remains bounded to ten events and safely handles legacy data
  assert.equal(restored.levels.regeneration,12);
  assert.deepEqual(dogHero({levels:{weapon:10}}).recent,[]);
 });
+
+test('D3 batch exchange converts 1, 5 and 100 in one atomic transaction',async()=>{
+ const f=fixture();
+ f.seed({focus_dust:1000,power_crystal:2});
+ const before=f.writes.length;
+ const converted=await f.request('POST','/api/dog/forge/exchange',
+  {requestId:'batch-exchange-at-100',resourceId:'focus_dust',count:100});
+ assert.equal(converted.statusCode,200);
+ assert.equal(converted.body.result.received,100);
+ assert.equal(converted.body.result.spent,1000);
+ assert.equal(converted.body.result.count,100);
+ assert.equal(converted.body.inventory.resources.focus_dust,0);
+ assert.equal(converted.body.inventory.resources.power_crystal,102);
+ assert.equal(converted.body.hero.exchanges,100);
+ assert.equal(converted.body.hero.recent[0].count,100);
+ assert.equal(f.writes.length-before,3,'one set for hero, inventory and receipt');
+ const written=f.writes.length;
+ const repeated=await f.request('POST','/api/dog/forge/exchange',
+  {requestId:'batch-exchange-at-100',resourceId:'focus_dust',count:100});
+ assert.equal(repeated.body.replayed,true);
+ assert.equal(repeated.body.result.count,100);
+ assert.equal(f.writes.length,written,'idempotent batch exchange');
+ const missing=await f.request('POST','/api/dog/forge/exchange',
+  {requestId:'batch-exchange-at-101',resourceId:'focus_dust',count:1});
+ assert.equal(missing.statusCode,409);
+ assert.equal(missing.body.error,'DOG_MATERIALS_MISSING');
+});
+test('D3 reject invalid batch counts and preserve source inventory',async()=>{
+ const f=fixture();f.seed({iron:1200,forge_coal:3});
+ for(const count of [0,-1,1.5,101,1000,'5',null]){
+  const p=await f.request('POST','/api/dog/forge/exchange',
+   {requestId:'invalid-forge-batch-'+String(count),resourceId:'iron',count});
+  assert.equal(p.statusCode,400,'count '+count);
+  assert.equal(p.body.error,'INVALID_EXCHANGE_COUNT');
+ }
+ assert.equal(f.bag().resources.iron,1200);
+ assert.equal(f.bag().resources.forge_coal,3);
+ const tooMuch=await f.request('POST','/api/dog/forge/exchange',
+  {requestId:'too-many-for-inventory',resourceId:'iron',count:100});
+ assert.equal(tooMuch.statusCode,200);
+ assert.equal(f.bag().resources.iron,200);
+ assert.equal(f.bag().resources.forge_coal,103);
+});
+test('D3 batch target cap, insufficient stock and journal legacy compatibility',()=>{
+ const bag=dogInventory(null);
+ bag.resources.iron=40;
+ bag.resources.forge_coal=999_999;
+ assert.throws(()=>forgeExchange(null,bag,'iron',123,2),/DOG_MATERIALS_LIMIT/);
+ bag.resources.forge_coal=0;
+ assert.throws(()=>forgeExchange(null,bag,'iron',123,5),/DOG_MATERIALS_MISSING/);
+ const once=forgeExchange(null,bag,'iron',123);
+ assert.deepEqual(once.result,{type:'exchange',from:'iron',to:'forge_coal',spent:10,received:1});
+ assert.equal(once.hero.exchanges,1);
+ assert.equal(once.hero.recent[0].count,1);
+ assert.equal(dogHero({recent:[{type:'exchange',from:'iron',to:'forge_coal',at:122}]}).recent[0].count,1);
+ const batch=forgeExchange(null,bag,'iron',123,4);
+ assert.equal(batch.hero.exchanges,4);
+ assert.equal(batch.inventory.resources.iron,0);
+ assert.equal(batch.hero.recent[0].count,4);
+});
