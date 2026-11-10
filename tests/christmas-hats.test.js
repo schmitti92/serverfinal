@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HATS_MAX_ROOM,HATS_SUPER_ODDS,drawHatsRoom,scoreHatsPrize} from '../christmas-hats-api.js';
+import {HATS_MAX_ROOM,HATS_SUPER_ODDS,drawHatsRoom,scoreHatsPrize,installChristmasHatsApi} from '../christmas-hats-api.js';
 
 test('ten rooms and escalating Superglück chances',()=>{
  assert.equal(HATS_MAX_ROOM,10);
@@ -43,4 +43,69 @@ test('Superglück is reachable even in the first room',()=>{
  let found=false;
  for(let i=0;i<4000&&!found;i++)found=drawHatsRoom(1).some(h=>h.superLuck);
  assert.equal(found,true);
+});
+
+
+test('server checkpoint and exact-once cash settlement',async()=>{
+ const docs=new Map(),routes=new Map();
+ const app={
+  get(path,...handlers){routes.set('GET '+path,handlers);},
+  post(path,...handlers){routes.set('POST '+path,handlers);}
+ };
+ const snapshot=(path)=>({exists:docs.has(path),data:()=>structuredClone(docs.get(path))});
+ const db={
+  collection(name){return {doc(uid){const path=name+'/'+uid;return {get:async()=>snapshot(path),_path:path};}};},
+  async runTransaction(run){
+   const pending=[];
+   const tx={
+    async get(ref){return snapshot(ref._path);},
+    set(ref,value,opt){pending.push({path:ref._path,value:structuredClone(value),merge:!!opt?.merge});}
+   };
+   const result=await run(tx);
+   for(const entry of pending){docs.set(entry.path,entry.merge?{...(docs.get(entry.path)||{}),...entry.value}:entry.value);}
+   return result;
+  }
+ };
+ installChristmasHatsApi(app,{getFirestore:()=>db,verifyProfile:async token=>token==='test' ? {uid:'player1'} : null});
+ async function request(method,path,body={}){
+  const handlers=routes.get(method+' '+path);
+  assert.ok(handlers,'route must be registered: '+path);
+  const req={body,get(name){return name==='authorization'?'Bearer test':null;}};
+  const res={code:200,body:null,status(n){this.code=n;return this;},set(){return this;},json(b){this.body=b;return this;}};
+  for(let i=0;i<handlers.length-1;i++)await new Promise(resolve=>handlers[i](req,res,resolve));
+  await handlers.at(-1)(req,res);
+  assert.equal(res.code,200,JSON.stringify(res.body));
+  assert.equal(res.body.ok,true);
+  return res.body;
+ }
+ const action=(body)=>request('POST','/api/christmas-hats/action',body);
+ let r=await action({type:'start',requestId:'start_test_0000000001'});
+ assert.equal(r.state.room,1);
+ const runId=r.state.id;
+ for(let room=1;room<=3;room++){
+  const hidden=docs.get('deal_christmas_hats_v1/player1');
+  const index=hidden.layout.findIndex(x=>x.type==='gift');
+  r=await action({type:'pick',index,requestId:'pick_checkpoint_'+room+'xxxxxxx',runId});
+  assert.equal(r.result.type,'gift');
+ }
+ assert.equal(r.state.checkpoint,3);
+ assert.equal(r.state.secured.length,3);
+ assert.equal(r.state.pending.length,0);
+ const fourth=docs.get('deal_christmas_hats_v1/player1');
+ const bomb=fourth.layout.findIndex(x=>x.type==='bomb');
+ const bombAction={type:'pick',index:bomb,requestId:'bomb_checkpoint_xxx1',runId};
+ r=await action(bombAction);
+ assert.equal(r.state.status,'finished');
+ assert.equal(r.state.summary.reason,'bomb');
+ assert.equal(r.state.summary.awarded.length,3);
+ assert.equal(r.state.summary.lost.length,0);
+ const after=structuredClone([...docs.entries()]);
+ const replay=await action(bombAction);
+ assert.equal(replay.replayed,true);
+ assert.deepEqual([...docs.entries()],after,'replay must not issue duplicate rewards');
+ const newRun=await action({type:'start',requestId:'new_run_after_bomb_x'});
+ assert.notEqual(newRun.state.id,runId);
+ const zero=await action({type:'cash',runId:newRun.state.id,requestId:'cash_out_without_prize_x'});
+ assert.equal(zero.state.status,'finished');
+ assert.equal(zero.state.summary.awarded.length,0);
 });
