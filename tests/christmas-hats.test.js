@@ -47,6 +47,8 @@ test('Superglück is reachable even in the first room',()=>{
 
 
 test('server checkpoint and exact-once cash settlement',async()=>{
+ const previousChrisUid=process.env.DEAL_CHRIS_BONUS_UID;
+ process.env.DEAL_CHRIS_BONUS_UID='player1';
  const docs=new Map(),routes=new Map();
  const app={
   get(path,...handlers){routes.set('GET '+path,handlers);},
@@ -108,4 +110,39 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const zero=await action({type:'cash',runId:newRun.state.id,requestId:'cash_out_without_prize_x'});
  assert.equal(zero.state.status,'finished');
  assert.equal(zero.state.summary.awarded.length,0);
+ const access=await request('GET','/api/christmas-hats/access');
+ assert.equal(access.allowed,true);
+ if(previousChrisUid===undefined)delete process.env.DEAL_CHRIS_BONUS_UID;
+ else process.env.DEAL_CHRIS_BONUS_UID=previousChrisUid;
+});
+
+
+test('private beta access uses verified UID and fails closed if not configured',async()=>{
+ const previous=process.env.DEAL_CHRIS_BONUS_UID;
+ try{
+  delete process.env.DEAL_CHRIS_BONUS_UID;
+  const handlers=new Map();
+  const app={get(path,...fn){handlers.set('GET '+path,fn);},post(path,...fn){handlers.set('POST '+path,fn);}};
+  installChristmasHatsApi(app,{verifyProfile:async token=>token==='chris'?{uid:'player1'}:token==='david'?{uid:'player2'}:null,getFirestore:()=>null});
+  async function invoke(path,token){
+   const list=handlers.get('GET '+path);
+   const req={get(name){return name==='authorization'?'Bearer '+token:'';}};
+   const res={code:200,body:null,status(c){this.code=c;return this;},set(){return this;},json(v){this.body=v;return this;}};
+   for(let i=0;i<list.length-1;i++){let called=false;await new Promise(resolve=>list[i](req,res,()=>{called=true;resolve()})); if(!called)break;}
+   // direct invocation is enough for the public access route; restricted /me
+   // must return 403 before accessing Firestore.
+   if(path==='/api/christmas-hats/access')await list.at(-1)(req,res);
+   return res;
+  }
+  const empty=await invoke('/api/christmas-hats/access','chris');
+  assert.equal(empty.body.allowed,false);
+  process.env.DEAL_CHRIS_BONUS_UID='player1';
+  const tester=await invoke('/api/christmas-hats/access','chris');
+  const other=await invoke('/api/christmas-hats/access','david');
+  assert.equal(tester.body.allowed,true);
+  assert.equal(other.body.allowed,false);
+ }finally{
+  if(previous===undefined)delete process.env.DEAL_CHRIS_BONUS_UID;
+  else process.env.DEAL_CHRIS_BONUS_UID=previous;
+ }
 });
