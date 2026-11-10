@@ -64,7 +64,7 @@ test('Drops are strictly 1–5 units, with published deterministic 35/30/20/10/5
  const seq=[99,1,75,99,94,40];let i=0;
  assert.deepEqual(rollDogMaterialChest(()=>seq[i++]),{count:5,items:{iron:2,crystal:2,rune:1}});
 });
-test('A completed verified 3-player match grants each participant one unopened chest exactly once',async()=>{
+test('Barikade records its result once but never grants DOG material chests',async()=>{
  const f=fixture();
  const match={game:'barikade',matchId:'dog-materials-match-0001',players:validPlayers,
   winnerUids:[validPlayers[1].uid],startedAt:Date.now()-360000,finishedAt:Date.now(),reason:'goal'};
@@ -72,26 +72,26 @@ test('A completed verified 3-player match grants each participant one unopened c
  assert.equal(initial.duplicate,false);
  for(const p of validPlayers){
   const saved=f.docs.get(DOG_MATERIALS_COLLECTION+'/'+p.uid);
-  assert.equal(saved.unopened,1);
-  assert.equal(saved.earned,1);
-  assert.equal(saved.opened,0);
+  assert.equal(saved,undefined);
+  assert.equal(f.docs.get('player_stats_v8/'+p.uid)?.games,1);
  }
  const writesBefore=f.writes.length;
  const repeat=await f.stats.book(match);
  assert.equal(repeat.duplicate,true);
  assert.equal(f.writes.length,writesBefore,'match replay does not duplicate chest credit');
 });
-test('A second distinct valid match adds another chest; unverified games never write inventories',async()=>{
+test('KreuzKunter records statistics without awarding chests; other games are rejected',async()=>{
  const f=fixture();
  const run=async id=>f.stats.book({game:'kreuz',matchId:id,players:validPlayers,
   winnerUids:[validPlayers[0].uid],startedAt:Date.now()-300000,finishedAt:Date.now(),reason:'completed'});
  await run('dog-materials-kreuz-01');
  await run('dog-materials-kreuz-02');
- assert.equal(f.inventory().unopened,2);
+ assert.equal(f.inventory(),undefined);
+ assert.equal(f.docs.get('player_stats_v8/'+uid)?.games,2);
  await assert.rejects(()=>f.stats.book({game:'skyjo',matchId:'dog-materials-unverified-01',
   players:validPlayers,winnerUids:[validPlayers[0].uid],startedAt:Date.now()-300000,finishedAt:Date.now()}),
   /GAME_NOT_VERIFIED/);
- assert.equal(f.inventory().unopened,2);
+ assert.equal(f.inventory(),undefined);
 });
 test('Open chest uses server-authoritative count and grants random materials once',async()=>{
  const rolls=[99,1,75,99,94,40];let i=0;
@@ -121,7 +121,7 @@ test('No public endpoint accepts fabricated match completion or chest earnings',
  assert.equal(status.statusCode,200);
  assert.equal(status.body.inventory.unopened,0);
  assert.deepEqual(status.body.inventory.resources,{iron:0,crystal:0,rune:0});
- assert.deepEqual(status.body.rules.verifiedGames,['barikade','kreuz']);
+ assert.deepEqual(status.body.rules.verifiedGames,['deal-or-no-deal']);
  for(const token of ['fake-token','']){
   const denied=await f.request('POST','/api/dog/materials/open',{requestId:'open-chest-denied-0001'},token);
   assert.equal(denied.statusCode,401);
