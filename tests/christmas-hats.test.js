@@ -262,7 +262,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const played=docs.get('deal_christmas_hats_v1/player1');
  docs.set('deal_christmas_hats_v1/player1',{...played,bonusTickets:1});
  const completeStart=await action({type:'start',requestId:'start_twenty_room_run_x'});
- assert.equal(completeStart.state.rulesVersion,5);
+ assert.equal(completeStart.state.rulesVersion,6);
  assert.equal(completeStart.state.maxRoom,20);
  assert.equal(completeStart.vouchers.total,0,'final bonus ticket consumed once');
  const fullRunId=completeStart.state.id;
