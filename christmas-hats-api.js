@@ -8,6 +8,11 @@ import {checkMonsterBalance} from './monster-wheel.js';
 
 export const HATS_MAX_ROOM=10;
 export const HATS_SUPER_ODDS=Object.freeze([2,2,2,5,5,5,10,10,15,15]);
+// Exact chance of selecting a bomb, per equally likely hat, in fresh v2 rooms.
+// A room has either one bomb (with probability 3*p) or no bomb; at most
+// one of the three hats can contain a bomb. Existing v1 active rooms are kept.
+export const HATS_BOMB_ODDS=Object.freeze([10,12,14,16,18,20,23,26,29,32]);
+export const HATS_CHECKPOINTS=Object.freeze([3,5,7,9]);
 const SESSION_COLLECTION='deal_christmas_hats_v1';
 const WALLET_COLLECTION='deal_or_no_deal_wallets_v1';
 const ALBUM_COLLECTION='deal_or_no_deal_christmas_v1';
@@ -100,7 +105,16 @@ export function drawHatsRoom(room){
  }
  const normal=scoreHatsPrize(a)<scoreHatsPrize(b)?a:b;
  const better=normal===a?b:a;
- const layout=[{type:'bomb',items:[]},{type:'gift',...normal},{type:'super',...better}];
+ // 10–32% odds per hat are mathematically incompatible with an obligatory
+ // one-bomb/three-hat board. Make the bomb optional and tell players clearly.
+ const hasBomb=randomInt(100)<3*HATS_BOMB_ODDS[room-1];
+ let extra=null;
+ if(!hasBomb){
+  extra=drawRegular(room);
+  // The labelled super hat must always be the highest-valued gift.
+  if(scoreHatsPrize(extra)>=scoreHatsPrize(better))extra=normal;
+ }
+ const layout=[hasBomb?{type:'bomb',items:[]}:{type:'gift',...extra},{type:'gift',...normal},{type:'super',...better}];
  for(let i=layout.length-1;i>0;i--){const j=randomInt(i+1);[layout[i],layout[j]]=[layout[j],layout[i]];}
  return layout;
 }
@@ -108,7 +122,7 @@ function fresh(requestId){
  return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1),secured:[],pending:[],lastReveal:null,
   lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:{started:true},
   lastActions:[{id:requestId,type:'start',runId:null,index:null,result:{started:true}}],
-  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null};
+  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:2};
 }
 // Each authenticated profile receives exactly one free starter voucher.
  // Additional vouchers can be granted by a future trusted reward flow.
@@ -123,7 +137,9 @@ function safeView(state){
  if(!state?.status)return null;
  return {id:state.id,status:state.status,room:state.room,checkpoint:state.checkpoint,
   secured:state.secured||[],pending:state.pending||[],lastReveal:state.lastReveal||null,
-  summary:state.summary||null,updatedAt:state.updatedAt};
+  summary:state.summary||null,updatedAt:state.updatedAt,
+  bombOdds:state.status==='playing'?(state.rulesVersion===2?HATS_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
+  rulesVersion:state.rulesVersion===2?2:1};
 }
 function totalItems(rewards){return rewards.flatMap(g=>g.items||[]);}
 function amountOf(items,kind,subkey=null){return items.filter(item=>item.kind===kind&&(!subkey||item.packId===subkey||item.hammer===subkey)).reduce((sum,item)=>sum+(kind==='cash'?item.amountCents:item.quantity),0);}
@@ -158,7 +174,7 @@ function applyPick(state,index){
  }else{
   const bag={room,items:selection.items,superLuck:!!selection.superLuck,hatType:selection.type};
   next.pending=[...state.pending,bag];
-  if(room===3||room===7){next.secured=[...state.secured,...next.pending];next.pending=[];next.checkpoint=room;}
+  if(HATS_CHECKPOINTS.includes(room)){next.secured=[...state.secured,...next.pending];next.pending=[];next.checkpoint=room;}
   if(room===10){
    next.status='finished';next.layout=null;
    const awarded=[...next.secured,...next.pending];
@@ -198,7 +214,7 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    const action=saved?.lastActions?.find(a=>a.id===pendingId)
     ||(saved?.lastActionId===pendingId?{result:saved.lastActionResult}:null);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:HATS_SUPER_ODDS,
+   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:HATS_SUPER_ODDS,bombOdds:HATS_BOMB_ODDS,checkpoints:HATS_CHECKPOINTS,
     ...(pendingId?{pendingAction:{applied:!!action,result:action?.result||null}}:{})});
   }catch(e){return fail(res,e);}
  });
