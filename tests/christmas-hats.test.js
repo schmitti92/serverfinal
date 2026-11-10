@@ -91,6 +91,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const action=(body)=>request('POST','/api/christmas-hats/action',body);
  let r=await action({type:'start',requestId:'start_test_0000000001'});
  assert.equal(r.state.room,1);
+ assert.equal(r.vouchers.total,0,'first start consumes the one-time free voucher');
  assert.ok(!Object.hasOwn(r.state,'layout'),'hats positions must never leak to client');
  const runId=r.state.id;
  let firstPickIndex=null;
@@ -128,12 +129,24 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  const replay=await action(bombAction);
  assert.equal(replay.replayed,true);
  assert.deepEqual([...docs.entries()],after,'replay must not issue duplicate rewards');
+ // One lifetime free ticket cannot be used again after the bomb.
+ const usedVoucher=docs.get('deal_christmas_hats_v1/player1');
+ assert.equal(usedVoucher.freeVoucherUsed,true);
+ assert.equal(usedVoucher.bonusTickets,0);
+ let blocked;
+ try{await action({type:'start',requestId:'blocked_second_free_x'})}catch(e){blocked=e}
+ assert.ok(blocked,'a second free run must be rejected');
+ // Future event achievements can later issue extraTickets from a trusted server action.
+ // Simulate two such later rewards to exercise resumability and receipt settlement.
+ docs.set('deal_christmas_hats_v1/player1',{...usedVoucher,bonusTickets:2});
  const newRun=await action({type:'start',requestId:'new_run_after_bomb_x'});
  assert.notEqual(newRun.state.id,runId);
+ assert.equal(newRun.vouchers.total,1,'only one of two bonus tickets spent');
  const zero=await action({type:'cash',runId:newRun.state.id,requestId:'cash_out_without_prize_x'});
  assert.equal(zero.state.status,'finished');
  assert.equal(zero.state.summary.awarded.length,0);
  const thirdRun=await action({type:'start',requestId:'start_seven_checkpoint_001'});
+ assert.equal(thirdRun.vouchers.total,0);
  let current=thirdRun;
  const thirdId=thirdRun.state.id;
  for(let i=1;i<=7;i++){
@@ -154,12 +167,15 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  assert.deepEqual([...docs.entries()],beforeCashReplay);
  const access=await request('GET','/api/christmas-hats/access');
  assert.equal(access.allowed,true);
+ const finished=await request('GET','/api/christmas-hats/me');
+ assert.equal(finished.vouchers.free,0);
+ assert.equal(finished.vouchers.bonus,0);
  if(previousChrisUid===undefined)delete process.env.DEAL_CHRIS_BONUS_UID;
  else process.env.DEAL_CHRIS_BONUS_UID=previousChrisUid;
 });
 
 
-test('private beta access uses verified UID and fails closed if not configured',async()=>{
+test('hats are open to all authenticated profiles regardless of former Chris beta flag',async()=>{
  const previous=process.env.DEAL_CHRIS_BONUS_UID;
  try{
   delete process.env.DEAL_CHRIS_BONUS_UID;
@@ -177,12 +193,12 @@ test('private beta access uses verified UID and fails closed if not configured',
    return res;
   }
   const empty=await invoke('/api/christmas-hats/access','chris');
-  assert.equal(empty.body.allowed,false);
+  assert.equal(empty.body.allowed,true);
   process.env.DEAL_CHRIS_BONUS_UID='player1';
   const tester=await invoke('/api/christmas-hats/access','chris');
   const other=await invoke('/api/christmas-hats/access','david');
   assert.equal(tester.body.allowed,true);
-  assert.equal(other.body.allowed,false);
+  assert.equal(other.body.allowed,true);
  }finally{
   if(previous===undefined)delete process.env.DEAL_CHRIS_BONUS_UID;
   else process.env.DEAL_CHRIS_BONUS_UID=previous;
