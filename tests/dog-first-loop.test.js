@@ -63,9 +63,12 @@ test('Reaction is one per player; shared boss success unlocks forge level 2',()=
  const won=boss10Finish(state,now+30001,()=>0);
  assert.equal(won.result.win,true);
  assert.deepEqual(won.progress.sharedBosses,[10]);
- for(const member of team.members)
+ for(const member of team.members){
   assert.equal(won.progress.people[member.uid].currentGate,11,
    'all three positions move to at least Tor 11 after victory');
+  assert.equal(won.progress.people[member.uid].highestGate,11,
+   'highest gate is also advanced by the shared win');
+ }
  assert.equal(won.progress.boss10.phase,'victory');
  assert.equal(ascensionView(null,bag(),won.progress).forgeLevel,2);
  assert.equal(ascensionView(null,bag(),won.progress).skillsCap,10);
@@ -79,6 +82,8 @@ test('Shared victory does not move a hero backwards from Tor 14',()=>{
  const won=boss10Finish(state,now+30001,()=>0);
  assert.equal(won.progress.people['hero-a'].currentGate,14);
  assert.equal(won.progress.people['hero-b'].currentGate,11);
+ assert.equal(won.progress.people['hero-a'].highestGate,14);
+ assert.equal(won.progress.people['hero-b'].highestGate,11);
 });
 
 test('Defeat triggers a group-wide cooldown and resets only after expiry',()=>{
