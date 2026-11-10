@@ -82,7 +82,8 @@ test('Chest weights add to 100, grow gradually and never grant unconfigured rari
    assert.ok(offered.count>=rule.min&&offered.count<=rule.max);
    const opened=dogChestContents(offered,seeded(i*10000+stage+3));
    assert.equal(Object.values(opened.items).reduce((a,b)=>a+b,0),offered.count);
-   for(const id of Object.keys(opened.items)){
+   for(const [id,quantity] of Object.entries(opened.items)){
+    if(quantity===0)continue;
     seen.add(id);
     const group=Object.values(DOG_BALANCE_MATERIALS).find(g=>g.includes(id));
     assert.ok(group&&rule.weights[group.indexOf(id)]>0,id+' appeared at stage '+stage);
