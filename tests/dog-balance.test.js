@@ -4,7 +4,7 @@ import {
  DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_CHEST_STAGES,DOG_BALANCE_MATERIALS,
  dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,dogEquipmentSuccessChance,
  dogWeaponBase,dogArmorBase,dogAttackChances,dogStrike,dogExpectedSoloDamage,dogMaxSoloDamage,
- dogMiniBossHp,dogMiniBossAttack,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss
+ dogMiniBossHp,dogMiniBossAttack,dogAdaptiveMiniBoss,dogNormalGateChance,dogResolveNormalGate,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss
 } from '../dog-balance.js';
 
 const seeded=(initial=987321)=>{let seed=initial>>>0;return max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor((seed/2**32)*max)};};
@@ -152,7 +152,8 @@ test('Mini-boss wins reward better weapon AND armor, with no artificial level lo
   const oldMax={attack_power:prevCap,destruction:prevCap,
    precision:prevCap,critical:prevCap,double_strike:prevCap};
   const hp=dogMiniBossHp(gate);
-  assert.ok(hp>dogMaxSoloDamage(tier,oldMax),'old gear cannot cheese boss '+gate);
+  assert.ok(hp<dogMaxSoloDamage(tier,oldMax),'extremely lucky old gear may win at '+gate);
+  assert.ok(ratio(tier,oldMax,hp,12000)<.05,'old gear is winning too frequently at '+gate);
   const skills={
    attack_power:Math.floor(cap*.65),destruction:Math.floor(cap*.5),
    precision:Math.floor(cap*.5),critical:Math.floor(cap*.6),
@@ -169,12 +170,59 @@ test('Mini-boss wins reward better weapon AND armor, with no artificial level lo
     armorLevel:tier,skills,rand:randWeak}).victory);
   }
   const rate=full/trials,weakRate=onlyWeapon/trials;
-  assert.ok(rate>.16&&rate<.9,'boss '+gate+' should be challenging, got '+rate);
+  assert.ok(rate>.20&&rate<.85,'boss '+gate+' should be challenging, got '+rate);
   assert.ok(rate>weakRate+.12,'boss '+gate+' must reward improved armor: '+rate+' vs '+weakRate);
   assert.ok(dogMiniBossAttack(gate)>0);
  }
  assert.equal(dogMiniBossHp(5),370);
  assert.throws(()=>dogMiniBossHp(13));
+});
+
+test('Normal gate chance is a smooth 30% to 80% readiness calculation',()=>{
+ const g=13;
+ const weak=dogNormalGateChance({gate:g,weaponLevel:1,armorLevel:1});
+ assert.equal(weak.chancePercent,30);
+ const good=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2});
+ assert.equal(good.chancePercent,50);
+ const skills={attack_power:10,critical:10,vitality:10,resilience:10};
+ const best=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2,skills});
+ assert.equal(best.chancePercent,80);
+ const medium=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2,
+   skills:{attack_power:5,critical:5,vitality:5,resilience:5}});
+ assert.equal(medium.chancePercent,65);
+ assert.equal(dogNormalGateChance({gate:13,weaponLevel:1,armorLevel:1,
+  skills:{attack_power:5,critical:5,vitality:5,resilience:5}}).chancePercent,45);
+ assert.ok(dogNormalGateChance({gate:4}).chancePercent>=30);
+ assert.throws(()=>dogNormalGateChance({gate:5}),/INVALID_NORMAL_GATE/);
+ assert.throws(()=>dogNormalGateChance({gate:10}),/INVALID_NORMAL_GATE/);
+ assert.throws(()=>dogNormalGateChance({gate:100}),/INVALID_NORMAL_GATE/);
+});
+
+test('Normal fight uses one server random draw and is retry-safe at the API level',()=>{
+ const options={gate:13,weaponLevel:2,armorLevel:2};
+ assert.equal(dogResolveNormalGate(options,()=>4999).win,true);
+ assert.equal(dogResolveNormalGate(options,()=>5000).win,false);
+ assert.equal(dogResolveNormalGate({...options,skills:{attack_power:10,critical:10,
+  vitality:10,resilience:10}},()=>7999).win,true);
+ assert.throws(()=>dogResolveNormalGate(options,()=>10000),/INVALID_RANDOM/);
+ // The pure helper must be stored once in a server receipt; it is NOT a
+ // replacement for an authenticated, idempotent API endpoint.
+});
+
+test('Mini-boss adjustment is bounded and never punishes weak builds',()=>{
+ const baseline=dogAdaptiveMiniBoss({gate:25,weaponLevel:1,armorLevel:1});
+ const suggested=dogAdaptiveMiniBoss({gate:25,weaponLevel:3,armorLevel:3});
+ assert.equal(baseline.bossHp,dogMiniBossHp(25));
+ assert.equal(baseline.bossAttack,dogMiniBossAttack(25));
+ assert.equal(suggested.bossHp,baseline.bossHp);
+ assert.equal(suggested.bossAttack,baseline.bossAttack);
+ const intense=dogAdaptiveMiniBoss({gate:25,weaponLevel:8,armorLevel:8,
+  skills:{attack_power:50,critical:50,vitality:50,resilience:50}});
+ assert.ok(intense.bossHp<=Math.round(baseline.bossHp*1.10));
+ assert.ok(intense.bossAttack<=Math.round(baseline.bossAttack*1.10));
+ assert.ok(intense.hpBonus>0 && intense.hpBonus<=.10);
+ assert.ok(intense.attackBonus>0 && intense.attackBonus<=.10);
+ assert.throws(()=>dogAdaptiveMiniBoss({gate:20}),/INVALID_MINIBOSS/);
 });
 
 test('Ten group bosses scale with old gear, not the newly unlocked next tier',()=>{
