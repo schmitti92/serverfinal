@@ -191,3 +191,46 @@ test('A chest award keeps forge stock while adding a chest',()=>{
  assert.equal(next.chests.medium,1);
  assert.equal(next.unopened,1);
 });
+
+test('Forge book journal records success, failure and exchange with no new reads',async()=>{
+ const f=fixture(()=>9999);
+ f.seed({iron:15,mithril:9,dragonsteel:2,focus_dust:11},{weapon:19});
+ const failed=await f.request('POST','/api/dog/forge/upgrade',
+  {requestId:'journal-failure-0001',itemId:'weapon',expectedLevel:19});
+ assert.equal(failed.statusCode,200);
+ assert.equal(failed.body.hero.recent.length,1);
+ assert.deepEqual(failed.body.hero.recent[0].type,'upgrade');
+ assert.equal(failed.body.hero.recent[0].success,false);
+ assert.equal(failed.body.hero.recent[0].level,19);
+ const exchanged=await f.request('POST','/api/dog/forge/exchange',
+  {requestId:'journal-exchange-001',resourceId:'focus_dust'});
+ assert.equal(exchanged.statusCode,200);
+ assert.equal(exchanged.body.hero.recent[0].type,'exchange');
+ assert.equal(exchanged.body.hero.recent[0].from,'focus_dust');
+ assert.equal(exchanged.body.hero.recent[1].itemId,'weapon');
+ const writes=f.writes.length;
+ const repeated=await f.request('POST','/api/dog/forge/exchange',
+  {requestId:'journal-exchange-001',resourceId:'focus_dust'});
+ assert.equal(repeated.statusCode,200);
+ assert.equal(repeated.body.replayed,true);
+ assert.deepEqual(repeated.body.hero.recent,exchanged.body.hero.recent);
+ assert.equal(f.writes.length,writes);
+ const fetched=await f.request('GET','/api/dog/forge/me');
+ assert.deepEqual(fetched.body.hero.recent,exchanged.body.hero.recent);
+});
+test('Forge journal remains bounded to ten events and safely handles legacy data',()=>{
+ let h=null,bag=dogInventory(null);
+ for(const key of DOG_RESOURCES)bag.resources[key]=100;
+ for(let i=0;i<12;i++){
+  const result=forgeUpgrade(h,bag,'regeneration',i,0,1000+i);
+  h=result.hero;bag=result.inventory;
+ }
+ assert.equal(h.recent.length,10);
+ assert.equal(h.recent[0].level,12);
+ assert.equal(h.recent[9].level,3);
+ assert.equal(h.successes,12);
+ const restored=dogHero({...h,recent:[null,{type:'unknown'},...h.recent]});
+ assert.equal(restored.recent.length,8);
+ assert.equal(restored.levels.regeneration,12);
+ assert.deepEqual(dogHero({levels:{weapon:10}}).recent,[]);
+});
