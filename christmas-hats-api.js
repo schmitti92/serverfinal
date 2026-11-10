@@ -6,13 +6,20 @@ import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,markChristmasDiscoveries} from './christmas-card-engine.js';
 import {checkMonsterBalance} from './monster-wheel.js';
 
-export const HATS_MAX_ROOM=10;
-export const HATS_SUPER_ODDS=Object.freeze([2,2,2,5,5,5,10,10,15,15]);
-// Exact chance of selecting a bomb, per equally likely hat, in fresh v2 rooms.
-// A room has either one bomb (with probability 3*p) or no bomb; at most
-// one of the three hats can contain a bomb. Existing v1 active rooms are kept.
-export const HATS_BOMB_ODDS=Object.freeze([10,12,14,16,18,20,23,26,29,32]);
-export const HATS_CHECKPOINTS=Object.freeze([3,5,7,9]);
+export const HATS_MAX_ROOM=20;
+export const HATS_SUPER_ODDS=Object.freeze([2,2,2,5,5,5,10,10,15,15,16,16,17,17,18,18,19,19,20,22]);
+// Odds are for THE HAT THE PLAYER PICKS (not for the room).
+// Each v3 room has either one bomb or none, so all 3 hats can be safe.
+// The last chance cannot exceed 33.33% with three hats and at most one bomb.
+// Active legacy v1 and v2 sessions retain their original 10-room length.
+export const HATS_BOMB_ODDS=Object.freeze([10,11,12,13,14,15,17,19,21,23,25,26,27,28,29,30,31,32,33,33]);
+export const HATS_CHECKPOINTS=Object.freeze([3,5,7,9,12,15,18]);
+const LEGACY_V2_BOMB_ODDS=[10,12,14,16,18,20,23,26,29,32];
+const LEGACY_V2_CHECKPOINTS=[3,5,7,9];
+const LEGACY_V1_CHECKPOINTS=[3,7];
+const rulesVersion=state=>state?.rulesVersion===3?3:state?.rulesVersion===2?2:1;
+const maxRoom=state=>rulesVersion(state)===3?HATS_MAX_ROOM:10;
+const checkpoints=state=>rulesVersion(state)===3?HATS_CHECKPOINTS:rulesVersion(state)===2?LEGACY_V2_CHECKPOINTS:LEGACY_V1_CHECKPOINTS;
 const SESSION_COLLECTION='deal_christmas_hats_v1';
 const WALLET_COLLECTION='deal_or_no_deal_wallets_v1';
 const ALBUM_COLLECTION='deal_or_no_deal_christmas_v1';
@@ -63,7 +70,7 @@ function makeSingle(room,tier){
 }
 function drawRegular(room){
  const tier=drawTier(room);
- const count=room<=3?1+randomInt(2):room<=6?1+randomInt(3):1+randomInt(4);
+ const count=room<=3?1+randomInt(2):room<=6?1+randomInt(3):room<=10?1+randomInt(4):2+randomInt(4);
  const items=[];
  for(let i=0;i<count;i++){
   const item=makeSingle(room,tier);
@@ -87,8 +94,8 @@ function drawSuper(){
  return {superLuck:true,items};
 }
 function drawGift(room){return randomInt(100)<HATS_SUPER_ODDS[room-1]?drawSuper():drawRegular(room);}
-export function drawHatsRoom(room){
- if(!Number.isInteger(room)||room<1||room>HATS_MAX_ROOM)throw Error('INVALID_ROOM');
+export function drawHatsRoom(room,version=3){
+ if(!Number.isInteger(room)||room<1||room>(version===3?HATS_MAX_ROOM:10)||![1,2,3].includes(version))throw Error('INVALID_ROOM');
  let a=drawGift(room),b=drawGift(room);
  // A rare exceptional gift should not make the other winning hat falsely
  // advertise itself as "better". Compare actual item values, not animations.
@@ -107,7 +114,7 @@ export function drawHatsRoom(room){
  const better=normal===a?b:a;
  // 10–32% odds per hat are mathematically incompatible with an obligatory
  // one-bomb/three-hat board. Make the bomb optional and tell players clearly.
- const hasBomb=randomInt(100)<3*HATS_BOMB_ODDS[room-1];
+ const hasBomb=version===1||randomInt(100)<3*(version===2?LEGACY_V2_BOMB_ODDS[room-1]:HATS_BOMB_ODDS[room-1]);
  let extra=null;
  if(!hasBomb){
   extra=drawRegular(room);
@@ -119,10 +126,10 @@ export function drawHatsRoom(room){
  return layout;
 }
 function fresh(requestId){
- return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1),secured:[],pending:[],lastReveal:null,
+ return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1,3),secured:[],pending:[],lastReveal:null,
   lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:{started:true},
   lastActions:[{id:requestId,type:'start',runId:null,index:null,result:{started:true}}],
-  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:2};
+  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:3};
 }
 // Each authenticated profile receives exactly one free starter voucher.
  // Additional vouchers can be granted by a future trusted reward flow.
@@ -138,8 +145,8 @@ function safeView(state){
  return {id:state.id,status:state.status,room:state.room,checkpoint:state.checkpoint,
   secured:state.secured||[],pending:state.pending||[],lastReveal:state.lastReveal||null,
   summary:state.summary||null,updatedAt:state.updatedAt,
-  bombOdds:state.status==='playing'?(state.rulesVersion===2?HATS_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
-  rulesVersion:state.rulesVersion===2?2:1};
+  bombOdds:state.status==='playing'?(rulesVersion(state)===3?HATS_BOMB_ODDS[state.room-1]:rulesVersion(state)===2?LEGACY_V2_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
+  maxRoom:maxRoom(state),checkpoints:checkpoints(state),rulesVersion:rulesVersion(state)};
 }
 function totalItems(rewards){return rewards.flatMap(g=>g.items||[]);}
 function amountOf(items,kind,subkey=null){return items.filter(item=>item.kind===kind&&(!subkey||item.packId===subkey||item.hammer===subkey)).reduce((sum,item)=>sum+(kind==='cash'?item.amountCents:item.quantity),0);}
@@ -158,7 +165,7 @@ function validStored(state){
   &&state.bonusTickets>=0&&state.bonusTickets<=1000000
   &&(state.freeVoucherUsed===undefined||typeof state.freeVoucherUsed==='boolean'))return;
  if(!state||state.version!==1||!['playing','finished'].includes(state.status)||!Number.isInteger(state.room)
-  ||state.room<1||state.room>10||!Array.isArray(state.secured)||!Array.isArray(state.pending))throw Error('INVALID_SESSION');
+  ||state.room<1||state.room>maxRoom(state)||!Array.isArray(state.secured)||!Array.isArray(state.pending))throw Error('INVALID_SESSION');
  if(state.status==='playing'&&(!Array.isArray(state.layout)||state.layout.length!==3))throw Error('INVALID_SESSION');
 }
 function applyPick(state,index){
@@ -174,13 +181,13 @@ function applyPick(state,index){
  }else{
   const bag={room,items:selection.items,superLuck:!!selection.superLuck,hatType:selection.type};
   next.pending=[...state.pending,bag];
-  if(HATS_CHECKPOINTS.includes(room)){next.secured=[...state.secured,...next.pending];next.pending=[];next.checkpoint=room;}
-  if(room===10){
+  if(checkpoints(state).includes(room)){next.secured=[...state.secured,...next.pending];next.pending=[];next.checkpoint=room;}
+  if(room===maxRoom(state)){
    next.status='finished';next.layout=null;
    const awarded=[...next.secured,...next.pending];
    next.summary={reason:'completed',room,lost:[],awarded,totals:payoutTotals(awarded)};
    next.secured=awarded;next.pending=[];
-  }else{next.room=room+1;next.layout=drawHatsRoom(next.room);}
+  }else{next.room=room+1;next.layout=drawHatsRoom(next.room,rulesVersion(state));}
  }
  return next;
 }
@@ -214,7 +221,7 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    const action=saved?.lastActions?.find(a=>a.id===pendingId)
     ||(saved?.lastActionId===pendingId?{result:saved.lastActionResult}:null);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:HATS_SUPER_ODDS,bombOdds:HATS_BOMB_ODDS,checkpoints:HATS_CHECKPOINTS,
+   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:HATS_SUPER_ODDS,bombOdds:HATS_BOMB_ODDS,checkpoints:HATS_CHECKPOINTS,maxRoom:HATS_MAX_ROOM,
     ...(pendingId?{pendingAction:{applied:!!action,result:action?.result||null}}:{})});
   }catch(e){return fail(res,e);}
  });
