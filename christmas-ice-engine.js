@@ -74,8 +74,20 @@ export function normalizeIceState(s){
  // Upgrade historical 20/25/30-tile saves to 50/100, preserving opened
  // tiles, receipts, prizes, inventory and progress. Missing stars in old
  // 23+ pictures are safely regenerated when the next strike is processed.
+ if(!s||typeof s!=='object')throw Error('INVALID_ICE_STATE');
  const tilesRequired=iceTileCount(s);
- const clean={...s,tileCount:tilesRequired};
+ // Some early player profiles predate the arrays introduced for the current
+ // 70-picture event. Supply missing presentation fields without changing
+ // any stored progress, hammer credits, opened tiles or awarded prizes.
+ const optionalArray=(value,name)=>{
+  if(value==null)return [];
+  if(!Array.isArray(value))throw Error('INVALID_ICE_'+name);
+  return value;
+ };
+ const clean={...s,tileCount:tilesRequired,
+  opened:optionalArray(s.opened,'OPENED'),
+  prizes:optionalArray(s.prizes,'PRIZES'),
+  lastActions:optionalArray(s.lastActions,'RECEIPTS')};
  if((clean.version||1)>=2)return clean;
  const wheel=clean.wheelHammers||{};
  return {...clean,version:2,freeHammers:{single:Math.max(0,wheel.single||0),double:Math.max(0,wheel.double||0),lucky:Math.max(0,wheel.lucky||0)},wheelHammers:{single:Math.max(0,wheel.single||0),double:Math.max(0,wheel.double||0),lucky:Math.max(0,wheel.lucky||0)}};
