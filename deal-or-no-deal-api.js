@@ -737,7 +737,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     for(const [id,count] of Object.entries(counts))increments[id]=FieldValue.increment(count);
     const previousAward=awardWrite;
     awardWrite=()=>{previousAward?.();tx.set(finalAlbumRef,{cards:increments,opened:FieldValue.increment(1),updatedAt:Date.now()},{merge:true});
-     tx.create(finalRewardRef,{uid:winner.id,gameId:after.id,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
+     tx.create(finalRewardRef,{uid:winner.id,gameId:after.id,packId:pack.id,packName:pack.id==='large'?'Gold-Kartenpaket':pack.name,revealed:drawn,createdAt:Date.now()})};
    }
    }
    const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.id)}));
