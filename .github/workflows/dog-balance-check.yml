@@ -8,10 +8,12 @@ on:
       - dog-materials.js
       - deal-or-no-deal-api.js
       - dog-gates.js
+      - dog-mini-rewards.js
       - dog-boss10.js
       - dog-ascension.js
       - tests/dog-balance.test.js
       - tests/dog-gates.test.js
+      - tests/dog-mini-rewards.test.js
       - tests/dog-first-loop.test.js
       - tests/dog-forge.test.js
       - tests/dog-materials.test.js
@@ -23,10 +25,12 @@ on:
       - dog-materials.js
       - deal-or-no-deal-api.js
       - dog-gates.js
+      - dog-mini-rewards.js
       - dog-boss10.js
       - dog-ascension.js
       - tests/dog-balance.test.js
       - tests/dog-gates.test.js
+      - tests/dog-mini-rewards.test.js
       - tests/dog-first-loop.test.js
       - tests/dog-forge.test.js
       - tests/dog-materials.test.js
@@ -49,9 +53,11 @@ jobs:
           node --check dog-materials.js
           node --check deal-or-no-deal-api.js
           node --check dog-gates.js
+          node --check dog-mini-rewards.js
+          node --check tests/dog-mini-rewards.test.js
           node --check dog-boss10.js
           node --check dog-ascension.js
           node --check tests/dog-first-loop.test.js
           node --check tests/dog-balance.test.js
       - name: Run balance simulations and unit tests
-        run: node --test tests/dog-balance.test.js tests/dog-gates.test.js tests/dog-first-loop.test.js tests/dog-forge.test.js tests/dog-materials.test.js
+        run: node --test tests/dog-balance.test.js tests/dog-gates.test.js tests/dog-mini-rewards.test.js tests/dog-first-loop.test.js tests/dog-forge.test.js tests/dog-materials.test.js
