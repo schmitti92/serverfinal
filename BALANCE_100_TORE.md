@@ -9,7 +9,7 @@
 - Waffen-/Rüstungsgrundwert: 100 × 2^(Level−1). Fähigkeiten wirken prozentual; die höchste mögliche Reaktion bleibt +10 %.
 - Normale persönliche Tore (außer Mini-Boss und Gruppenboss) haben eine Server-Siegchance von 30–80 %, die aus relativem Waffen-/Rüstungslevel (bis +20 Prozentpunkte) sowie den jeweils zwei höchsten Angriffs- und Verteidigungsfähigkeiten (+30 Prozentpunkte) berechnet wird. Ein Held mit alter Ausrüstung kann die Tore 11–14 trotzdem mit etwa 30–45 % bestehen.
 
-Mini-Bosse sind echte Solo-Kämpfe mit vier Angriffen, gegnerischen Reaktionen und Überlebensprüfung. Sie bekommen LP passend zur vorherigen Ausrüstungsstufe. Mit passender Waffe **und** Rüstung sind sie deutlich besser schaffbar, aber nicht automatisch gewonnen (Beispielstufe 15: ca. 50 % unter einem mittleren verbesserten Build). Ein überdurchschnittlich entwickelter Held erhöht ihre LP und Gegenangriffe nur leicht um höchstens 10 %; ein schwacher Held erhält keinen künstlich leichteren Boss. Große Bosse werden separat anhand von drei Spielern über je sechs Angriffe in 30 Sekunden skaliert.
+Mini-Bosse sind echte Solo-Kämpfe mit maximal vier Spielerangriffen, **ohne unfairen Gegner-Erstschlag**, aber mit Gegenangriffen, gelegentlichen schweren Treffern und Überlebensprüfung. Jeder Versuch liefert einen kleinen Animationsablauf und eine konkrete Empfehlung nach einer Niederlage. Sie bekommen LP passend zur vorherigen Ausrüstungsstufe. Mit passender Waffe **und** Rüstung sind sie deutlich besser schaffbar, aber nicht automatisch gewonnen (Beispielstufe 15: ca. 58 % unter dem definierten mittleren Build). Ein überdurchschnittlich entwickelter Held erhöht ihre LP und Gegenangriffe nur leicht um höchstens 10 %; ein schwacher Held erhält keinen künstlich leichteren Boss. Große Bosse werden separat anhand von drei Spielern über je sechs Angriffe in 30 Sekunden skaliert.
 
 ## Rohstoffe je persönlichem Kapitel
 
@@ -28,6 +28,24 @@ Mini-Bosse sind echte Solo-Kämpfe mit vier Angriffen, gegnerischen Reaktionen u
 
 Neue Materialien erscheinen schon **vor** dem gemeinsamen Boss, dessen Sieg das zugehörige Upgrade freischaltet. Kistengröße und Gewichtung müssen beim Erhalt auf dem Server eingefroren werden, damit spätere Levelaufstiege alte Kisten nicht nachträglich vergrößern.
 
+## Mini-Boss-Feinschliff (simulierte Siegquoten)
+
+| Tor | Vollständig verbessertes Beispielprofil | Nur Waffe verbessert |
+|---|---:|---:|
+| 15 | 57,7 % | 12,7 % |
+| 25 | 57,7 % | 14,0 % |
+| 35 | 60,3 % | 15,0 % |
+| 45 | 60,2 % | 14,3 % |
+| 55 | 62,0 % | 2,6 % |
+| 65 | 64,6 % | 2,5 % |
+| 75 | 63,3 % | 3,0 % |
+| 85 | 65,9 % | 3,8 % |
+| 95 | 67,2 % | 4,3 % |
+
+Die Quoten stammen aus jeweils 4.500 reproduzierbaren Kämpfen pro Vergleichsprofil; sie sind **kein hartes Gewinnversprechen** für reale Spieler. Der Angriff des Mini-Bosses wird nur leicht an sehr starke Spieler angepasst (maximal +10 %), während Waffe und Rüstung Fortschritt bringen. Schwerere Gegenangriffe verhindern automatische Siege nach einem bloßen Waffen-Upgrade.
+
+**Kompatibilität:** Neue Kisten liefern im Entwurfsmodell für jede der 15 Materialarten einen ganzzahligen Zähler, auch wenn er null ist. Das entspricht dem Schema der bisherigen Inventarvalidierung. Alt-Kisten verbleiben unverändert.
+
 ## Ausrüstungsschmiede
 Materialkosten Waffe: Level 2 = 3 Eisenerz; 3 = 2 Eisenerz + 1 Schmiedekohle; 4 = 2 Schmiedekohle; 5 = 2 Schmiedekohle + 1 Stahlkern; 6 = 3 Stahlkern; 7 = 2 Stahlkern + 1 Mithril; 8 = 2 Mithril; 9 = 3 Mithril; 10 = 2 Mithril + 1 Drachenstahl.
 
@@ -38,7 +56,7 @@ Die Rüstung nutzt die parallelen Verteidigungsmaterialien. Vorgesehene Erfolgsw
 2. Bestehende Spielerbestände über Level 10 sichern; keine automatische Herabstufung.
 3. Kisten-Snapshots nur serverseitig ausstellen/öffnen; vorhandene Kisten unverändert erhalten.
 4. Eigenes Solo-Kampfsystem und 30-Sekunden-Teamkampf integrieren, inklusive Überlebenswahrscheinlichkeiten.
-5. Die 14 isolierten Balancingtests sind im DOG-Balance-Workflow erfolgreich. Vor Freigabe **vollständige** End-to-End-Tests der Firestore-Transaktionen, normalen Siegreceipts und Ressourcenbelohnungen ergänzen.
+5. Die **15 isolierten Balancingtests** sind im DOG-Balance-Workflow erfolgreich. Vor Freigabe **vollständige** End-to-End-Tests der Firestore-Transaktionen, normalen Siegreceipts und Ressourcenbelohnungen ergänzen.
 6. Für normale Tore darf das Ergebnis von `dogResolveNormalGate()` pro serverbestätigter Aktion nur **einmal** gezogen und unter einer wiederholbaren Request-ID gespeichert werden. Sonst könnten wiederholte Requests zusätzliche Würfe erzeugen.
 7. Vollständige Gewinnquoten und Rohstoff-Farmingdauer unter echtem Spieler-Upgradeverhalten und der 30-Sekunden-Kampfdauer prüfen.
 8. Bestehende Kisten- und Boss-APIs sind durch diesen isolierten Branch **nicht** verändert. Die systemweiten Repository-Tests haben bereits auf `main` bekannte Fehlschläge; der eigene DOG-Balance-Workflow ist erfolgreich.
