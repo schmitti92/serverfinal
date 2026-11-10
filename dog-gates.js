@@ -34,10 +34,16 @@ export function dogGateProgress(raw){
  for(const [uid,value] of Object.entries(people).slice(0,3)){
   if(!validUid(uid))continue;
   const p=obj(value);
+  const normals=positiveUnique(p.normals,normal);
+  const minis=positiveUnique(p.minis,mini);
+  const currentGate=clamp(p.currentGate,1,100,1);
+  // A previous attempt at an older mini-boss can move the current marker
+  // backwards, but can never erase the furthest earned gate.
+  const furthestWin=Math.max(1,...normals.map(n=>n+1),...minis.map(n=>n+1));
   result[uid]={
-   currentGate:clamp(p.currentGate,1,100,1),
-   normals:positiveUnique(p.normals,normal),
-   minis:positiveUnique(p.minis,mini),
+   currentGate,
+   highestGate:Math.max(currentGate,clamp(p.highestGate,1,100,1),furthestWin),
+   normals,minis,
    lastAttemptAt:clamp(p.lastAttemptAt,0,10_000_000_000_000,0),
    lastResult:p.lastResult==='win'?'win':p.lastResult==='loss'?'loss':null
   };
@@ -54,6 +60,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
  const members=team.members.map(m=>{
   const p=progress.people[m.uid];
   return {uid:m.uid,name:cleanName(m.name),currentGate:p?.currentGate??1,
+   highestGate:p?.highestGate??1,
    wonNormals:p?.normals.length??0,wonMinis:p?.minis.length??0,
    lastAttemptAt:p?.lastAttemptAt??0,lastResult:p?.lastResult??null,
    isMe:m.uid===viewerUid};
@@ -62,7 +69,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
   isMember:members.some(m=>m.uid===viewerUid),canJoin:members.length<3,
   sharedBosses:progress.sharedBosses,
   dogUnlocked:progress.sharedBosses.includes(100), // only trusted server wins may write this
-  progress:progress.people[viewerUid]||{currentGate:1,normals:[],minis:[],
+  progress:progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null},
   availableBossGate:10, // legacy shared arena is still a separate Tor-1 test
   bossArenaIsTest:true,
@@ -87,7 +94,9 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
   dogSimulateMiniBoss({gate,...gear,rand}):
   dogResolveNormalGate({gate,...gear},rand);
  const success=mini(gate)?fight.victory:fight.win;
- const nextPlayer={currentGate:success?Math.min(100,gate+1):gate,
+ const nextGate=success?Math.min(100,gate+1):gate;
+ const nextPlayer={currentGate:nextGate,
+  highestGate:Math.max(player.highestGate??player.currentGate,success?nextGate:1),
   normals:normal(gate)&&success?[...player.normals,gate].sort((a,b)=>a-b):player.normals,
   minis:mini(gate)&&success?[...player.minis,gate].sort((a,b)=>a-b):player.minis,
   lastAttemptAt:now,lastResult:success?'win':'loss'};
