@@ -1,11 +1,12 @@
 /** Personal expedition map: secure team positions and solo gate attempts.
  * Each shared boss team's roster is the only allowed 3-player roster.
- * This module does not award loot, unlock DOG or alter the legacy boss arena.
+ * First mini-boss wins award loot atomically; DOG unlock and legacy boss stay separate.
  */
 import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {dogNormalGateChance,dogResolveNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
+import {dogDrawMiniReward,dogMiniRewardDocument,DOG_MINI_REWARD_COLLECTIONS} from './dog-mini-rewards.js';
 
 export const DOG_GATE_PROGRESS_COLLECTION='dog_gate_progress_v1';
 export const DOG_GATE_PROGRESS_ID='first-three-heroes';
@@ -183,12 +184,31 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
      if(before.gate!==gate)throw Error('DOG_GATE_RECEIPT_CONFLICT');
      return {result:before.result,map:dogGateMapView(teamData,saved,uid),replayed:true};
     }
-    const outcome=dogGateFight(saved,uid,gate,hero.exists?hero.data():null,rand,clock());
+    const now=clock();
+    const outcome=dogGateFight(saved,uid,gate,hero.exists?hero.data():null,rand,now);
+    let result=outcome.result;
+    // A first mini-boss victory fixes ONE reward in this exact transaction.
+    // All prize data is server-generated; the browser cannot request its type,
+    // amount, or recipient. A lost response replays the same receipt.
+    let prizeWrite=null;
+    if(result.type==='mini'&&result.win){
+     const highestGate=outcome.progress.people[uid].highestGate;
+     const prize=dogDrawMiniReward(gate,highestGate,rand);
+     const prizeRef=db.collection(DOG_MINI_REWARD_COLLECTIONS[prize.kind]).doc(uid);
+     // Read before any writes, including the victory/receipt.
+     const prizeSnap=await tx.get(prizeRef);
+     const credit=dogMiniRewardDocument(prize,prizeSnap.exists?prizeSnap.data():null,now,rand);
+     prizeWrite={ref:prizeRef,credit};
+     result={...result,miniRewardPending:false,miniReward:{
+      ...prize,granted:true}};
+    }
     const map=dogGateMapView(teamData,outcome.progress,uid);
-    // Store both result and progressed map atomically.
+    // The victory, mini prize and immutable receipt share one commit.
     tx.set(progressRef,outcome.progress);
-    tx.create(receiptRef,{uid,gate,requestId,createdAt:clock(),result:outcome.result});
-    return {result:outcome.result,map,replayed:false};
+    if(prizeWrite)tx.set(prizeWrite.ref,prizeWrite.credit.data,
+     ...(prizeWrite.credit.merge?[{merge:true}]:[]));
+    tx.create(receiptRef,{uid,gate,requestId,createdAt:now,result});
+    return {result,map,replayed:false};
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...response});
