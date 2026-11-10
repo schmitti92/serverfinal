@@ -105,6 +105,36 @@ test('Deal socket delivers public state to two players after start',async()=>{
  }
 });
 
+test('Three viewers receive the identical timed briefcase reveal without secret amounts',async()=>{
+ const {api,Socket,invoke}=harness(['a','b','c']);
+ const viewers=['a','b','c'].map(uid=>{
+  const ws=new Socket();api.attachSocket(ws);
+  ws.message({type:'subscribe',code:'123',token:uid});return ws;
+ });
+ await flush();
+ let res=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(res.body.ok,true);
+ let game=res.body.game;
+ for(let i=0;i<3;i++){
+  res=await invoke('POST','/api/deal-or-no-deal/:code/action',game.order[i],{id:crypto.randomUUID(),revision:game.revision,type:'select',case:i});
+  assert.equal(res.body.ok,true,JSON.stringify(res.body));game=res.body.game;
+ }
+ const actor=game.order[game.turnIndex];
+ res=await invoke('POST','/api/deal-or-no-deal/:code/action',actor,{id:crypto.randomUUID(),revision:game.revision,type:'open',case:3});
+ assert.equal(res.body.ok,true,JSON.stringify(res.body));
+ assert.equal(res.body.game.phase,'reveal');
+ const revealAt=res.body.game.pending.startedAt;
+ assert.ok(Number.isFinite(revealAt));
+ for(const ws of viewers){
+  const state=ws.sent.filter(x=>x.type==='deal-state').at(-1).game;
+  assert.equal(state.phase,'reveal');
+  assert.equal(state.pending.startedAt,revealAt);
+  assert.equal(state.pending.eventId,res.body.game.pending.eventId);
+  assert.deepEqual(state.openedAmounts,[],'no case amount leaks during the shared reveal');
+ }
+ for(const ws of viewers)ws.close();
+});
+
 test('Both subscribed players receive every committed selection, open and reveal',async()=>{
  const {api,Socket,invoke}=harness();
  const a=new Socket(),b=new Socket();
