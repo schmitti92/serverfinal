@@ -1,0 +1,30 @@
+name: DOG 100-Tore Balance Check
+
+on:
+  push:
+    paths:
+      - dog-balance.js
+      - tests/dog-balance.test.js
+      - .github/workflows/dog-balance-check.yml
+  pull_request:
+    paths:
+      - dog-balance.js
+      - tests/dog-balance.test.js
+      - .github/workflows/dog-balance-check.yml
+  workflow_dispatch:
+
+jobs:
+  balance-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check balance syntax
+        run: |
+          node --check dog-balance.js
+          node --check tests/dog-balance.test.js
+      - name: Run balance simulations and unit tests
+        run: node --test tests/dog-balance.test.js
