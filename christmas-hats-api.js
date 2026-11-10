@@ -7,7 +7,10 @@ import {CHRISTMAS_CARDS,christmasDraw,markChristmasDiscoveries} from './christma
 import {checkMonsterBalance} from './monster-wheel.js';
 
 export const HATS_MAX_ROOM=20;
+// Frozen original high-payout Superglück chances for v1–v5 runs.
 export const HATS_SUPER_ODDS=Object.freeze([2,2,2,5,5,5,10,10,15,15,16,16,17,17,18,18,19,19,20,22]);
+// New v6: Superglück is rare and the early rooms pay modest prizes.
+export const HATS_BALANCED_SUPER_ODDS=Object.freeze([0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,9,10,12]);
 // Odds are for THE HAT THE PLAYER PICKS (not for the room).
 // Each v3 room has either one bomb or none, so all 3 hats can be safe.
 // The last chance cannot exceed 33.33% with three hats and at most one bomb.
@@ -26,9 +29,9 @@ const LEGACY_V3_CHECKPOINTS=[3,5,7,9,12,15,18];
 const LEGACY_V2_BOMB_ODDS=[10,12,14,16,18,20,23,26,29,32];
 const LEGACY_V2_CHECKPOINTS=[3,5,7,9];
 const LEGACY_V1_CHECKPOINTS=[3,7];
-const rulesVersion=state=>state?.rulesVersion===5?5:state?.rulesVersion===4?4:state?.rulesVersion===3?3:state?.rulesVersion===2?2:1;
+const rulesVersion=state=>state?.rulesVersion===6?6:state?.rulesVersion===5?5:state?.rulesVersion===4?4:state?.rulesVersion===3?3:state?.rulesVersion===2?2:1;
 const maxRoom=state=>rulesVersion(state)>=3?HATS_MAX_ROOM:10;
-const checkpoints=state=>rulesVersion(state)===5?HATS_CHECKPOINTS:rulesVersion(state)===4?LEGACY_V4_CHECKPOINTS:rulesVersion(state)===3?LEGACY_V3_CHECKPOINTS:rulesVersion(state)===2?LEGACY_V2_CHECKPOINTS:LEGACY_V1_CHECKPOINTS;
+const checkpoints=state=>rulesVersion(state)>=5?HATS_CHECKPOINTS:rulesVersion(state)===4?LEGACY_V4_CHECKPOINTS:rulesVersion(state)===3?LEGACY_V3_CHECKPOINTS:rulesVersion(state)===2?LEGACY_V2_CHECKPOINTS:LEGACY_V1_CHECKPOINTS;
 const SESSION_COLLECTION='deal_christmas_hats_v1';
 const WALLET_COLLECTION='deal_or_no_deal_wallets_v1';
 const ALBUM_COLLECTION='deal_or_no_deal_christmas_v1';
@@ -102,22 +105,78 @@ function drawSuper(){
  }
  return {superLuck:true,items};
 }
-function drawGift(room){return randomInt(100)<HATS_SUPER_ODDS[room-1]?drawSuper():drawRegular(room);}
-export function drawHatsRoom(room,version=5){
- if(!Number.isInteger(room)||room<1||room>(version>=3?HATS_MAX_ROOM:10)||![1,2,3,4,5].includes(version))throw Error('INVALID_ROOM');
- let a=drawGift(room),b=drawGift(room);
+const BALANCED_POOLS=Object.freeze([
+ Object.freeze(['pack:small','pack:small','pack:small','hammer:single']),
+ Object.freeze(['pack:large','pack:large','pack:large','hammer:double','hammer:double','cash']),
+ Object.freeze(['pack:large','pack:large','hammer:double','hammer:double','pack:premium','cash','cash','joker']),
+ Object.freeze(['pack:large','pack:premium','pack:premium','hammer:double','hammer:double','hammer:lucky','cash','cash','joker']),
+ Object.freeze(['pack:premium','pack:premium','pack:premium','pack:platinum','hammer:double','hammer:lucky','cash','cash','cash','joker'])
+]);
+const BALANCED_CASH=Object.freeze([
+ Object.freeze([]),
+ Object.freeze([10000,20000,30000,50000]),
+ Object.freeze([30000,50000,75000,100000,150000]),
+ Object.freeze([60000,100000,150000,200000,300000]),
+ Object.freeze([150000,200000,300000,400000,600000,800000,1000000])
+]);
+const balancedStage=room=>room<=3?0:room<=6?1:room<=10?2:room<=15?3:4;
+function balancedSingle(room){
+ const stage=balancedStage(room),id=pick(BALANCED_POOLS[stage]);
+ return id==='cash'?cash(pick(BALANCED_CASH[stage])):reward(id,1);
+}
+function balancedRegular(room){
+ const count=room<=6?1:randomInt(100)<(room<=10?18:room<=15?28:38)?2:1;
+ const items=[],used=new Set();
+ for(let t=0;items.length<count&&t<25;t++){
+  const item=balancedSingle(room),key=item.kind+':'+(item.packId||item.hammer||'cash');
+  if(used.has(key))continue;
+  used.add(key);items.push(item);
+ }
+ return {superLuck:false,items};
+}
+function balancedSuper(room){
+ // Most Superglück wins have only two different items; late ones rarely three.
+ const count=room>=16&&randomInt(100)<20?3:2,items=[],used=new Set();
+ for(let t=0;items.length<count&&t<30;t++){
+  const item=balancedSingle(room),key=item.kind+':'+(item.packId||item.hammer||'cash');
+  if(used.has(key))continue;
+  used.add(key);items.push(item);
+ }
+ if(room===20&&randomInt(1000)===0){
+  // Grand headline jackpot: only 0.1% of final-room Superglück draws.
+  const fiveMillion=cash(5000000),index=items.findIndex(item=>item.kind==='cash');
+  if(index>=0)items[index]=fiveMillion;
+  else items[0]=fiveMillion;
+ }
+ return {superLuck:true,items};
+}
+function drawGift(room,version=5){
+ if(version===6)return randomInt(100)<HATS_BALANCED_SUPER_ODDS[room-1]?balancedSuper(room):balancedRegular(room);
+ return randomInt(100)<HATS_SUPER_ODDS[room-1]?drawSuper():drawRegular(room);
+}
+export function drawHatsRoom(room,version=6){
+ if(!Number.isInteger(room)||room<1||room>(version>=3?HATS_MAX_ROOM:10)||![1,2,3,4,5,6].includes(version))throw Error('INVALID_ROOM');
+ let a=drawGift(room,version),b=drawGift(room,version);
  // A rare exceptional gift should not make the other winning hat falsely
  // advertise itself as "better". Compare actual item values, not animations.
- for(let i=0;scoreHatsPrize(a)===scoreHatsPrize(b)&&i<12;i++)b=drawGift(room);
+ for(let i=0;scoreHatsPrize(a)===scoreHatsPrize(b)&&i<12;i++)b=drawGift(room,version);
  if(scoreHatsPrize(a)===scoreHatsPrize(b)){
   // A fixed same-tier fallback avoids a sixth prize, duplicate category,
   // or a premium reward appearing in rooms 1–3.
-  a={superLuck:false,items:[reward(room<=3?'pack:small':room<=6?'pack:large':'pack:premium',1)]};
-  b=room<=3
-   ?{superLuck:false,items:[reward('pack:small',3),reward('hammer:single',3)]}
-   :room<=6
-    ?{superLuck:false,items:[reward('pack:premium',3),reward('hammer:double',3),reward('joker',3)]}
-    :{superLuck:false,items:[cash(5000000),reward('pack:platinum',3),reward('hammer:lucky',3),reward('joker',3),reward('pack:premium',3)]};
+  if(version===6){
+   // A tie must NEVER cause the old oversized six-item fallback.
+   a={superLuck:false,items:[reward(room<=3?'pack:small':room<=6?'pack:large':'pack:premium',1)]};
+   b={superLuck:false,items:[reward(room<=3?'hammer:single':room<=10?'hammer:double':'hammer:lucky',1)]};
+   if(scoreHatsPrize(a)===scoreHatsPrize(b))
+    b={superLuck:false,items:[cash(room<=6?20000:room<=10?50000:room<=15?150000:400000)]};
+  }else{
+   a={superLuck:false,items:[reward(room<=3?'pack:small':room<=6?'pack:large':'pack:premium',1)]};
+   b=room<=3
+    ?{superLuck:false,items:[reward('pack:small',3),reward('hammer:single',3)]}
+    :room<=6
+     ?{superLuck:false,items:[reward('pack:premium',3),reward('hammer:double',3),reward('joker',3)]}
+     :{superLuck:false,items:[cash(5000000),reward('pack:platinum',3),reward('hammer:lucky',3),reward('joker',3),reward('pack:premium',3)]};
+  }
  }
  const normal=scoreHatsPrize(a)<scoreHatsPrize(b)?a:b;
  const better=normal===a?b:a;
@@ -129,7 +188,7 @@ export function drawHatsRoom(room,version=5){
  const hasBomb=version===1||randomInt(100)<3*chance;
  let extra=null;
  if(!hasBomb){
-  extra=drawRegular(room);
+  extra=version===6?balancedRegular(room):drawRegular(room);
   // The labelled super hat must always be the highest-valued gift.
   if(scoreHatsPrize(extra)>=scoreHatsPrize(better))extra=normal;
  }
@@ -138,10 +197,10 @@ export function drawHatsRoom(room,version=5){
  return layout;
 }
 function fresh(requestId){
- return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1,5),secured:[],pending:[],lastReveal:null,
+ return {version:1,id:randomUUID(),status:'playing',room:1,layout:drawHatsRoom(1,6),secured:[],pending:[],lastReveal:null,
   lastActionId:requestId,lastActionType:'start',lastActionIndex:null,lastActionResult:{started:true},
   lastActions:[{id:requestId,type:'start',runId:null,index:null,result:{started:true}}],
-  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:5};
+  updatedAt:Date.now(),createdAt:Date.now(),checkpoint:0,summary:null,rulesVersion:6};
 }
 // Each authenticated profile receives exactly one free starter voucher.
  // Additional vouchers can be granted by a future trusted reward flow.
@@ -157,7 +216,7 @@ function safeView(state){
  return {id:state.id,status:state.status,room:state.room,checkpoint:state.checkpoint,
   secured:state.secured||[],pending:state.pending||[],lastReveal:state.lastReveal||null,
   summary:state.summary||null,updatedAt:state.updatedAt,
-  bombOdds:state.status==='playing'?(rulesVersion(state)===5?HATS_BOMB_ODDS[state.room-1]:rulesVersion(state)===4?LEGACY_V4_BOMB_ODDS[state.room-1]:rulesVersion(state)===3?LEGACY_V3_BOMB_ODDS[state.room-1]:rulesVersion(state)===2?LEGACY_V2_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
+  bombOdds:state.status==='playing'?(rulesVersion(state)>=5?HATS_BOMB_ODDS[state.room-1]:rulesVersion(state)===4?LEGACY_V4_BOMB_ODDS[state.room-1]:rulesVersion(state)===3?LEGACY_V3_BOMB_ODDS[state.room-1]:rulesVersion(state)===2?LEGACY_V2_BOMB_ODDS[state.room-1]:Math.round(100/3)):null,
   maxRoom:maxRoom(state),checkpoints:checkpoints(state),rulesVersion:rulesVersion(state)};
 }
 function totalItems(rewards){return rewards.flatMap(g=>g.items||[]);}
@@ -233,7 +292,7 @@ export function installChristmasHatsApi(app,{verifyProfile,getFirestore}){
    const action=saved?.lastActions?.find(a=>a.id===pendingId)
     ||(saved?.lastActionId===pendingId?{result:saved.lastActionResult}:null);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:HATS_SUPER_ODDS,bombOdds:HATS_BOMB_ODDS,checkpoints:HATS_CHECKPOINTS,maxRoom:HATS_MAX_ROOM,
+   return res.json({ok:true,state:saved?safeView(saved):null,vouchers:availableHatsVouchers(saved),odds:rulesVersion(saved)===6||!saved?.status?HATS_BALANCED_SUPER_ODDS:HATS_SUPER_ODDS,bombOdds:HATS_BOMB_ODDS,checkpoints:HATS_CHECKPOINTS,maxRoom:HATS_MAX_ROOM,
     ...(pendingId?{pendingAction:{applied:!!action,result:action?.result||null}}:{})});
   }catch(e){return fail(res,e);}
  });
