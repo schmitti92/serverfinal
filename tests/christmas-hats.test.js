@@ -5,8 +5,8 @@ import {HATS_MAX_ROOM,HATS_SUPER_ODDS,HATS_BOMB_ODDS,HATS_CHECKPOINTS,drawHatsRo
 test('twenty rooms with escalating Superglück and bomb probabilities',()=>{
  assert.equal(HATS_MAX_ROOM,20);
  assert.deepEqual(HATS_SUPER_ODDS,[2,2,2,5,5,5,10,10,15,15,16,16,17,17,18,18,19,19,20,22]);
- assert.deepEqual(HATS_BOMB_ODDS,[10,11,12,13,14,15,17,19,21,23,25,26,27,28,29,30,31,32,33,33]);
- assert.deepEqual(HATS_CHECKPOINTS,[3,5,7,9,12,15,18]);
+ assert.deepEqual(HATS_BOMB_ODDS,[10,12,0,14,16,0,18,20,0,22,24,0,26,28,0,30,31,0,32,33]);
+ assert.deepEqual(HATS_CHECKPOINTS,[5,10,15,20]);
 });
 
 test('each room has at most one bomb and the super hat is best',()=>{
@@ -48,7 +48,7 @@ test('each room has at most one bomb and the super hat is best',()=>{
 });
 
 test('probability of the chosen hat containing a bomb matches each advertised room chance',()=>{
- for(const room of [1,3,5,6,8,10,12,15,18,20]){
+ for(const room of [1,2,3,5,6,9,12,15,18,20]){
   const trials=3000;let pickedBombs=0,zeroBombRooms=0;
   for(let i=0;i<trials;i++){
    const layout=drawHatsRoom(room);
@@ -59,6 +59,17 @@ test('probability of the chosen hat containing a bomb matches each advertised ro
   assert.ok(Math.abs(actual-HATS_BOMB_ODDS[room-1])<3.5,'room '+room+' advertised odds '+HATS_BOMB_ODDS[room-1]+'% actual '+actual.toFixed(2)+'%');
   if(room===1)assert.ok(zeroBombRooms>1500,'most first rooms contain no bombs');
  }
+});
+
+test('every third room is guaranteed all-safe and the save points fall every five rooms',()=>{
+ for(const room of [3,6,9,12,15,18])for(let i=0;i<150;i++){
+  const hats=drawHatsRoom(room,5);
+  assert.deepEqual(hats.filter(h=>h.type==='bomb'),[]);
+  assert.equal(hats.filter(h=>h.type==='gift').length,2);
+  assert.equal(hats.filter(h=>h.type==='super').length,1);
+ }
+ assert.equal(HATS_BOMB_ODDS[0],10);
+ assert.equal(HATS_CHECKPOINTS.every(x=>x%5===0),true);
 });
 
 test('new 20-room sessions remain independent of still-active 10-room legacy sessions',()=>{
@@ -120,22 +131,22 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  let r=await action({type:'start',requestId:'start_test_0000000001'});
  assert.equal(r.state.room,1);
  assert.equal(r.state.bombOdds,10);
- assert.equal(r.state.rulesVersion,3);
+ assert.equal(r.state.rulesVersion,5);
  assert.equal(r.state.maxRoom,20);
- assert.deepEqual(r.state.checkpoints,[3,5,7,9,12,15,18]);
+ assert.deepEqual(r.state.checkpoints,[5,10,15,20]);
  assert.equal(r.vouchers.total,0,'first start consumes the one-time free voucher');
  assert.ok(!Object.hasOwn(r.state,'layout'),'hats positions must never leak to client');
  const runId=r.state.id;
  let firstPickIndex=null;
- for(let room=1;room<=3;room++){
+ for(let room=1;room<=5;room++){
   const hidden=docs.get('deal_christmas_hats_v1/player1');
   const index=hidden.layout.findIndex(x=>x.type==='gift');
   if(room===1)firstPickIndex=index;
   r=await action({type:'pick',index,requestId:'pick_checkpoint_'+room+'xxxxxxx',runId});
   assert.equal(r.result.type,'gift');
  }
- assert.equal(r.state.checkpoint,3);
- assert.equal(r.state.secured.length,3);
+ assert.equal(r.state.checkpoint,5);
+ assert.equal(r.state.secured.length,5);
  assert.equal(r.state.pending.length,0);
  // Replay the FIRST of three picks after two newer picks: never select a
  // second hat in room four or credit a second prize.
@@ -144,7 +155,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
   requestId:'pick_checkpoint_1xxxxxxx',runId});
  assert.equal(oldPick.replayed,true);
  assert.equal(oldPick.outdated,true);
- assert.equal(oldPick.state.room,4);
+ assert.equal(oldPick.state.room,6);
  assert.deepEqual([...docs.entries()],untouched,'late pick cannot open a new room');
  const recovered=await request('GET','/api/christmas-hats/me',{}, {pendingId:'pick_checkpoint_1xxxxxxx'});
  assert.equal(recovered.pendingAction.applied,true);
@@ -158,7 +169,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  r=await action(bombAction);
  assert.equal(r.state.status,'finished');
  assert.equal(r.state.summary.reason,'bomb');
- assert.equal(r.state.summary.awarded.length,3);
+ assert.equal(r.state.summary.awarded.length,5);
  assert.equal(r.state.summary.lost.length,0);
  const after=structuredClone([...docs.entries()]);
  const replay=await action(bombAction);
@@ -184,18 +195,18 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  assert.equal(thirdRun.vouchers.total,0);
  let current=thirdRun;
  const thirdId=thirdRun.state.id;
- for(let i=1;i<=7;i++){
+ for(let i=1;i<=10;i++){
   const saved=docs.get('deal_christmas_hats_v1/player1');
   const gift=saved.layout.findIndex(h=>h.type==='gift');
   current=await action({type:'pick',runId:thirdId,index:gift,requestId:'seven_checkpoint_'+i+'_actionxxx'});
  }
- assert.equal(current.state.checkpoint,7);
- assert.equal(current.state.secured.length,7);
+ assert.equal(current.state.checkpoint,10);
+ assert.equal(current.state.secured.length,10);
  assert.equal(current.state.pending.length,0);
  const resultCash=await action({type:'cash',runId:thirdId,requestId:'cash_after_seven_roomx'});
  assert.equal(resultCash.state.status,'finished');
  assert.equal(resultCash.state.summary.reason,'cash');
- assert.equal(resultCash.state.summary.awarded.length,7);
+ assert.equal(resultCash.state.summary.awarded.length,10);
  const beforeCashReplay=structuredClone([...docs.entries()]);
  const cashAgain=await action({type:'cash',runId:thirdId,requestId:'cash_after_seven_roomx'});
  assert.equal(cashAgain.replayed,true);
