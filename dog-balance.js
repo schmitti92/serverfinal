@@ -134,7 +134,7 @@ export function dogMiniBossHp(gate){
  const peakSkills={attack_power:priorSkillCap,destruction:priorSkillCap};
  // Near the upper bound of the previous tier: an extraordinarily lucky
  // veteran can still win early. New weapon + armor greatly improve the odds.
- return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*(.84+.009*priorGear));
+ return Math.ceil(dogMaxSoloDamage(priorGear,peakSkills)*(.95+.003*priorGear));
 }
 export function dogGroupBossHp(gate){
  if(!Number.isSafeInteger(gate)||gate<10||gate>100||gate%10!==0)throw Error('DOG_BALANCE_INVALID_GROUPBOSS');
@@ -207,7 +207,7 @@ export function dogMiniBossAttack(gate){
  const tier=(gate-5)/10; // 0 at gate 5, 9 at gate 95
  return Math.round(dogWeaponBase(tier+1)*(.72+.045*tier)*1.2);
 }
-export const DOG_MINI_BOSS_RETALIATION_CHANCE=.80;
+export const DOG_MINI_BOSS_RETALIATION_CHANCE=.90;
 
 export function dogIncomingDamage({armorLevel=1,enemyAttack=100,skills={},blocked=false,dodged=false}={}){
  if(dodged)return 0;
