@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {HATS_MAX_ROOM,HATS_SUPER_ODDS,HATS_BOMB_ODDS,HATS_CHECKPOINTS,drawHatsRoom,scoreHatsPrize,installChristmasHatsApi} from '../christmas-hats-api.js';
+import {HATS_MAX_ROOM,HATS_SUPER_ODDS,HATS_BALANCED_SUPER_ODDS,HATS_BOMB_ODDS,HATS_CHECKPOINTS,drawHatsRoom,scoreHatsPrize,installChristmasHatsApi} from '../christmas-hats-api.js';
 
 test('twenty rooms with escalating Superglück and bomb probabilities',()=>{
  assert.equal(HATS_MAX_ROOM,20);
  assert.deepEqual(HATS_SUPER_ODDS,[2,2,2,5,5,5,10,10,15,15,16,16,17,17,18,18,19,19,20,22]);
+ assert.deepEqual(HATS_BALANCED_SUPER_ODDS,[0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,9,10,12]);
  assert.deepEqual(HATS_BOMB_ODDS,[10,12,0,14,16,0,18,20,0,22,24,0,26,28,0,30,31,0,32,33]);
  assert.deepEqual(HATS_CHECKPOINTS,[5,10,15,20]);
 });
@@ -47,6 +48,39 @@ test('each room has at most one bomb and the super hat is best',()=>{
  }
 });
 
+test('v6 modest early loot, staged variety and rare high-end rewards protect the long-term economy',()=>{
+ const seenByStage=Array.from({length:5},()=>new Set());
+ for(const room of [1,2,3,4,5,6,7,9,10,11,12,14,15,16,17,18,19,20]){
+  const stage=room<=3?0:room<=6?1:room<=10?2:room<=15?3:4;
+  for(let i=0;i<350;i++){
+   const hats=drawHatsRoom(room,6);
+   for(const h of hats.filter(h=>h.type!=='bomb')){
+    assert.ok(h.items.length>=1&&h.items.length<=(room>=16?3:2),'small bundle in room '+room);
+    if(room<=6&&!h.superLuck)assert.equal(h.items.length,1,'one ordinary reward per early hat');
+    for(const item of h.items){
+     assert.equal(item.quantity,1,'no multi-unit reward inflation in a single hat');
+     const key=item.kind+':'+(item.packId||item.hammer||item.amountCents);
+     seenByStage[stage].add(key);
+     if(room<=3)assert.ok(
+      item.kind==='pack'&&item.packId==='small'||item.kind==='hammer'&&item.hammer==='single',
+      'first three rooms contain only basic prizes');
+     if(room<=6)assert.ok(item.kind!=='pack'||['small','large'].includes(item.packId));
+     if(room<16)assert.ok(item.packId!=='platinum','Platinum is a late-game reward');
+     if(item.kind==='cash'){
+      const cap=room<=6?50000:room<=10?150000:room<=15?300000:room<20?1000000:5000000;
+      assert.ok(item.amountCents<=cap*100,'money cap room '+room);
+     }
+    }
+   }
+  }
+ }
+ assert.ok(seenByStage.every(x=>x.size>=2),'each stage offers different item variants');
+ // The old v5 generator is intentionally untouched for active matches.
+ let oldBounty=false;
+ for(let i=0;i<250&&!oldBounty;i++)oldBounty=drawHatsRoom(10,5).some(h=>h.items?.some(it=>it.quantity>1));
+ assert.ok(oldBounty,'v5 retains its original more generous rewards');
+});
+
 test('probability of the chosen hat containing a bomb matches each advertised room chance',()=>{
  for(const room of [1,2,3,5,6,9,12,15,18,20]){
   const trials=3000;let pickedBombs=0,zeroBombRooms=0;
@@ -86,10 +120,11 @@ test('rejects invalid rooms',()=>{
  for(const number of [0,21,-5,1.5,'7'])assert.throws(()=>drawHatsRoom(number),/INVALID_ROOM/);
 });
 
-test('Superglück is reachable even in the first room',()=>{
+test('Superglück is reserved for lucky later rooms in v6, but legacy v5 retains room-one jackpots',()=>{
+ for(let i=0;i<300;i++)assert.ok(drawHatsRoom(1,6).every(h=>!h.superLuck));
  let found=false;
- for(let i=0;i<4000&&!found;i++)found=drawHatsRoom(1).some(h=>h.superLuck);
- assert.equal(found,true);
+ for(let i=0;i<4000&&!found;i++)found=drawHatsRoom(1,5).some(h=>h.superLuck);
+ assert.equal(found,true,'an already-running v5 game retains its old odds');
 });
 
 
@@ -131,7 +166,7 @@ test('server checkpoint and exact-once cash settlement',async()=>{
  let r=await action({type:'start',requestId:'start_test_0000000001'});
  assert.equal(r.state.room,1);
  assert.equal(r.state.bombOdds,10);
- assert.equal(r.state.rulesVersion,5);
+ assert.equal(r.state.rulesVersion,6);
  assert.equal(r.state.maxRoom,20);
  assert.deepEqual(r.state.checkpoints,[5,10,15,20]);
  assert.equal(r.vouchers.total,0,'first start consumes the one-time free voucher');
