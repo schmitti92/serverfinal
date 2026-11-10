@@ -264,3 +264,42 @@ test('Boss phase/warning fields survive GET and receipt replay without changing 
  assert.equal(replay.body.bossHp,hp);
  assert.equal(replay.body.bossCharged,true);
 });
+
+test('An outdated multiplayer screen cannot trigger an unseen flame attack',async()=>{
+ const f=fixture();await join(f,'a',300);await join(f,'b',301);
+ const first=await f.call('POST','/api/dog/boss/act',
+  {requestId:'fresh-hero-a-000001',move:'attack',expectedTurn:0},'a');
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.bossTurn,1);
+ const before=f.team(),count=f.writes.length;
+ const stale=await f.call('POST','/api/dog/boss/act',
+  {requestId:'stale-hero-b-000001',move:'power',expectedTurn:0},'b');
+ assert.equal(stale.statusCode,409);
+ assert.equal(stale.body.error,'BOSS_STATE_STALE');
+ assert.equal(f.writes.length,count);
+ assert.deepEqual(f.team(),before);
+ const refreshed=await f.call('GET','/api/dog/boss/me',{},'b');
+ assert.equal(refreshed.body.bossTurn,1);
+ const correct=await f.call('POST','/api/dog/boss/act',
+  {requestId:'fresh-hero-b-000001',move:'guard',expectedTurn:1},'b');
+ assert.equal(correct.statusCode,200);
+ assert.equal(correct.body.bossTurn,2);
+});
+test('Replaying a confirmed attack ignores later turn changes but rejects altered expectation',async()=>{
+ const f=fixture();await join(f,'a',303);await join(f,'b',304);
+ const cmd={requestId:'replay-turn-a-000001',move:'attack',expectedTurn:0};
+ const first=await f.call('POST','/api/dog/boss/act',cmd,'a');
+ assert.equal(first.statusCode,200);
+ await f.call('POST','/api/dog/boss/act',
+  {requestId:'second-turn-b-0001',move:'guard',expectedTurn:1},'b');
+ const hp=f.team().bossHp,writeCount=f.writes.length;
+ const replay=await f.call('POST','/api/dog/boss/act',cmd,'a');
+ assert.equal(replay.statusCode,200);
+ assert.equal(replay.body.replayed,true);
+ assert.equal(replay.body.bossHp,hp);
+ assert.equal(f.writes.length,writeCount);
+ const conflict=await f.call('POST','/api/dog/boss/act',
+  {...cmd,expectedTurn:1},'a');
+ assert.equal(conflict.statusCode,409);
+ assert.equal(conflict.body.error,'BOSS_RECEIPT_CONFLICT');
+});
