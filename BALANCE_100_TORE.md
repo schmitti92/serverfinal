@@ -40,7 +40,7 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 **Vor Live-Freigabe unbedingt prüfen:**
 1. **Umgehungsschutz ergänzt:** Für Mitglieder der registrierten Dreier-Expedition prüft jetzt auch die bisherige `/api/dog/forge/...`-Schnittstelle die Boss-Freischaltung. Ihre neuen Ausrüstungslimits betragen 10 statt 20; auch die elf Fähigkeitslevel werden nach Bossfortschritt begrenzt. Bereits bestehende höhere Werte werden nicht abgeschnitten oder automatisch herabgestuft. Unbeteiligte Profile bleiben im bisherigen Modus. Dieser Migrationspfad muss trotzdem vor Live-Freigabe mit den realen Altbeständen geprüft werden.
 2. Vorhandene Ausrüstung über Level 10 darf niemals stillschweigend herabgestuft oder überschrieben werden.
-3. Bestehende Kisten (5–40 Rohstoffe) sind noch nicht auf die fünf neuen Kistentypen umgestellt.
+3. **Fünf neue Kistenarten integriert:** In `deal-or-no-deal-api.js` werden neue Expeditionskisten im selben bestätigten Auszahlungs-Receipt gespeichert. Das Inventar unterscheidet fünf neue Kisten und bewahrt ältere `small/medium/large/legacy`-Kisten unverändert auf. **Vor Live-Freigabe** muss diese neue gemischte Inventarstruktur mit echten Altbeständen geprüft werden.
 4. Neues Frontend und neues Backend müssen gemeinsam ausgeliefert und mit echten drei Konten in einem isolierten Testsystem geprüft werden. Alte Boss-Testarena bleibt getrennt.
 5. **Wiederaufnahme ergänzt:** Nach Ablauf der 30 Sekunden kann der authentifizierte `finish`-Aufruf entscheiden. Zusätzlich stellt der erste spätere authentifizierte `GET /api/dog/gates/boss10` einen steckengebliebenen Kampf durch eine Firestore-Transaktion einmalig wieder her. Bei einer Niederlage beginnt die 10-Minuten-Pause zum **ursprünglichen Kampfende**, auch wenn die Spieler erst später zurückkehren. Das ist keine asynchrone Hintergrundaufgabe.
 6. Gemeinsame Bosse 20–100, Belohnungen sowie die endgültige DOG-Freischaltung bleiben ausstehend.
@@ -49,7 +49,7 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 
 ## Fünf Rohstoffkisten – gestaffelt über die 100 Tore
 
-Die Art der Kiste wird beim **Verdienen** einer Kiste serverseitig aus dem persönlichen höchsten Tor gezogen. Der Inhalt wird zusammen mit Typ, Kapitel und Menge als neues **Version-4-Angebot** fixiert. Beim späteren Öffnen darf das Upgrade des Spielers die bereits verdiente Kiste **nicht** verändern.
+Die Art der Kiste wird beim **bestätigten Abschluss einer Deal-or-No-Deal-Partie** aus dem persönlichen höchsten Tor gezogen. **Typ, Kapitel und Rohstoffanzahl** werden als neues **Version-4-Angebot** unveränderlich gespeichert; die konkrete Verteilung auf die 15 Materialien wird erst beim Öffnen serverseitig gezogen. Eine spätere Fortschrittsverbesserung darf die früher verdiente Kistenart oder -menge **nicht** verändern. Gleiche Angebote werden für begrenzten Firestore-Speicherplatz zusammengefasst.
 
 | Typ | Design | Materialmenge | Erst möglich |
 |---|---|---:|---|
@@ -97,7 +97,7 @@ Die Rohstoff-Seltenheiten sind von der **Kistenmenge getrennt**: Gewöhnlich / U
 
 Neue Materialien können **vor** dem jeweiligen Gruppenboss selten gefunden werden. Das Schloss für das Waffen- oder Rüstungsupgrade löst sich trotzdem erst nach dem bestätigten gemeinsamen Boss-Sieg.
 
-**Kompatibilität und noch offene Live-Integration:** Die alte Kisten-API speichert bisher drei Kistenklassen `small/medium/large` mit 5–40 Rohstoffen. Diese bereits verdienten Kisten dürfen bei der Migration nicht kleiner werden oder verloren gehen. Das fünfstufige Angebot ist derzeit ausschließlich in `dog-balance.js` und den Tests umgesetzt, noch nicht in der tatsächlichen Deal-Partie-Belohnung und dem Inventar-Öffnen. Frühere Version-3-Angebote des Balancingmodells bleiben lesbar; das Live-Legacy-Inventar ist davon unabhängig.
+**Integrierter Entwicklungsstand und Kompatibilität:** `dog-materials.js` verwaltet die fünf neuen Typen in `expeditionChests`, getrennt von `chests.small/medium/large/legacy`. Beim Auszahlen einer bestätigten Deal-Partie werden Mitglieder des registrierten Dreierteams nach ihrem `highestGate` mit einer neuen, beim Erhalt fixierten Kiste belohnt; andere Konten behalten vorerst das alte Vergabemodell. Der bereits vorhandene Deal-Auszahlungsbeleg verhindert doppelte Auszahlungen und doppelte Kisten. `POST /api/dog/materials/open` öffnet neue oder alte Kisten durch eine separate wiederholungssichere Firestore-Transaktion. Das Frontend bietet alle fünf neuen und die alten Kisten getrennt an. Vor dem Merge müssen Altbestände und der parallele Abschluss echter Deal-Partien getestet werden. Kein Live-Rollout durchgeführt.
 
 ## Mini-Boss-Feinschliff (simulierte Siegquoten)
 
