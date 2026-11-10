@@ -10,6 +10,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  * Deliberately DOES NOT launch legacy games until they have safe room adapters.
  */
 import { randomInt, randomUUID } from 'node:crypto';
+import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -22,6 +23,7 @@ export const HUB_GAMES = Object.freeze({
   'merk-matrix': { title:'Merk-Matrix 2', min:1, max:4 },
   'drei-schatzkammern': { title:'Die drei Schatzkammern', min:1, max:4 },
   kniffel: { title:'Kniffel', min:1, max:4 },
+  dog: { title:'DOG Klassisch', min:1, max:4 },
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHALLENGE_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -458,6 +460,38 @@ function finishEisstock(ch,members){
       applyKniffel(state,uid,choice);
     }
   }
+  function advanceDogBots(match){
+    let s=match.dog;
+    let guard=0;
+    while(s.phase!=='finished' && ++guard<300){
+      if(s.phase==='exchange'){
+        const seat=s.players.findIndex(p=>p.bot&&s.exchanges[p.seat]===null);
+        if(seat<0)break;
+        const move=dogBotAction(s,seat);
+        if(!move)throw Error('DOG_BOT_EXCHANGE_FAILED');
+        s=dogExchangeCard(s,seat,move.cardId);
+      }else if((s.phase==='play'||s.phase==='seven')&&s.players[s.current]?.bot){
+        const move=dogBotAction(s,s.current);
+        if(!move)throw Error('DOG_BOT_MOVE_FAILED');
+        s=dogTakeAction(s,s.current,move);
+      }else break;
+    }
+    if(guard>=300)throw Error('DOG_BOT_LOOP');
+    match.dog=s;
+  }
+  function startDog(room){
+    if(room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
+    const players=activeSeats(room);
+    if(players.length<1||players.length>4)throw error(409,'INVALID_PLAYER_COUNT');
+    const roster=Array.from({length:4},(_,seat)=>{
+      const player=players[seat];
+      return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
+    });
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
+    room.phase='playing';
+    advanceDogBots(room.match);
+  }
+
   function startGame(room){
     if(room.game==='drei-schatzkammern'){
       const seats=activeSeats(room);
@@ -491,6 +525,7 @@ function finishEisstock(ch,members){
       assertFreshMatch(room.lastCompleted,room.match);
       room.phase='playing';return;
     }
+    if(room.game==='dog')return startDog(room);
     if(room.game==='partychallenge')return startChallenge(room);
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
@@ -526,6 +561,8 @@ function finishEisstock(ch,members){
         merkMatrix:room.match.game==='merk-matrix'?publicMerkMatrix(room.match.merkMatrix,room.match.members,identity.uid,clock()):null,
         treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,revealHistory:room.match.treasureHistory||[],myReady:!!room.match.engine2.match.ready[identity.uid],engine:(()=>{const m=projectEngine2(room.match.engine2,identity.uid).match;return m?.phase==='countdown'&&clock()>=m.startedAt?{...m,phase:'playing'}:m;})()}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
+        dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
+        dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -551,12 +588,13 @@ function finishEisstock(ch,members){
     if(!match)return null;
     if(match.game==='drei-schatzkammern')return match.engine2?.match?.phase||'instructions';
     if(match.game==='kniffel')return match.kniffel?.finished?'finished':'playing';
+    if(match.game==='dog')return match.dog?.phase==='finished'?'finished':'playing';
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
     if(match.game==='eier-chaos')return match.eierChaos?.finished?'finished':match.eierChaos?.phase||'instructions';
     if(match.game==='merk-matrix')return match.merkMatrix?.finished?'finished':match.merkMatrix?.phase||'instructions';
     return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel','drei-schatzkammern'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
+  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel','dog','drei-schatzkammern'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -604,7 +642,7 @@ function finishEisstock(ch,members){
     catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
-  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business'],challengeFoundation:true}));
+  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog'],challengeFoundation:true}));
   app.use('/api/hub/rooms',authentication);
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
@@ -677,6 +715,34 @@ function finishEisstock(ch,members){
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
     })};
   }));
+
+  // DOG Classic: room membership and authoritative rules in the same Firestore transaction.
+  // Opponent hands, draw deck and private card exchanges never leave the server.
+  app.post('/api/hub/rooms/:code/dog/action',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const {matchId,action,expectedRevision,actionId}=req.body||{};
+    if(!code||typeof matchId!=='string'||!Number.isInteger(expectedRevision)||typeof actionId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(actionId)||!action||typeof action!=='object')throw error(400,'INVALID_DOG_ACTION');
+    const room=await mutate(code,identity,room=>{
+      const match=room.match;
+      if(room.phase!=='playing'||match?.game!=='dog'||match.id!==matchId)throw error(409,'DOG_MATCH_MISMATCH');
+      const seat=match.dogRoster.find(r=>r.uid===identity.uid)?.seat;
+      if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
+      if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
+      if(match.dog.revision!==expectedRevision)throw error(409,'DOG_STALE_REVISION');
+      try{
+        if(action.type==='exchange'){
+          match.dog=dogExchangeCard(match.dog,seat,action.cardId);
+        }else{
+          // Cancellation is intentionally disallowed online until it is implemented atomically.
+          match.dog=dogTakeAction(match.dog,seat,action);
+        }
+      }catch(e){throw error(409,e.message||'DOG_RULE_REJECTED');}
+      match.dogCommands=[...(match.dogCommands||[]).slice(-90),actionId];
+      advanceDogBots(match);
+    });
+    return {room};
+  }));
+
   // Business: host-controlled virtual players for isolated gameplay tests.
   app.post('/api/hub/rooms/:code/business-test-players',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
@@ -1701,6 +1767,7 @@ function finishEisstock(ch,members){
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='playing'||!room.match)throw error(409,'NO_ACTIVE_MATCH');
       if(room.match.game==='partychallenge')throw error(409,'CHALLENGE_RESULTS_REQUIRED');
+      if(room.match.game==='dog'){if(room.match.dog?.phase!=='finished')throw error(409,'MATCH_NOT_FINISHED');archiveCompletedMatch(room);return;}
       if(!(await isMatchFinished(room.match)))throw error(409,'MATCH_NOT_FINISHED');
       archiveCompletedMatch(room);
     })};
