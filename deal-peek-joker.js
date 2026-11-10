@@ -38,34 +38,41 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
     // Validate against the CURRENT match, not the historic 26-case cap.
     if(caseIndex>=game.values.length)throw Error('INVALID_CASE');
     if(!game.players?.some(p=>String(p.id)===req.peekUid))throw Error('NOT_PARTICIPANT');
-    // Only selected personal cases belonging to OTHER players qualify.
-    // The requester's case value is never returned, even during replay.
-    const opponents=game.players.filter(p=>String(p.id)!==req.peekUid);
-    const otherCases=opponents.filter(p=>Number.isInteger(p.case)&&p.case>=0&&p.case<game.values.length)
-     .map(p=>({id:String(p.id),name:String(p.name||'Mitspieler').slice(0,30),case:p.case,amount:game.values[p.case]}));
-    if(!otherCases.length)throw Error('NO_OTHER_PLAYER_CASES');
+    // Same Joker, two modes: click your OWN personal case to reveal only yours,
+    // or click any opponent's personal case to reveal ALL opponents (never yours).
+    // Only this private authenticated response contains the hidden values.
     const own=game.players.find(p=>String(p.id)===req.peekUid);
-    if(caseIndex===own?.case)throw Error('OWN_CASE_FORBIDDEN');
-    if(!otherCases.some(p=>p.case===caseIndex))throw Error('NOT_OPPONENT_CASE');
-    if(!otherCases.every(p=>Number.isSafeInteger(p.amount)&&p.amount>=0))throw Error('GAME_INVALID');
-    if(game.opened?.includes(caseIndex)||game.pending?.case===caseIndex||
-       otherCases.some(p=>game.opened?.includes(p.case)||game.pending?.case===p.case))throw Error('CASE_NOT_CLOSED');
+    const ownCase=Number.isInteger(own?.case)&&own.case>=0&&own.case<game.values.length
+     ?{id:String(own.id),name:String(own.name||'Dein Koffer').slice(0,30),case:own.case,amount:game.values[own.case]}:null;
+    const otherCases=game.players.filter(p=>String(p.id)!==req.peekUid)
+     .filter(p=>Number.isInteger(p.case)&&p.case>=0&&p.case<game.values.length)
+     .map(p=>({id:String(p.id),name:String(p.name||'Mitspieler').slice(0,30),case:p.case,amount:game.values[p.case]}));
+    const isOwn=caseIndex===ownCase?.case;
+    const mode=isOwn?'own':'opponents';
+    if(!isOwn&&!otherCases.some(p=>p.case===caseIndex))throw Error('NOT_OPPONENT_CASE');
     if(receiptSnap.exists){
      const receipt=receiptSnap.data();
      if(receipt.code!==code||receipt.case!==caseIndex||receipt.gameId!==game.id)throw Error('REQUEST_REUSED');
-     // Old single-case receipts are safe to replay using current opponents.
-     const privateCases=Array.isArray(receipt.cases)?receipt.cases:otherCases;
-     return {case:caseIndex,cases:privateCases.filter(p=>p.id!==req.peekUid),balance:receipt.balance,replayed:true};
+     // A saved receipt is the source of truth for an already consumed Joker.
+     // Older receipts have no mode and were always opponent-only.
+     const receiptMode=receipt.mode==='own'?'own':'opponents';
+     const recorded=Array.isArray(receipt.cases)?receipt.cases:otherCases;
+     const privateCases=recorded.filter(p=>receiptMode==='own'?p.id===req.peekUid:p.id!==req.peekUid);
+     return {case:caseIndex,mode:receiptMode,cases:privateCases,balance:receipt.balance,replayed:true};
     }
     if(!game.players.some(p=>String(p.id)===req.peekUid&&p.deal===null))throw Error('NOT_ACTIVE_PLAYER');
     if(!['open','decision','reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
+    if(!isOwn&&!otherCases.length)throw Error('NO_OTHER_PLAYER_CASES');
+    const privateCases=isOwn?[ownCase]:otherCases;
+    if(!privateCases.every(p=>Number.isSafeInteger(p.amount)&&p.amount>=0))throw Error('GAME_INVALID');
+    if(privateCases.some(p=>game.opened?.includes(p.case)||game.pending?.case===p.case))throw Error('CASE_NOT_CLOSED');
     const balance=Number(invSnap.data()?.balance)||0;
     if(!Number.isSafeInteger(balance)||balance<1)throw Error('NO_JOKERS');
     const nextBalance=balance-1;
     tx.set(invRef,{balance:nextBalance,updatedAt:Date.now()},{merge:true});
-    // One private receipt, one charge, all other participants' case amounts.
-    tx.create(receiptRef,{gameId:game.id,code,case:caseIndex,cases:otherCases,balance:nextBalance,createdAt:Date.now()});
-    return {case:caseIndex,cases:otherCases,balance:nextBalance,replayed:false};
+    // Exactly one Joker and two private writes, regardless of peek mode.
+    tx.create(receiptRef,{gameId:game.id,code,case:caseIndex,mode,cases:privateCases,balance:nextBalance,createdAt:Date.now()});
+    return {case:caseIndex,mode,cases:privateCases,balance:nextBalance,replayed:false};
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...result});
