@@ -1,7 +1,7 @@
 'use strict';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,publicRemaining,nextTurn,drawHammerFromTwelve} from '../deal-or-no-deal.js';
+import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -167,6 +167,32 @@ test('the 12 equal hammer-wheel slots are exactly 5 single, 5 double, 2 lucky',(
  assert.equal(outcomes.filter(x=>x==='single').length,5);
  assert.equal(outcomes.filter(x=>x==='double').length,5);
  assert.equal(outcomes.filter(x=>x==='lucky').length,2);
+});
+test('Banker special bonus has exact 5% Hütchen, 5% Monster spin and 90% none',()=>{
+ assert.deepEqual(BANKER_SPECIAL_ODDS,{minigame:5,monster:5});
+ const outcome=Array.from({length:100},(_,roll)=>drawBankerSpecial(n=>{assert.equal(n,100);return roll}));
+ assert.equal(outcome.filter(x=>x==='minigame').length,5);
+ assert.equal(outcome.filter(x=>x==='monster').length,5);
+ assert.equal(outcome.filter(x=>x===null).length,90);
+ for(const roll of [-1,100,1.5,NaN])assert.throws(()=>drawBankerSpecial(()=>roll),/INVALID_BANKER_SPECIAL_ROLL/);
+});
+
+test('Banker offers publish the special voucher or Monster prize for all players',()=>{
+ for(const [slot,kind] of [[0,'minigame'],[5,'monster'],[10,null]]){
+  const rng=n=>n===100?slot:0;
+  let g=create([{id:'a',name:'Spieler A'},{id:'b',name:'Spieler B'}],rng);
+  for(const actor of g.order)g=apply(g,actor,{id:'choose-'+g.revision,revision:g.revision,type:'select',case:g.players.findIndex(p=>p.id===actor)},rng);
+  let guard=0;
+  while(g.phase!=='decision'&&guard++<15){
+   const type=g.phase==='open'?'open':'ack-reveal';
+   const actor=type==='open'?nextTurn(g):g.pending.actor;
+   g=apply(g,actor,{id:'move-'+g.revision,revision:g.revision,type,...(type==='open'?{case:free(g)[0]}:{})},rng);
+  }
+  assert.equal(g.phase,'decision');
+  assert.equal(g.history.at(-1).bonusSpecial,kind);
+  assert.equal(publicView(g).history.at(-1).bonusSpecial,kind);
+  assert.equal(g.history.at(-1).participants.length,2);
+ }
 });
 test('Banker hammer bonus is rolled once for a new offer and shown without secrets',()=>{
  let g=create([{id:'p1',name:'Player'}],rand);
