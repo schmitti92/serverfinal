@@ -7,6 +7,7 @@ import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installDogMaterialsApi } from "./dog-materials.js";
+import { installDogForgeApi } from "./dog-forge.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
@@ -4296,7 +4297,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/dog/materials') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
@@ -4344,6 +4345,10 @@ const profileStatsV8=installProfileStats(app,{
 // DOG expedition: inventory and chest opening stay server-authoritative.
 // Only Deal-or-No-Deal's verified final payout credits new chests.
 installDogMaterialsApi(app,{
+  verifyProfile:profileStatsV8.identity,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
+installDogForgeApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
