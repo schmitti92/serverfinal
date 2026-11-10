@@ -11,6 +11,20 @@
 
 Mini-Bosse sind echte Solo-Kämpfe mit maximal vier Spielerangriffen, **ohne unfairen Gegner-Erstschlag**, aber mit Gegenangriffen, gelegentlichen schweren Treffern und Überlebensprüfung. Jeder Versuch liefert einen kleinen Animationsablauf und eine konkrete Empfehlung nach einer Niederlage. Sie bekommen LP passend zur vorherigen Ausrüstungsstufe. Mit passender Waffe **und** Rüstung sind sie deutlich besser schaffbar, aber nicht automatisch gewonnen (Beispielstufe 15: ca. 58 % unter dem definierten mittleren Build). Ein überdurchschnittlich entwickelter Held erhöht ihre LP und Gegenangriffe nur leicht um höchstens 10 %; ein schwacher Held erhält keinen künstlich leichteren Boss. Große Bosse werden separat anhand von drei Spielern über je sechs Angriffe in 30 Sekunden skaliert.
 
+## Drei Spieler auf derselben Karte (neuer API-Entwurf)
+
+Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur gelesen. Alle drei erhalten **ihre eigenen Torpositionen** im neuen, zusammengefassten Firestore-Dokument `dog_gate_progress_v1/first-three-heroes`. Die Karte benötigt dafür nur zwei Dokument-Lesevorgänge: Teamroster und Fortschritt. Sie wird nur bei sichtbarer Seite etwa einmal pro Minute oder nach einer Aktion aktualisiert, nicht per Dauer-Polling im Sekundentakt.
+
+- `GET /api/dog/gates/map`: authentifizierte Übersicht mit den drei gespeicherten Torpositionen; meldet keinen erfundenen Online-Status.
+- `POST /api/dog/gates/join`: Konto tritt idempotent dem serververwalteten Dreierteam bei (maximal drei Personen), ohne künstliche Torfortschritte.
+- `POST /api/dog/gates/fight`: nur persönliche Normal- und Mini-Boss-Tore zwischen 1–99; Pflicht zur erfolgreichen Absolvierung des vorherigen **normalen** Tors. Frühere Mini-Bosse und Gruppenbosse werden dadurch **nicht** zur harten Wegsperre.
+- Ein Konto kann Tor 1 nicht für Tor 20 überspringen und aus einem abgelehnten Kampf keine Belohnung erhalten. Der Server verwendet die gespeicherte Waffe, Rüstung und die Fähigkeiten, nicht Client-Eingaben.
+- Jede Kampfaktion erhält eine eindeutig wiederholbare Anfrage-ID; der serverseitige Zufallswurf und der neue persönliche Fortschritt werden in **einer Firestore-Transaktion** gespeichert.
+- Ein erstmaliger Mini-Boss-Sieg meldet vorerst nur `miniRewardPending`; die eigentliche zufällige Belohnung ist **noch nicht** in die Karten-, Hammer-, Joker- und Geldkonten integriert. Keine Phantom-Gutschrift.
+- Der vorhandene gemeinsame Aschewächter ist technisch noch ein **Tor-1-Testboss**. Die Karte kann über Tor 10 zur bestehenden Testarena führen, aber die echte Tor-10-Freischaltung und weitere Gruppenboss-Arenen müssen später sicher angebunden werden.
+
+**Wichtig:** Diese API ist Bestandteil von Draft-PR #19 und nicht automatisch live, solange Server und Frontend auf ihrem Entwicklungsbranch stehen. Karten-PR #90 benötigt diese Server-API.
+
 ## Rohstoffe je persönlichem Kapitel
 
 | Tore | Kisteninhalt | Gewöhnlich | Ungewöhnlich | Selten | Episch | Legendär |
