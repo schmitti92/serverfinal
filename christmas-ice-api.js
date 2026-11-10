@@ -8,6 +8,7 @@ import {checkMonsterBalance} from './monster-wheel.js';
 export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDealGameChanged}){
  const collection='christmas_ice_progress_v1',inventoryCollection='deal_peek_inventory_v1',walletCollection='deal_or_no_deal_wallets_v1';
  const albumCollection='deal_or_no_deal_christmas_v1',picture30Spins=3;
+ const hatsCollection='deal_christmas_hats_v1';
  const auth=async(req,res,next)=>{
   try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];
    const identity=await verifyProfile(token);
@@ -193,10 +194,25 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
       lastActions:(next.lastActions||[]).map(a=>a.id===requestId?{...a,result:resultWithBonus}:a)};
     }
     if(strike.result.gift?.kind==='joker'){
-     const invSnap=await tx.get(inventory);
+     // Every freshly earned joker picture also grants one genuine hats run.
+     // Both inventory updates are inside the SAME Firestore transaction as
+     // the paid hammer, picture progress and eventual monster-wheel bonus.
+     // In particular, no voucher is issued for replayed/reset old pictures.
+     const hatsRef=db.collection(hatsCollection).doc(req.iceUid);
+     const [invSnap,hatsSnap]=await Promise.all([tx.get(inventory),tx.get(hatsRef)]);
      const old=Number(invSnap.data()?.balance)||0;
      if(!Number.isSafeInteger(old)||old<0||old>=1000000)throw Error('INVALID_JOKER_BALANCE');
-     tx.set(inventory,{balance:old+1,updatedAt:Date.now()},{merge:true});
+     const hats=hatsSnap.exists?hatsSnap.data():{};
+     const bonusTickets=checkMonsterBalance(Number(hats.bonusTickets||0),1,1000000);
+     const voucherGift={...strike.result.gift,hatsVoucher:1};
+     next={...next,
+      prizes:(next.prizes||[]).map(g=>g.number===voucherGift.number?voucherGift:g),
+      lastActions:(next.lastActions||[]).map(a=>a.id===requestId
+       ?{...a,result:{...a.result,gift:voucherGift,hatsVoucherGranted:1}}:a)};
+     const now=Date.now();
+     tx.set(inventory,{balance:old+1,updatedAt:now},{merge:true});
+     tx.set(hatsRef,{...(hatsSnap.exists?{}:{voucherOnly:true}),
+      bonusTickets,updatedAt:now},{merge:true});
     }
     // A free hammer usually changes only ice progress. Avoid a redundant
     // wallet write unless a paid hit or a money prize changed the balance.
@@ -206,7 +222,7 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
     if(next.balance!==walletBalance)
      tx.set(walletRef,{balance:next.balance,updatedAt:Date.now()},{merge:true});
     tx.set(ref,next);
-    const finalReceipt=picture30Completed?next.lastActions?.find(a=>a.id===requestId)?.result:strike.result;
+    const finalReceipt=next.lastActions?.find(a=>a.id===requestId)?.result||strike.result;
     return {state:{...publicIceState(next),balance:next.balance},result:finalReceipt,changed:true};
    });
    res.set('Cache-Control','no-store');
