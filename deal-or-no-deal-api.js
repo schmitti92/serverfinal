@@ -6,6 +6,7 @@ import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory} from './dog-materi
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
 const SHOP_ITEMS=Object.freeze([{"id":"brille","name":"Goldene Sonnenbrille","price":100000000,"category":"Accessoires","emoji":"🕶️"},{"id":"pirat","name":"Piratenhut","price":150000000,"category":"Accessoires","emoji":"🏴‍☠️"},{"id":"mikro","name":"Show-Mikrofon","price":200000000,"category":"Extras","emoji":"🎙️"},{"id":"silberrahmen","name":"Silberner Profilrahmen","price":300000000,"category":"Rahmen","emoji":"🪞"},{"id":"silberkoffer","name":"Silberkoffer","price":500000000,"category":"Koffer","emoji":"💼"},{"id":"krone","name":"Königskrone","price":750000000,"category":"Accessoires","emoji":"👑"},{"id":"goldrahmen","name":"Goldener Profilrahmen","price":1000000000,"category":"Rahmen","emoji":"🖼️"},{"id":"goldkoffer","name":"Goldkoffer","price":1500000000,"category":"Koffer","emoji":"🧳"},{"id":"vip","name":"VIP-Abzeichen","price":2500000000,"category":"Extras","emoji":"🌟"},{"id":"studio","name":"Exklusives Studio","price":4000000000,"category":"Hintergründe","emoji":"🎬"},{"id":"diamant","name":"Diamantkoffer","price":7500000000,"category":"Koffer","emoji":"💎"},{"id":"trophaee","name":"Legendäre Show-Trophäe","price":10000000000,"category":"Extras","emoji":"🏆"}]);
 import {randomInt} from 'node:crypto';
+import {drawFinalWinnerPack} from './christmas-final-wheel.js';
 const CARD_COLLECTION='deal_or_no_deal_cards_v1';
 const CARD_DEFINITIONS=Object.freeze([
 {id:'studio-lights',name:'Die große Bühne',rarity:'common',emoji:'🎬',series:'Goldstudio'},
@@ -729,7 +730,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const finalAlbumRef=db.collection(CHRISTMAS_COLLECTION).doc(winner.id);
    const [finalRewardSnap,finalAlbumSnap]=await Promise.all([tx.get(finalRewardRef),tx.get(finalAlbumRef)]);
    if(!finalRewardSnap.exists){
-    const roll=randomInt(100),pack=CHRISTMAS_PACKS.find(p=>p.id===(roll<10?'premium':roll<60?'large':'small'));
+    const pack=CHRISTMAS_PACKS.find(p=>p.id===drawFinalWinnerPack());
     const previous=finalAlbumSnap.exists?finalAlbumSnap.data():{},drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
     const increments={};
     const counts={};for(const card of drawn)counts[card.id]=(counts[card.id]||0)+1;
