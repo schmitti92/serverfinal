@@ -1,19 +1,20 @@
 'use strict';
 import * as crypto from 'node:crypto';
-const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000,500000000,1000000000];
-// 26–28 keep the long-established cadence. For a NEW 29-case match,
-// six cases open before the first call and the last rounds stay meaningful.
-const STEPS=[5,4,4,3,2,2,1,1],STEPS_29=[6,5,5,4,3,2,2,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
+const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000,500000000,1000000000,5000000000];
+// Original modes and 29-case cadence remain stable. A new 30-case match gets
+// 29 openable suitcases (one reserved for a player in solo mode) across 8 offers.
+const STEPS=[5,4,4,3,2,2,1,1],STEPS_29=[6,5,5,4,3,2,2,1],
+ STEPS_30=[6,5,5,4,3,3,2,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
 const shuffle=(a,rand=crypto.randomInt)=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
 const active=g=>g.players.filter(p=>p.deal===null);
 const locked=g=>new Set(g.players.map(p=>p.case).filter(Number.isInteger));
 const free=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i));
 const publicRemaining=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!g.opened.includes(i)).map(i=>g.values[i]);
 function create(players,random=crypto.randomInt,caseCount=27){
- if(![26,27,28,29].includes(caseCount))throw Error('INVALID_CASE_COUNT');
+ if(![26,27,28,29,30].includes(caseCount))throw Error('INVALID_CASE_COUNT');
  if(!Array.isArray(players)||players.length<1||players.length>4)throw Error('PLAYER_COUNT');
  const ids=players.map(p=>String(p.id));if(new Set(ids).size!==ids.length)throw Error('DUPLICATE_PLAYER');
- return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null})),values:shuffle(VALUES.slice(0,caseCount),random),order:shuffle(ids,random),selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerSchedule:caseCount===29?[...STEPS_29]:null,offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
+ return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null})),values:shuffle(VALUES.slice(0,caseCount),random),order:shuffle(ids,random),selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerSchedule:caseCount===30?[...STEPS_30]:caseCount===29?[...STEPS_29]:null,offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
 }
 function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnIndex+i)%g.order.length];if(g.players.some(p=>p.id===id&&p.deal===null))return id}return null}
 function apply(g,actor,command,random=crypto.randomInt){
@@ -89,4 +90,4 @@ function offer(g,random){
  g.phase='decision';
 }
 function publicView(g){const {values,commands,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:p.deal??g.values[p.case]})):null};}
-export {drawHammerFromTwelve,VALUES,STEPS,STEPS_29,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
+export {drawHammerFromTwelve,VALUES,STEPS,STEPS_29,STEPS_30,MULT,create,apply,publicView,free,active,publicRemaining,nextTurn};
