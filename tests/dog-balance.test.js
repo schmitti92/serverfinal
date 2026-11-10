@@ -59,9 +59,10 @@ test('Chest amount and rarity are frozen at award time, before opening',()=>{
  const first=dogChestOffer(7,()=>0);
  const second=dogChestOffer(87,()=>0);
  assert.deepEqual(first,{version:3,stage:0,count:1});
- assert.deepEqual(second,{version:3,stage:8,count:6});
+ assert.deepEqual(second,{version:3,stage:8,count:4});
  assert.equal(dogChestStage(14),1);
  assert.equal(dogChestStage(99),9);
+ assert.deepEqual(dogChestOffer(99,()=>0),{version:3,stage:9,count:5});
  const opened=dogChestContents(first,()=>0);
  assert.equal(opened.count,1);
  assert.equal(opened.stage,0);
@@ -76,7 +77,7 @@ test('Chest weights add to 100, grow gradually and never grant unconfigured rari
  const seen=new Set();
  for(const [stage,rule] of DOG_CHEST_STAGES.entries()){
   assert.equal(rule.weights.reduce((a,b)=>a+b,0),100);
-  assert.ok(rule.min>=1&&rule.max<=10&&rule.min<=rule.max);
+  assert.ok(rule.min>=1&&rule.max<=5&&rule.min<=rule.max);
   for(let i=0;i<300;i++){
    const offered=dogChestOffer(stage*10+1,seeded(i*10000+stage));
    assert.ok(offered.count>=rule.min&&offered.count<=rule.max);
