@@ -40,6 +40,49 @@ test('Deal socket rejects users who are not room members',async()=>{
  assert.ok(ws.sent.some(m=>m.type==='deal-error'));
  assert.equal(ws.readyState,3);
 });
+test('Deal socket reauthenticates in-place and keeps every player synchronized',async()=>{
+ const {api,Socket,invoke}=harness(['a','b']);
+ const a=new Socket(),b=new Socket();
+ api.attachSocket(a);api.attachSocket(b);
+ a.message({type:'subscribe',code:'123',token:'a'});
+ b.message({type:'subscribe',code:'123',token:'b'});
+ await flush();
+ a.message({type:'reauth',token:'a'});
+ b.message({type:'reauth',token:'b'});
+ await flush();
+ assert.ok(a.sent.some(m=>m.type==='deal-reauthenticated'));
+ assert.ok(b.sent.some(m=>m.type==='deal-reauthenticated'));
+ assert.equal(a.readyState,1);
+ assert.equal(b.readyState,1);
+ const start=await invoke('POST','/api/deal-or-no-deal/:code/start','a');
+ assert.equal(start.body.ok,true);
+ for(const ws of [a,b]){
+  assert.equal(ws.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.id,start.body.game.id);
+ }
+ a.close();b.close();
+});
+
+test('Deal socket refresh cannot change player identity or bypass fresh room membership',async()=>{
+ const {api,Socket,docs}=harness(['a','b']);
+ const a=new Socket();api.attachSocket(a);
+ a.message({type:'subscribe',code:'123',token:'a'});
+ await flush();
+ assert.equal(a.readyState,1);
+ a.message({type:'reauth',token:'b'});
+ await flush();
+ assert.equal(a.readyState,3,'a different player token must invalidate the subscription');
+ assert.equal(a.sent.some(m=>m.type==='deal-reauthenticated'),false);
+ const b=new Socket();api.attachSocket(b);
+ b.message({type:'subscribe',code:'123',token:'a'});
+ await flush();
+ const room=docs.get('spielesammlung_hub_v1/123');
+ docs.set('spielesammlung_hub_v1/123',{...room,players:room.players.filter(p=>p.uid!=='a')});
+ b.message({type:'reauth',token:'a'});
+ await flush();
+ assert.equal(b.readyState,3,'removed members cannot renew a socket');
+ assert.ok(b.sent.some(m=>m.type==='deal-error'));
+});
+
 test('Deal socket delivers public state to two players after start',async()=>{
  const {api,Socket,invoke}=harness();
  const a=new Socket(),b=new Socket();
