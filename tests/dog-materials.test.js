@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installDogMaterialsApi, DOG_MATERIALS_COLLECTION, DOG_CHEST_RECEIPTS_COLLECTION,
- dogInventory,addVerifiedChestToInventory,openDogChestInInventory,rollDogMaterialChest,
+ dogInventory,addVerifiedChestToInventory,addExpeditionChestToInventory,
+ openExpeditionChestInInventory,openDogChestInInventory,rollDogMaterialChest,
  rollDogChestTier,DOG_CHEST_SIZES,DOG_RESOURCE_GROUPS,DOG_RESOURCES} from '../dog-materials.js';
 import {installProfileStats} from '../profile-stats.js';
+import {dogChestOffer,DOG_CHEST_TYPES} from '../dog-balance.js';
 
 const uid='material_test_player_0001';
 function fixture(random=()=>0){
@@ -189,7 +191,7 @@ test('Existing inventories retain old chests, resources and history',()=>{
  const before={version:1,unopened:2,earned:2,opened:0,resources:{iron:44,crystal:10,rune:1},
   recent:[{count:3,items:{iron:1,crystal:1,rune:1},openedAt:1710000000000}]};
  const normalized=dogInventory(before);
- assert.equal(normalized.version,2);
+ assert.equal(normalized.version,3);
  assert.equal(normalized.chests.legacy,2);
  assert.equal(normalized.resources.iron,44);
  assert.equal(normalized.resources.power_crystal,10);
@@ -218,4 +220,99 @@ test('Existing earned boxes open as a newly selected tier without being lost',as
  assert.equal(result.body.inventory.resources.power_crystal,2);
  assert.equal(result.body.inventory.resources.war_rune,1);
  assert.equal(result.body.inventory.unopened,0);
+});
+
+test('Five-type expedition awards are frozen and aggregate without losing old chests',()=>{
+ const original=addVerifiedChestToInventory({
+  chests:{small:2,medium:1,large:0,legacy:0},resources:{iron:8},earned:3,opened:0
+ },Date.now(),'small');
+ const earned=dogChestOffer(91,limit=>limit===100?99:limit-1);
+ assert.deepEqual(earned,{version:4,stage:9,tier:'legendary',count:20});
+ const first=addExpeditionChestToInventory(original,earned);
+ const twice=addExpeditionChestToInventory(first,earned);
+ assert.equal(twice.expeditionChests.length,1,'same award snapshot aggregates safely');
+ assert.equal(twice.expeditionChests[0].quantity,2);
+ assert.equal(twice.unopened,6,'legacy three small/medium plus two new');
+ assert.equal(twice.chests.small,3);
+ assert.equal(twice.chests.medium,1);
+ assert.equal(twice.resources.iron,8);
+ const opened=openExpeditionChestInInventory(twice,'legendary',()=>0);
+ assert.equal(opened.drop.count,20);
+ assert.equal(opened.drop.tier,'legendary');
+ assert.equal(opened.inventory.unopened,5);
+ assert.equal(opened.inventory.expeditionChests[0].quantity,1);
+ assert.equal(opened.inventory.chests.small,3);
+ assert.equal(opened.inventory.resources.iron,8);
+ const last=openExpeditionChestInInventory(opened.inventory,'legendary',()=>0);
+ assert.equal(last.inventory.expeditionChests.length,0);
+ assert.equal(last.inventory.chests.small,3);
+ assert.throws(()=>openExpeditionChestInInventory(last.inventory,'legendary',()=>0),/NO_DOG_CHEST_TYPE/);
+});
+
+test('New expedition chest API opens exactly one earned snapshot and replays safely',async()=>{
+ const f=fixture(()=>0);
+ const old=addVerifiedChestToInventory(null,Date.now(),'large');
+ const award=dogChestOffer(1,()=>0);
+ const inventory=addExpeditionChestToInventory(old,award);
+ f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,inventory);
+ const first=await f.request('POST','/api/dog/materials/open',
+  {tier:'wood',requestId:'expedition-wood-first-0001',count:20,stage:9});
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.drop.tier,'wood');
+ assert.equal(first.body.drop.count,1);
+ assert.equal(first.body.drop.items.focus_dust,1);
+ assert.equal(first.body.inventory.chests.large,1,'old large chest retained');
+ assert.equal(first.body.inventory.expeditionChests.length,0);
+ const writes=f.writes.length;
+ const repeated=await f.request('POST','/api/dog/materials/open',
+  {tier:'legendary',requestId:'expedition-wood-first-0001'});
+ assert.equal(repeated.body.replayed,true);
+ assert.equal(repeated.body.drop.count,1);
+ assert.equal(f.writes.length,writes);
+ const unearned=await f.request('POST','/api/dog/materials/open',
+  {tier:'legendary',requestId:'expedition-legendary-fake-0001'});
+ assert.equal(unearned.statusCode,409);
+ assert.equal(unearned.body.error,'NO_DOG_CHEST_TYPE');
+ assert.equal(f.inventory().chests.large,1);
+});
+
+test('All five new types can be opened by the old authenticated materials endpoint',async()=>{
+ const f=fixture(()=>0);
+ let inv=dogInventory(null);
+ const levels={wood:1,iron:21,silver:31,gold:51,legendary:81};
+ for(const [tier,gate] of Object.entries(levels)){
+  const weights={wood:0,iron:80,silver:95,gold:98,legendary:97};
+  let calls=0;
+  const offer=dogChestOffer(gate,limit=>{
+   const roll=calls++===0?weights[tier]:0;
+   return roll<limit?roll:0;
+  });
+  assert.equal(offer.tier,tier,'expected '+tier);
+  inv=addExpeditionChestToInventory(inv,offer);
+ }
+ f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,inv);
+ const initial=await f.request('GET','/api/dog/materials/me');
+ assert.equal(initial.body.inventory.expeditionChests.length,5);
+ assert.equal(initial.body.inventory.unopened,5);
+ assert.deepEqual(Object.keys(initial.body.rules.expeditionTiers),Object.keys(DOG_CHEST_TYPES));
+ for(const tier of Object.keys(levels)){
+  const result=await f.request('POST','/api/dog/materials/open',
+   {tier,requestId:'expedition-'+tier+'-material-test-0001'});
+  assert.equal(result.statusCode,200,tier);
+  assert.equal(result.body.drop.tier,tier);
+  assert.equal(result.body.inventory.unopened,5-Object.keys(levels).indexOf(tier)-1);
+ }
+ assert.equal(f.inventory().expeditionChests.length,0);
+});
+
+test('Malformed stored expedition snapshots cannot silently erase earned chests',()=>{
+ const b=dogInventory(null);
+ assert.throws(()=>dogInventory({...b,expeditionChests:[
+  {version:4,stage:0,tier:'legendary',count:20,quantity:1}
+ ]}),/DOG_CHEST_STORAGE_INVALID/);
+ assert.throws(()=>addExpeditionChestToInventory(null,
+  {version:4,stage:0,tier:'legendary',count:20}),/DOG_BALANCE_INVALID_CHEST/);
+ assert.throws(()=>dogInventory({...b,expeditionChests:[
+  {version:4,stage:0,tier:'wood',count:2,quantity:0}
+ ]}),/DOG_CHEST_STORAGE_INVALID/);
 });
