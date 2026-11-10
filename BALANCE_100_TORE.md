@@ -40,31 +40,64 @@ Ein gemeinsamer Dreier-Kader wird aus der bestehenden `dog-boss.js`-Teamstruktur
 **Vor Live-Freigabe unbedingt prüfen:**
 1. **Umgehungsschutz ergänzt:** Für Mitglieder der registrierten Dreier-Expedition prüft jetzt auch die bisherige `/api/dog/forge/...`-Schnittstelle die Boss-Freischaltung. Ihre neuen Ausrüstungslimits betragen 10 statt 20; auch die elf Fähigkeitslevel werden nach Bossfortschritt begrenzt. Bereits bestehende höhere Werte werden nicht abgeschnitten oder automatisch herabgestuft. Unbeteiligte Profile bleiben im bisherigen Modus. Dieser Migrationspfad muss trotzdem vor Live-Freigabe mit den realen Altbeständen geprüft werden.
 2. Vorhandene Ausrüstung über Level 10 darf niemals stillschweigend herabgestuft oder überschrieben werden.
-3. Bestehende Kisten (5–40 Rohstoffe) sind noch nicht auf die neuen Kapitelmengen umgestellt.
+3. Bestehende Kisten (5–40 Rohstoffe) sind noch nicht auf die fünf neuen Kistentypen umgestellt.
 4. Neues Frontend und neues Backend müssen gemeinsam ausgeliefert und mit echten drei Konten in einem isolierten Testsystem geprüft werden. Alte Boss-Testarena bleibt getrennt.
 5. **Wiederaufnahme ergänzt:** Nach Ablauf der 30 Sekunden kann der authentifizierte `finish`-Aufruf entscheiden. Zusätzlich stellt der erste spätere authentifizierte `GET /api/dog/gates/boss10` einen steckengebliebenen Kampf durch eine Firestore-Transaktion einmalig wieder her. Bei einer Niederlage beginnt die 10-Minuten-Pause zum **ursprünglichen Kampfende**, auch wenn die Spieler erst später zurückkehren. Das ist keine asynchrone Hintergrundaufgabe.
 6. Gemeinsame Bosse 20–100, Belohnungen sowie die endgültige DOG-Freischaltung bleiben ausstehend.
 
 **Kartenpositionen:** Jeder Held hat zwei getrennte Werte: `currentGate` für das aktuell gewählte/zuletzt bekämpfte Tor und `highestGate` für sein höchstes jemals erreichtes Tor. Ältere Mini-Bosse dürfen erneut besucht werden, ohne den Bestwert zurückzusetzen. Andere Profile außerhalb des Dreierteams erhalten aus dem Kartenendpunkt nur eine anonyme Platzanzahl, keine Namen oder Torpositionen.
 
-## Rohstoffe je persönlichem Kapitel
+## Fünf Rohstoffkisten – gestaffelt über die 100 Tore
 
-| Tore | Kisteninhalt | Gewöhnlich | Ungewöhnlich | Selten | Episch | Legendär |
-|---|---:|---:|---:|---:|---:|---:|
-| 1–10 | 1–3 | 95% | 5% | 0% | 0% | 0% |
-| 11–20 | 1–3 | 82% | 17% | 1% | 0% | 0% |
-| 21–30 | 2–3 | 73% | 24% | 3% | 0% | 0% |
-| 31–40 | 2–4 | 62% | 32% | 6% | 0% | 0% |
-| 41–50 | 3–5 | 55% | 32% | 12% | 1% | 0% |
-| 51–60 | 3–5 | 47% | 32% | 18% | 3% | 0% |
-| 61–70 | 3–5 | 40% | 30% | 23% | 6% | 1% |
-| 71–80 | 4–5 | 32% | 28% | 25% | 13% | 2% |
-| 81–90 | 4–5 | 26% | 26% | 27% | 17% | 4% |
-| 91–99 | 5 | 22% | 23% | 28% | 21% | 6% |
+Die Art der Kiste wird beim **Verdienen** einer Kiste serverseitig aus dem persönlichen höchsten Tor gezogen. Der Inhalt wird zusammen mit Typ, Kapitel und Menge als neues **Version-4-Angebot** fixiert. Beim späteren Öffnen darf das Upgrade des Spielers die bereits verdiente Kiste **nicht** verändern.
 
-**Bei Tor 1–10** enthalten Kisten **1–3 Rohstoffe**: 50 % Wahrscheinlichkeit für einen, 35 % für zwei und 15 % für drei Rohstoffe. Ab Tor 11 gelten die stufenweisen Grenzen der Tabelle. Insgesamt bleiben es maximal fünf Rohstoffe pro Kiste. Höhere Tore erhöhen zusätzlich die Chance auf seltene Materialien.
+| Typ | Design | Materialmenge | Erst möglich |
+|---|---|---:|---|
+| Holzkiste | Holz, Seil und Eisenbeschläge | 1–3 | Tor 1 |
+| Eisenkiste | Geschmiedetes Eisen mit Schloss | 2–5 | Tor 21 |
+| Silberkiste | Silberne Beschläge, blauer Schimmer | 4–8 | Tor 31 |
+| Goldkiste | Goldene Schatztruhe mit Glühen | 6–12 | Tor 51 |
+| Legendäre Truhe | Leuchtende Truhe mit magischen Runen | **10–20** | **Tor 81** |
 
-Neue Materialien erscheinen schon **vor** dem gemeinsamen Boss, dessen Sieg das zugehörige Upgrade freischaltet. Kistengröße und Gewichtung müssen beim Erhalt auf dem Server eingefroren werden, damit spätere Levelaufstiege alte Kisten nicht nachträglich vergrößern.
+Bei **Tor 1–20** gibt es ausschließlich Holzkisten. Die Menge ist darin gewichtet: **50 % für 1**, **35 % für 2**, **15 % für 3** Materialien. Andere Kisten verwenden innerhalb ihrer Größenklasse eine gleichmäßige Ziehung.
+
+### Wahrscheinlichkeit pro verdiente Kiste
+
+| Tore | Holz | Eisen | Silber | Gold | Legendär |
+|---|---:|---:|---:|---:|---:|
+| 1–10 | 100 % | 0 % | 0 % | 0 % | 0 % |
+| 11–20 | 100 % | 0 % | 0 % | 0 % | 0 % |
+| 21–30 | 80 % | 20 % | 0 % | 0 % | 0 % |
+| 31–40 | 65 % | 30 % | 5 % | 0 % | 0 % |
+| 41–50 | 45 % | 40 % | 15 % | 0 % | 0 % |
+| 51–60 | 35 % | 45 % | 18 % | 2 % | 0 % |
+| 61–70 | 25 % | 40 % | 28 % | 7 % | 0 % |
+| 71–80 | 15 % | 33 % | 37 % | 15 % | 0 % |
+| 81–90 | 10 % | 28 % | 38 % | 21 % | 3 % |
+| 91–99 | 5 % | 20 % | 37 % | 31 % | 7 % |
+
+Die legendäre Truhe ist eine **seltene große Menge**, nicht jede Kiste im letzten Abschnitt. Bei Tor 91–99 liegt die erwartete Menge über alle fünf Typen hinweg nur bei rund **6,84 Materialien je Kiste**. Damit bleibt die Materialbeschaffung auch mit hohen Schmiedestufen anspruchsvoll.
+
+### Seltenheit der einzelnen Rohstoffe
+
+Die Rohstoff-Seltenheiten sind von der **Kistenmenge getrennt**: Gewöhnlich / Ungewöhnlich / Selten / Episch / Legendär. Sie hängen weiterhin vom Abschnitt des eigenen Fortschritts ab:
+
+| Tore | Gewöhnlich | Ungewöhnlich | Selten | Episch | Legendär |
+|---|---:|---:|---:|---:|---:|
+| 1–10 | 95 % | 5 % | 0 % | 0 % | 0 % |
+| 11–20 | 82 % | 17 % | 1 % | 0 % | 0 % |
+| 21–30 | 73 % | 24 % | 3 % | 0 % | 0 % |
+| 31–40 | 62 % | 32 % | 6 % | 0 % | 0 % |
+| 41–50 | 55 % | 32 % | 12 % | 1 % | 0 % |
+| 51–60 | 47 % | 32 % | 18 % | 3 % | 0 % |
+| 61–70 | 40 % | 30 % | 23 % | 6 % | 1 % |
+| 71–80 | 32 % | 28 % | 25 % | 13 % | 2 % |
+| 81–90 | 26 % | 26 % | 27 % | 17 % | 4 % |
+| 91–99 | 22 % | 23 % | 28 % | 21 % | 6 % |
+
+Neue Materialien können **vor** dem jeweiligen Gruppenboss selten gefunden werden. Das Schloss für das Waffen- oder Rüstungsupgrade löst sich trotzdem erst nach dem bestätigten gemeinsamen Boss-Sieg.
+
+**Kompatibilität und noch offene Live-Integration:** Die alte Kisten-API speichert bisher drei Kistenklassen `small/medium/large` mit 5–40 Rohstoffen. Diese bereits verdienten Kisten dürfen bei der Migration nicht kleiner werden oder verloren gehen. Das fünfstufige Angebot ist derzeit ausschließlich in `dog-balance.js` und den Tests umgesetzt, noch nicht in der tatsächlichen Deal-Partie-Belohnung und dem Inventar-Öffnen. Frühere Version-3-Angebote des Balancingmodells bleiben lesbar; das Live-Legacy-Inventar ist davon unabhängig.
 
 ## Mini-Boss-Feinschliff (simulierte Siegquoten)
 
