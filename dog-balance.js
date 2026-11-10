@@ -205,7 +205,7 @@ export function dogMiniBossAttack(gate){
  if(!Number.isSafeInteger(gate)||gate<5||gate>95||gate%10!==5)
   throw Error('DOG_BALANCE_INVALID_MINIBOSS');
  const tier=(gate-5)/10; // 0 at gate 5, 9 at gate 95
- return Math.round(dogWeaponBase(tier+1)*(.72+.025*tier)*1.2);
+ return Math.round(dogWeaponBase(tier+1)*(.72+.035*tier)*1.23);
 }
 export const DOG_MINI_BOSS_RETALIATION_CHANCE=.90;
 export const DOG_MINI_BOSS_HEAVY_CHANCE=.20;
