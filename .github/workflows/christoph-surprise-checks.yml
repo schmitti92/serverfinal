@@ -1,0 +1,30 @@
+name: Christoph surprise gift checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'christoph-surprise-api.js'
+      - 'tests/christoph-surprise.test.js'
+      - 'server.js'
+      - '.github/workflows/christoph-surprise-checks.yml'
+  pull_request:
+    paths:
+      - 'christoph-surprise-api.js'
+      - 'tests/christoph-surprise.test.js'
+      - 'server.js'
+      - '.github/workflows/christoph-surprise-checks.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax checks
+        run: |
+          node --check christoph-surprise-api.js
+          node --check server.js
+      - name: Transaction and claim tests
+        run: node --test tests/christoph-surprise.test.js
