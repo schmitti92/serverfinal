@@ -1,3 +1,5 @@
+import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory} from './dog-materials.js';
+
 /** Spielerportal V8B: resilient server-confirmed, identity-bound results.
  * The browser has READ access only. No endpoint accepts wins or scores.
  * Matches are booked atomically once per server-owned match ID.
@@ -53,6 +55,7 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
     const store=db();if(!store)throw Error('DATABASE_UNAVAILABLE');
     const ref=store.collection(MATCHES).doc(`${game}_${matchId}`);
     const statsRefs=roster.map(p=>store.collection(STATS).doc(p.uid));
+    const dogRefs=roster.map(p=>store.collection(DOG_MATERIALS_COLLECTION).doc(p.uid));
     const histories=roster.map(p=>store.collection('player_match_history_v8').doc(p.uid).collection('matches').doc(`${game}_${matchId}`));
     const item={game,matchId,players:roster,winnerUids:winners,startedAt:tStart,finishedAt:tEnd,durationMs:Math.max(0,tEnd-tStart),reason:clean(reason,32),scores:matchScores,createdAt:Date.now()};
     return store.runTransaction(async tx=>{
@@ -70,6 +73,10 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
         return {ok:true,duplicate:true};
       }
       const existing=[];for(const sr of statsRefs)existing.push(await tx.get(sr));
+      // Verified completion and all 1-chest-per-player payouts share ONE
+      // Firestore transaction; an already-booked match never creates another.
+      const materialSnapshots=[];
+      for(const mr of dogRefs)materialSnapshots.push(await tx.get(mr));
       tx.create(ref,item);
       roster.forEach((p,i)=>{
         const win=winners.includes(p.uid),draw=winners.length>1;
@@ -79,6 +86,7 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
         const delta={games:1,wins:win&&!draw?1:0,losses:!win?1:0,draws:draw&&win?1:0};
         by[game]={games:count(prior.games)+1,wins:count(prior.wins)+delta.wins,losses:count(prior.losses)+delta.losses,draws:count(prior.draws)+delta.draws};
         tx.set(statsRefs[i],{uid:p.uid,games:count(prev.games)+1,wins:count(prev.wins)+delta.wins,losses:count(prev.losses)+delta.losses,draws:count(prev.draws)+delta.draws,byGame:by,updatedAt:tEnd});
+        tx.set(dogRefs[i],addVerifiedChestToInventory(materialSnapshots[i].exists?materialSnapshots[i].data():null,tEnd));
         tx.create(histories[i],{game,matchId,finishedAt:tEnd,durationMs:item.durationMs,place:win?(draw?'draw':'win'):'loss',score:matchScores[p.seat]??null,players:roster.map(({uid,name,seat})=>({uid,name,seat})),winnerUids:winners});
       });
       return {ok:true,duplicate:false};
