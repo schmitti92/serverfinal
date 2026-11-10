@@ -71,9 +71,9 @@ export function resetIceState(s,random=randomInt){
 // Old test builds gave 20 free strikes per picture. Discard those test grants
 // while keeping separately recorded winner-wheel prizes and progress.
 export function normalizeIceState(s){
- // Upgrade historical 20/25/30-tile saves to 50/100, preserving opened
- // tiles, receipts, prizes, inventory and progress. Missing stars in old
- // 23+ pictures are safely regenerated when the next strike is processed.
+ // Upgrade historical 20/25/30/50/100-tile saves to the current 50/100/150
+ // board size while preserving opened tiles, receipts, prizes and inventory.
+ // Missing or invalid stars are recovered from unopened tiles on the next strike.
  if(!s||typeof s!=='object')throw Error('INVALID_ICE_STATE');
  const tilesRequired=iceTileCount(s);
  // Some early player profiles predate the arrays introduced for the current
