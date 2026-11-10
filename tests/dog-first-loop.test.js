@@ -333,6 +333,66 @@ test('Expired fight reconciles to loss with cooldown measured from original dead
  assert.equal(retry.body.phase??retry.body.view?.phase,'waiting');
 });
 
+test('Live boss API accepts a solo start and records a permanent failed fight',async()=>{
+ const f=fixture();
+ const ready=await f.call('POST','/api/dog/gates/boss10/ready',{
+  requestId:'solo-readiness-00000001'},'a');
+ assert.equal(ready.statusCode,200);
+ assert.equal(ready.body.view.phase,'waiting');
+ assert.equal(ready.body.view.canStart,true);
+ const started=await f.call('POST','/api/dog/gates/boss10/start',{
+  requestId:'solo-start-000000001'},'a');
+ assert.equal(started.statusCode,200);
+ assert.equal(started.body.view.phase,'fighting');
+ assert.equal(started.body.view.roster.length,1);
+ const outsiderReaction=await f.call('POST','/api/dog/gates/boss10/react',{
+  requestId:'outsider-reaction-000001'},'b');
+ assert.equal(outsiderReaction.statusCode,403);
+ assert.equal(outsiderReaction.body.error,'DOG_BOSS10_NOT_PARTICIPANT');
+ f.advance(DOG_BOSS10_DURATION_MS);
+ const finished=await f.call('POST','/api/dog/gates/boss10/finish',{
+  requestId:'solo-finish-00000001'},'a');
+ assert.equal(finished.statusCode,200);
+ assert.equal(finished.body.result.win,false);
+ assert.equal(finished.body.result.participants,1);
+ assert.equal(finished.body.view.won,false);
+ assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
+  .sharedBosses,[]);
+});
+
+test('Live boss API allows a two-player rare victory and unlocks the shared forge',async()=>{
+ const f=fixture();
+ for(const t of ['a','b']){
+  const r=await f.call('POST','/api/dog/gates/boss10/ready',{
+   requestId:'duo-ready-'+t+'-00000001'},t);
+  assert.equal(r.statusCode,200);
+ }
+ const started=await f.call('POST','/api/dog/gates/boss10/start',{
+  requestId:'duo-start-0000000001'},'a');
+ assert.equal(started.statusCode,200);
+ assert.equal(started.body.view.roster.length,2);
+ assert.equal(started.body.view.phase,'fighting');
+ for(const t of ['a','b']){
+  const r=await f.call('POST','/api/dog/gates/boss10/react',{
+   requestId:'duo-react-'+t+'-0000001'},t);
+  assert.equal(r.statusCode,200);
+ }
+ f.advance(DOG_BOSS10_DURATION_MS);
+ const finished=await f.call('POST','/api/dog/gates/boss10/finish',{
+  requestId:'duo-finish-000000001'},'b');
+ assert.equal(finished.statusCode,200);
+ assert.equal(finished.body.result.win,true);
+ assert.equal(finished.body.result.rareCritical,true);
+ assert.equal(finished.body.view.result.participants,2);
+ assert.equal(finished.body.view.won,true);
+ const forged=await f.call('GET','/api/dog/gates/ascension',{},'c');
+ assert.equal(forged.body.forgeLevel,2,'the rare joint success unlocks the whole team');
+ const replay=await f.call('POST','/api/dog/gates/boss10/finish',{
+  requestId:'duo-finish-000000001'},'b');
+ assert.equal(replay.body.replayed,true);
+ assert.equal(replay.body.result.damage,finished.body.result.damage);
+});
+
 test('Legacy forge endpoint cannot bypass the boss-10 limit',async()=>{
  const f=fixture();
  const blocked=await f.call('GET','/api/dog/forge/me');
