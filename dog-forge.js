@@ -37,6 +37,7 @@ export const DOG_FORGE_GROUPS=Object.freeze({
 // Draft values only. Future boss balancing adjusts this table, not stored levels.
 export const DOG_FORGE_TUNING=Object.freeze({
  exchangeRate:10,
+ exchangeMaxBatch:100,
  equipmentSuccess:[
   {max:2,chance:100},{max:5,chance:95},{max:10,chance:80},
   {max:15,chance:65},{max:19,chance:45},{max:20,chance:25}
@@ -55,7 +56,8 @@ function normalizeJournal(value){
     level:bounded(e.level,item.baseLevel,item.maxLevel,item.baseLevel),at}];
   }
   if(e.type==='exchange'&&DOG_RESOURCES.includes(e.from)&&DOG_RESOURCES.includes(e.to))
-   return [{type:'exchange',from:e.from,to:e.to,at}];
+   return [{type:'exchange',from:e.from,to:e.to,
+     count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),at}];
   return [];
  });
 }
@@ -139,25 +141,31 @@ export function forgeUpgrade(heroRaw,inventoryRaw,itemId,expectedLevel,roll=0,no
   result:{type:'upgrade',itemId,success,oldLevel:quote.level,newLevel:nextHero.levels[itemId],
    cost:quote.cost,chance:quote.successChance}};
 }
-export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now()){
+/** Exchange up to 100 units in ONE inventory transaction, with legacy count=1. */
+export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),count=1){
  const group=Object.values(DOG_RESOURCE_GROUPS).find(x=>x.includes(resourceId));
  if(!group||group.indexOf(resourceId)===group.length-1)throw Error('INVALID_EXCHANGE_RESOURCE');
+ if(!Number.isSafeInteger(count)||count<1||count>DOG_FORGE_TUNING.exchangeMaxBatch)
+  throw Error('INVALID_EXCHANGE_COUNT');
  const inventory=dogInventory(inventoryRaw),hero=dogHero(heroRaw);
  const nextResource=group[group.indexOf(resourceId)+1];
- if(inventory.resources[resourceId]<DOG_FORGE_TUNING.exchangeRate)throw Error('DOG_MATERIALS_MISSING');
- if(inventory.resources[nextResource]>=1_000_000)throw Error('DOG_MATERIALS_LIMIT');
+ const spent=count*DOG_FORGE_TUNING.exchangeRate;
+ if(inventory.resources[resourceId]<spent)throw Error('DOG_MATERIALS_MISSING');
+ if(inventory.resources[nextResource]+count>1_000_000||hero.exchanges+count>1_000_000)
+  throw Error('DOG_MATERIALS_LIMIT');
  const resources={...inventory.resources,
-  [resourceId]:inventory.resources[resourceId]-DOG_FORGE_TUNING.exchangeRate,
-  [nextResource]:inventory.resources[nextResource]+1};
+  [resourceId]:inventory.resources[resourceId]-spent,
+  [nextResource]:inventory.resources[nextResource]+count};
  return {inventory:{...inventory,resources,updatedAt:now},
-  hero:{...hero,exchanges:hero.exchanges+1,
-   recent:[{type:'exchange',from:resourceId,to:nextResource,at:now},...hero.recent]
+  hero:{...hero,exchanges:hero.exchanges+count,
+   recent:[{type:'exchange',from:resourceId,to:nextResource,count,at:now},...hero.recent]
     .slice(0,FORGE_JOURNAL_LIMIT),updatedAt:now},
   result:{type:'exchange',from:resourceId,to:nextResource,
-   spent:DOG_FORGE_TUNING.exchangeRate,received:1}};
+   spent,received:count,...(count===1?{}:{count})}};
 }
 const HTTP_STATUS=Object.freeze({
  LOGIN_REQUIRED:401,INVALID_FORGE_REQUEST:400,INVALID_FORGE_ITEM:400,INVALID_EXCHANGE_RESOURCE:400,
+ INVALID_EXCHANGE_COUNT:400,
  STALE_FORGE_LEVEL:409,FORGE_MAX_LEVEL:409,DOG_MATERIALS_MISSING:409,
  DOG_MATERIALS_LIMIT:409
 });
@@ -206,7 +214,7 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
     if(type==='upgrade'){
      const {itemId,expectedLevel}=object(req.body);
      next=forgeUpgrade(hero,bag,itemId,expectedLevel,rand(10000),now);
-    }else next=forgeExchange(hero,bag,req.body?.resourceId,now);
+    }else next=forgeExchange(hero,bag,req.body?.resourceId,now,req.body?.count??1);
     const view=forgeView(next.hero,next.inventory);
     const payload={...view,result:next.result,replayed:false};
     tx.set(heroRef,next.hero);tx.set(bagRef,next.inventory);
