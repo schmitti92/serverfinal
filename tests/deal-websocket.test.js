@@ -350,3 +350,69 @@ test('Closed subscription receives no later game broadcasts',async()=>{
  assert.ok(active.sent.some(m=>m.type==='deal-state'&&m.game?.id===started.body.game.id));
  active.close();
 });
+
+
+test('30-case 50-million jackpot survives multiplayer protocol, final settlement and host replay',async()=>{
+ const {api,Socket,invoke,docs}=harness(['a']);
+ const root='/api/deal-or-no-deal/:code';
+ const ws=new Socket();
+ api.attachSocket(ws);
+ ws.message({type:'subscribe',code:'123',token:'a'});
+ await flush();
+ const notHost=await invoke('POST',root+'/start','stranger',{caseCount:30});
+ assert.equal(notHost.statusCode,401,'only authenticated room members may start');
+ let response=await invoke('POST',root+'/start','a',{caseCount:30});
+ assert.equal(response.statusCode,200,JSON.stringify(response.body));
+ let game=response.body.game;
+ assert.equal(game.caseCount,30);
+ assert.deepEqual(game.bankerSchedule,[6,5,5,4,3,3,2,1]);
+ assert.equal(game.values,undefined,'private case amounts never enter multiplayer updates');
+ const stored=docs.get('deal_or_no_deal_matches_v1/123').game;
+ assert.equal(stored.values.length,30);
+ const jackpotIndex=stored.values.indexOf(5000000000);
+ assert.ok(jackpotIndex>=0&&jackpotIndex<30);
+ const take=async(type,extra={})=>{
+  response=await invoke('POST',root+'/action','a',{
+   type,...extra,id:crypto.randomUUID(),revision:game.revision
+  });
+  assert.equal(response.statusCode,200,JSON.stringify(response.body));
+  game=response.body.game;
+  assert.equal(game.caseCount,30);
+  assert.equal(game.values,undefined,'never reveal hidden jackpot values through the API');
+  const latest=ws.sent.filter(m=>m.type==='deal-state').at(-1)?.game;
+  assert.equal(latest?.caseCount,30);
+  assert.equal(latest?.revision,game.revision);
+ };
+ await take('select',{case:jackpotIndex});
+ assert.equal(game.players[0].case,jackpotIndex);
+ let guard=0;
+ while(game.phase!=='final'&&guard++<150){
+  if(game.phase==='open'){
+   const opened=new Set(game.opened);
+   const next=Array.from({length:30},(_,i)=>i)
+    .find(i=>i!==jackpotIndex&&!opened.has(i));
+   assert.ok(Number.isInteger(next));
+   await take('open',{case:next});
+  }else if(game.phase==='reveal'){
+   await take('ack-reveal');
+  }else if(game.phase==='decision'){
+   await take('decide',{deal:false});
+  }else assert.fail('Unexpected game phase '+game.phase);
+ }
+ assert.equal(game.phase,'final');
+ assert.equal(game.opened.length,29);
+ assert.equal(game.finalValues[0].amount,5000000000);
+ assert.equal(game.finalValues[0].payout,5000000000);
+ const wallets=await invoke('GET',root+'/balances','a');
+ assert.equal(wallets.statusCode,200,JSON.stringify(wallets.body));
+ assert.equal(wallets.body.players[0].balance,5000000000,'€50m credited once');
+ const secondWallet=await invoke('GET',root+'/balances','a');
+ assert.equal(secondWallet.body.players[0].balance,5000000000,'no duplicate settlement');
+ const replay=await invoke('POST',root+'/start','a',{skipFinalWheel:true,caseCount:30});
+ assert.equal(replay.statusCode,200,JSON.stringify(replay.body));
+ assert.equal(replay.body.game.caseCount,30);
+ assert.equal(replay.body.game.phase,'select');
+ assert.equal(docs.get('deal_or_no_deal_matches_v1/123').game.values.length,30);
+ assert.equal(docs.get('deal_or_no_deal_wallets_v1/a').balance,5000000000);
+ ws.close();
+});
