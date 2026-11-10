@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installDogMaterialsApi, DOG_MATERIALS_COLLECTION, DOG_CHEST_RECEIPTS_COLLECTION,
- dogInventory,addVerifiedChestToInventory,openDogChestInInventory,rollDogMaterialChest} from '../dog-materials.js';
+ dogInventory,addVerifiedChestToInventory,openDogChestInInventory,rollDogMaterialChest,
+ rollDogChestTier,DOG_CHEST_SIZES,DOG_RESOURCE_GROUPS,DOG_RESOURCES} from '../dog-materials.js';
 import {installProfileStats} from '../profile-stats.js';
 
 const uid='material_test_player_0001';
@@ -52,17 +53,51 @@ const validPlayers=[
  {uid:'material_test_player_0002',seat:'blue',name:'B'},
  {uid:'material_test_player_0003',seat:'green',name:'C'}
 ];
-test('Drops are strictly 1–5 units, with published deterministic 35/30/20/10/5 odds',()=>{
- const qs=[0,34,35,64,65,84,85,94,95,99];
- const want=[1,1,2,2,3,3,4,4,5,5];
- for(let n=0;n<qs.length;n++){
-  let first=true;
-  const drop=rollDogMaterialChest(()=>{if(first){first=false;return qs[n]}return 0});
-  assert.equal(drop.count,want[n]);
-  assert.equal(Object.values(drop.items).reduce((a,b)=>a+b,0),drop.count);
+test('Chest tiers: 60% small, 30% medium, 10% large at exact edges',()=>{
+ const values=[0,59,60,89,90,99],want=['small','small','medium','medium','large','large'];
+ values.forEach((v,i)=>assert.equal(rollDogChestTier(()=>v),want[i]));
+ assert.deepEqual(Object.values(DOG_CHEST_SIZES).map(t=>[t.min,t.max]),[[5,10],[10,20],[20,40]]);
+ assert.equal(DOG_RESOURCES.length,15);
+ assert.equal(new Set(DOG_RESOURCES).size,15);
+ assert.equal(Object.keys(DOG_RESOURCE_GROUPS).length,3);
+ for(const tier of Object.values(DOG_CHEST_SIZES))assert.equal(tier.rarityWeights.reduce((a,b)=>a+b),1000);
+});
+test('Each size gives 5-10, 10-20 or 20-40 items and a 15-key breakdown',()=>{
+ for(const [tier,low,high] of [['small',5,10],['medium',10,20],['large',20,40]]){
+  const min=rollDogMaterialChest(tier,()=>0);
+  assert.equal(min.count,low);
+  assert.equal(min.items.focus_dust,low);
+  assert.equal(Object.keys(min.items).length,15);
+  const max=rollDogMaterialChest(tier,limit=>limit-1);
+  assert.equal(max.count,high);
+  assert.equal(max.items.dragonsteel,high);
+  assert.equal(Object.values(max.items).reduce((a,b)=>a+b,0),high);
  }
- const seq=[99,1,75,99,94,40];let i=0;
- assert.deepEqual(rollDogMaterialChest(()=>seq[i++]),{count:5,items:{iron:2,crystal:2,rune:1}});
+});
+test('Different chests use different rarity odds (one roll per category and material)',()=>{
+ for(const [tier,rarities] of Object.entries({
+  small:[600,280,100,18,2],medium:[450,320,170,50,10],large:[300,350,230,90,30]
+ })){
+  const cuts=rarities.reduce((acc,n)=>{acc.push((acc.at(-1)||0)+n);return acc},[]);
+  for(let rarity=0;rarity<5;rarity++){
+   const roll=rarity===0?0:cuts[rarity-1];
+   let step=0;
+   const chest=rollDogMaterialChest(tier,limit=>{
+    const phase=step++%3;
+    if(phase===0)return 0; // quantity draw first, then category, then rarity
+    if(phase===1)return 0;
+    return roll;
+   });
+   // Explicitly drive rarity by call type so the quantity call is independent.
+   let calls=0;
+   const exact=rollDogMaterialChest(tier,limit=>{
+    if(calls++===0)return 0;
+    return limit===3?0:roll;
+   });
+   assert.equal(exact.items[DOG_RESOURCE_GROUPS.attack[rarity]],DOG_CHEST_SIZES[tier].min);
+   assert.equal(Object.values(exact.items).reduce((a,b)=>a+b,0),exact.count);
+  }
+ }
 });
 test('Barikade records its result once but never grants DOG material chests',async()=>{
  const f=fixture();
@@ -93,34 +128,52 @@ test('KreuzKunter records statistics without awarding chests; other games are re
   /GAME_NOT_VERIFIED/);
  assert.equal(f.inventory(),undefined);
 });
-test('Open chest uses server-authoritative count and grants random materials once',async()=>{
- const rolls=[99,1,75,99,94,40];let i=0;
- const f=fixture(()=>rolls[i++]??0);
- f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,addVerifiedChestToInventory(null));
- const first=await f.request('POST','/api/dog/materials/open',{requestId:'open-chest-valid-0001',count:999,iron:999});
+test('Opening a LARGE earned chest gives 20-40 real resources once and cannot be faked',async()=>{
+ let calls=0;
+ const f=fixture(max=>{calls++;return max-1;});
+ f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,addVerifiedChestToInventory(null,Date.now(),'large'));
+ const first=await f.request('POST','/api/dog/materials/open',
+  {requestId:'open-chest-valid-0001',tier:'large',count:999,dragonsteel:999});
  assert.equal(first.statusCode,200);
- assert.equal(first.body.drop.count,5);
- assert.deepEqual(first.body.drop.items,{iron:2,crystal:2,rune:1});
+ assert.equal(first.body.drop.count,40);
+ assert.equal(first.body.drop.tier,'large');
+ assert.equal(first.body.drop.items.dragonsteel,40);
  assert.equal(f.inventory().unopened,0);
+ assert.equal(f.inventory().chests.large,0);
  assert.equal(f.inventory().opened,1);
- assert.deepEqual(f.inventory().resources,{iron:2,crystal:2,rune:1});
- assert.ok(f.inventory().recent[0].openedAt>1700000000000,'keep real timestamps');
- const writesBefore=f.writes.length,randomBefore=i;
- const replay=await f.request('POST','/api/dog/materials/open',{requestId:'open-chest-valid-0001'});
+ assert.equal(f.inventory().resources.dragonsteel,40);
+ assert.ok(f.inventory().recent[0].openedAt>1700000000000);
+ const writesBefore=f.writes.length,randomBefore=calls;
+ const replay=await f.request('POST','/api/dog/materials/open',
+  {requestId:'open-chest-valid-0001',tier:'small'});
  assert.equal(replay.body.replayed,true);
  assert.deepEqual(replay.body.drop,first.body.drop);
  assert.equal(f.writes.length,writesBefore);
- assert.equal(i,randomBefore);
- const refused=await f.request('POST','/api/dog/materials/open',{requestId:'open-chest-valid-0002'});
+ assert.equal(calls,randomBefore);
+ const refused=await f.request('POST','/api/dog/materials/open',{requestId:'open-chest-valid-0002',tier:'small'});
  assert.equal(refused.statusCode,409);
  assert.equal(refused.body.error,'NO_DOG_CHESTS');
+});
+test('Cannot open a tier that was not earned',async()=>{
+ const f=fixture();
+ f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,addVerifiedChestToInventory(null,Date.now(),'small'));
+ const invalid=await f.request('POST','/api/dog/materials/open',{requestId:'wrong-size-request1',tier:'large'});
+ assert.equal(invalid.statusCode,409);
+ assert.equal(invalid.body.error,'NO_DOG_CHEST_TYPE');
+ assert.equal(f.inventory().unopened,1);
+ const fake=await f.request('POST','/api/dog/materials/open',{requestId:'wrong-size-request2',tier:'giant'});
+ assert.equal(fake.statusCode,400);
+ assert.equal(f.inventory().unopened,1);
 });
 test('No public endpoint accepts fabricated match completion or chest earnings',async()=>{
  const f=fixture();
  const status=await f.request('GET','/api/dog/materials/me');
  assert.equal(status.statusCode,200);
  assert.equal(status.body.inventory.unopened,0);
- assert.deepEqual(status.body.inventory.resources,{iron:0,crystal:0,rune:0});
+ assert.equal(Object.keys(status.body.inventory.resources).length,15);
+ assert.equal(Object.values(status.body.inventory.resources).reduce((a,b)=>a+b),0);
+ assert.equal(status.body.rules.chestMin,5);
+ assert.equal(status.body.rules.chestMax,40);
  assert.deepEqual(status.body.rules.verifiedGames,['deal-or-no-deal']);
  for(const token of ['fake-token','']){
   const denied=await f.request('POST','/api/dog/materials/open',{requestId:'open-chest-denied-0001'},token);
@@ -140,14 +193,37 @@ test('Receipt persists separately, making repeated requests idempotent beyond hi
  assert.equal(replay.statusCode,200);
  assert.equal(replay.body.replayed,true);
 });
-test('Opening and merging materials never destroys earlier inventory',()=>{
- const before={unopened:2,earned:2,opened:0,resources:{iron:44,crystal:10,rune:1}};
- const drop={count:3,items:{iron:1,crystal:1,rune:1}};
- const after=openDogChestInInventory(before,drop,Date.now());
+test('Existing inventories retain old chests, resources and history',()=>{
+ const before={version:1,unopened:2,earned:2,opened:0,resources:{iron:44,crystal:10,rune:1},
+  recent:[{count:3,items:{iron:1,crystal:1,rune:1},openedAt:1710000000000}]};
+ const normalized=dogInventory(before);
+ assert.equal(normalized.version,2);
+ assert.equal(normalized.chests.legacy,2);
+ assert.equal(normalized.resources.iron,44);
+ assert.equal(normalized.resources.power_crystal,10);
+ assert.equal(normalized.resources.war_rune,1);
+ assert.equal(normalized.recent[0].items.power_crystal,1);
+ const drop=rollDogMaterialChest('small',()=>0);
+ const after=openDogChestInInventory(before,drop,Date.now(),'legacy');
  assert.equal(after.unopened,1);
- assert.equal(after.resources.iron,45);
- assert.equal(after.resources.crystal,11);
- assert.equal(after.resources.rune,2);
- assert.equal(after.recent[0].count,3);
- assert.equal(dogInventory(after).recent[0].items.rune,1);
+ assert.equal(after.chests.legacy,1);
+ assert.equal(after.resources.iron,44);
+ assert.equal(after.resources.power_crystal,10);
+ assert.equal(after.resources.war_rune,1);
+ assert.equal(after.resources.focus_dust,5);
+ assert.equal(dogInventory(after).resources.power_crystal,10);
+});
+test('Existing earned boxes open as a newly selected tier without being lost',async()=>{
+ const f=fixture(()=>0);
+ f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,{version:1,unopened:1,earned:1,opened:0,
+  resources:{iron:8,crystal:2,rune:1}});
+ const result=await f.request('POST','/api/dog/materials/open',
+  {requestId:'legacy-open-request-001',tier:'legacy'});
+ assert.equal(result.statusCode,200);
+ assert.equal(result.body.drop.tier,'small');
+ assert.equal(result.body.drop.count,5);
+ assert.equal(result.body.inventory.resources.iron,8);
+ assert.equal(result.body.inventory.resources.power_crystal,2);
+ assert.equal(result.body.inventory.resources.war_rune,1);
+ assert.equal(result.body.inventory.unopened,0);
 });
