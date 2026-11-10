@@ -4,7 +4,7 @@ import {
  DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_CHEST_STAGES,DOG_BALANCE_MATERIALS,
  dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,dogEquipmentSuccessChance,
  dogWeaponBase,dogArmorBase,dogAttackChances,dogStrike,dogExpectedSoloDamage,dogMaxSoloDamage,
- dogMiniBossHp,dogMiniBossAttack,dogAdaptiveMiniBoss,dogNormalGateChance,dogResolveNormalGate,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss
+ dogMiniBossHp,dogMiniBossAttack,dogAdaptiveMiniBoss,dogNormalGateChance,dogResolveNormalGate,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss,dogMiniBossFeedback
 } from '../dog-balance.js';
 
 const seeded=(initial=987321)=>{let seed=initial>>>0;return max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor((seed/2**32)*max)};};
@@ -63,7 +63,12 @@ test('Chest amount and rarity are frozen at award time, before opening',()=>{
  assert.equal(dogChestStage(14),1);
  assert.equal(dogChestStage(99),9);
  const opened=dogChestContents(first,()=>0);
- assert.deepEqual(opened,{count:1,stage:0,items:{focus_dust:1}});
+ assert.equal(opened.count,1);
+ assert.equal(opened.stage,0);
+ assert.equal(opened.items.focus_dust,1);
+ assert.equal(Object.keys(opened.items).length,15);
+ assert.equal(Object.values(opened.items).reduce((sum,count)=>sum+count,0),1);
+ assert.ok(Object.values(opened.items).every(count=>Number.isSafeInteger(count)&&count>=0));
  assert.throws(()=>dogChestContents({...first,count:100},()=>0),/DOG_BALANCE_INVALID_CHEST/);
 });
 
@@ -176,6 +181,23 @@ test('Mini-boss wins reward better weapon AND armor, with no artificial level lo
  }
  assert.equal(dogMiniBossHp(5),370);
  assert.throws(()=>dogMiniBossHp(13));
+});
+
+test('Mini-boss produces a bounded animation timeline and useful defeat feedback',()=>{
+ const zero=()=>0;
+ const perfect=dogSimulateMiniBoss({gate:15,weaponLevel:2,armorLevel:2,
+  skills:{attack_power:10,destruction:10,critical:10,double_strike:10},reaction:true,rand:zero});
+ assert.ok(perfect.timeline.length>0 && perfect.timeline.length<=16);
+ assert.equal(perfect.timeline[0].type,'hero-attack');
+ assert.equal(perfect.feedback.reason,'victory');
+ assert.ok(perfect.timeline.every(e=>!('playerUid' in e)));
+ const weak=dogSimulateMiniBoss({gate:95,weaponLevel:1,armorLevel:1,rand:zero});
+ assert.equal(weak.victory,false);
+ assert.equal(weak.timeline[0].type,'hero-attack');
+ assert.equal(weak.feedback.reason,'defense');
+ const noDamage=dogMiniBossFeedback({gate:15,victory:false,heroHp:25});
+ assert.equal(noDamage.reason,'attack');
+ assert.throws(()=>dogMiniBossFeedback(null),/DOG_BALANCE_INVALID_FIGHT_REPORT/);
 });
 
 test('Normal gate chance is a smooth 30% to 80% readiness calculation',()=>{
