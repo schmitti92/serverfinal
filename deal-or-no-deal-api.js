@@ -730,7 +730,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const finalAlbumRef=db.collection(CHRISTMAS_COLLECTION).doc(winner.id);
    const [finalRewardSnap,finalAlbumSnap]=await Promise.all([tx.get(finalRewardRef),tx.get(finalAlbumRef)]);
    if(!finalRewardSnap.exists){
-    const pack=CHRISTMAS_PACKS.find(p=>p.id===drawFinalWinnerPack());
+    const finalPackId=drawFinalWinnerPack(),pack=CHRISTMAS_PACKS.find(p=>p.id===finalPackId);
     const previous=finalAlbumSnap.exists?finalAlbumSnap.data():{},drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
     const increments={};
     const counts={};for(const card of drawn)counts[card.id]=(counts[card.id]||0)+1;
