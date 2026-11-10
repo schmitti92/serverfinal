@@ -46,11 +46,11 @@ function makeServer(){
   const req={get:()=> 'Bearer '+(token||'player-'+currentUid)};
   const res={headers:{},statusCode:200,set(key,value){this.headers[key]=value;return this},
    status(code){this.statusCode=code;return this},json(data){this.payload=data;return data}};
-  await new Promise((resolve,reject)=>{
-   handlers[0](req,res,()=>{
-    Promise.resolve().then(()=>handlers[1](req,res)).then(resolve,reject);
-   });
+  let nextHandler=null;
+  await handlers[0](req,res,()=>{
+   nextHandler=Promise.resolve().then(()=>handlers[1](req,res));
   });
+  if(nextHandler)await nextHandler;
   return res;
  }
  return {db,call,documents,writes,setUid:x=>{currentUid=x}};
