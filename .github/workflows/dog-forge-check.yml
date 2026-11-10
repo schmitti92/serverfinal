@@ -1,0 +1,27 @@
+name: DOG forge focused checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-forge.js'
+      - 'dog-materials.js'
+      - 'tests/dog-forge.test.js'
+      - '.github/workflows/dog-forge-check.yml'
+  pull_request:
+    paths:
+      - 'dog-forge.js'
+      - 'dog-materials.js'
+      - 'tests/dog-forge.test.js'
+      - '.github/workflows/dog-forge-check.yml'
+  workflow_dispatch:
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify forge crafting and persistent journal
+        run: node --test tests/dog-forge.test.js
