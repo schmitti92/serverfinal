@@ -66,7 +66,11 @@ export function dogGateProgress(raw){
    lastResult:p.lastResult==='win'?'win':p.lastResult==='loss'?'loss':null
   };
  }
- return {version:1,people:result,sharedBosses:positiveUnique(x.sharedBosses,
+ return {version:1,people:result,
+  // Authenticated developer setting; kept in the single progress document.
+  developerBossCooldownDisabledFor:validUid(x.developerBossCooldownDisabledFor)?
+   x.developerBossCooldownDisabledFor:null,
+  sharedBosses:positiveUnique(x.sharedBosses,
   gate=>Number.isSafeInteger(gate)&&gate>=10&&gate<=100&&gate%10===0),
   // Preserve the Tor-10 state and all later group-boss encounters across
   // personal fights, mini-boss rewards and shared boss transactions.
@@ -75,6 +79,15 @@ export function dogGateProgress(raw){
    .filter(gate=>Object.hasOwn(obj(x.groupBosses),String(gate)))
    .map(gate=>[String(gate),obj(x.groupBosses[String(gate)])])),
   updatedAt:clamp(x.updatedAt,0,10_000_000_000_000,0)};
+}
+/** Bypass the 10-minute boss lock only for the privately authorized
+ * three-seat pilot, never for a normal party of human players. */
+export function dogDeveloperCooldownBypass(progressRaw,teamRaw,uid){
+ const owner=dogGateProgress(progressRaw).developerBossCooldownDisabledFor;
+ const members=bossTeam(teamRaw).members.map(m=>m.uid);
+ const bots=['dog-live-bot-nova','dog-live-bot-titan'];
+ return !!owner&&members.length===3&&members.includes(owner)&&
+  bots.every(id=>members.includes(id))&&(uid===owner||bots.includes(uid));
 }
 // Only a real expired encounter requires settlement. Normal map polling
 // has no additional Firestore reads or writes.
