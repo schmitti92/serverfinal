@@ -113,12 +113,12 @@ test('final settlement awards boosted payout exactly once and uses it for winner
  const finished=await h.invoke('GET','/api/deal-or-no-deal/:code/balances','a');
  assert.equal(finished.body.ok,true);
  assert.equal(h.balance('a'),600000000);
- assert.equal(h.balance('b'),850000000);
+ assert.equal(h.balance('b'),PRICE+100000000+250000000);
  assert.equal(h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_a').amount,500000000);
  assert.equal(h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_b').amount,250000000);
  assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/a').wins,1);
  assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/b').wins,0);
  await h.invoke('GET','/api/deal-or-no-deal/:code/balances','b');
  assert.equal(h.balance('a'),600000000,'recovery must not repeat payout');
- assert.equal(h.balance('b'),850000000);
+ assert.equal(h.balance('b'),PRICE+100000000+250000000);
 });
