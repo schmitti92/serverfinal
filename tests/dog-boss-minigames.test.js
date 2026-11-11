@@ -185,3 +185,26 @@ test('In-progress legacy v1 fights retain single-answer timing and 10% score rul
  assert.equal(dogMiniStrongRoundCount(state,'a'),3);
  assert.ok(Math.abs(dogMiniBonus(state,'a')-.10)<1e-12);
 });
+
+
+test('Eight rapid math answers are accepted in one server-verified transaction',()=>{
+ const {plan,round}=select('math',80);
+ const answers=round.puzzles.map(p=>p.correctIndex);
+ const at=round.endMs+550;
+ const batch=submit(plan,'a',round,answers,at);
+ assert.equal(batch.replayed,false);
+ assert.equal(batch.correctCount,8);
+ assert.equal(batch.games.answers.a[round.round].attempts.length,8);
+ assert.equal(batch.games.answers.a[round.round].correctCount,8);
+ assert.equal(dogMiniStrongRoundCount(batch.games,'a'),1);
+ assert.ok(Math.abs(dogMiniBonus(batch.games,'a')-.06)<1e-9);
+ assert.equal(dogMiniBonus(batch.games,'b'),0);
+ assert.equal(dogPublicMiniGames(batch.games,'b').myAnswers[round.round],undefined);
+ assert.throws(()=>submit(batch.games,'a',round,answers,at+10),/STEP_ORDER/);
+ assert.throws(()=>submit(plan,'a',round,answers,round.endMs+2000),/TOO_LATE/);
+ assert.throws(()=>submit(plan,'a',round,answers.concat(0),at),/BAD_ANSWER/);
+ assert.throws(()=>submit(plan,'a',round,[0,7],at),/BAD_ANSWER/);
+ const partial=submit(plan,'b',round,answers.slice(0,4),round.endMs-100);
+ assert.equal(partial.games.answers.b[round.round].attempts.length,4);
+ assert.ok(Math.abs(dogMiniBonus(partial.games,'b')-.03)<1e-9);
+});
