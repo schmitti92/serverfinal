@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 import {create,payoutFor,publicView} from '../deal-or-no-deal.js';
 
-const PRICE=500000000; // 5,000,000 EUR in cents
+const PRICE=300000000; // 3,000,000 EUR in cents
 function harness(){
  const routes=new Map(),docs=new Map();
  const key=(name,id)=>name+'/'+id;
