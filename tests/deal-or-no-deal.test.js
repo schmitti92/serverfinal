@@ -79,7 +79,7 @@ test('personal cases stay protected and only the actor confirms reveal',()=>{
  assert.equal(g.phase,'open');
 });
 test('every briefcase reveal has one server-defined start clock for all spectators',()=>{
- let game=create([{id:'a'},{id:'b'},{id:'c'}],rand,30);
+ let game=create([{id:'a'},{id:'b'},{id:'c'}],rand,29);
  for(let i=0;i<3;i++)game=send(game,game.order[i],'select',{case:i});
  const actor=nextTurn(game),before=Date.now();
  game=send(game,actor,'open',{case:free(game)[0]});
@@ -333,12 +333,14 @@ test('29-case new 10-million jackpot is shuffled, private and pays correctly in 
 function bankerOpenings(caseCount,playerCount,{legacy=false,legacy30=false,variant=0}={}){
  let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>n===5?variant:0,caseCount);
  if(legacy)delete game.bankerSchedule;
- if(legacy30){game.bankerSchedule=[...STEPS_30];delete game.bankerScheduleVariant;}
+ if(legacy30){game.bankerSchedule=[...STEPS_30];delete game.bankerScheduleVariant;delete game.openingBatch;}
  const offers=[];
  for(let i=0;i<playerCount;i++)game=send(game,game.order[i],'select',{case:i});
  let guard=0;
  while(game.phase!=='final'&&guard++<200){
-  if(game.phase==='open')game=send(game,nextTurn(game),'open',{case:free(game)[0]});
+  if(game.phase==='batch-pick')game=send(game,game.order[Math.floor(game.openingBatch.picks.length/3)],'open',{case:free(game)[0]});
+   else if(game.phase==='batch-reveal'){game.openingBatch.endsAt=Date.now()-1;game=send(game,game.order[0],'ack-batch');}
+   else if(game.phase==='open')game=send(game,nextTurn(game),'open',{case:free(game)[0]});
   else if(game.phase==='reveal')game=send(game,game.pending.actor,'ack-reveal');
   else if(game.phase==='decision'){
    offers.push(game.opened.length);
@@ -435,7 +437,9 @@ test('30-case new 50-million jackpot is randomly hidden and pays exactly 50 mill
  game=send(game,'a','select',{case:selectedCase});
  let guard=0;
  while(game.phase!=='final'&&guard++<180){
-  if(game.phase==='open')game=send(game,'a','open',{case:free(game)[0]});
+  if(game.phase==='batch-pick')game=send(game,game.order[Math.floor(game.openingBatch.picks.length/3)],'open',{case:free(game)[0]});
+   else if(game.phase==='batch-reveal'){game.openingBatch.endsAt=Date.now()-1;game=send(game,'a','ack-batch');}
+   else if(game.phase==='open')game=send(game,'a','open',{case:free(game)[0]});
   else if(game.phase==='reveal')game=send(game,'a','ack-reveal');
   else if(game.phase==='decision')game=send(game,'a','decide',{deal:false});
   else throw Error('Unexpected 30-case phase '+game.phase);
@@ -444,6 +448,53 @@ test('30-case new 50-million jackpot is randomly hidden and pays exactly 50 mill
  assert.equal(game.opened.length,29);
  assert.equal(publicView(game).finalValues[0].amount,jackpot);
  assert.equal(publicView(game).finalValues[0].payout,jackpot);
+});
+
+
+test('30-case opening collects three cases per player before rapid nine-case reveal',()=>{
+ let g=create([{id:'a'},{id:'b'},{id:'c'}],rand,30);
+ for(let i=0;i<3;i++)g=send(g,g.order[i],'select',{case:i});
+ assert.equal(g.phase,'batch-pick');
+ assert.equal(g.bankerSchedule[0],9);
+ assert.throws(()=>send(g,g.order[1],'open',{case:3}),/INVALID_BATCH_PICK/);
+ for(let i=0;i<9;i++){
+  const actor=g.order[Math.floor(i/3)],chosen=3+i;
+  g=send(g,actor,'open',{case:chosen});
+  assert.equal(g.opened.length,0);
+  assert.equal(g.history.length,0);
+  assert.equal(g.openingBatch.picks.length,i+1);
+  assert.ok(!free(g).includes(chosen));
+  if(i<8)assert.equal(g.phase,'batch-pick');
+ }
+ assert.equal(g.phase,'batch-reveal');
+ const view=publicView(g);
+ assert.deepEqual(view.openingBatch.reveals.map(p=>p.case),[3,4,5,6,7,8,9,10,11]);
+ assert.ok(view.openingBatch.endsAt>view.openingBatch.startedAt);
+ assert.throws(()=>send(g,g.order[0],'ack-batch'),/INVALID_BATCH_ACK/);
+ g.openingBatch.endsAt=Date.now()-1;
+ g=send(g,g.order[1],'ack-batch');
+ assert.equal(g.phase,'decision');
+ assert.equal(g.opened.length,9);
+ assert.equal(g.events.filter(e=>e.type==='opened').length,9);
+ assert.equal(g.history.length,1);
+});
+test('30-case batch respects player counts and already-running legacy matches',()=>{
+ for(const count of [1,2,4]){
+  let g=create(Array.from({length:count},(_,i)=>({id:'p'+i})),rand,30);
+  for(let i=0;i<count;i++)g=send(g,g.order[i],'select',{case:i});
+  for(let i=0;i<count*3;i++)g=send(g,g.order[Math.floor(i/3)],'open',{case:free(g)[0]});
+  assert.equal(g.phase,'batch-reveal');
+  g.openingBatch.endsAt=Date.now()-1;
+  g=send(g,g.order[0],'ack-batch');
+  assert.equal(g.history[0].round,1);
+  assert.equal(g.opened.length,count*3);
+ }
+ let legacy=create([{id:'a'}],rand,30);
+ delete legacy.openingBatch;
+ legacy=send(legacy,'a','select',{case:0});
+ assert.equal(legacy.phase,'open');
+ legacy=send(legacy,'a','open',{case:1});
+ assert.equal(legacy.phase,'reveal');
 });
 
 test('30-case banker patterns exactly match all five requested milestone sequences',()=>{
@@ -461,8 +512,9 @@ test('30-case banker patterns exactly match all five requested milestone sequenc
   assert.deepEqual(picked.steps,expected[variant].map((n,i)=>n-(expected[variant][i-1]||0)));
   const {game,offers}=bankerOpenings(30,3,{variant});
   assert.equal(game.bankerScheduleVariant,variant+1);
-  assert.deepEqual(offers,expected[variant], 'variant '+(variant+1)+' with 3 players');
-  assert.equal(game.history.length,expected[variant].length);
+  const targets=[9,...expected[variant].filter(x=>x>9)];
+  assert.deepEqual(offers,targets, 'variant '+(variant+1)+' with 3 players');
+  assert.equal(game.history.length,targets.length);
   assert.equal(game.opened.length,27);
   assert.deepEqual(publicView(game).bankerSchedule,game.bankerSchedule);
   assert.equal(publicView(game).bankerScheduleVariant,variant+1);
@@ -473,7 +525,7 @@ test('every 30-case variant adapts to 1, 2 and 4 players without inventing extra
  for(let variant=0;variant<BANKER_30_OPENINGS.length;variant++){
   for(const playerCount of [1,2,4]){
    const {game,offers}=bankerOpenings(30,playerCount,{variant});
-   const expected=BANKER_30_OPENINGS[variant].filter(opened=>opened<=30-playerCount);
+   const expected=[3*playerCount,...BANKER_30_OPENINGS[variant].filter(opened=>opened>3*playerCount&&opened<=30-playerCount)];
    assert.deepEqual(offers,expected,'variant '+(variant+1)+' with '+playerCount+' players');
    assert.equal(game.history.length,expected.length);
    assert.equal(game.opened.length,30-playerCount);
@@ -488,10 +540,10 @@ test('once selected, a 30-case pattern stays stable through gameplay and vote',(
  const schedule=[...game.bankerSchedule];
  assert.equal(game.bankerScheduleVariant,5);
  for(let i=0;i<3;i++)game=send(game,game.order[i],'select',{case:i});
- for(let i=0;i<8;i++){
-  game=send(game,nextTurn(game),'open',{case:free(game)[0]});
-  game=send(game,game.pending.actor,'ack-reveal');
- }
+ for(let i=0;i<9;i++)game=send(game,game.order[Math.floor(i/3)],'open',{case:free(game)[0]});
+ assert.equal(game.phase,'batch-reveal');
+ game.openingBatch.endsAt=Date.now()-1;
+ game=send(game,game.order[0],'ack-batch');
  assert.equal(game.phase,'decision');
  for(const id of game.history.at(-1).participants)game=send(game,id,'decide',{deal:false});
  assert.deepEqual(game.bankerSchedule,schedule);
