@@ -4,7 +4,9 @@ import {developerGateSetup,developerAddMaterials,installDogDeveloperApi,
  DOG_DEVELOPER_BOSS_GATES} from '../dog-developer.js';
 import {DOG_LIVE_BOT_IDS,DOG_LIVE_PILOT_COLLECTION,DOG_LIVE_PILOT_ID} from '../dog-live-bots.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
-import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from '../dog-gates.js';
+import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogDeveloperCooldownBypass,dogGateProgress} from '../dog-gates.js';
+import {boss10View,boss10Ready} from '../dog-boss10.js';
+import {groupBossView,groupBossReady} from '../dog-group-boss.js';
 import {DOG_MATERIALS_COLLECTION,DOG_RESOURCES} from '../dog-materials.js';
 
 const uid='user_chris_owner';
@@ -135,4 +137,85 @@ test('Developer HTTP refuses to overwrite a human team and never credits materia
   {action:'materials',resource:'all',amount:1000,requestId:'dev-request-00005'});
  assert.equal(denied.status,409);
  assert.equal(h.map.has(DOG_MATERIALS_COLLECTION+'/'+uid),false);
+});
+
+test('Boss cooldown setting survives gate presets and keeps Boss 10 state reset',()=>{
+ const initial=developerGateSetup({...progress,
+  developerBossCooldownDisabledFor:uid,
+  boss10:{phase:'cooldown',cooldownUntil:700000}},team,uid,9,2000);
+ assert.equal(initial.developerBossCooldownDisabledFor,uid);
+ assert.equal(initial.boss10,undefined,'Developer boss preparation resets prior Tor-10 result');
+ const rewritten=dogGateProgress(initial);
+ assert.equal(rewritten.developerBossCooldownDisabledFor,uid,
+  'All later progress transactions preserve the developer preference');
+});
+
+test('Only owner-plus-Nova-Titan can bypass Boss 10 cooldown immediately',()=>{
+ const now=100000;
+ const checkpoint=developerGateSetup(progress,team,uid,9,now);
+ const cooling={...checkpoint,boss10:{phase:'cooldown',cooldownUntil:now+600000,attempt:2}};
+ const active={...cooling,developerBossCooldownDisabledFor:uid};
+ assert.equal(boss10View(team,cooling,uid,now).phase,'cooldown');
+ assert.throws(()=>boss10Ready(cooling,team,uid,{},now),/DOG_BOSS10_COOLDOWN/);
+ assert.equal(dogDeveloperCooldownBypass(active,team,uid),true);
+ assert.equal(dogDeveloperCooldownBypass(active,team,DOG_LIVE_BOT_IDS[0]),true);
+ assert.equal(boss10View(team,active,uid,now).phase,'waiting');
+ assert.equal(boss10View(team,active,uid,now).cooldownRemainingMs,0);
+ const resumed=boss10Ready(active,team,DOG_LIVE_BOT_IDS[0],{},now);
+ assert.equal(resumed.boss10.phase,'waiting');
+ assert.equal(resumed.boss10.attempt,3);
+ const ordinary={members:[{uid,name:'Chris'},{uid:'other-human',name:'David'},
+  {uid:'another-human',name:'Vanessa'}]};
+ assert.equal(dogDeveloperCooldownBypass(active,ordinary,uid),false);
+ assert.throws(()=>boss10Ready(active,ordinary,uid,{},now),/DOG_BOSS10_COOLDOWN/);
+});
+
+test('Bosses 20 to 100 honor the developer flag without bypassing prerequisites',()=>{
+ const now=100000;
+ for(const gate of [20,40,70,100]){
+  const checkpoint=developerGateSetup(progress,team,uid,gate-1,now);
+  const cooling={...checkpoint,groupBosses:{[gate]:{
+   phase:'cooldown',cooldownUntil:now+600000,attempt:2}}};
+  assert.throws(()=>groupBossReady(gate,cooling,team,uid,{},now),/DOG_GROUP_COOLDOWN/);
+  const active={...cooling,developerBossCooldownDisabledFor:uid};
+  const view=groupBossView(gate,team,active,uid,now);
+  assert.equal(view.phase,'waiting','Boss '+gate+' is immediately available');
+  assert.equal(view.cooldownRemainingMs,0);
+  const resumed=groupBossReady(gate,active,team,DOG_LIVE_BOT_IDS[0],{},now);
+  assert.equal(resumed.groupBosses[gate].phase,'waiting');
+  assert.equal(resumed.groupBosses[gate].attempt,3);
+ }
+});
+
+test('Authenticated cooldown toggle is persistent, reversible and idempotent',async()=>{
+ const h=harness();
+ const get=()=>h.call('GET','/api/dog/developer/status');
+ assert.equal((await get()).bossCooldownDisabled,false);
+ const command={action:'cooldown',disabled:true,requestId:'dev-cooldown-00001'};
+ const switched=await h.call('POST','/api/dog/developer/apply',uid,command);
+ assert.equal(switched.status,200);
+ assert.equal(switched.bossCooldownDisabled,true);
+ assert.equal((await get()).bossCooldownDisabled,true);
+ const receipt=await h.call('POST','/api/dog/developer/apply',uid,command);
+ assert.equal(receipt.status,200);
+ assert.equal(receipt.replayed,true);
+ const invalid=await h.call('POST','/api/dog/developer/apply',uid,
+  {...command,disabled:false});
+ assert.equal(invalid.status,409,'Old receipt cannot toggle a different setting');
+ const checkpoint=await h.call('POST','/api/dog/developer/apply',uid,
+  {action:'preset',gate:19,requestId:'dev-cooldown-preset'});
+ assert.equal(checkpoint.status,200);
+ assert.equal((await get()).bossCooldownDisabled,true);
+ const off=await h.call('POST','/api/dog/developer/apply',uid,
+  {action:'cooldown',disabled:false,requestId:'dev-cooldown-00002'});
+ assert.equal(off.status,200);
+ assert.equal((await get()).bossCooldownDisabled,false);
+ const document=h.map.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID);
+ assert.equal(document.developerBossCooldownDisabledFor,null);
+ const rejected=await h.call('POST','/api/dog/developer/apply','other-user',
+  {action:'cooldown',disabled:true,requestId:'dev-cooldown-00003'});
+ assert.equal(rejected.status,404);
+ const malformed=await h.call('POST','/api/dog/developer/apply',uid,
+  {action:'cooldown',disabled:'yes',requestId:'dev-cooldown-00004'});
+ assert.equal(malformed.status,400);
 });
