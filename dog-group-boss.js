@@ -65,8 +65,10 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&!won,
   ...boss,...(skipCooldown?{ready:[],cooldownUntil:0}:{}),
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
-    ...(dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt)?
-    {exchange:dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt)}:{})},
+    ...(dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt,
+       hero=>groupBossDamagePotential(gate,[hero],[],null))?
+    {exchange:dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt,
+       hero=>groupBossDamagePotential(gate,[hero],[],null))}:{})},
   phase:won?'victory':skipCooldown?'waiting':boss.phase,won,
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   forgeLevel:Math.min(10,gate/10+1),
@@ -101,7 +103,7 @@ export function groupBossDamagePotential(gate,roster=[],reactions=[],miniGames=n
   const multiplier=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):seen.has(m.uid)?1.10:1;
   return sum+DOG_GROUP_BOSS_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
    (.91+.30*attack)*survival*multiplier;
- },0)*(dogNormalizeMiniGames(miniGames)?.version===3?
+ },0)*(dogNormalizeMiniGames(miniGames)?.version>=3?
   (.94+.06*dogMiniTeamShield(miniGames,roster)/100):1);
 }
 const maxed=(gate,m)=>m.weaponLevel>=gearCap(gate)&&m.armorLevel>=gearCap(gate)&&
@@ -147,7 +149,7 @@ const startFight=(gate,progress,team,ready,heroes,now,rand=randomInt)=>{
  const previous=stateAt(progress,gate);
  return withState(progress,gate,{...previous,ready:[...ready],roster,
   phase:'fighting',startedAt:now,endsAt:now+DOG_BOSS10_DURATION_MS,
-  chancePercent,reactions:[],miniGames:dogCreateMiniGames(gate,rand,{exchange:true})},now);
+  chancePercent,reactions:[],miniGames:dogCreateMiniGames(gate,rand,{exchange:'cinematic'})},now);
 };
 export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.now(),rand=randomInt){
  ensureGate(gate);
