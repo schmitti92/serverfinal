@@ -455,8 +455,8 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  let game=response.body.game;
  assert.equal(game.caseCount,30);
  assert.ok(Number.isInteger(game.bankerScheduleVariant)&&game.bankerScheduleVariant>=1&&game.bankerScheduleVariant<=5);
- const targets=BANKER_30_OPENINGS[game.bankerScheduleVariant-1];
- assert.deepEqual(game.bankerSchedule,targets.map((n,i)=>n-(targets[i-1]||0)),'the server selects one of the five valid patterns');
+ const targets=[3,...BANKER_30_OPENINGS[game.bankerScheduleVariant-1].filter(n=>n>3)];
+ assert.deepEqual(game.bankerSchedule,targets.map((n,i)=>n-(targets[i-1]||0)),'first call is after three picked cases in a solo match');
  assert.equal(game.values,undefined,'private case amounts never enter multiplayer updates');
  const stored=docs.get('deal_or_no_deal_matches_v1/123').game;
  assert.equal(stored.values.length,30);
@@ -478,8 +478,11 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  assert.equal(game.players[0].case,jackpotIndex);
  let guard=0;
  while(game.phase!=='final'&&guard++<150){
-  if(game.phase==='open'){
-   const opened=new Set(game.opened);
+  if(game.phase==='batch-reveal'){
+   docs.get('deal_or_no_deal_matches_v1/123').game.openingBatch.endsAt=Date.now()-1;
+   await take('ack-batch');
+  }else if(game.phase==='batch-pick'||game.phase==='open'){
+   const opened=new Set([...game.opened,...(game.openingBatch?.picks||[]).map(p=>p.case)]);
    const next=Array.from({length:30},(_,i)=>i)
     .find(i=>i!==jackpotIndex&&!opened.has(i));
    assert.ok(Number.isInteger(next));
