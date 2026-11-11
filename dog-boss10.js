@@ -58,13 +58,15 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(progress.people[m.uid])}));
  const elapsed=Math.max(0,now-boss.startedAt);
+ const exchange=dogMiniExchangeView(boss.miniGames,boss.roster,elapsed,
+  hero=>boss10DamagePotential([hero],[],null));
  const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
   hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
  const bossMaxHp=dogGroupBossHp(10);
  const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
-   boss10DamagePotential(boss.roster,[],null));
+   boss10DamagePotential(boss.roster,[],null),Number(exchange?.cumulativeExtraDamage)||0);
  return {gate:10,name:'Der Aschewächter',bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   teamReady:team.members.length===3,isMember:team.members.some(m=>m.uid===uid),
   participantCount:boss.phase==='fighting'||boss.phase==='victory'||boss.phase==='cooldown'?boss.roster.length:boss.ready.length,
@@ -72,10 +74,7 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   eligible:eligible(progress.people[uid]),members,
   ...boss,...(skipCooldown?{phase:'waiting',ready:[],cooldownUntil:0}:{}),
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
-    ...(dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt,
-       hero=>boss10DamagePotential([hero],[],null))?
-    {exchange:dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt,
-       hero=>boss10DamagePotential([hero],[],null))}:{})},won:progress.sharedBosses.includes(10),
+    ...(exchange?{exchange}:{})},won:progress.sharedBosses.includes(10),
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
   cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
