@@ -214,12 +214,21 @@ test('Authenticated API: rare duo win persists and unlocks following forge tier 
  }
  const start=await f.call('POST','/start',{requestId:'duo-start-00000001'});
  assert.equal(start.statusCode,200);
+ f.advance(6000);
  for(const user of ['a','b']){
-  const reacted=await f.call('POST','/react',{
-   requestId:'duo-react-'+user+'-00000001'},user);
-  assert.equal(reacted.statusCode,200);
+  const reaction=await f.call('POST','/minigame',{
+   requestId:'duo-timing-'+user+'-000001',round:0,answer:1},user);
+  assert.equal(reaction.statusCode,200);
+  assert.equal(reaction.body.result.correct,true);
  }
- f.advance(30000);
+ f.advance(4500);
+ for(const user of ['a','b']){
+  const math=await f.call('POST','/minigame',{
+   requestId:'duo-arithmetic-'+user+'-001',round:1,answer:0},user);
+  assert.equal(math.statusCode,200);
+  assert.equal(math.body.result.correct,true);
+ }
+ f.advance(19500);
  const result=await f.call('POST','/finish',{requestId:'duo-finish-00000001'});
  assert.equal(result.statusCode,200);
  assert.equal(result.body.result.win,true);
