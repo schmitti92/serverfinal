@@ -7,6 +7,7 @@ import {
  DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS
 } from '../dog-boss10.js';
 import {ascensionView,ascensionUpgrade,installDogAscensionApi} from '../dog-ascension.js';
+import {dogMiniTargetIndex,dogMiniReactionPosition} from '../dog-boss-minigames.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_MATERIALS_COLLECTION} from '../dog-materials.js';
@@ -27,17 +28,41 @@ const bag=()=>({resources:{
  life_dust:40,guard_crystal:10,life_essence:5,guardian_rune:2,phoenix_feather:1
  }});
 function solveFirstTwo(state,uid){
+ // v2 rounds consist of eight math tasks or three timed sub-actions.
+ // Complete at least two thirds of each of the first two minigames so
+ // that the rare duo-critical rules are tested with actual strong play.
  for(const round of state.boss10.miniGames.rounds.slice(0,2)){
-  const at=round.kind==='reaction'?round.targetMs:round.startMs+300;
-  const answer=round.kind==='reaction'?1:
-   round.kind==='math'?round.correctIndex:
-   round.kind==='target'?(round.initialIndex+
-    Math.floor((at-round.startMs)/round.stepMs))%round.lanes:
-   Array.from({length:round.lanes},(_,i)=>i).find(i=>
-    i!==round.dangerIndex&&i!==round.secondDangerIndex);
-  const result=boss10MiniAnswer(state,uid,round.round,answer,now+at);
-  assert.equal(result.result.correct,true);
-  state=result.progress;
+  for(let step=0;step<(round.maxSteps||1);step++){
+   let at,answer;
+   if(round.kind==='math'){
+    at=round.startMs+300+step*850;
+    answer=round.puzzles?.[step]?.correctIndex??round.correctIndex;
+   }else if(round.kind==='dodge'){
+    const danger=round.attacks?.[step]||round;
+    at=danger.startMs+400;
+    answer=Array.from({length:round.lanes},(_,i)=>i).find(i=>
+     i!==danger.dangerIndex&&i!==danger.secondDangerIndex);
+   }else if(round.kind==='target'){
+    at=round.startMs+400+step*2000;
+    answer=dogMiniTargetIndex(round,at);
+   }else{
+    if(!round.maxSteps)at=round.targetMs;
+    else{
+     const min=round.startMs+Math.floor(step*8000/3)+450;
+     const max=round.startMs+Math.floor((step+1)*8000/3)-220;
+     at=NaN;
+     for(let t=min;t<max;t+=10)
+      if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){
+       at=t;break;
+      }
+     assert.ok(Number.isFinite(at),'green reaction zone must be available');
+    }
+    answer=1;
+   }
+   const result=boss10MiniAnswer(state,uid,round.round,answer,now+at,step);
+   assert.equal(result.result.correct,true,round.kind+' step '+step);
+   state=result.progress;
+  }
  }
  return state;
 }
@@ -133,7 +158,7 @@ test('Three ready commands start exactly one 30-second encounter',()=>{
  assert.throws(()=>boss10Ready(state,team,'hero-a',heroes(),now+200),/RUNNING/);
 });
 
-test('Timed minigames are one-shot per player and group success unlocks forge level 2',()=>{
+test('Every sub-action is idempotent per player and strong team play unlocks forge level 2',()=>{
  let state=progress();
  for(const member of team.members)state=boss10Ready(state,team,member.uid,heroes(),now);
  state=solveFirstTwo(state,'hero-a');
