@@ -157,7 +157,7 @@ const ERRORS={LOGIN_REQUIRED:401,DOG_GATE_INVALID:400,INVALID_REQUEST_ID:400,
  DOG_GATE_RECEIPT_CONFLICT:409,DOG_GATE_PREVIOUS_REQUIRED:409,
  DOG_GATE_ALREADY_WON:409,DOG_GATE_BOSS_REQUIRED:409,DOG_GATE_COOLDOWN:429,
  DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403};
-export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
+export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -184,6 +184,18 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
    const [teamSnap,progressSnap]=await Promise.all([teamRef.get(),progressRef.get()]);
    const team=teamSnap.exists?teamSnap.data():null,uid=req.dogGateProfile.uid;
    let progress=progressSnap.exists?progressSnap.data():null;
+   // The test teammates solve their challenges on the real shared fight,
+   // including missed rounds after a reconnect or an inactive browser.
+   const simulation=botLogic?.advanceAllLiveBotFights(progress,team,uid,clock(),rand);
+   if(simulation?.changed){
+    progress=await db.runTransaction(async tx=>{
+     const fresh=await tx.get(progressRef);
+     const step=botLogic.advanceAllLiveBotFights(fresh.exists?fresh.data():null,
+      team,uid,clock(),rand);
+     if(step.changed)tx.set(progressRef,step.progress);
+     return step.progress;
+    });
+   }
    if(bossTeam(team).members.some(m=>m.uid===uid)&&
       expiredSharedBossGates(progress,clock()).length){
     // If every browser closed during the fight, returning to the map
@@ -251,6 +263,8 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
     const outcome=dogGateFight(saved,uid,gate,hero.exists?hero.data():null,rand,now);
     let result=outcome.result;
     let nextProgress=outcome.progress;
+    if(result.win&&result.type==='normal'&&botLogic?.isLiveBotTeam(teamData,uid))
+     nextProgress=botLogic.mirrorLiveBotVictory(nextProgress,teamData,uid,gate,now);
     // A first mini-boss victory fixes ONE reward in this exact transaction.
     // All prize data is server-generated; the browser cannot request its type,
     // amount, or recipient. A lost response replays the same receipt.
