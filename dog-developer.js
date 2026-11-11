@@ -3,7 +3,7 @@
  * can change the three-player bot team. Never credit DOG completion here.
  */
 import {bossTeam,DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
-import {dogGateProgress,dogGateMapView,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
+import {dogGateProgress,dogGateMapView,dogDeveloperCooldownBypass,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_MATERIALS_COLLECTION,DOG_RESOURCES,dogInventory} from './dog-materials.js';
 import {DOG_LIVE_PILOT_COLLECTION,DOG_LIVE_PILOT_ID,DOG_LIVE_BOT_IDS,isLiveBotTeam} from './dog-live-bots.js';
 
@@ -38,7 +38,7 @@ export function developerGateSetup(progressRaw,teamRaw,ownerUid,limit,now=Date.n
  }
  // Intentionally discard previous fight state and wins from the selected boss onward.
  // The final DOG unlock is NEVER generated as part of developer preparation.
- return dogGateProgress({version:1,people,sharedBosses,groupBosses:{},updatedAt:now});
+ return dogGateProgress({...prior,version:1,people,sharedBosses,groupBosses:{},updatedAt:now});
 }
 
 export function developerAddMaterials(inventoryRaw,resource,amount,now=Date.now()){
@@ -93,20 +93,23 @@ export function installDogDeveloperApi(app,{verifyProfile,getFirestore,clock=Dat
     botsReady:isLiveBotTeam(teamSnap.exists?teamSnap.data():null,req.developerUid),
     presets:DOG_DEVELOPER_GATE_PRESETS,bosses:DOG_DEVELOPER_BOSS_GATES,
     resources:DOG_RESOURCES,amounts:DOG_DEVELOPER_RESOURCE_AMOUNTS,
+    bossCooldownDisabled:dogDeveloperCooldownBypass(progressSnap.exists?progressSnap.data():null,
+     teamSnap.exists?teamSnap.data():null,req.developerUid),
     ...dogGateMapView(teamSnap.exists?teamSnap.data():null,
       progressSnap.exists?progressSnap.data():null,req.developerUid)});
   }catch(e){return fail(res,e);}
  });
  app.post('/api/dog/developer/apply',check,async(req,res)=>{
   try{
-   const uid=req.developerUid,{action,requestId,gate,resource,amount}=req.body||{};
+   const uid=req.developerUid,{action,requestId,gate,resource,amount,disabled}=req.body||{};
    if(!safeId(requestId))throw Error('INVALID_REQUEST_ID');
    const preset=action==='preset'&&DOG_DEVELOPER_GATE_PRESETS.includes(gate);
    const boss=action==='boss'&&DOG_DEVELOPER_BOSS_GATES.includes(gate);
    const materials=action==='materials'&&
     (resource==='all'||DOG_RESOURCES.includes(resource))&&
     DOG_DEVELOPER_RESOURCE_AMOUNTS.includes(amount);
-   if(!(preset||boss||materials))
+   const cooldown=action==='cooldown'&&typeof disabled==='boolean';
+   if(!(preset||boss||materials||cooldown))
     throw Error(action==='materials'?'DOG_DEVELOPER_INVALID_MATERIAL':'DOG_DEVELOPER_INVALID_GATE');
    const {db,owner,team,progress,inventory,receipt}=refs(),bag=inventory(uid),receiptRef=receipt(uid,requestId);
    const response=await db.runTransaction(async tx=>{
@@ -114,7 +117,8 @@ export function installDogDeveloperApi(app,{verifyProfile,getFirestore,clock=Dat
     const [ownerSnap,receiptSnap,teamSnap,progressSnap,bagSnap]=await Promise.all([
      tx.get(owner),tx.get(receiptRef),tx.get(team),tx.get(progress),tx.get(bag)]);
     if(ownerSnap.data()?.uid!==uid)throw Error('DOG_DEVELOPER_NOT_AVAILABLE');
-    const inputs={action,gate:gate??null,resource:resource??null,amount:amount??null};
+    const inputs={action,gate:gate??null,resource:resource??null,amount:amount??null,
+     disabled:cooldown?disabled:null};
     if(receiptSnap.exists){
      const last=receiptSnap.data();
      if(JSON.stringify(last.inputs)!==JSON.stringify(inputs))
@@ -125,7 +129,15 @@ export function installDogDeveloperApi(app,{verifyProfile,getFirestore,clock=Dat
     if(!isLiveBotTeam(oldTeam,uid))throw Error('DOG_DEVELOPER_BOTS_REQUIRED');
     const now=clock();
     let result;
-    if(materials){
+    if(cooldown){
+     const prior=dogGateProgress(progressSnap.exists?progressSnap.data():null);
+     const next={...prior,developerBossCooldownDisabledFor:disabled?uid:null,updatedAt:now};
+     // Shared progress is already part of every boss transaction: no extra
+     // database reads are required to honor this persisted preference.
+     if(prior.developerBossCooldownDisabledFor!==next.developerBossCooldownDisabledFor)
+      tx.set(progress,next);
+     result={action,disabled,bossCooldownDisabled:disabled};
+    }else if(materials){
      const next=developerAddMaterials(bagSnap.exists?bagSnap.data():null,resource,amount,now);
      tx.set(bag,next);
      result={action,resource,amount,resources:next.resources};
