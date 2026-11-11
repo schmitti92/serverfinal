@@ -219,6 +219,34 @@ test('99s endgame: 12s maths, 15s dodge, two 8s games and four 14s cinematics',(
  assert.equal(dogMiniExchangeView(dogCreateMiniGames(10,()=>0,{exchange:true}),roster,39_000).durationMs,40_000);
  assert.equal(dogMiniExchangeView(dogCreateMiniGames(10,()=>0,{exchange:'cinematic'}),roster,49_000).durationMs,50_000);
 });
+test('v9 narrow Konter stays on the actual tap, not the later server transaction',()=>{
+ const game=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
+ const reaction=game.rounds[3],start=now;
+ assert.equal(game.version,9);
+ assert.ok(reaction.zoneRadius<.065&&reaction.zoneRadius>.05,
+  'the green center is narrower than previous 20%+ hit width');
+ const older={...game,version:8};
+ const oldRadius=dogNormalizeMiniGames(older).rounds[3].zoneRadius;
+ assert.ok(reaction.zoneRadius<oldRadius*.6,'old v8 fights retain the wider target');
+ let tap=-1;
+ for(let ms=reaction.startMs;ms<reaction.endMs;ms+=5){
+  if(Math.abs(dogMiniReactionPosition(reaction,ms)-.5)<reaction.zoneRadius*.45){
+   tap=ms;break;
+  }
+ }
+ assert.ok(tap>=0);
+ const captured=start+tap;
+ const hit=dogSubmitMiniAnswer(game,roster,'a',reaction.round,1,
+  captured+420,start,0,captured,captured+190);
+ assert.equal(hit.correct,true,'real input point scores even when database update is 420ms later');
+ assert.equal(hit.games.answers.a[reaction.round].attempts[0].tappedAt,captured);
+ assert.throws(()=>dogSubmitMiniAnswer(game,roster,'b',reaction.round,1,
+  captured+1100,start,0,captured,captured+940),/DOG_MINIGAME_BAD_TIMESTAMP/,
+  'timestamps older than the bounded transfer cannot be replayed');
+ assert.throws(()=>dogSubmitMiniAnswer(game,roster,'c',reaction.round,1,
+  captured+150,start,0,captured+200,captured+70),/DOG_MINIGAME_BAD_TIMESTAMP/,
+  'client may not claim future timestamps');
+});
 test('three dodge directions and verified success are safely synchronized to all players',()=>{
  let game=dogCreateMiniGames(70,()=>0,{exchange:'endgame'});
  const dodge=game.rounds.find(r=>r.kind==='dodge');
