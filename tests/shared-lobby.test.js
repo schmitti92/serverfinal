@@ -1043,3 +1043,134 @@ test('DOG four-human lobby hides each opponent hand',async()=>{
   for(let j=0;j<4;j++)if(j!==i)assert.equal(view.match.dog.hands[j].count,6);
  }
 });
+
+
+async function fourHumanDog(h){
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const player of ['bob','cara','dana']){
+  const joined=await h.api('POST','/api/hub/rooms/'+code+'/join',player);
+  assert.equal(joined.status,200);
+ }
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ for(const name of ['alice','bob','cara']){
+  const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready',name,{ready:true});
+  assert.equal(ready.status,200);
+ }
+ const last=await h.api('POST','/api/hub/rooms/'+code+'/ready','dana',{ready:true});
+ assert.equal(last.status,200);
+ assert.equal(last.room.match.game,'dog');
+ assert.equal(last.room.match.dog.players.filter(p=>p.bot).length,0);
+ return {code,matchId:last.room.match.id};
+}
+function dogCommand(matchId,view,action,id){
+ return {matchId,action,expectedRevision:view.match.dog.revision,actionId:id};
+}
+
+test('DOG online phase 1: concurrent four-player exchanges cannot overwrite each other',async()=>{
+ const h=harness(),{code,matchId}=await fourHumanDog(h),path='/api/hub/rooms/'+code+'/dog/action';
+ const al=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ const bo=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ assert.equal(al.match.dog.revision,bo.match.dog.revision);
+ const [a,b]=await Promise.all([
+  h.api('POST',path,'alice',dogCommand(matchId,al,{type:'exchange',cardId:al.match.dog.hands[0][0].id},'dog-exchange-alice-1')),
+  h.api('POST',path,'bob',dogCommand(matchId,bo,{type:'exchange',cardId:bo.match.dog.hands[1][0].id},'dog-exchange-bob-1'))
+ ]);
+ assert.deepEqual([a.status,b.status].sort(),[200,409]);
+ const state=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(state.match.dog.revision,al.match.dog.revision+1);
+ assert.equal(state.match.dog.exchanges.filter(Boolean).length,1);
+ const loser=a.status===409?['alice',al]:['bob',bo];
+ const refreshed=(await h.api('GET','/api/hub/rooms/'+code,loser[0])).room;
+ const seat=refreshed.match.dogSeat;
+ const retried=await h.api('POST',path,loser[0],dogCommand(matchId,refreshed,{type:'exchange',cardId:loser[1].match.dog.hands[seat][0].id},'dog-exchange-retry-1'));
+ assert.equal(retried.status,200);
+ assert.equal(retried.room.match.dog.exchanges.filter(Boolean).length,2);
+ const replay=await h.api('POST',path,loser[0],dogCommand(matchId,refreshed,{type:'exchange',cardId:loser[1].match.dog.hands[seat][0].id},'dog-exchange-retry-1'));
+ assert.equal(replay.status,200);
+ assert.equal(replay.room.match.dog.revision,retried.room.match.dog.revision);
+});
+
+test('DOG online phase 1: all four players exchange privately; reconnection preserves the match',async()=>{
+ const h=harness(),{code,matchId}=await fourHumanDog(h),path='/api/hub/rooms/'+code+'/dog/action';
+ const users=['alice','bob','cara','dana'];
+ for(let i=0;i<4;i++){
+  const view=(await h.api('GET','/api/hub/rooms/'+code,users[i])).room;
+  assert.equal(view.match.id,matchId);
+  const card=view.match.dog.hands[i][0];
+  const result=await h.api('POST',path,users[i],dogCommand(matchId,view,{type:'exchange',cardId:card.id},'dog-phase1-exchange-'+i));
+  assert.equal(result.status,200);
+  if(i<3)assert.equal(result.room.match.dog.phase,'exchange');
+ }
+ for(let i=0;i<4;i++){
+  const snapshot=(await h.api('GET','/api/hub/rooms/'+code,users[i])).room;
+  const reconnected=(await h.api('GET','/api/hub/rooms/'+code,users[i])).room;
+  assert.equal(reconnected.match.id,matchId);
+  assert.equal(snapshot.match.dog.revision,reconnected.match.dog.revision);
+  assert.deepEqual(snapshot.match.dog.pieces,reconnected.match.dog.pieces);
+  assert.equal(snapshot.match.dog.deck,undefined);
+  assert.equal(snapshot.match.dog.discard,undefined);
+  assert.equal(Array.isArray(snapshot.match.dog.hands[i]),true);
+  for(let other=0;other<4;other++)if(other!==i){
+   assert.equal(Array.isArray(snapshot.match.dog.hands[other]),false);
+   assert.equal(typeof snapshot.match.dog.hands[other].count,'number');
+  }
+ }
+});
+
+test('DOG online phase 1: split seven survives reload and duplicate/replayed commands',async()=>{
+ const h=harness(),{code,matchId}=await fourHumanDog(h),path='/api/hub/rooms/'+code+'/dog/action';
+ const key='spielesammlung_hub_v1/'+code,raw=h.docs.get(key);
+ assert.ok(raw?.match?.dog,'Mock room must include authoritative DOG state');
+ const state=raw.match.dog;
+ state.phase='play';state.current=0;state.starter=0;
+ state.hands=[[{id:9999,type:'7'}],[],[],[]];
+ state.exchanges=[null,null,null,null];state.seven=null;
+ state.revision=44;
+ state.pieces[0].place='track';state.pieces[0].pos=3;
+ raw.match.dogCommands=[];raw.revision++;
+ h.docs.set(key,raw);
+ const first=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(first.match.dog.revision,44);
+ const begin=await h.api('POST',path,'alice',dogCommand(matchId,first,{type:'seven',cardId:9999,as:'7'},'dog-phase1-seven-start'));
+ assert.equal(begin.status,200);
+ assert.equal(begin.room.match.dog.phase,'seven');
+ const loaded=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(loaded.match.dog.phase,'seven');
+ assert.equal(loaded.match.dog.seven.snapshot,undefined,'Private rollback snapshot is never transmitted');
+ const move={type:'seven-step',pieceId:0,steps:3,viaGoal:false,to:'track:6'};
+ const next=await h.api('POST',path,'alice',dogCommand(matchId,loaded,move,'dog-phase1-seven-step-3'));
+ assert.equal(next.status,200);
+ assert.equal(next.room.match.dog.seven.spent,3);
+ assert.equal(next.room.match.dog.pieces[0].pos,6);
+ const afterReload=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(afterReload.match.dog.seven.spent,3);
+ const duplicate=await h.api('POST',path,'alice',dogCommand(matchId,loaded,move,'dog-phase1-seven-step-3'));
+ assert.equal(duplicate.status,200);
+ assert.equal(duplicate.room.match.dog.seven.spent,3);
+ assert.equal(duplicate.room.match.dog.revision,next.room.match.dog.revision);
+ const stale=await h.api('POST',path,'alice',dogCommand(matchId,loaded,move,'dog-phase1-seven-step-4'));
+ assert.equal(stale.status,409);
+ const finalMove={type:'seven-step',pieceId:0,steps:4,viaGoal:false,to:'track:10'};
+ const final=await h.api('POST',path,'alice',dogCommand(matchId,afterReload,finalMove,'dog-phase1-seven-finish'));
+ assert.equal(final.status,200);
+ assert.equal(final.room.match.dog.pieces[0].pos,10);
+ assert.notEqual(final.room.match.dog.phase,'seven');
+ assert.equal(final.room.match.dog.seven,null);
+});
+
+test('DOG online phase 1: invalid actor, stale match and malformed command never change the game',async()=>{
+ const h=harness(),{code,matchId}=await fourHumanDog(h),path='/api/hub/rooms/'+code+'/dog/action';
+ const view=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ const original=view.match.dog.revision;
+ const payload=dogCommand(matchId,view,{type:'exchange',cardId:view.match.dog.hands[0][0].id},'dog-phase1-reconnect-a');
+ const unauthorized=await h.api('POST',path,'stranger',payload);
+ assert.equal(unauthorized.status,401);
+ const wrongMatch=await h.api('POST',path,'alice',{...payload,matchId:'outdated-match-id'});
+ assert.equal(wrongMatch.status,409);
+ const invalidCommand=await h.api('POST',path,'alice',{...payload,actionId:'x'});
+ assert.equal(invalidCommand.status,400);
+ const spectator=await h.api('POST',path,'bob',{...payload,actionId:'dog-phase1-bob-spoof'});
+ assert.equal(spectator.status,409,'Player cannot send another player private card ID');
+ const after=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(after.match.dog.revision,original);
+});
