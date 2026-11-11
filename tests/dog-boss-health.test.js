@@ -28,13 +28,13 @@ test('group maximum HP is the sum of frozen individual equipment HP',()=>{
 });
 test('verified dodges prevent team HP loss; failed defense costs real team LP',()=>{
  const games=plan();
- const before=dogMiniGroupHealth(games,roster,26999,hp);
+ const before=dogMiniGroupHealth(games,roster,20499,hp);
  assert.equal(before.hp,total,'before the first defense resolves, HP is untouched');
- const first=dogMiniGroupHealth(games,roster,27000,hp);
+ const first=dogMiniGroupHealth(games,roster,21000,hp);
  assert.equal(first.remainingPercent,75);
  assert.equal(first.hp,first.heroes.reduce((n,h)=>n+h.hp,0));
  assert.ok(first.hp<total);
- const final=dogMiniGroupHealth(games,roster,57000,hp);
+ const final=dogMiniGroupHealth(games,roster,49000,hp);
  assert.equal(final.remainingPercent,50);
  assert.ok(final.hp<first.hp);
  assert.equal(final.lost,final.maxHp-final.hp);
@@ -42,9 +42,9 @@ test('verified dodges prevent team HP loss; failed defense costs real team LP',(
 test('server-sourced boss HP steps down after confirmed offensive phases, never regenerates',()=>{
  const games=plan(),max=dogGroupBossHp(10);
  const base=boss10DamagePotential(roster,[],null);
- const atStart=dogMiniBossLiveHp(games,roster,11999,max,base);
- const afterOne=dogMiniBossLiveHp(games,roster,12000,max,base);
- const afterTwo=dogMiniBossLiveHp(games,roster,42000,max,base);
+ const atStart=dogMiniBossLiveHp(games,roster,7999,max,base);
+ const afterOne=dogMiniBossLiveHp(games,roster,8000,max,base);
+ const afterTwo=dogMiniBossLiveHp(games,roster,33000,max,base);
  assert.equal(atStart,max);
  assert.ok(afterOne<max,'first team attack reduces shown HP');
  assert.ok(afterTwo<afterOne,'second attack reduces shown HP again');
