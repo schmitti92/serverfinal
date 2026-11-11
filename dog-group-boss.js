@@ -194,6 +194,7 @@ export function groupBossMiniAnswer(gate,raw,uid,round,answer,now=Date.now(),ste
  return {progress:answered.replayed?progress:withState(progress,gate,{...state,miniGames:answered.games},now),
   result:{type:'minigame',round,step,correct:answered.correct,
    replayed:answered.replayed,
+   ...(Number.isInteger(answered.correctCount)?{correctCount:answered.correctCount}:{}),
    bonusPercent:Math.round(dogMiniBonus(answered.games,uid)*1000)/10}};
 }
 export function groupBossFinish(gate,raw,now=Date.now(),rand=randomInt){
