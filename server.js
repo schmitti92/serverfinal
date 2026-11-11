@@ -4363,6 +4363,11 @@ installDogBossApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
+/* Gate preview is not public yet. Production gate routes are deliberately
+ * disabled until the three-player playtest finishes. Existing records stay
+ * stored; the preview uses a completely separate document. */
+app.use('/api/dog/gates',(_req,res)=>
+ res.status(404).json({ok:false,error:'DOG_EVENT_PRIVATE_TEST'}));
 installDogGatesApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
@@ -4379,11 +4384,6 @@ installDogAscensionApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
-/* Gate preview is not public yet. Production gate routes are deliberately
- * disabled until the three-player playtest finishes. Existing records stay
- * stored; the preview uses a completely separate document. */
-app.use('/api/dog/gates',(_req,res)=>
- res.status(404).json({ok:false,error:'DOG_EVENT_PRIVATE_TEST'}));
 installDogPrivatePreviewApi(app,{
  verifyProfile:profileStatsV8.identity,
  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
