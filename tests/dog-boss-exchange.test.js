@@ -130,7 +130,7 @@ test('50s cinematic encounters preserve all 4x8s tasks and add four 4.5s pauses'
  assert.deepEqual(cinema.rounds.map((r,i)=>{
   const next=cinema.rounds[i+1];
   return (next?.startMs??50000)-r.endMs;
- },[4500,4500,4500,4500]);
+ }),[4500,4500,4500,4500]);
  assert.equal(dogNormalizeMiniGames(cinema).version,4);
  assert.deepEqual(dogNormalizeMiniGames(old).rounds.map(r=>r.startMs),
   DOG_EXCHANGE_WINDOWS.map(r=>r.startMs));
