@@ -4,12 +4,16 @@ on:
     branches: [main]
     paths:
       - 'dog/engine.js'
+      - 'shared-lobby.js'
+      - 'tests/shared-lobby.test.js'
       - 'tests/dog-engine.test.js'
       - 'tests/dog-official-rules.test.js'
       - '.github/workflows/dog-classic-official.yml'
   pull_request:
     paths:
       - 'dog/engine.js'
+      - 'shared-lobby.js'
+      - 'tests/shared-lobby.test.js'
       - 'tests/dog-engine.test.js'
       - 'tests/dog-official-rules.test.js'
   workflow_dispatch:
@@ -23,3 +27,4 @@ jobs:
           node-version: '22'
       - run: node --check dog/engine.js
       - run: node --test tests/dog-engine.test.js tests/dog-official-rules.test.js
+      - run: node --test --test-name-pattern=DOG tests/shared-lobby.test.js
