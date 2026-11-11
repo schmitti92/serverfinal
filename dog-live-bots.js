@@ -8,7 +8,7 @@ import {bossJoin,bossTeam,DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog
 import {dogGateProgress,dogGateMapView,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {boss10Ready,boss10State,boss10MiniAnswer,boss10Finish} from './dog-boss10.js';
 import {groupBossReady,groupBossState,groupBossMiniAnswer,groupBossFinish} from './dog-group-boss.js';
-import {dogMiniTargetIndex} from './dog-boss-minigames.js';
+import {dogMiniTargetIndex,dogMiniReactionPosition} from './dog-boss-minigames.js';
 
 export const DOG_LIVE_BOT_IDS=Object.freeze(['dog-live-bot-nova','dog-live-bot-titan']);
 export const DOG_LIVE_PILOT_COLLECTION='dog_live_pilot_owner_v1';
@@ -92,21 +92,38 @@ export function readyWithLiveBots(gate,progressRaw,teamRaw,uid,humanHero,now=Dat
   groupBossReady(gate,next,team,uid,heroes,now,rand);
  return next;
 }
-function botAnswer(round,shouldSucceed,elapsed){
- if(round.kind==='math')return shouldSucceed?round.correctIndex:(round.correctIndex+1)%3;
+function botAnswer(round,shouldSucceed,elapsed,step=0){
+ if(round.kind==='math'){
+  const correct=round.puzzles?.[step]?.correctIndex??round.correctIndex;
+  return shouldSucceed?correct:(correct+1)%3;
+ }
  if(round.kind==='dodge'){
+  const attack=round.attacks?.[step]||round;
   const safe=Array.from({length:round.lanes},(_,i)=>i)
-   .find(i=>i!==round.dangerIndex&&i!==round.secondDangerIndex);
-  return shouldSucceed?safe:round.dangerIndex;
+   .find(i=>i!==attack.dangerIndex&&i!==attack.secondDangerIndex);
+  return shouldSucceed?safe:attack.dangerIndex;
  }
  if(round.kind==='reaction')return shouldSucceed?1:0;
  const target=dogMiniTargetIndex(round,elapsed);
  return shouldSucceed?target:(target+1)%round.lanes;
 }
-/** Process only the 2 bot answer slots and the ordinary fight settlement.
- * Intended for an already-authorized GET, re-read inside a transaction.
- * A slow tab/reconnect can fill missed 7-second rounds exactly once.
- */
+function botTimeForStep(round,step){
+ if(!round.maxSteps)return round.kind==='reaction'?round.targetMs:round.startMs+1800;
+ if(round.kind==='dodge')return round.attacks[step].startMs+900;
+ if(round.kind==='math')return round.startMs+620+step*880;
+ if(round.kind==='target')return round.startMs+550+step*2000;
+ // Three changing-speed reaction strikes: scan each ~2.66s interval for
+ // a genuine server-verifiable green crossing, no secret timing bypass.
+ const min=round.startMs+Math.floor(step*8000/3)+450;
+ const max=round.startMs+Math.floor((step+1)*8000/3)-220;
+ for(let at=min;at<max;at+=20)
+  if(Math.abs(dogMiniReactionPosition(round,at)-.5)<=round.zoneRadius*.5)
+   return at;
+ return min;
+}
+/** Play bot input in one aggregate GET transaction rather than one Firestore
+ * document write per simulated tap. Missed windows are reconstructed from
+ * the original immutable server clock; each step is individually scored. */
 export function advanceLiveBotFight(gate,progressRaw,teamRaw,uid,now=Date.now(),rand=randomInt){
  const progress=dogGateProgress(progressRaw);
  if(!isLiveBotTeam(teamRaw,uid))return {progress,changed:false};
@@ -114,15 +131,20 @@ export function advanceLiveBotFight(gate,progressRaw,teamRaw,uid,now=Date.now(),
  if(state.phase!=='fighting')return {progress,changed};
  for(const [index,id] of DOG_LIVE_BOT_IDS.entries()){
   for(const round of state.miniGames?.rounds||[]){
-   if(state.miniGames?.answers?.[id]?.[round.round])continue;
-   const elapsed=round.kind==='reaction'?round.targetMs:round.startMs+1800;
-   if(now<state.startedAt+elapsed)continue;
-   const pass=(state.attempt*17+gate+index*31+round.round*23)%100<(index===0?82:68);
-   const answer=botAnswer(round,pass,elapsed);
-   const at=state.startedAt+elapsed;
-   const result=gate===10?boss10MiniAnswer(next,id,round.round,answer,at):
-    groupBossMiniAnswer(gate,next,id,round.round,answer,at);
-   next=result.progress;changed=true;state=bossAt(next,gate);
+   const limit=round.maxSteps||1;
+   for(let step=0;step<limit;step++){
+    const previous=state.miniGames?.answers?.[id]?.[round.round];
+    if(round.maxSteps?previous?.attempts?.[step]:previous)continue;
+    const elapsed=botTimeForStep(round,step);
+    if(now<state.startedAt+elapsed)break;
+    const pass=(state.attempt*17+gate+index*31+round.round*23+step*13)%100<
+     (index===0?82:68);
+    const answer=botAnswer(round,pass,elapsed,step);
+    const at=state.startedAt+elapsed;
+    const result=gate===10?boss10MiniAnswer(next,id,round.round,answer,at,step):
+     groupBossMiniAnswer(gate,next,id,round.round,answer,at,step);
+    next=result.progress;changed=true;state=bossAt(next,gate);
+   }
   }
  }
  if(now>=state.endsAt){
