@@ -6,7 +6,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
-import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from './dog-gates.js';
+import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
  dogMiniBonus,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
@@ -53,17 +53,20 @@ export function boss10State(raw){
 const eligible=p=>REQUIRED_NORMALS.every(g=>p?.normals?.includes(g));
 export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
+ const skipCooldown=boss.phase==='cooldown'&&dogDeveloperCooldownBypass(progress,team,uid);
  const members=team.members.map(m=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
-  ready:boss.ready.includes(m.uid),reacted:boss.reactions.includes(m.uid),
+  ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(progress.people[m.uid])}));
  return {gate:10,name:'Der Aschewächter',bossHp:dogGroupBossHp(10),
   teamReady:team.members.length===3,isMember:team.members.some(m=>m.uid===uid),
   participantCount:boss.phase==='fighting'||boss.phase==='victory'||boss.phase==='cooldown'?boss.roster.length:boss.ready.length,
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&boss.ready.length>=1,
   eligible:eligible(progress.people[uid]),members,
-  ...boss,miniGames:dogPublicMiniGames(boss.miniGames,uid),won:progress.sharedBosses.includes(10),
+  ...boss,...(skipCooldown?{phase:'waiting',ready:[],cooldownUntil:0}:{}),
+  miniGames:dogPublicMiniGames(boss.miniGames,uid),won:progress.sharedBosses.includes(10),
+  developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
-  cooldownRemainingMs:boss.phase==='cooldown'?Math.max(0,boss.cooldownUntil-now):0};
+  cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
 }
 /** Freeze the participating team at the exact moment the fight starts.
  * Three ready heroes auto-start; one or two require an explicit start request. */
@@ -101,7 +104,7 @@ export function boss10Ready(progressRaw,teamRaw,uid,heroByUid={},now=Date.now(),
  if(boss.phase==='fighting')throw Error('DOG_BOSS10_RUNNING');
  if(boss.phase==='victory')throw Error('DOG_BOSS10_ALREADY_WON');
  if(boss.phase==='cooldown'){
-  if(now<boss.cooldownUntil)throw Error('DOG_BOSS10_COOLDOWN');
+  if(now<boss.cooldownUntil&&!dogDeveloperCooldownBypass(progress,team,uid))throw Error('DOG_BOSS10_COOLDOWN');
   boss={...starter(),attempt:boss.attempt+1};
  }
  if(boss.ready.includes(uid))return progress;
