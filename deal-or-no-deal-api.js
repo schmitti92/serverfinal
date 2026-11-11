@@ -155,7 +155,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const walletCollection='deal_or_no_deal_wallets_v1';
  const payoutCollection='deal_or_no_deal_payouts_v1';
   // One in-game purchase per player and match; all stored amounts are cents.
-  const DOUBLE_BOOST_COST_CENTS=500000000;
+  const DOUBLE_BOOST_COST_CENTS=300000000;
  const inventoryCollection='deal_or_no_deal_inventory_v1';
  // Cache only GET membership checks for 2 seconds; all mutations use a fresh room read.
  // Never cache membership failures. A removed user can retain read access for at most 2s.
