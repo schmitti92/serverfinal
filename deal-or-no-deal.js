@@ -30,7 +30,7 @@ function pickBankerStyle(random=crypto.randomInt){
 const shuffle=(a,rand=crypto.randomInt)=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
 const active=g=>g.players.filter(p=>p.deal===null);
 const locked=g=>new Set(g.players.map(p=>p.case).filter(Number.isInteger));
-const free=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i));
+const free=g=>{const queued=new Set(g.openingBatch?.picks?.map(p=>p.case)||[]);return Array.from({length:g.values.length},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i)&&!queued.has(i));};
 const publicRemaining=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!g.opened.includes(i)).map(i=>g.values[i]);
 function create(players,random=crypto.randomInt,caseCount=27){
  if(![26,27,28,29,30].includes(caseCount))throw Error('INVALID_CASE_COUNT');
@@ -41,7 +41,10 @@ function create(players,random=crypto.randomInt,caseCount=27){
  // Existing games keep their saved schedule and are never rerolled.
  const thirty=caseCount===30?pick30BankerSchedule(random):null;
  const bankerStyle=pickBankerStyle(random);
- return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null,doublePayout:false})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerStyle,bankerSchedule:thirty?thirty.steps:caseCount===29?[...STEPS_29]:null,...(thirty?{bankerScheduleVariant:thirty.variant}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
+ // Three queued picks per player, only for newly started 30-case matches.
+ const firstBatchCount=caseCount===30?players.length*3:0;
+ const new30Schedule=thirty?openingToSteps([firstBatchCount,...BANKER_30_OPENINGS[thirty.variant-1].filter(target=>target>firstBatchCount)]):null;
+ return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null,doublePayout:false})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerStyle,bankerSchedule:thirty?new30Schedule:caseCount===29?[...STEPS_29]:null,...(thirty?{openingBatch:{picks:[],perPlayer:3,startedAt:null,intervalMs:650,endsAt:null}}:{}),...(thirty?{bankerScheduleVariant:thirty.variant}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
 }
 function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnIndex+i)%g.order.length];if(g.players.some(p=>p.id===id&&p.deal===null))return id}return null}
 function apply(g,actor,command,random=crypto.randomInt){
@@ -52,7 +55,25 @@ function apply(g,actor,command,random=crypto.randomInt){
  const next=structuredClone(g),p=next.players.find(p=>p.id===String(actor));if(!p)throw Error('NOT_PARTICIPANT');
  if(next.phase==='select'){
   if(command.type!=='select'||next.order[next.selectionIndex]!==p.id||!Number.isInteger(command.case)||command.case<0||command.case>=next.values.length||locked(next).has(command.case))throw Error('INVALID_SELECTION');
-  p.case=command.case;next.selectionIndex++;if(next.selectionIndex===next.players.length)next.phase='open';
+  p.case=command.case;next.selectionIndex++;if(next.selectionIndex===next.players.length)next.phase=next.openingBatch?'batch-pick':'open';
+ }else if(next.phase==='batch-pick'){
+  const batch=next.openingBatch,actor=next.order[Math.floor(batch.picks.length/batch.perPlayer)];
+  if(command.type!=='open'||actor!==p.id||!Number.isInteger(command.case)||!free(next).includes(command.case))throw Error('INVALID_BATCH_PICK');
+  batch.picks.push({case:command.case,actor:p.id});
+  if(batch.picks.length===next.players.length*batch.perPlayer){
+   batch.startedAt=Date.now()+500;
+   batch.endsAt=batch.startedAt+batch.picks.length*batch.intervalMs+350;
+   next.phase='batch-reveal';
+  }
+ }else if(next.phase==='batch-reveal'){
+  const batch=next.openingBatch;
+  if(command.type!=='ack-batch'||!batch||!Number.isFinite(batch.endsAt)||Date.now()<batch.endsAt)throw Error('INVALID_BATCH_ACK');
+  for(const selected of batch.picks){
+   next.opened.push(selected.case);
+   next.events.push({type:'opened',case:selected.case,amount:next.values[selected.case],playerId:selected.actor,eventId:crypto.randomUUID()});
+  }
+  next.roundOpened=batch.picks.length;
+  offer(next,random);
  }else if(next.phase==='open'){
   if(command.type!=='open'||nextTurn(next)!==p.id||!free(next).includes(command.case))throw Error('INVALID_OPEN');
   // One authoritative reveal clock for ALL players; the future start gives
@@ -149,5 +170,5 @@ function offer(g,random){
  g.phase='decision';
 }
 function payoutFor(g,p){const amount=p.deal??g.values[p.case];const payout=amount*(p.doublePayout===true?2:1);if(!Number.isSafeInteger(payout)||payout<0)throw Error('INVALID_PAYOUT');return payout}
-function publicView(g){const {values,commands,bankerStyle,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId,...(Number.isFinite(g.pending.startedAt)?{startedAt:g.pending.startedAt}:{})}:null,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:payoutFor(g,p)})):null};}
+function publicView(g){const {values,commands,bankerStyle,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId,...(Number.isFinite(g.pending.startedAt)?{startedAt:g.pending.startedAt}:{})}:null,openingBatch:g.openingBatch?{...g.openingBatch,...(g.phase==='batch-reveal'?{reveals:g.openingBatch.picks.map(p=>({...p,amount:g.values[p.case]}))}:{})}:undefined,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:payoutFor(g,p)})):null};}
 export {drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,free,active,publicRemaining,nextTurn};
