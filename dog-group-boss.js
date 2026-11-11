@@ -156,7 +156,7 @@ const startFight=(gate,progress,team,ready,heroes,now,rand=randomInt)=>{
  const previous=stateAt(progress,gate);
  return withState(progress,gate,{...previous,ready:[...ready],roster,
   phase:'fighting',startedAt:now,endsAt:now+DOG_BOSS10_DURATION_MS,
-  chancePercent,reactions:[],miniGames:dogCreateMiniGames(gate,rand,{exchange:'cinematic'})},now);
+  chancePercent,reactions:[],miniGames:dogCreateMiniGames(gate,rand,{exchange:'endgame'})},now);
 };
 export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.now(),rand=randomInt){
  ensureGate(gate);
