@@ -337,6 +337,23 @@ test('Ten group bosses scale with old gear, not the newly unlocked next tier',()
  assert.throws(()=>dogGroupBossHp(15));
 });
 
+test('Group bosses gain small late-chapter HP pressure while keeping the 30-second setup',()=>{
+ let prior=0;
+ for(let gate=10;gate<=100;gate+=10){
+  const gear=gate/10;
+  const cap=gear*DOG_SKILLS_PER_BOSS;
+  const skills={attack_power:Math.floor(cap*.4),destruction:Math.floor(cap*.4),
+   critical:Math.floor(cap*.4),double_strike:Math.floor(cap*.4),
+   precision:Math.floor(cap*.4)};
+  const oldHp=3*6*(dogExpectedSoloDamage(gear,skills)/DOG_SOLO_ATTACKS)*.85;
+  const actual=dogGroupBossHp(gate);
+  assert.ok(actual>prior);
+  assert.equal(actual,Math.ceil(oldHp*(1+.006*(gear-1))));
+  assert.ok(actual<=Math.ceil(oldHp*1.054),'long-term boss HP scaling must stay controlled');
+  prior=actual;
+ }
+});
+
 test('Late-stage chests grow moderately while top forge materials stay rare',()=>{
  const chestAverage={wood:1.65,iron:3.5,silver:6,gold:9,legendary:15};
  const average=chapter=>DOG_CHEST_STAGES[chapter].chestWeights

@@ -189,8 +189,13 @@ export function dogGroupBossHp(gate){
  const gear=gate/10,cap=gear*DOG_SKILLS_PER_BOSS;
  const skills={attack_power:Math.floor(cap*.4),destruction:Math.floor(cap*.4),
   critical:Math.floor(cap*.4),double_strike:Math.floor(cap*.4),precision:Math.floor(cap*.4)};
- // 3 players, each 6 attacks in 30s. 85% of expected team output.
- return Math.ceil(3*6*(dogExpectedSoloDamage(gear,skills)/DOG_SOLO_ATTACKS)*.85);
+ // Three players, six attacks each in a 30-second encounter. A modest
+ // +0.6% HP per further group-boss chapter offsets the stronger endgame
+ // skills without invalidating the intended well-geared 3-hero route.
+ // Gate 10 remains unchanged; Gate 100 is only 5.4% above the old HP.
+ const chapterPressure=1+.006*(gear-1);
+ return Math.ceil(3*6*(dogExpectedSoloDamage(gear,skills)/DOG_SOLO_ATTACKS)*
+  .85*chapterPressure);
 }
 /** A mini-boss scales its attacks with the armor level newly unlocked by the
  * prior shared boss. 80% telegraphed retaliation probability, not certainty. */
