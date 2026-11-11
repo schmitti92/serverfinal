@@ -211,11 +211,11 @@ export function dogNormalGateChance({gate,weaponLevel=1,armorLevel=1,skills={}}=
   'vitality','resilience','regeneration','blocking','evasion','last_stand']));
  const mastery=(attackMastery+defenseMastery)/2;
  // The first chapter starts at gear 1; only mastery can improve its odds.
- // In later chapters the upgrade from gear N-1 to N adds at most 20 points.
+ // A full equipment upgrade contributes more than the skill mastery bonus.
  const weaponReady=stage===0?0:Math.max(0,Math.min(1,gearLevel(weaponLevel)-(recommendedEquipment-1)));
  const armorReady=stage===0?0:Math.max(0,Math.min(1,gearLevel(armorLevel)-(recommendedEquipment-1)));
  const equipmentReady=(weaponReady+armorReady)/2;
- const chancePercent=Math.max(30,Math.min(80,Math.round(30+20*equipmentReady+30*mastery)));
+ const chancePercent=Math.max(30,Math.min(80,Math.round(30+30*equipmentReady+20*mastery)));
  return {gate,chancePercent,equipmentReady,mastery,
   recommendedEquipment,recommendedSkillCap};
 }

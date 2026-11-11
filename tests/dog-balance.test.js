@@ -267,25 +267,43 @@ test('Normal gate chance is a smooth 30% to 80% readiness calculation',()=>{
  const weak=dogNormalGateChance({gate:g,weaponLevel:1,armorLevel:1});
  assert.equal(weak.chancePercent,30);
  const good=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2});
- assert.equal(good.chancePercent,50);
+ assert.equal(good.chancePercent,60);
  const skills={attack_power:10,critical:10,vitality:10,resilience:10};
  const best=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2,skills});
  assert.equal(best.chancePercent,80);
  const medium=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2,
    skills:{attack_power:5,critical:5,vitality:5,resilience:5}});
- assert.equal(medium.chancePercent,65);
+ assert.equal(medium.chancePercent,70);
  assert.equal(dogNormalGateChance({gate:13,weaponLevel:1,armorLevel:1,
-  skills:{attack_power:5,critical:5,vitality:5,resilience:5}}).chancePercent,45);
+  skills:{attack_power:5,critical:5,vitality:5,resilience:5}}).chancePercent,40);
  assert.ok(dogNormalGateChance({gate:4}).chancePercent>=30);
  assert.throws(()=>dogNormalGateChance({gate:5}),/INVALID_NORMAL_GATE/);
  assert.throws(()=>dogNormalGateChance({gate:10}),/INVALID_NORMAL_GATE/);
  assert.throws(()=>dogNormalGateChance({gate:100}),/INVALID_NORMAL_GATE/);
 });
 
+test('Equipment is more influential than full mastery on every normal chapter',()=>{
+ for(const gate of [13,33,63,93]){
+  const recommended=Math.floor((gate-1)/10)+1;
+  const masterySkills={attack_power:recommended*5,critical:recommended*5,
+   vitality:recommended*5,resilience:recommended*5};
+  const base={gate,weaponLevel:recommended-1,armorLevel:recommended-1};
+  const weak=dogNormalGateChance(base);
+  const skillOnly=dogNormalGateChance({...base,skills:masterySkills});
+  const gearOnly=dogNormalGateChance({...base,weaponLevel:recommended,
+   armorLevel:recommended});
+  assert.equal(weak.chancePercent,30);
+  assert.equal(skillOnly.chancePercent,50);
+  assert.equal(gearOnly.chancePercent,60);
+  assert.equal(dogNormalGateChance({...base,weaponLevel:recommended,
+   armorLevel:recommended,skills:masterySkills}).chancePercent,80);
+ }
+});
+
 test('Normal fight uses one server random draw and is retry-safe at the API level',()=>{
  const options={gate:13,weaponLevel:2,armorLevel:2};
- assert.equal(dogResolveNormalGate(options,()=>4999).win,true);
- assert.equal(dogResolveNormalGate(options,()=>5000).win,false);
+ assert.equal(dogResolveNormalGate(options,()=>5999).win,true);
+ assert.equal(dogResolveNormalGate(options,()=>6000).win,false);
  assert.equal(dogResolveNormalGate({...options,skills:{attack_power:10,critical:10,
   vitality:10,resilience:10}},()=>7999).win,true);
  assert.throws(()=>dogResolveNormalGate(options,()=>10000),/INVALID_RANDOM/);
@@ -317,4 +335,21 @@ test('Ten group bosses scale with old gear, not the newly unlocked next tier',()
   prior=hp;
  }
  assert.throws(()=>dogGroupBossHp(15));
+});
+
+test('Late-stage chests grow moderately while top forge materials stay rare',()=>{
+ const chestAverage={wood:1.65,iron:3.5,silver:6,gold:9,legendary:15};
+ const average=chapter=>DOG_CHEST_STAGES[chapter].chestWeights
+  .reduce((sum,w,i)=>sum+w/100*chestAverage[DOG_CHEST_TYPE_IDS[i]],0);
+ assert.ok(Math.abs(average(0)-1.65)<1e-12);
+ assert.ok(Math.abs(average(9)-6.8425)<1e-12);
+ for(let chapter=1;chapter<10;chapter++)
+  assert.ok(average(chapter)>=average(chapter-1),
+   'the material expectation must not decrease as players progress');
+ assert.ok(average(9)<5*average(0));
+ const firstIron=average(0)*DOG_CHEST_STAGES[0].weights[0]/100/3;
+ const lastDragonsteel=average(9)*DOG_CHEST_STAGES[9].weights[4]/100/3;
+ assert.ok(firstIron<0.6,'starting upgrades still require multiple chests');
+ assert.ok(lastDragonsteel<0.15,'legendary upgrades remain a long-term project');
+ assert.deepEqual(dogEquipmentCost('weapon',10),{mithril:2,dragonsteel:1});
 });
