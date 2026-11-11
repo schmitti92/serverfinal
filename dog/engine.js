@@ -94,7 +94,7 @@ function deal(s,rng){
   }
   history(s,'Runde '+s.round+': '+count+' Karten pro Person');
 }
-export function exchangeCard(original,seat,cardId){
+export function exchangeCard(original,seat,cardId,rng=Math.random){
   const s=clone(original);
   if(s.phase!=='exchange'||s.exchanges[seat]!==null)throw Error('EXCHANGE_NOT_ALLOWED');
   const hand=s.hands[seat],at=hand.findIndex(x=>x.id===cardId);
@@ -104,7 +104,7 @@ export function exchangeCard(original,seat,cardId){
     for(let i=0;i<4;i++)s.hands[(i+2)%4].push(s.exchanges[i]);
     s.exchanges=[null,null,null,null];s.phase='play';s.current=s.starter;
     history(s,'Alle Partnerkarten wurden verdeckt getauscht');
-    settle(s);
+    settle(s,rng);
   }
   s.revision++;return s;
 }
@@ -218,7 +218,7 @@ function cardFor(s,seat,id){const c=s.hands[seat].find(x=>x.id===id);if(!c)throw
 function discardCard(s,seat,id){const index=s.hands[seat].findIndex(x=>x.id===id);if(index<0)throw Error('CARD_NOT_HELD');s.discard.push(s.hands[seat].splice(index,1)[0]);}
 export function takeAction(original,seat,action,rng=Math.random){
   const s=clone(original);
-  if(s.phase==='exchange')return exchangeCard(s,seat,action.cardId);
+  if(s.phase==='exchange')return exchangeCard(s,seat,action.cardId,rng);
   if(s.current!==seat)throw Error('NOT_YOUR_TURN');
   const avail=legalActions(s,seat);
   const found=avail.find(m=>m.type===action.type&&m.cardId===action.cardId&&m.as===action.as&&m.pieceId===action.pieceId&&m.targetId===action.targetId&&m.steps===action.steps&&m.viaGoal===action.viaGoal);
