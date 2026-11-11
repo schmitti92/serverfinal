@@ -38,7 +38,8 @@ export function developerGateSetup(progressRaw,teamRaw,ownerUid,limit,now=Date.n
  }
  // Intentionally discard previous fight state and wins from the selected boss onward.
  // The final DOG unlock is NEVER generated as part of developer preparation.
- return dogGateProgress({...prior,version:1,people,sharedBosses,groupBosses:{},updatedAt:now});
+ return dogGateProgress({version:1,people,sharedBosses,groupBosses:{},
+  developerBossCooldownDisabledFor:prior.developerBossCooldownDisabledFor,updatedAt:now});
 }
 
 export function developerAddMaterials(inventoryRaw,resource,amount,now=Date.now()){
@@ -118,7 +119,7 @@ export function installDogDeveloperApi(app,{verifyProfile,getFirestore,clock=Dat
      tx.get(owner),tx.get(receiptRef),tx.get(team),tx.get(progress),tx.get(bag)]);
     if(ownerSnap.data()?.uid!==uid)throw Error('DOG_DEVELOPER_NOT_AVAILABLE');
     const inputs={action,gate:gate??null,resource:resource??null,amount:amount??null,
-     disabled:cooldown?disabled:null};
+     ...(cooldown?{disabled}:{})};
     if(receiptSnap.exists){
      const last=receiptSnap.data();
      if(JSON.stringify(last.inputs)!==JSON.stringify(inputs))
