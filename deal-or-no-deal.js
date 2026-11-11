@@ -169,6 +169,19 @@ function offer(g,random){
  g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants:active(g).map(p=>p.id),decisions:[]});
  g.phase='decision';
 }
-function payoutFor(g,p){const amount=p.deal??g.values[p.case];const payout=amount*(p.doublePayout===true?2:1);if(!Number.isSafeInteger(payout)||payout<0)throw Error('INVALID_PAYOUT');return payout}
+// This is the ORIGINAL game result. The purchased ×2 never changes rankings,
+// banker decisions, winners, or any special reward.
+function payoutFor(g,p){
+ const amount=p.deal??g.values[p.case];
+ if(!Number.isSafeInteger(amount)||amount<0)throw Error('INVALID_PAYOUT');
+ return amount;
+}
+// Only the final wallet settlement applies the purchased bonus. It never
+// participates in game results or determines who wins the match.
+function cashCreditFor(g,p){
+ const base=payoutFor(g,p),credit=base*(p.doublePayout===true?2:1);
+ if(!Number.isSafeInteger(credit)||credit<0)throw Error('INVALID_PAYOUT');
+ return credit;
+}
 function publicView(g){const {values,commands,bankerStyle,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId,...(Number.isFinite(g.pending.startedAt)?{startedAt:g.pending.startedAt}:{})}:null,openingBatch:g.openingBatch?{...g.openingBatch,...(g.phase==='batch-reveal'?{reveals:g.openingBatch.picks.map(p=>({...p,amount:g.values[p.case]}))}:{})}:undefined,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:payoutFor(g,p)})):null};}
-export {drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,free,active,publicRemaining,nextTurn};
+export {drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,cashCreditFor,free,active,publicRemaining,nextTurn};
