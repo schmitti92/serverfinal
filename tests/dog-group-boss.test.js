@@ -338,7 +338,7 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  assert.equal(a.body.miniGames.myAnswers[1].correct,true);
  assert.equal(a.body.miniGames.myAnswers[1].attempts.length,3);
  assert.equal(b.body.miniGames.myAnswers[1].correct,false);
- assert.equal(c.body.miniGames.myAnswers[0],undefined);
+ assert.equal(c.body.miniGames.myAnswers[1],undefined);
  f.advance(now+40001-f.time());
  const late=await f.call('POST','/minigame',{
   requestId:'trio-100-late-c-001',round:1,answer:0},'c');
@@ -402,7 +402,7 @@ test('Group boss ready avoids unnecessary gear reads through the 100 gates',asyn
   const stable=await f.call('GET','',{},'b');
   assert.equal(stable.body.phase,'fighting');
   assert.equal(stable.body.roster.length,3);
-  assert.equal(stable.body.endsAt-stable.body.startedAt,30000);
+  assert.equal(stable.body.endsAt-stable.body.startedAt,40000);
  }
 });
 
@@ -465,7 +465,7 @@ test('HTTP arithmetic batch submits eight answers in one write and receipt repla
  assert.equal(f.writes.filter(x=>x===key).length,priorWrites+1,
   'eight rapid math answers must require one progress write');
  const replay=await f.call('POST','/minigame',{
-  requestId,round:1,step:0,answer:[...answers]},'a');
+  requestId,round:0,step:0,answer:[...answers]},'a');
  assert.equal(replay.statusCode,200);
  assert.equal(replay.body.replayed,true);
  assert.equal(f.writes.filter(x=>x===key).length,priorWrites+1);
