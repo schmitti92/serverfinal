@@ -52,20 +52,54 @@ export const dogMiniDifficulty=gate=>{
   targetStepMs:Math.max(530,1300-tier*75),
   mathTier:tier>=9?4:tier>=7?3:tier>=4?2:1});
 };
-const mathPuzzle=(difficulty,rand)=>{
- const {mathTier,tier}=difficulty;let a,b,answer,question;
- if(mathTier===1){a=6+draw(rand,10+tier*3);b=4+draw(rand,10+tier*2);
-  answer=a+b;question=a+' + '+b+' = ?';}
- else if(mathTier===2){a=3+draw(rand,6+tier);b=3+draw(rand,7);
-  answer=a*b;question=a+' × '+b+' = ?';}
- else if(mathTier===3){b=3+draw(rand,7);answer=4+draw(rand,12+tier);
-  question=(b*answer)+' ÷ '+b+' = ?';}
- else{a=4+draw(rand,9);b=4+draw(rand,9);const c=3+draw(rand,17);
-  answer=a*b+c;question=a+' × '+b+' + '+c+' = ?';}
- const delta=mathTier>=3?3+draw(rand,6):2+draw(rand,5);
+/** Eight deliberately progressive challenges.
+ * The step is part of the server-stored puzzle (never inferred from client
+ * choices); higher gates scale operands, but every new item has a stronger
+ * arithmetic demand than the previous one.
+ * Results are nonnegative, integral and within the 0–2000 answer contract.
+ */
+const mathPuzzle=(difficulty,rand,step=0)=>{
+ const {tier}=difficulty;
+ let answer,question;
+ if(step===0){
+  const a=3+draw(rand,5+tier),b=2+draw(rand,6+tier);
+  answer=a+b;question=a+' + '+b+' = ?';
+ }else if(step===1){
+  const a=14+tier*2+draw(rand,17),b=9+draw(rand,14+tier);
+  answer=a+b;question=a+' + '+b+' = ?';
+ }else if(step===2){
+  const a=31+tier*3+draw(rand,24),b=8+draw(rand,13+tier);
+  answer=a-b;question=a+' − '+b+' = ?';
+ }else if(step===3){
+  const a=3+Math.floor(tier/3)+draw(rand,5),b=4+draw(rand,5+Math.floor(tier/3));
+  answer=a*b;question=a+' × '+b+' = ?';
+ }else if(step===4){
+  const divisor=3+draw(rand,6),quotient=6+Math.floor(tier/2)+draw(rand,8);
+  answer=quotient;question=(divisor*quotient)+' ÷ '+divisor+' = ?';
+ }else if(step===5){
+  const a=5+Math.floor(tier/2)+draw(rand,6),b=4+draw(rand,6);
+  const c=6+draw(rand,12+tier);
+  answer=a*b+c;question=a+' × '+b+' + '+c+' = ?';
+ }else if(step===6){
+  const a=7+Math.floor(tier/2)+draw(rand,9),b=4+draw(rand,9);
+  const c=3+draw(rand,5);
+  answer=(a+b)*c;question='('+a+' + '+b+') × '+c+' = ?';
+ }else{
+  const a=9+Math.floor(tier/2)+draw(rand,10),b=6+draw(rand,7);
+  const divisor=2+draw(rand,5);
+  // Construct the offset so the final division is always exact.
+  const c=(divisor-(a*b)%divisor)%divisor+divisor*(2+draw(rand,4));
+  answer=(a*b+c)/divisor;
+  question='('+a+' × '+b+' + '+c+') ÷ '+divisor+' = ?';
+ }
+ const delta=2+step+draw(rand,4+Math.floor(tier/3));
+ const lower=answer-delta>=0?answer-delta:answer+delta*2;
+ const wrong=[lower,answer+delta].sort((x,y)=>x-y);
  const correctIndex=draw(rand,3);
- const options=Array.from({length:3},(_,i)=>i===correctIndex?answer:
-  Math.max(0,answer+(i<correctIndex?-(correctIndex-i)*delta:(i-correctIndex)*delta)));
+ const options=Array.from({length:3},(_,i)=>{
+  if(i===correctIndex)return answer;
+  return wrong[i<correctIndex?i:i-1];
+ });
  return {question,options,correctIndex};
 };
 function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
@@ -73,7 +107,7 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
  const base={kind,round,startMs,endMs,difficulty:d.tier,
   maxSteps:TYPES[kind]};
  if(kind==='math'){
-  return {...base,puzzles:Array.from({length:8},()=>mathPuzzle(d,rand)),
+  return {...base,puzzles:Array.from({length:8},(_,step)=>mathPuzzle(d,rand,step)),
    hint:'Acht Sekunden: Löse so viele Aufgaben wie möglich!'};
  }
  if(kind==='dodge'){
