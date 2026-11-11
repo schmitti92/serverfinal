@@ -57,7 +57,7 @@ export function developerAddMaterials(inventoryRaw,resource,amount,now=Date.now(
 export function installDogDeveloperApi(app,{verifyProfile,getFirestore,clock=Date.now}){
  const check=async(req,res,next)=>{
   try{
-   const token=/^Bearer\\s+([\\w.\\-]+)$/.exec(String(req.get('authorization')||''))?.[1];
+   const token=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''))?.[1];
    const identity=token&&await verifyProfile(token);
    if(!identity?.uid)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
    req.developerUid=identity.uid;
