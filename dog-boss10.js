@@ -185,8 +185,8 @@ export function boss10React(progressRaw,uid,now=Date.now()){
  if(boss.reactions.includes(uid))return progress;
  return {...progress,boss10:{...boss,reactions:[...boss.reactions,uid]},updatedAt:now};
 }
-/** Server validates a single timed answer. The challenge and result are
- * shared, but each player has an independent score (max 10% damage boost). */
+/** Server validates each timed minigame action, including batched math.
+ * Individual bonuses are private to each participating player. */
 export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now(),step=0){
  const progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
  if(boss.phase!=='fighting'||now>=boss.endsAt||now<boss.startedAt)
@@ -194,6 +194,7 @@ export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now(),ste
  const result=dogSubmitMiniAnswer(boss.miniGames,boss.roster,uid,round,answer,now,boss.startedAt,step);
  return {progress:result.replayed?progress:{...progress,boss10:{...boss,miniGames:result.games},updatedAt:now},
   result:{type:'minigame',round,step,correct:result.correct,replayed:result.replayed,
+   ...(Number.isInteger(result.correctCount)?{correctCount:result.correctCount}:{}),
    bonusPercent:Math.round(dogMiniBonus(result.games,uid)*1000)/10}};
 }
 export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
