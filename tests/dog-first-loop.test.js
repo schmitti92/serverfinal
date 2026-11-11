@@ -334,9 +334,38 @@ function fixture(){
   }
   return res;
  }
- return {docs,reads,writes:writeKeys,call,advance:ms=>time+=ms,roll:n=>dice=n};
+ return {docs,reads,writes:writeKeys,call,advance:ms=>time+=ms,time:()=>time,roll:n=>dice=n};
 }
 
+async function completeBoss10ApiRound(f,index,users){
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ const round=f.docs.get(key).boss10.miniGames.rounds[index];
+ assert.ok(['reaction','math'].includes(round.kind));
+ for(let step=0;step<round.maxSteps;step++){
+  let at;
+  if(round.kind==='math')at=round.startMs+300+step*850;
+  else{
+   at=NaN;
+   const min=round.startMs+Math.floor(step*8000/3)+450;
+   const max=round.startMs+Math.floor((step+1)*8000/3)-220;
+   for(let t=min;t<max;t+=10)
+    if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){
+     at=t;break;
+    }
+   assert.ok(Number.isFinite(at),'a valid reaction window exists');
+  }
+  f.advance(now+at-f.time());
+  for(const token of users){
+   const answer=round.kind==='math'?round.puzzles[step].correctIndex:1;
+   const response=await f.call('POST','/api/dog/gates/boss10/minigame',{
+    requestId:'new-duo-'+index+'-'+token+'-'+step+'-unique',
+    round:index,step,answer
+   },token);
+   assert.equal(response.statusCode,200);
+   assert.equal(response.body.result.correct,true);
+  }
+ }
+}
 test('After everyone disconnects, a later boss view settles the fight exactly once',async()=>{
  const f=fixture();
  for(const [i,t] of ['a','b','c'].entries()){
@@ -419,21 +448,9 @@ test('Live boss API allows a two-player rare victory and unlocks the shared forg
  assert.equal(started.body.view.phase,'fighting');
  // Same 3-of-4 challenges for both users; server validates their
  // individual reaction timing and math choices without a client success flag.
- f.advance(6000);
- for(const t of ['a','b']){
-  const r=await f.call('POST','/api/dog/gates/boss10/minigame',{
-   requestId:'duo-reaction-'+t+'-001',round:0,answer:1},t);
-  assert.equal(r.statusCode,200);
-  assert.equal(r.body.result.correct,true);
- }
- f.advance(4500);
- for(const t of ['a','b']){
-  const r=await f.call('POST','/api/dog/gates/boss10/minigame',{
-   requestId:'duo-math-'+t+'-00001',round:1,answer:0},t);
-  assert.equal(r.statusCode,200);
-  assert.equal(r.body.result.correct,true);
- }
- f.advance(DOG_BOSS10_DURATION_MS-10500);
+ await completeBoss10ApiRound(f,0,['a','b']);
+ await completeBoss10ApiRound(f,1,['a','b']);
+ f.advance(now+DOG_BOSS10_DURATION_MS-f.time());
  const finished=await f.call('POST','/api/dog/gates/boss10/finish',{
   requestId:'duo-finish-000000001'},'b');
  assert.equal(finished.statusCode,200);
