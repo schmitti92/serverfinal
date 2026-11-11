@@ -227,7 +227,7 @@ const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  DOG_MINIGAME_BAD_ANSWER:400,DOG_MINIGAME_TOO_LATE:409,
  DOG_BOSS10_USE_MINIGAMES:409,
  NOT_DOG_TEAM_MEMBER:403,DOG_BOSS10_RECEIPT_CONFLICT:409,DOG_BOSS10_RANDOM_INVALID:500};
-export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
+export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -251,6 +251,16 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
    let progress=progressSnap.exists?progressSnap.data():null;
    if(!bossTeam(team).members.some(m=>m.uid===uid))
     throw Error('NOT_DOG_TEAM_MEMBER');
+   const tick=botLogic?.advanceLiveBotFight(10,progress,team,uid,clock(),rand);
+   if(tick?.changed){
+    progress=await db.runTransaction(async tx=>{
+     const snapshot=await tx.get(progressRef);
+     const latest=botLogic.advanceLiveBotFight(10,snapshot.exists?snapshot.data():null,
+      team,uid,clock(),rand);
+     if(latest.changed)tx.set(progressRef,latest.progress);
+     return latest.progress;
+    });
+   }
    const existing=boss10State(dogGateProgress(progress).boss10);
    // Reconcile only after the 30-second deadline. If all three browsers
    // disconnected, opening this view settles the missed result atomically.
@@ -295,7 +305,13 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      }
      const now=clock();
      let next,result,unchanged=false;
-     if(command==='ready'||command==='start'){
+     if(command==='ready'&&botLogic?.isLiveBotTeam(team,uid)){
+      const snap=await tx.get(db.collection(DOG_HERO_COLLECTION).doc(uid));
+      next=botLogic.readyWithLiveBots(10,progress,team,uid,
+       snap.exists?snap.data():null,now,rand);
+      result={type:'ready',started:boss10State(next.boss10).phase==='fighting',
+       botsReady:2};
+     }else if(command==='ready'||command==='start'){
       const heroes={},roster=bossTeam(team).members;
       const state=boss10State(dogGateProgress(progress).boss10);
       // The first two Ready clicks merely register readiness. Freeze gear

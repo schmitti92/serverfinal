@@ -228,7 +228,7 @@ const HTTP_ERRORS={
 };
 /** Authenticated and idempotent API. Only a signed-in team member can
  * read or write the group's boss state, reactions, or reward. */
-export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
+export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -256,6 +256,16 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
    const team=teamSnap.exists?teamSnap.data():null;
    if(!bossTeam(team).members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
    let progress=progressSnap.exists?progressSnap.data():null;
+   const tick=botLogic?.advanceLiveBotFight(gate,progress,team,uid,clock(),rand);
+   if(tick?.changed){
+    progress=await db.runTransaction(async tx=>{
+     const snapshot=await tx.get(progressRef);
+     const latest=botLogic.advanceLiveBotFight(gate,
+      snapshot.exists?snapshot.data():null,team,uid,clock(),rand);
+     if(latest.changed)tx.set(progressRef,latest.progress);
+     return latest.progress;
+    });
+   }
    const active=stateAt(dogGateProgress(progress),gate);
    if(active.phase==='fighting'&&active.endsAt&&clock()>=active.endsAt){
     // Reconnect settlement is one Firestore transaction, never one roll
@@ -298,7 +308,13 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
        result:receipt.data().result,replayed:true};
      }
      const now=clock();let next,result,unchanged=false;
-     if(command==='ready'||command==='start'){
+     if(command==='ready'&&botLogic?.isLiveBotTeam(team,uid)){
+      const snap=await tx.get(db.collection(DOG_HERO_COLLECTION).doc(uid));
+      next=botLogic.readyWithLiveBots(gate,progress,team,uid,
+       snap.exists?snap.data():null,now,rand);
+      result={type:'ready',started:stateAt(next,gate).phase==='fighting',
+       botsReady:2};
+     }else if(command==='ready'||command==='start'){
       const roster=bossTeam(team).members,heroes={};
       const state=stateAt(dogGateProgress(progress),gate);
       // Read gear only if this click launches the team battle. Manual
