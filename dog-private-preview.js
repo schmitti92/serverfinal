@@ -14,7 +14,7 @@ import {boss10Ready,boss10MiniAnswer,boss10Finish,boss10View,boss10State}
  from './dog-boss10.js';
 import {groupBossReady,groupBossMiniAnswer,groupBossFinish,groupBossView,groupBossState}
  from './dog-group-boss.js';
-import {dogMiniTargetIndex} from './dog-boss-minigames.js';
+import {dogMiniTargetIndex,dogMiniReactionPosition} from './dog-boss-minigames.js';
 
 export const DOG_PREVIEW_COLLECTION='dog_private_100_gates_v1';
 export const DOG_PREVIEW_DOC='single_owner_sandbox';
@@ -90,16 +90,31 @@ const reply=(data,uid,now)=>{
   boss:validBoss(gate)?gate===10?boss10View(data.team,progress,uid,now):
    groupBossView(gate,data.team,progress,uid,now):null};
 };
-const botAnswer=(round,correct,time)=>{
+const botAnswer=(round,correct,time,step=0)=>{
  if(round.kind==='reaction')return correct?1:0;
- if(round.kind==='math')return correct?round.correctIndex:(round.correctIndex+1)%3;
+ if(round.kind==='math'){
+  const index=round.puzzles?.[step]?.correctIndex??round.correctIndex;
+  return correct?index:(index+1)%3;
+ }
  if(round.kind==='dodge'){
+  const attack=round.attacks?.[step]||round;
   const safe=Array.from({length:round.lanes},(_,i)=>i)
-   .find(i=>i!==round.dangerIndex&&i!==round.secondDangerIndex);
-  return correct?safe:round.dangerIndex;
+   .find(i=>i!==attack.dangerIndex&&i!==attack.secondDangerIndex);
+  return correct?safe:attack.dangerIndex;
  }
  const index=dogMiniTargetIndex(round,time);
  return correct?index:(index+1)%round.lanes;
+};
+const botInputTime=(round,step)=>{
+ if(!round.maxSteps)return round.kind==='reaction'?round.targetMs:round.startMs+1800;
+ if(round.kind==='dodge')return round.attacks[step].startMs+900;
+ if(round.kind==='math')return round.startMs+620+step*880;
+ if(round.kind==='target')return round.startMs+550+step*2000;
+ const min=round.startMs+Math.floor(step*8000/3)+450;
+ const max=round.startMs+Math.floor((step+1)*8000/3)-220;
+ for(let t=min;t<max;t+=20)
+  if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5)return t;
+ return min;
 };
 export function advancePrivateBoss(raw,now=Date.now(),rand=randomInt){
  let data=obj(raw),progress=dogGateProgress(data.progress),changed=false;
@@ -109,19 +124,19 @@ export function advancePrivateBoss(raw,now=Date.now(),rand=randomInt){
  if(boss.phase!=='fighting')return {data,changed};
  for(const [i,id] of DOG_PREVIEW_BOTS.entries()){
   for(const round of boss.miniGames?.rounds||[]){
-   if(boss.miniGames?.answers?.[id]?.[round.round])continue;
-   const time=round.kind==='reaction'?round.targetMs:round.startMs+1800;
-   if(now<boss.startedAt+time)continue;
-   // Stable bot personalities. One or two misses are possible each fight.
-   const roll=(boss.attempt*17+gate+i*31+round.round*23)%100;
-   const correct=roll<(i===0?82:68);
-   const answer=botAnswer(round,correct,time);
-   const at=boss.startedAt+time;
-   const result=gate===10?boss10MiniAnswer(progress,id,round.round,answer,at):
-    groupBossMiniAnswer(gate,progress,id,round.round,answer,at);
-   progress=result.progress;
-   changed=true;
-   boss=active(progress,gate);
+   for(let step=0;step<(round.maxSteps||1);step++){
+    const prior=boss.miniGames?.answers?.[id]?.[round.round];
+    if(round.maxSteps?prior?.attempts?.[step]:prior)continue;
+    const time=botInputTime(round,step);
+    if(now<boss.startedAt+time)break;
+    const roll=(boss.attempt*17+gate+i*31+round.round*23+step*13)%100;
+    const correct=roll<(i===0?82:68);
+    const answer=botAnswer(round,correct,time,step);
+    const at=boss.startedAt+time;
+    const result=gate===10?boss10MiniAnswer(progress,id,round.round,answer,at,step):
+     groupBossMiniAnswer(gate,progress,id,round.round,answer,at,step);
+    progress=result.progress;changed=true;boss=active(progress,gate);
+   }
   }
  }
  if(now>=boss.endsAt){
@@ -167,8 +182,8 @@ export function actPrivateExpedition(raw,command,params={},now=Date.now(),rand=r
  }else if(command==='minigame'){
   if(!validBoss(gate))throw Error('PREVIEW_INVALID_GATE');
   const completed=gate===10?
-   boss10MiniAnswer(progress,uid,params.round,params.answer,now):
-   groupBossMiniAnswer(gate,progress,uid,params.round,params.answer,now);
+   boss10MiniAnswer(progress,uid,params.round,params.answer,now,params.step??0):
+   groupBossMiniAnswer(gate,progress,uid,params.round,params.answer,now,params.step??0);
   data={...data,progress:completed.progress};
   result=completed.result;
  }else if(command==='chest'){
