@@ -265,7 +265,7 @@ test('Existing weapon levels beyond 10 remain saved but cannot be forged higher'
 });
 
 function fixture(){
- const docs=new Map(),routes=new Map(),reads=[],writes=[];
+ const docs=new Map(),routes=new Map(),reads=[],writeKeys=[];
  let time=now;let dice=0;
  const snapshot=k=>({exists:docs.has(k),data:()=>structuredClone(docs.get(k))});
  const db={collection:c=>({doc:id=>({key:c+'/'+id,get:async()=>snapshot(c+'/'+id)})}),
@@ -276,7 +276,7 @@ function fixture(){
     create:(ref,val)=>{writes=true;changes.push(['create',ref.key,structuredClone(val)])}};
    const result=await fn(tx);
    for(const [op,k,v] of changes){if(op==='create'&&docs.has(k))throw Error('DUPLICATE');
-    docs.set(k,v);writes.push(k)}
+    docs.set(k,v);writeKeys.push(k)}
    return result;
   }};
  const app={get:(route,...fn)=>routes.set('GET '+route,fn),
@@ -309,7 +309,7 @@ function fixture(){
   }
   return res;
  }
- return {docs,reads,writes,call,advance:ms=>time+=ms,roll:n=>dice=n};
+ return {docs,reads,writes:writeKeys,call,advance:ms=>time+=ms,roll:n=>dice=n};
 }
 
 test('After everyone disconnects, a later boss view settles the fight exactly once',async()=>{
