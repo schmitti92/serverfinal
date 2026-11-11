@@ -401,3 +401,22 @@ test('Group boss manual duo start loads only the participating heroes',async()=>
   [DOG_HERO_COLLECTION+'/a',DOG_HERO_COLLECTION+'/b']);
  assert.deepEqual(started.body.view.roster.map(x=>x.uid),['a','b']);
 });
+
+test('Group boss repeated Ready returns receipt without rewriting expedition progress',async()=>{
+ const f=fixture(40),route='/ready';
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ const first=await f.call('POST',route,{requestId:'repeat-ready-first-001'},'a');
+ assert.equal(first.statusCode,200);
+ assert.equal(f.writes.filter(x=>x===key).length,1);
+ const repeated=await f.call('POST',route,{requestId:'repeat-ready-newid-001'},'a');
+ assert.equal(repeated.statusCode,200);
+ assert.equal(repeated.body.replayed,false);
+ assert.equal(f.writes.filter(x=>x===key).length,1);
+ const again=await f.call('POST',route,{requestId:'repeat-ready-newid-001'},'a');
+ assert.equal(again.body.replayed,true);
+ for(const uid of ['b','c']){
+  const res=await f.call('POST',route,{requestId:'launch-ready-'+uid+'-001'},uid);
+  assert.equal(res.statusCode,200);
+ }
+ assert.equal((await f.call('GET','',{},'b')).body.phase,'fighting');
+});

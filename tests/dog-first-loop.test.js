@@ -265,7 +265,7 @@ test('Existing weapon levels beyond 10 remain saved but cannot be forged higher'
 });
 
 function fixture(){
- const docs=new Map(),routes=new Map(),reads=[];
+ const docs=new Map(),routes=new Map(),reads=[],writes=[];
  let time=now;let dice=0;
  const snapshot=k=>({exists:docs.has(k),data:()=>structuredClone(docs.get(k))});
  const db={collection:c=>({doc:id=>({key:c+'/'+id,get:async()=>snapshot(c+'/'+id)})}),
@@ -276,7 +276,7 @@ function fixture(){
     create:(ref,val)=>{writes=true;changes.push(['create',ref.key,structuredClone(val)])}};
    const result=await fn(tx);
    for(const [op,k,v] of changes){if(op==='create'&&docs.has(k))throw Error('DUPLICATE');
-    docs.set(k,v)}
+    docs.set(k,v);writes.push(k)}
    return result;
   }};
  const app={get:(route,...fn)=>routes.set('GET '+route,fn),
@@ -309,7 +309,7 @@ function fixture(){
   }
   return res;
  }
- return {docs,reads,call,advance:ms=>time+=ms,roll:n=>dice=n};
+ return {docs,reads,writes,call,advance:ms=>time+=ms,roll:n=>dice=n};
 }
 
 test('After everyone disconnects, a later boss view settles the fight exactly once',async()=>{
@@ -540,4 +540,25 @@ test('Boss 10 manual solo battle fetches equipment only for its participant',asy
  assert.deepEqual(f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/')),
   [DOG_HERO_COLLECTION+'/hero-a']);
  assert.deepEqual(started.body.view.roster.map(x=>x.uid),['hero-a']);
+});
+
+test('Boss 10 duplicate Ready with a new receipt cannot rewrite shared progress',async()=>{
+ const f=fixture(),route='/api/dog/gates/boss10/ready';
+ const first=await f.call('POST',route,{requestId:'first-ready-noop-0001'},'a');
+ assert.equal(first.statusCode,200);
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ assert.equal(f.writes.filter(path=>path===key).length,1);
+ const repeat=await f.call('POST',route,{requestId:'new-ready-noop-000001'},'a');
+ assert.equal(repeat.statusCode,200);
+ assert.equal(repeat.body.view.phase,'waiting');
+ assert.equal(repeat.body.replayed,false,'fresh command receipt still exists');
+ assert.equal(f.writes.filter(path=>path===key).length,1,'no redundant progress write');
+ const replay=await f.call('POST',route,{requestId:'new-ready-noop-000001'},'a');
+ assert.equal(replay.body.replayed,true);
+ assert.equal(f.writes.filter(path=>path===key).length,1);
+ for(const [t,id] of [['b','final-b-ready-000001'],['c','final-c-ready-000001']]){
+  const r=await f.call('POST',route,{requestId:id},t);
+  assert.equal(r.statusCode,200);
+ }
+ assert.equal((await f.call('GET','/api/dog/gates/boss10')).body.phase,'fighting');
 });

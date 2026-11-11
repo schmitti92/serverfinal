@@ -293,7 +293,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       return {view:boss10View(team,progress,uid,clock()),result:receipt.data().result,replayed:true};
      }
      const now=clock();
-     let next,result;
+     let next,result,unchanged=false;
      if(command==='ready'||command==='start'){
       const heroes={},roster=bossTeam(team).members;
       const state=boss10State(dogGateProgress(progress).boss10);
@@ -312,6 +312,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       next=command==='ready'?
        boss10Ready(progress,team,uid,heroes,now,rand):
        boss10Start(progress,team,uid,heroes,now,rand);
+      unchanged=command==='ready'&&state.phase==='waiting'&&state.ready.includes(uid);
       result={type:command,started:boss10State(next.boss10).phase==='fighting'};
      }else if(command==='react'){
       next=boss10React(progress,uid,now);
@@ -319,11 +320,14 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      }else if(command==='minigame'){
       const solved=boss10MiniAnswer(progress,uid,round,choice,now);
       next=solved.progress;result=solved.result;
+      unchanged=solved.result.replayed===true;
      }else{
       next=boss10Finish(progress,now,rand).progress;
       result={type:'finish',...boss10State(next.boss10).result};
      }
-     tx.set(progressRef,next);
+     // A second Ready or already-scored answer still gets an exact replay
+     // receipt, but does not rewrite the shared progress document.
+     if(!unchanged)tx.set(progressRef,next);
      tx.create(receiptRef,{uid,command,requestId,
       ...(command==='minigame'?{round,answer:choice}:{}),
       createdAt:now,result});

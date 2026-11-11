@@ -297,7 +297,7 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
       return {view:groupBossView(gate,team,progress,uid,clock()),
        result:receipt.data().result,replayed:true};
      }
-     const now=clock();let next,result;
+     const now=clock();let next,result,unchanged=false;
      if(command==='ready'||command==='start'){
       const roster=bossTeam(team).members,heroes={};
       const state=stateAt(dogGateProgress(progress),gate);
@@ -315,6 +315,7 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
       next=command==='ready'?
        groupBossReady(gate,progress,team,uid,heroes,now,rand):
        groupBossStart(gate,progress,team,uid,heroes,now,rand);
+      unchanged=command==='ready'&&state.phase==='waiting'&&state.ready.includes(uid);
       result={type:command,started:stateAt(next,gate).phase==='fighting'};
      }else if(command==='react'){
       next=groupBossReact(gate,progress,uid,now);
@@ -322,11 +323,14 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
      }else if(command==='minigame'){
       const completed=groupBossMiniAnswer(gate,progress,uid,round,answer,now);
       next=completed.progress;result=completed.result;
+      unchanged=completed.result.replayed===true;
      }else{
       next=groupBossFinish(gate,progress,now,rand).progress;
       result={type:'finish',...stateAt(next,gate).result};
      }
-     tx.set(progressRef,next);
+     // Preserve a receipt for idempotency without rewriting progress when
+     // a participant is already ready or a minigame was already scored.
+     if(!unchanged)tx.set(progressRef,next);
      tx.create(receiptRef,{uid,gate,command,requestId,
       ...(command==='minigame'?{round,answer}:{}),
       result,createdAt:now});
