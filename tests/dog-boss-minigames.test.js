@@ -4,7 +4,7 @@ import {
  DOG_MINIGAME_KINDS,DOG_MINIGAME_WINDOWS,dogMiniDifficulty,
  dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
  dogSubmitMiniAnswer,dogMiniBonus,dogMiniTargetIndex,
- dogMiniReactionPosition,dogMiniDodgePenalty,dogMiniStrongRoundCount
+ dogMiniReactionPosition,dogMiniReactionValid,dogMiniDodgePenalty,dogMiniStrongRoundCount
 } from '../dog-boss-minigames.js';
 
 const start=1_800_000_000_000,roster=[{uid:'a'},{uid:'b'},{uid:'c'}];
@@ -207,4 +207,28 @@ test('Eight rapid math answers are accepted in one server-verified transaction',
  const partial=submit(plan,'b',round,answers.slice(0,4),round.endMs-100);
  assert.equal(partial.games.answers.b[round.round].attempts.length,4);
  assert.ok(Math.abs(dogMiniBonus(partial.games,'b')-.03)<1e-9);
+});
+
+
+test('Server-only reaction scoring tolerates bounded transport jitter but not arbitrary timing',()=>{
+ const {round,plan}=select('reaction',100);
+ const greens=[];
+ for(let elapsed=round.startMs+100;elapsed<round.endMs-250;elapsed+=5){
+  if(Math.abs(dogMiniReactionPosition(round,elapsed)-.5)<=round.zoneRadius)
+   greens.push(elapsed);
+ }
+ assert.ok(greens.length>5,'reaction has real green windows');
+ const after=greens.find(at=>{
+  const future=at+125;
+  return future<round.endMs&&
+   Math.abs(dogMiniReactionPosition(round,future)-.5)>round.zoneRadius;
+ });
+ assert.ok(after,'there is a server-received timestamp just after green');
+ assert.equal(dogMiniReactionValid(round,after+125),true);
+ assert.equal(submit(plan,'a',round,1,after+125).correct,true);
+ // A click entirely before the first possible window remains invalid.
+ assert.equal(dogMiniReactionValid(round,round.startMs),false);
+ assert.equal(submit(plan,'b',round,1,round.startMs+5).correct,false);
+ // The allowed window never extends beyond the real eight-second round.
+ assert.equal(dogMiniReactionValid(round,round.endMs+1),false);
 });
