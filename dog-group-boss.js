@@ -188,7 +188,7 @@ export function groupBossMiniAnswer(gate,raw,uid,round,answer,now=Date.now()){
  if(state.phase!=='fighting'||now>=state.endsAt||now<state.startedAt)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
  const answered=dogSubmitMiniAnswer(state.miniGames,state.roster,uid,round,answer,now,state.startedAt);
- return {progress:withState(progress,gate,{...state,miniGames:answered.games},now),
+ return {progress:answered.replayed?progress:withState(progress,gate,{...state,miniGames:answered.games},now),
   result:{type:'minigame',round,correct:answered.correct,
    replayed:answered.replayed,
    bonusPercent:Math.round(dogMiniBonus(answered.games,uid)*1000)/10}};
