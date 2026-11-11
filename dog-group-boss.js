@@ -290,7 +290,9 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
      if(!bossTeam(team).members.some(m=>m.uid===uid))
       throw Error('NOT_DOG_TEAM_MEMBER');
      if(receipt.exists){
-      if(receipt.data().command!==command||receipt.data().gate!==gate)
+      const prior=receipt.data();
+      if(prior.command!==command||prior.gate!==gate||
+         (command==='minigame'&&(prior.round!==round||prior.answer!==answer)))
        throw Error('DOG_GROUP_RECEIPT_CONFLICT');
       return {view:groupBossView(gate,team,progress,uid,clock()),
        result:receipt.data().result,replayed:true};
@@ -316,7 +318,9 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
       result={type:'finish',...stateAt(next,gate).result};
      }
      tx.set(progressRef,next);
-     tx.create(receiptRef,{uid,gate,command,requestId,result,createdAt:now});
+     tx.create(receiptRef,{uid,gate,command,requestId,
+      ...(command==='minigame'?{round,answer}:{}),
+      result,createdAt:now});
      return {view:groupBossView(gate,team,next,uid,now),result,replayed:false};
     });
     res.set('Cache-Control','no-store');return res.json({ok:true,...response});

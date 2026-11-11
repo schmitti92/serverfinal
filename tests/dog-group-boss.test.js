@@ -344,3 +344,27 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
   DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,9,
   'exactly three Ready, five score writes and one settlement');
 });
+
+test('Group boss receipts are bound to the exact minigame round and answer',async()=>{
+ const f=fixture(20);
+ for(const uid of ['a','b','c']){
+  const ready=await f.call('POST','/ready',{
+   requestId:'receipt-ready-'+uid+'-00001'},uid);
+  assert.equal(ready.statusCode,200);
+ }
+ f.advance(6000);
+ const requestId='receipt-mini-same-id-0001';
+ const first=await f.call('POST','/minigame',{requestId,round:0,answer:1});
+ assert.equal(first.statusCode,200);
+ const retry=await f.call('POST','/minigame',{requestId,round:0,answer:1});
+ assert.equal(retry.statusCode,200);
+ assert.equal(retry.body.replayed,true);
+ const wrongAnswer=await f.call('POST','/minigame',{requestId,round:0,answer:0});
+ assert.equal(wrongAnswer.statusCode,409);
+ assert.equal(wrongAnswer.body.error,'DOG_GROUP_RECEIPT_CONFLICT');
+ const wrongRound=await f.call('POST','/minigame',{requestId,round:1,answer:1});
+ assert.equal(wrongRound.statusCode,409);
+ assert.equal(wrongRound.body.error,'DOG_GROUP_RECEIPT_CONFLICT');
+ const view=await f.call('GET');
+ assert.equal(Object.keys(view.body.miniGames.myAnswers).length,1);
+});

@@ -286,7 +286,10 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      const progress=progressSnap.exists?progressSnap.data():null;
      if(!bossTeam(team).members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
      if(receipt.exists){
-      if(receipt.data().command!==command)throw Error('DOG_BOSS10_RECEIPT_CONFLICT');
+      const prior=receipt.data();
+      if(prior.command!==command||
+         (command==='minigame'&&(prior.round!==round||prior.answer!==choice)))
+       throw Error('DOG_BOSS10_RECEIPT_CONFLICT');
       return {view:boss10View(team,progress,uid,clock()),result:receipt.data().result,replayed:true};
      }
      const now=clock();
@@ -314,7 +317,9 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       result={type:'finish',...boss10State(next.boss10).result};
      }
      tx.set(progressRef,next);
-     tx.create(receiptRef,{uid,command,requestId,createdAt:now,result});
+     tx.create(receiptRef,{uid,command,requestId,
+      ...(command==='minigame'?{round,answer:choice}:{}),
+      createdAt:now,result});
      return {view:boss10View(team,next,uid,now),result,replayed:false};
     });
     res.set('Cache-Control','no-store');return res.json({ok:true,...answer});

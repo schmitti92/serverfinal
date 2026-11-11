@@ -488,3 +488,27 @@ test('Authenticated API completes ready/fight/forge cycle without double claims'
  assert.equal(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).sharedBosses.length,1);
  assert.ok(f.docs.has(DOG_BOSS10_RECEIPTS_COLLECTION+'/hero-a_finish-shared-000001'));
 });
+
+test('Boss 10 receipt retry checks the original minigame round and answer',async()=>{
+ const f=fixture();
+ for(const uid of ['a','b','c']){
+  const ready=await f.call('POST','/api/dog/gates/boss10/ready',{
+   requestId:'boss10-receipt-ready-'+uid+'-01'},uid);
+  assert.equal(ready.statusCode,200);
+ }
+ f.advance(6000);
+ const route='/api/dog/gates/boss10/minigame';
+ const requestId='boss10-mini-receipt-00001';
+ const first=await f.call('POST',route,{requestId,round:0,answer:1},'a');
+ assert.equal(first.statusCode,200);
+ const retry=await f.call('POST',route,{requestId,round:0,answer:1},'a');
+ assert.equal(retry.statusCode,200);
+ assert.equal(retry.body.replayed,true);
+ for(const payload of [{round:0,answer:0},{round:1,answer:1}]){
+  const conflict=await f.call('POST',route,{requestId,...payload},'a');
+  assert.equal(conflict.statusCode,409);
+  assert.equal(conflict.body.error,'DOG_BOSS10_RECEIPT_CONFLICT');
+ }
+ const state=await f.call('GET','/api/dog/gates/boss10',{},'a');
+ assert.equal(Object.keys(state.body.miniGames.myAnswers).length,1);
+});
