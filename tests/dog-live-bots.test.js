@@ -65,13 +65,13 @@ test('The real Boss-10 endpoint can automatically ready two bots and the human',
  const state=boss10State(ready.boss10);
  assert.equal(state.phase,'fighting');
  assert.deepEqual(state.roster.map(x=>x.uid),[...DOG_LIVE_BOT_IDS,'real-owner']);
- assert.equal(state.endsAt-state.startedAt,50000);
- const result=advanceLiveBotFight(10,ready,team,'real-owner',now+52000,rand);
+ assert.equal(state.endsAt-state.startedAt,60000);
+ const result=advanceLiveBotFight(10,ready,team,'real-owner',now+62000,rand);
  assert.equal(result.changed,true);
  const finished=boss10State(result.progress.boss10);
  assert.equal(finished.result.participants,3);
  assert.equal(Object.keys(finished.miniGames.answers).length,2);
- const again=advanceLiveBotFight(10,result.progress,team,'real-owner',now+53000,rand);
+ const again=advanceLiveBotFight(10,result.progress,team,'real-owner',now+63000,rand);
  assert.equal(again.changed,false);
 });
 test('Boss 20–100 uses the exact ordinary group-boss engine with real hero equipment',()=>{
@@ -82,7 +82,7 @@ test('Boss 20–100 uses the exact ordinary group-boss engine with real hero equ
   const b=groupBossState(gate,ready.groupBosses[gate]);
   assert.equal(b.phase,'fighting');
   assert.equal(b.roster.length,3);
-  const settled=advanceAllLiveBotFights(ready,team,'real-owner',now+52000,rand);
+  const settled=advanceAllLiveBotFights(ready,team,'real-owner',now+62000,rand);
   const result=groupBossState(gate,settled.progress.groupBosses[gate]);
   assert.equal(settled.changed,true);
   assert.ok(['victory','cooldown'].includes(result.phase));
