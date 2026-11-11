@@ -279,6 +279,47 @@ export function dogMiniTeamShield(raw,roster=[],throughRound=3){
 }
 /** Read-only synchronized stage summary derived entirely from persisted
  * server-verified team answers, never from client-submitted hit values. */
+/** Der gemeinsame Lebenspool besteht aus den echten Lebenspunkten aller
+ * angetretenen Helden. Das Verhältnis früherer Schildpunkte beschreibt nur
+ * den bereits bestätigten Anteil der überstandenen Bossangriffe.
+ * Reiner View-Selector: weder neue Writes noch neue Firestore-Reads.
+ */
+export function dogMiniGroupHealth(raw,roster=[],elapsed=0,heroMaximum=()=>145){
+ const players=Array.isArray(roster)?roster.filter(p=>p?.uid).slice(0,3):[];
+ const games=dogNormalizeMiniGames(raw);
+ const exchange=games?.version>=3?dogMiniExchangeView(games,players,elapsed):null;
+ const defensiveRounds=exchange?.stages?.filter(stage=>stage.completed&&stage.defensive)||[];
+ const remainingPercent=defensiveRounds.length?
+  Math.max(50,Math.min(100,Number(defensiveRounds.at(-1).shield)||100)):100;
+ const heroes=players.map(p=>{
+  const maxHp=Math.max(1,Math.min(1000000,Math.round(Number(heroMaximum(p))||145)));
+  const hp=Math.round(maxHp*remainingPercent/100);
+  return {uid:p.uid,hp,maxHp};
+ });
+ const maxHp=heroes.reduce((v,m)=>v+m.maxHp,0);
+ const hp=heroes.reduce((v,m)=>v+m.hp,0);
+ return {hp,maxHp,lost:Math.max(0,maxHp-hp),heroes,
+  remainingPercent,confirmedDefenses:defensiveRounds.length};
+}
+
+/** Die inszenierten, serverseitig garantierten Basistreffer reduzieren die
+ * sichtbaren Boss-LP nach den beiden offensiven Phasen. Nur ein konservativer
+ * Teil des Ausrüstungs-Schadens wird vor dem zufallsabhängigen Finale verbucht:
+ * .85 < .90 minimaler Glücksfaktor × .97 minimaler Teamschutz.
+ * Damit können LP beim Finale nur gleich bleiben oder weiter fallen.
+ */
+export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage=0){
+ const maxHp=Math.max(1,Math.round(Number(bossMaxHp)||1));
+ const games=dogNormalizeMiniGames(raw);
+ if(!games||games.version<3||!Array.isArray(roster)||!roster.length)return maxHp;
+ const resolved=games.rounds.filter(r=>
+  !['dodge','reaction'].includes(r.kind)&&elapsed>=r.endMs).length;
+ if(!resolved)return maxHp;
+ const fraction=resolved===1?.43:.83;
+ const guaranteed=Math.floor(Math.max(0,Number(baseDamage)||0)*.85*fraction);
+ return Math.max(1,maxHp-Math.min(maxHp-1,guaranteed));
+}
+
 export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null){
  const games=dogNormalizeMiniGames(raw);
  if(!games||games.version<3)return null;
