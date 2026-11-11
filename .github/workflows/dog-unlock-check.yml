@@ -1,0 +1,32 @@
+name: DOG Tor-100 Unlock Guard
+
+on:
+  push:
+    paths:
+      - shared-lobby.js
+      - dog-gates.js
+      - dog-boss.js
+      - tests/shared-lobby.test.js
+      - .github/workflows/dog-unlock-check.yml
+  pull_request:
+    paths:
+      - shared-lobby.js
+      - dog-gates.js
+      - dog-boss.js
+      - tests/shared-lobby.test.js
+      - .github/workflows/dog-unlock-check.yml
+  workflow_dispatch:
+
+jobs:
+  dog-unlock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check hub syntax
+        run: node --check shared-lobby.js
+      - name: Run focused DOG online unlock and multiplayer tests
+        run: node --test --test-name-pattern='DOG' tests/shared-lobby.test.js

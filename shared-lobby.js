@@ -502,7 +502,7 @@ function finishEisstock(ch,members){
       const player=players[seat];
       return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
     });
-    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),dogUnlockVerified:true,members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
     room.phase='playing';
     advanceDogBots(room.match);
   }
@@ -748,6 +748,10 @@ function finishEisstock(ch,members){
     const room=await mutate(code,identity,room=>{
       const match=room.match;
       if(room.phase!=='playing'||match?.game!=='dog'||match.id!==matchId)throw error(409,'DOG_MATCH_MISMATCH');
+      // Old DOG sessions created before the Tor-100 entitlement guard cannot
+      // bypass it by sending card actions directly. This avoids two extra
+      // Firestore reads on every legal turn of a verified match.
+      if(match.dogUnlockVerified!==true)throw error(403,'DOG_LOCKED_UNTIL_GATE_100');
       const seat=match.dogRoster.find(r=>r.uid===identity.uid)?.seat;
       if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};

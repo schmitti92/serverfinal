@@ -1083,3 +1083,26 @@ test('DOG unlock: before Tor 100 no access; after Tor 100 only the three heroes 
  assert.equal((await h.api('POST','/api/hub/rooms/'+outsiderRoom+'/select','dana',{game:'dog'})).status,403);
  assert.equal((await h.api('POST','/api/hub/rooms/'+outsiderRoom+'/select','dana',{game:'kniffel'})).status,200);
 });
+
+test('DOG old match without verified Tor-100 unlock cannot accept direct card moves',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ grantDogUnlock(h);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ assert.equal(started.status,200);
+ const storedKey='spielesammlung_hub_v1/'+code;
+ const current=h.docs.get(storedKey);
+ assert.equal(current.match.dogUnlockVerified,true);
+ const old=structuredClone(current);
+ delete old.match.dogUnlockVerified;
+ h.docs.set(storedKey,old);
+ const match=started.room.match;
+ const cardId=match.dog.hands[0][0].id;
+ const response=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:match.id,action:{type:'exchange',cardId},expectedRevision:match.dog.revision,
+  actionId:'dog-legacy-not-verified-01'
+ });
+ assert.equal(response.status,403);
+ assert.equal(response.error,'DOG_LOCKED_UNTIL_GATE_100');
+ assert.equal(h.docs.get(storedKey).match.dog.revision,old.match.dog.revision);
+});
