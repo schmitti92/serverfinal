@@ -59,7 +59,8 @@ const createRound=(kind,round,gate,rand)=>{
  if(kind==='dodge'){
   const dangerIndex=draw(rand,d.choices);
   return {...base,lanes:d.choices,dangerIndex,
-   hint:'Weiche auf ein freies Feld aus!'};
+   secondDangerIndex:d.choices===3?(dangerIndex+1+draw(rand,2))%3:null,
+   hint:'Wähle das einzige sichere Feld!'};
  }
  if(kind==='reaction'){
   const targetMs=startMs+3000+draw(rand,1300);
@@ -96,7 +97,10 @@ export function dogNormalizeMiniGames(raw){
    difficulty:d.tier,hint:String(round.hint||'').slice(0,120)};
   if(round.kind==='dodge'){
    const lanes=int(round.lanes,2,3,2);
-   return {...base,lanes,dangerIndex:int(round.dangerIndex,0,lanes-1,0)};
+   const dangerIndex=int(round.dangerIndex,0,lanes-1,0);
+   const other=int(round.secondDangerIndex,0,lanes-1,-1);
+   return {...base,lanes,dangerIndex,
+    secondDangerIndex:lanes===3&&other!==dangerIndex?other:null};
   }
   if(round.kind==='reaction')return {...base,
    targetMs:int(round.targetMs,fixed.startMs+2500,fixed.startMs+4500,fixed.startMs+3000),
@@ -133,7 +137,7 @@ export function dogPublicMiniGames(raw,uid){
  const games=dogNormalizeMiniGames(raw);
  if(!games)return null;
  return {gate:games.gate,rounds:games.rounds.map(x=>{
-  const {correctIndex,dangerIndex,...publicFields}=x;
+  const {correctIndex,...publicFields}=x;
   return publicFields;
  }),myAnswers:games.answers[uid]||{},
   completedBy:Object.fromEntries(Object.entries(games.answers)
@@ -163,7 +167,8 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   throw Error('DOG_MINIGAME_TOO_LATE');
  let correct=false;
  if(round.kind==='math')correct=value===round.correctIndex;
- else if(round.kind==='dodge')correct=value<round.lanes&&value!==round.dangerIndex;
+ else if(round.kind==='dodge')correct=value<round.lanes&&
+  value!==round.dangerIndex&&value!==round.secondDangerIndex;
  else if(round.kind==='reaction')correct=value===1&&
   Math.abs(elapsed-round.targetMs)<=round.toleranceMs;
  else if(round.kind==='target'){
