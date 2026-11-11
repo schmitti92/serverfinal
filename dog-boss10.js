@@ -238,6 +238,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
   }catch{return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});}
  };
  const fail=(res,e)=>{const code=String(e?.message||'');
+  if(!ERRORS[code])console.error('[dog-boss10] Unexpected error:',e);
   return res.status(ERRORS[code]||500).json({ok:false,error:ERRORS[code]?code:'DOG_BOSS10_UNAVAILABLE'});};
  const refs=()=>{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
   return {db,teamRef:db.collection(DOG_BOSS_TEAM_COLLECTION).doc(DOG_BOSS_TEAM_ID),
