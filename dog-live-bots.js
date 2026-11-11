@@ -38,14 +38,19 @@ export function addLiveBots(teamRaw,progressRaw,uid,name,now=Date.now()){
   if(!team.members.some(m=>m.uid===id))team=bossJoin(team,id,botNames[i],null,now);
  }
  if(!isLiveBotTeam(team,uid))throw Error('DOG_BOTS_TEAM_INVALID');
+ // Always retain the REAL owner as the first of three people. Normalization
+ // intentionally caps personal progress at three entries; omitting the owner
+ // would silently discard their gate wins after the next round-trip.
+ if(Object.keys(progress.people).some(id=>id!==uid&&!DOG_LIVE_BOT_IDS.includes(id)))
+  throw Error('DOG_BOTS_OTHER_PLAYERS_IN_PROGRESS');
  const prior=progress.people[uid]||empty();
- const people={...progress.people};
+ const people={[uid]:prior};
  for(const id of DOG_LIVE_BOT_IDS){
-  if(!people[id]){
-   people[id]={...empty(),currentGate:prior.currentGate,
-    highestGate:prior.highestGate,normals:[...prior.normals],
-    minis:[...prior.minis]};
-  }
+  const old=progress.people[id]||empty();
+  people[id]={...old,currentGate:Math.max(old.currentGate,prior.currentGate),
+   highestGate:Math.max(old.highestGate,prior.highestGate),
+   normals:[...new Set([...old.normals,...prior.normals])].sort((a,b)=>a-b),
+   minis:[...new Set([...old.minis,...prior.minis])].sort((a,b)=>a-b)};
  }
  return {team,progress:{...progress,people,updatedAt:now}};
 }
@@ -164,9 +169,10 @@ export function installDogLivePilotApi(app,{verifyProfile,getFirestore,clock=Dat
  const fail=(res,error)=>{
   const code=String(error?.message||'');
   return res.status(code==='LOGIN_REQUIRED'?401:
-   code==='DOG_BOTS_TEAM_FULL'||code==='DOG_BOTS_OTHER_PLAYERS_IN_TEAM'?409:
+   code==='DOG_BOTS_TEAM_FULL'||code==='DOG_BOTS_OTHER_PLAYERS_IN_TEAM'||
+   code==='DOG_BOTS_OTHER_PLAYERS_IN_PROGRESS'?409:
    code==='DOG_BOTS_RESERVED'?403:404)
-   .json({ok:false,error:['DOG_BOTS_OTHER_PLAYERS_IN_TEAM','DOG_BOTS_RESERVED',
+   .json({ok:false,error:['DOG_BOTS_OTHER_PLAYERS_IN_TEAM','DOG_BOTS_OTHER_PLAYERS_IN_PROGRESS','DOG_BOTS_RESERVED',
     'LOGIN_REQUIRED'].includes(code)?code:'DOG_PILOT_UNAVAILABLE'});
  };
  app.post('/api/dog/live-bots/enable',async(req,res)=>{
