@@ -10,10 +10,10 @@ import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
-import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
+import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_GROUP_BOSS_GATES=Object.freeze([20,30,40,50,60,70,80,90,100]);
 export const DOG_GROUP_BOSS_NAMES=Object.freeze({
@@ -57,7 +57,15 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(gate,progress,m.uid)}));
  const won=progress.sharedBosses.includes(gate);
- return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:dogGroupBossHp(gate),
+ const elapsed=Math.max(0,now-boss.startedAt);
+ const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+ const bossMaxHp=dogGroupBossHp(gate);
+ const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
+  boss.result.hpRemaining:
+  dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
+   groupBossDamagePotential(gate,boss.roster,[],null));
+ return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   isMember:members.some(m=>m.uid===uid),teamReady:members.length===3,
   eligible:eligible(gate,progress,uid),members,
   participantCount:['fighting','cooldown','victory'].includes(boss.phase)?
