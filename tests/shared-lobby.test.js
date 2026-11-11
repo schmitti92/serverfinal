@@ -1174,3 +1174,29 @@ test('DOG online phase 1: invalid actor, stale match and malformed command never
  const after=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
  assert.equal(after.match.dog.revision,original);
 });
+
+
+test('DOG online phase 1: a fifth hub member can spectate without private cards or move privileges',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const user of ['bob','cara','dana'])await h.api('POST','/api/hub/rooms/'+code+'/join',user);
+ h.identities.eric={uid:'user_eric123',name:'Eric'};
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/join','eric')).status,200);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ for(const user of ['alice','bob','cara','dana']){
+  const result=await h.api('POST','/api/hub/rooms/'+code+'/ready',user,{ready:true});
+  assert.equal(result.status,200);
+ }
+ const guest=(await h.api('GET','/api/hub/rooms/'+code,'eric')).room;
+ assert.equal(guest.match.game,'dog');
+ assert.equal(guest.match.participating,false);
+ assert.equal(guest.match.dogSeat,null);
+ assert.equal(guest.match.dog.hands.every(hand=>typeof hand.count==='number'&&!Array.isArray(hand)),true);
+ assert.equal(guest.match.dog.deck,undefined);
+ const unauthorized=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','eric',{
+  matchId:guest.match.id,expectedRevision:guest.match.dog.revision,
+  actionId:'dog-spectator-00001',action:{type:'exchange',cardId:1}
+ });
+ assert.equal(unauthorized.status,403);
+ const after=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(after.match.dog.revision,guest.match.dog.revision);
+});
