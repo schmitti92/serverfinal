@@ -10,6 +10,7 @@ import { installDogMaterialsApi } from "./dog-materials.js";
 import { installDogForgeApi } from "./dog-forge.js";
 import { installDogBossApi } from "./dog-boss.js";
 import { installDogGatesApi } from "./dog-gates.js";
+import { installDogDeveloperApi } from "./dog-developer.js";
 import { installDogBoss10Api } from "./dog-boss10.js";
 import { installDogGroupBossApi } from "./dog-group-boss.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
@@ -4306,7 +4307,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/christoph-surprise') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || req.path.startsWith('/api/dog/gates') || req.path.startsWith('/api/dog/preview') || req.path.startsWith('/api/dog/live-bots') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/christoph-surprise') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || req.path.startsWith('/api/dog/gates') || req.path.startsWith('/api/dog/developer') || req.path.startsWith('/api/dog/preview') || req.path.startsWith('/api/dog/live-bots') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
@@ -4373,6 +4374,10 @@ installDogLivePilotApi(app,{
 });
 const liveBotLogic={isLiveBotTeam,mirrorLiveBotVictory,readyWithLiveBots,
  advanceLiveBotFight,advanceAllLiveBotFights};
+installDogDeveloperApi(app,{
+ verifyProfile:profileStatsV8.identity,
+ getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
 installDogGatesApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
