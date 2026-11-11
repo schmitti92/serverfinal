@@ -7,7 +7,7 @@ test('out of turn and invalid actions leave state untouched',()=>{const g=create
 test('hold and roll limit',()=>{const g=createKniffel(members(1));applyKniffel(g,'u0',{type:'roll'},()=>2);applyKniffel(g,'u0',{type:'hold',index:0});applyKniffel(g,'u0',{type:'roll'},()=>5);assert.equal(g.dice[0],2);assert.equal(g.dice[1],5);applyKniffel(g,'u0',{type:'roll'},()=>6);const before=JSON.stringify(g);assert.throws(()=>applyKniffel(g,'u0',{type:'roll'}));assert.equal(JSON.stringify(g),before);});
 test('joker awards bonus and forces matching upper category',()=>{const g=createKniffel(members(1),'joker');applyKniffel(g,'u0',{type:'roll'},()=>6);applyKniffel(g,'u0',{type:'score',category:11});applyKniffel(g,'u0',{type:'roll'},()=>6);assert.deepEqual(allowed(g),[5]);assert.throws(()=>applyKniffel(g,'u0',{type:'score',category:8}));applyKniffel(g,'u0',{type:'score',category:5});assert.equal(g.players[0].jokerBonus,100);});
 
-test('free-entry joker opens only empty cells after a roll and is consumed by scoring',()=>{const g=createKniffel(members(1),'top-down',true);applyKniffel(g,'u0',{type:'roll'},()=>4);applyKniffel(g,'u0',{type:'roll'},()=>4);assert.deepEqual(allowed(g),[0]);applyKniffel(g,'u0',{type:'free-entry'});assert.equal(allowed(g).length,13);applyKniffel(g,'u0',{type:'score',category:7});assert.equal(g.players[0].sheet[0][7],20);assert.equal(g.players[0].freeEntryUsed,true);assert.equal(g.freeEntryActive,false);applyKniffel(g,'u0',{type:'roll'},()=>4);assert.throws(()=>applyKniffel(g,'u0',{type:'free-entry'}));});
+test('free-entry joker opens only empty cells after a roll and is consumed by scoring',()=>{const g=createKniffel(members(1),'top-down',true);applyKniffel(g,'u0',{type:'roll'},()=>4);applyKniffel(g,'u0',{type:'roll'},()=>4);assert.deepEqual(allowed(g),[0,11]);applyKniffel(g,'u0',{type:'free-entry'});assert.equal(allowed(g).length,13);applyKniffel(g,'u0',{type:'score',category:7});assert.equal(g.players[0].sheet[0][7],20);assert.equal(g.players[0].freeEntryUsed,true);assert.equal(g.freeEntryActive,false);applyKniffel(g,'u0',{type:'roll'},()=>4);assert.throws(()=>applyKniffel(g,'u0',{type:'free-entry'}));});
 test('free-entry joker cannot be used before rolling or in a disabled match',()=>{const g=createKniffel(members(1),'top-down',true);assert.throws(()=>applyKniffel(g,'u0',{type:'free-entry'}));const disabled=createKniffel(members(1),'top-down',false);applyKniffel(disabled,'u0',{type:'roll'},()=>2);assert.throws(()=>applyKniffel(disabled,'u0',{type:'free-entry'}));});
 test('free-entry joker does not overwrite occupied fields',()=>{const g=createKniffel(members(1),'top-down',true);applyKniffel(g,'u0',{type:'roll'},()=>2);applyKniffel(g,'u0',{type:'score',category:0});applyKniffel(g,'u0',{type:'roll'},()=>3);applyKniffel(g,'u0',{type:'roll'},()=>3);applyKniffel(g,'u0',{type:'free-entry'});assert.ok(!allowed(g).includes(0));assert.throws(()=>applyKniffel(g,'u0',{type:'score',category:0}));});
 
@@ -118,7 +118,7 @@ test('free-entry joker can be activated during a copied turn and score any empty
  const g=createKniffel(members(2),'triple-mixed',true,1);
  for(let i=0;i<3;i++)applyKniffel(g,'u0',{type:'roll'},()=>6);
  applyKniffel(g,'u1',{type:'copy-roll'});
- applyKniffel(g,'u0',{type:'score',category:0,column:0});
+ applyKniffel(g,'u0',{type:'score',category:11,column:0});
  assert.equal(g.turn,1);assert.ok(g.players[1].pendingCopy);
  applyKniffel(g,'u1',{type:'free-entry'});
  assert.equal(g.freeEntryActive,true);
