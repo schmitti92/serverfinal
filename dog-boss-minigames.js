@@ -10,6 +10,13 @@ export const DOG_MINIGAME_WINDOWS=Object.freeze([
  Object.freeze({startMs:11000,endMs:19000}),
  Object.freeze({startMs:19000,endMs:27000})
 ]);
+export const DOG_EXCHANGE_WINDOWS=Object.freeze([
+ Object.freeze({startMs:0,endMs:8000}),
+ Object.freeze({startMs:10000,endMs:18000}),
+ Object.freeze({startMs:20000,endMs:28000}),
+ Object.freeze({startMs:30000,endMs:38000})
+]);
+const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
 const LEGACY_WINDOWS=[{startMs:3000,endMs:10000},
  {startMs:10000,endMs:17000},{startMs:17000,endMs:24000}];
 const TYPES={math:8,dodge:3,reaction:3,target:3};
@@ -46,8 +53,8 @@ const mathPuzzle=(difficulty,rand)=>{
   Math.max(0,answer+(i<correctIndex?-(correctIndex-i)*delta:(i-correctIndex)*delta)));
  return {question,options,correctIndex};
 };
-function createRound(kind,round,gate,rand){
- const {startMs,endMs}=DOG_MINIGAME_WINDOWS[round],d=dogMiniDifficulty(gate);
+function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
+ const {startMs,endMs}=windows[round],d=dogMiniDifficulty(gate);
  const base={kind,round,startMs,endMs,difficulty:d.tier,
   maxSteps:TYPES[kind]};
  if(kind==='math'){
@@ -72,7 +79,9 @@ function createRound(kind,round,gate,rand){
   initialIndex:draw(rand,d.tier>=8?5:d.tier>=4?4:3),
   stepMs:d.targetStepMs,hint:'Treffe drei wandernde Schwachpunkte!'};
 }
-export function dogCreateMiniGames(gate,rand=randomInt){
+export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
+ if(exchange)return {version:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>
+  createRound(kind,i,gate,rand,DOG_EXCHANGE_WINDOWS)),answers:{}};
  const available=[...DOG_MINIGAME_KINDS];
  for(let i=available.length-1;i>0;i--){
   const j=draw(rand,i+1);[available[i],available[j]]=[available[j],available[i]];
@@ -103,8 +112,8 @@ function normalizeV1Round(round,i,gate){
  return {...base,question:String(round.question||'').slice(0,60),
   options,correctIndex:int(round.correctIndex,0,2,0)};
 }
-function normalizeV2Round(round,i,gate){
- const fixed=DOG_MINIGAME_WINDOWS[i],d=dogMiniDifficulty(gate);
+function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS){
+ const fixed=windows[i],d=dogMiniDifficulty(gate);
  const base={kind:round.kind,round:i,startMs:fixed.startMs,endMs:fixed.endMs,
   difficulty:d.tier,maxSteps:TYPES[round.kind],hint:String(round.hint||'').slice(0,120)};
  if(round.kind==='math'){
@@ -136,23 +145,26 @@ function normalizeV2Round(round,i,gate){
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2].includes(raw.version)||
-  !Array.isArray(raw.rounds)||raw.rounds.length!==3||
+ if(!isObj(raw)||![1,2,3].includes(raw.version)||
+  !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version===3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
+ const windows=raw.version===1?LEGACY_WINDOWS:
+  raw.version===3?DOG_EXCHANGE_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
-   round.startMs!==(raw.version===1?LEGACY_WINDOWS[i]:DOG_MINIGAME_WINDOWS[i]).startMs||
-   round.endMs!==(raw.version===1?LEGACY_WINDOWS[i]:DOG_MINIGAME_WINDOWS[i]).endMs)return null;
+   (raw.version===3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
+   round.startMs!==windows[i].startMs||
+   round.endMs!==windows[i].endMs)return null;
   return raw.version===1?normalizeV1Round(round,i,raw.gate):
-   normalizeV2Round(round,i,raw.gate);
+   normalizeV2Round(round,i,raw.gate,windows);
  });
- if(rounds.some(x=>!x)||new Set(rounds.map(x=>x.kind)).size!==3)return null;
+ if(rounds.some(x=>!x)||new Set(rounds.map(x=>x.kind)).size!==rounds.length)return null;
  const answers={};
  if(isObj(raw.answers))for(const [uid,records] of Object.entries(raw.answers).slice(0,3)){
   if(!uidOkay(uid)||!isObj(records))continue;
   answers[uid]={};
-  for(let i=0;i<3;i++){
+  for(let i=0;i<rounds.length;i++){
    const answer=records[i];
    if(raw.version===1){
     if(answer?.correct===true||answer?.correct===false)
@@ -226,7 +238,8 @@ export function dogMiniBonus(raw,uid){
  const games=dogNormalizeMiniGames(raw);if(!games)return 0;
  if(games.version===1)return Math.min(.10,
   Object.values(games.answers[uid]||{}).filter(a=>a.correct).length/3*.10);
- const weights={math:.06,dodge:.02,reaction:.04,target:.03};
+ const weights=games.version===3?{math:.06,dodge:0,reaction:0,target:.03}:
+  {math:.06,dodge:.02,reaction:.04,target:.03};
  return Math.min(.15,games.rounds.reduce((score,round)=>{
   const count=(games.answers[uid]?.[round.round]?.attempts||[]).filter(a=>a.correct).length;
   return score+weights[round.kind]*Math.min(1,count/round.maxSteps);
@@ -234,8 +247,53 @@ export function dogMiniBonus(raw,uid){
 }
 /** Missing or failed dodges have an actual defensive penalty (max 7.5 %).
  * A perfect triple dodge avoids this entirely. */
+/** Shared team shield, visible only in the four-round boss exchange.
+ * Each defensive scene can cost up to 25 points, based on verified dodges
+ * or reaction counters. Initial value 100, absolute floor 50. */
+export function dogMiniTeamShield(raw,roster=[],throughRound=3){
+ const games=dogNormalizeMiniGames(raw);
+ if(games?.version!==3)return 100;
+ const participants=Array.isArray(roster)?roster.filter(m=>m?.uid):[];
+ if(!participants.length)return 100;
+ let shield=100;
+ for(const round of games.rounds){
+  if(round.round>throughRound||
+     !['dodge','reaction'].includes(round.kind))continue;
+  const max=round.maxSteps*participants.length;
+  const correct=participants.reduce((sum,m)=>sum+
+   (games.answers[m.uid]?.[round.round]?.attempts||[])
+    .filter(a=>a.correct).length,0);
+  shield-=Math.round(25*(1-Math.min(max,correct)/max));
+ }
+ return Math.max(50,Math.min(100,shield));
+}
+/** Read-only synchronized stage summary derived entirely from persisted
+ * server-verified team answers, never from client-submitted hit values. */
+export function dogMiniExchangeView(raw,roster=[],elapsed=0){
+ const games=dogNormalizeMiniGames(raw);
+ if(games?.version!==3)return null;
+ const participants=Array.isArray(roster)?roster.filter(m=>m?.uid):[];
+ const stages=games.rounds.map((round,index)=>{
+  const attempts=participants.flatMap(m=>
+   games.answers[m.uid]?.[index]?.attempts||[]);
+  const correct=attempts.filter(a=>a.correct).length;
+  const max=round.maxSteps*participants.length;
+  const resolved=elapsed>=round.endMs;
+  const defensive=round.kind==='dodge'||round.kind==='reaction';
+  const shield=resolved&&defensive?dogMiniTeamShield(games,participants,index):null;
+  return {round:index,kind:round.kind,defensive,
+   completed:resolved,correct,max,
+   bonusPercent:!defensive&&max?
+    Math.round(100*(round.kind==='math'?.06:.03)*correct/max*10)/10:0,
+   shield};
+ });
+ const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
+ return {version:3,durationMs:40000,shield:
+  shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
+  stages};
+}
 export function dogMiniDodgePenalty(raw,uid){
- const games=dogNormalizeMiniGames(raw);if(!games||games.version===1)return 0;
+ const games=dogNormalizeMiniGames(raw);if(!games||games.version===1||games.version===3)return 0;
  const dodge=games.rounds.find(r=>r.kind==='dodge');if(!dodge)return 0;
  const correct=(games.answers[uid]?.[dodge.round]?.attempts||[])
   .filter(a=>a.correct).length;
@@ -246,7 +304,7 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  if(!games)throw Error('DOG_MINIGAME_MISSING');
  if(!Array.isArray(roster)||!roster.some(m=>m.uid===uid))
   throw Error('DOG_MINIGAME_NOT_PARTICIPANT');
- if(!Number.isSafeInteger(roundIndex)||roundIndex<0||roundIndex>2)
+ if(!Number.isSafeInteger(roundIndex)||roundIndex<0||roundIndex>=(games.rounds.length))
   throw Error('DOG_MINIGAME_BAD_ROUND');
  if(!Array.isArray(value)&&(!Number.isSafeInteger(value)||value<0||value>4))
   throw Error('DOG_MINIGAME_BAD_ANSWER');
