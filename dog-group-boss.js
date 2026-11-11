@@ -58,13 +58,15 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   eligible:eligible(gate,progress,m.uid)}));
  const won=progress.sharedBosses.includes(gate);
  const elapsed=Math.max(0,now-boss.startedAt);
+ const exchange=dogMiniExchangeView(boss.miniGames,boss.roster,elapsed,
+  hero=>groupBossDamagePotential(gate,[hero],[],null));
  const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
   hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
  const bossMaxHp=dogGroupBossHp(gate);
  const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
-   groupBossDamagePotential(gate,boss.roster,[],null));
+   groupBossDamagePotential(gate,boss.roster,[],null),Number(exchange?.cumulativeExtraDamage)||0);
  return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   isMember:members.some(m=>m.uid===uid),teamReady:members.length===3,
   eligible:eligible(gate,progress,uid),members,
@@ -73,10 +75,7 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&!won,
   ...boss,...(skipCooldown?{ready:[],cooldownUntil:0}:{}),
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
-    ...(dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt,
-       hero=>groupBossDamagePotential(gate,[hero],[],null))?
-    {exchange:dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt,
-       hero=>groupBossDamagePotential(gate,[hero],[],null))}:{})},
+    ...(exchange?{exchange}:{})},
   phase:won?'victory':skipCooldown?'waiting':boss.phase,won,
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   forgeLevel:Math.min(10,gate/10+1),
