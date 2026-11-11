@@ -308,7 +308,7 @@ export function dogMiniGroupHealth(raw,roster=[],elapsed=0,heroMaximum=()=>145){
  * .85 < .90 minimaler Glücksfaktor × .97 minimaler Teamschutz.
  * Damit können LP beim Finale nur gleich bleiben oder weiter fallen.
  */
-export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage=0){
+export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage=0,earnedExtraDamage=0){
  const maxHp=Math.max(1,Math.round(Number(bossMaxHp)||1));
  const games=dogNormalizeMiniGames(raw);
  if(!games||games.version<3||!Array.isArray(roster)||!roster.length)return maxHp;
@@ -316,7 +316,10 @@ export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage
   !['dodge','reaction'].includes(r.kind)&&elapsed>=r.endMs).length;
  if(!resolved)return maxHp;
  const fraction=resolved===1?.43:.83;
- const guaranteed=Math.floor(Math.max(0,Number(baseDamage)||0)*.85*fraction);
+ // Verified minigame success contributes only when its offensive phase
+ // has settled on the server. 0.85 is below the minimum final 0.90×0.97.
+ const guaranteed=Math.floor((Math.max(0,Number(baseDamage)||0)*fraction+
+  Math.max(0,Number(earnedExtraDamage)||0))*.85);
  return Math.max(1,maxHp-Math.min(maxHp-1,guaranteed));
 }
 
