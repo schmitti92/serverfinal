@@ -262,10 +262,11 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   throw Error('DOG_MINIGAME_BAD_STEP');
  const history=mine[roundIndex]?.attempts||[];
  if(history[step])return {games,correct:history[step].correct,replayed:true,step};
- if(step!==history.length)throw Error('DOG_MINIGAME_STEP_ORDER');
+ if(step!==history.length&&!(round.kind==='dodge'&&step>history.length))
+  throw Error('DOG_MINIGAME_STEP_ORDER');
  if(elapsed<round.startMs||elapsed>=round.endMs)
   throw Error('DOG_MINIGAME_TOO_LATE');
- if(history.length&&now-history[history.length-1].at<
+ if(history.length&&round.kind!=='dodge'&&now-history[history.length-1].at<
   (round.kind==='math'?210:round.kind==='reaction'?420:300))
   throw Error('DOG_MINIGAME_TOO_FAST');
  let correct=false;
@@ -284,7 +285,18 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   if(!correct&&phase<120&&elapsed>=round.startMs+round.stepMs)
    correct=value===dogMiniTargetIndex(round,elapsed-120);
  }
- const attempts=[...history,{step,correct,at:now}];
+ const attempts=[...history];
+ if(round.kind==='dodge'&&step>history.length){
+  // Each unplayed strike becomes a verified miss after its real impact.
+  // Never accept a future strike early or let an unplayed step deadlock
+  // all later attempts.
+  for(let missing=history.length;missing<step;missing++){
+   const impact=round.attacks[missing].impactMs;
+   if(elapsed<impact)throw Error('DOG_MINIGAME_STEP_ORDER');
+   attempts.push({step:missing,correct:false,at:startedAt+impact});
+  }
+ }
+ attempts.push({step,correct,at:now});
  const entry={attempts,correct:attempts.some(a=>a.correct),at:now,
   correctCount:attempts.filter(a=>a.correct).length};
  const next={...games,answers:{...games.answers,[uid]:{...mine,[roundIndex]:entry}}};
