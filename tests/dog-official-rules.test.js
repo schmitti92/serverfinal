@@ -219,3 +219,53 @@ test('DOG official: forged move with wrong distance or wrong card identity is de
  assert.throws(()=>takeAction(s,0,{...m,cardId:123456}),/ILLEGAL_ACTION/);
  assert.equal(s.pieces[0].pos,3);
 });
+
+
+test('DOG official: unplayable complete hands are discarded, never selectively retained',()=>{
+ let s=createGame({rng:()=>0.17,bots:[false,false,false,false]});
+ s.hands=Array.from({length:4},(_,seat)=>[{id:2000+seat,type:'3'}]);
+ for(let seat=0;seat<4;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
+ // Nobody has a pawn on the track and no one has a start card.
+ // All four hands are forfeited and a new round is dealt.
+ assert.equal(s.round,2);
+ assert.equal(s.phase,'exchange');
+ assert.equal(s.starter,1);
+ assert.equal(s.hands[0].length,5);
+ assert.ok(s.discard.some(c=>c.id===2000));
+ assert.ok(s.discard.some(c=>c.id===2003));
+});
+
+test('DOG official: card counts cycle 6,5,4,3,2,6 and the dealer/starter rotates',()=>{
+ let s=createGame({rng:()=>0.3,bots:[false,false,false,false]});
+ assert.deepEqual({round:s.round,starter:s.starter,hand:s.hands[0].length},{round:1,starter:0,hand:6});
+ for(const [index,want] of [5,4,3,2,6].entries()){
+   s.hands=Array.from({length:4},(_,seat)=>[{id:3000+index*4+seat,type:'3'}]);
+   for(let seat=0;seat<4;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
+   assert.equal(s.round,index+2);
+   assert.equal(s.starter,(index+1)%4);
+   assert.equal(s.current,s.starter);
+   assert.ok(s.hands.every(hand=>hand.length===want));
+   assert.equal(s.phase,'exchange');
+ }
+});
+
+test('DOG official: partner pawn blocking a foreign start is captured on a new spawn',()=>{
+ const s=fixture('1/11',0);
+ position(s,8,'track',0); // green partner pawn is unprotected on red start
+ const move=action(s,a=>a.type==='start'&&a.pieceId===0);
+ const after=takeAction(s,0,move);
+ assert.equal(after.pieces[8].place,'home');
+ assert.equal(after.pieces[0].pos,0);
+});
+
+test('DOG official: voluntary pass, shortened card or direct goal entry are rejected',()=>{
+ const s=fixture('13',0);
+ position(s,0,'track',63);
+ const moves=legalActions(s,0);
+ assert.ok(moves.some(a=>a.type==='move'&&a.steps===13));
+ assert.throws(()=>takeAction(s,0,{type:'pass'}),/ILLEGAL_ACTION/);
+ assert.throws(()=>takeAction(s,0,{...moves.find(m=>m.type==='move'),steps:1}),/ILLEGAL_ACTION/);
+ const fromStart=fixture('2',0);
+ position(fromStart,0,'track',0);
+ assert.equal(legalActions(fromStart,0).some(a=>a.viaGoal),false);
+});
