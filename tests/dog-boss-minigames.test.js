@@ -3,115 +3,185 @@ import assert from 'node:assert/strict';
 import {
  DOG_MINIGAME_KINDS,DOG_MINIGAME_WINDOWS,dogMiniDifficulty,
  dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogSubmitMiniAnswer,dogMiniBonus,dogMiniTargetIndex
+ dogSubmitMiniAnswer,dogMiniBonus,dogMiniTargetIndex,
+ dogMiniReactionPosition,dogMiniDodgePenalty,dogMiniStrongRoundCount
 } from '../dog-boss-minigames.js';
-const now=1_800_000_000_000,roster=[{uid:'a'},{uid:'b'},{uid:'c'}];
-const dice=()=>0;
-test('Every Boss 10–100 selects exactly three unique games in valid fixed windows',()=>{
+
+const start=1_800_000_000_000,roster=[{uid:'a'},{uid:'b'},{uid:'c'}];
+const select=(kind,gate=50)=>{
+ for(let seed=0;seed<12;seed++){
+  const plan=dogCreateMiniGames(gate,n=>seed%n);
+  const round=plan.rounds.find(r=>r.kind===kind);
+  if(round)return {plan,round};
+ }
+ throw Error('TEST_MISSING_GAME_'+kind);
+};
+const submit=(state,uid,round,answer,offset,step=0)=>
+ dogSubmitMiniAnswer(state,roster,uid,round.round,answer,start+offset,start,step);
+
+test('Each Boss 10–100 gets three different eight-second games within thirty seconds',()=>{
  for(let gate=10;gate<=100;gate+=10){
   const plans=[];
-  for(const seed of [0,1,2,3]){
+  for(let seed=0;seed<4;seed++){
    const plan=dogCreateMiniGames(gate,n=>seed%n);
+   assert.equal(plan.version,2);
    assert.equal(plan.rounds.length,3);
    assert.equal(new Set(plan.rounds.map(r=>r.kind)).size,3);
-   assert.ok(plan.rounds.every((r,i)=>r.startMs===DOG_MINIGAME_WINDOWS[i].startMs&&
-    r.endMs===DOG_MINIGAME_WINDOWS[i].endMs));
+   assert.ok(plan.rounds.every((r,i)=>
+    r.startMs===DOG_MINIGAME_WINDOWS[i].startMs&&
+    r.endMs===DOG_MINIGAME_WINDOWS[i].endMs&&
+    r.endMs-r.startMs===8000));
    assert.ok(plan.rounds.every(r=>DOG_MINIGAME_KINDS.includes(r.kind)));
    assert.equal(dogNormalizeMiniGames(plan).rounds.length,3);
    plans.push(plan.rounds.map(r=>r.kind).join(','));
   }
-  assert.ok(new Set(plans).size>1,'different random draws should alter order/selection');
+  assert.ok(new Set(plans).size>1,'different random draws vary the games');
  }
+ assert.equal(DOG_MINIGAME_WINDOWS[0].startMs,3000);
+ assert.equal(DOG_MINIGAME_WINDOWS[2].endMs,27000);
 });
-test('Boss difficulty grows: tighter reaction windows, faster targets, harder math',()=>{
- const first=dogMiniDifficulty(10),last=dogMiniDifficulty(100);
- assert.ok(last.reactionToleranceMs<first.reactionToleranceMs);
- assert.ok(last.targetStepMs<first.targetStepMs);
- assert.ok(last.mathTier>first.mathTier);
- assert.ok(last.choices>first.choices);
+
+test('Boss difficulty rises from easier math and wider reaction zone to harder targets',()=>{
+ const easy=dogMiniDifficulty(10),hard=dogMiniDifficulty(100);
+ assert.ok(hard.reactionToleranceMs<easy.reactionToleranceMs);
+ assert.ok(hard.targetStepMs<easy.targetStepMs);
+ assert.ok(hard.mathTier>easy.mathTier);
+ assert.ok(hard.choices>easy.choices);
  assert.throws(()=>dogMiniDifficulty(15),/BAD_GATE/);
  for(const gate of [10,40,70,100]){
   const d=dogMiniDifficulty(gate);
-  assert.ok(d.reactionToleranceMs>=400);
   assert.ok(d.targetStepMs>=530);
+  assert.ok(d.reactionToleranceMs>=400);
  }
 });
-test('Server conceals arithmetic solution but shows telegraphed danger and timing',()=>{
- const plan=dogCreateMiniGames(100,dice);
- const publicView=dogPublicMiniGames(plan,'a');
+
+test('Math answers remain private; four different types send only public challenges',()=>{
+ const plan=select('math',100).plan,publicView=dogPublicMiniGames(plan,'a');
  assert.equal(publicView.rounds.length,3);
  assert.ok(!('answers' in publicView));
- assert.ok(publicView.rounds.every(r=>!('correctIndex' in r)));
- const viewText=JSON.stringify(publicView);
- assert.ok(!viewText.includes('correctIndex'));
- const before=JSON.stringify(plan);
- const attempt=plan.rounds[0];
- assert.ok(attempt);
- assert.equal(JSON.stringify(plan),before,'view generation does not mutate saved plan');
+ assert.ok(!JSON.stringify(publicView).includes('correctIndex'));
+ assert.ok(plan.rounds.some(r=>r.kind==='math'&&r.puzzles.length===8));
+ assert.equal(dogPublicMiniGames(plan,'a').myAnswers[0],undefined);
+ assert.deepEqual(plan,JSON.parse(JSON.stringify(plan)),'view is non-mutating');
 });
-test('Correct math answers are one-shot, private and capped to 10% total',()=>{
- const plan=dogCreateMiniGames(50,()=>0);
- const round=plan.rounds.find(r=>r.kind==='math');
- assert.ok(round,'deterministic sample includes math');
- const nowAnswer=now+round.startMs+200;
- const good=dogSubmitMiniAnswer(plan,roster,'a',round.round,round.correctIndex,nowAnswer,now);
- assert.equal(good.correct,true);
- assert.equal(good.replayed,false);
- assert.equal(dogMiniBonus(good.games,'a'),.1/3);
- assert.equal(dogMiniBonus(good.games,'b'),0);
- const repeat=dogSubmitMiniAnswer(good.games,roster,'a',round.round,
-  (round.correctIndex+1)%3,nowAnswer+100,now);
- assert.equal(repeat.replayed,true);
- assert.equal(repeat.correct,true);
- assert.deepEqual(repeat.games,good.games);
- assert.ok(dogPublicMiniGames(good.games,'b').myAnswers[round.round]===undefined);
- const rounds=good.games.rounds;
- let state=good.games;
- for(const r of rounds){
-  if(r.round===round.round)continue;
-  // Directly recreate an awarded server-verified success to test upper bound.
-  state={...state,answers:{...state.answers,a:{
-   ...state.answers.a,[r.round]:{correct:true,at:now+r.startMs+200}}}};
+
+test('Blitz-Mathe: eight individually checked inputs, idempotent retries and a 6% cap',()=>{
+ const {plan,round}=select('math');
+ let state=plan;
+ for(let step=0;step<8;step++){
+  const answer=round.puzzles[step].correctIndex;
+  const at=round.startMs+200+step*850;
+  const result=submit(state,'a',round,answer,at,step);
+  assert.equal(result.correct,true);
+  assert.equal(result.replayed,false);
+  state=result.games;
+  const retry=submit(state,'a',round,(answer+1)%3,at+5,step);
+  assert.equal(retry.replayed,true);
+  assert.equal(retry.correct,true);
+  assert.deepEqual(retry.games,state);
  }
- assert.ok(Math.abs(dogMiniBonus(state,'a')-.1)<1e-12);
+ assert.equal(state.answers.a[round.round].attempts.length,8);
+ assert.ok(Math.abs(dogMiniBonus(state,'a')-.06)<1e-9);
+ assert.equal(dogMiniBonus(state,'b'),0);
+ assert.equal(dogMiniStrongRoundCount(state,'a'),1);
+ assert.equal(dogPublicMiniGames(state,'b').myAnswers[round.round],undefined);
+ assert.throws(()=>submit(state,'a',round,0,round.startMs+7400,8),/BAD_STEP/);
 });
-test('Strict server time and account validation reject fake successes and late requests',()=>{
- const plan=dogCreateMiniGames(100,()=>0),round=plan.rounds[0];
- assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'d',0,0,now+3100,now),/NOT_PARTICIPANT/);
- assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'a',4,0,now+3100,now),/BAD_ROUND/);
- assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'a',0,5,now+3100,now),/BAD_ANSWER/);
- assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'a',0,1,now+2999,now),/TOO_LATE/);
- assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'a',0,1,now+10001,now),/TOO_LATE/);
+
+test('Every submission verifies participant, round, answer, time, step ordering and speed',()=>{
+ const {plan,round}=select('math',100);
+ assert.throws(()=>submit(plan,'d',round,0,round.startMs+400),/NOT_PARTICIPANT/);
+ assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'a',4,0,start+4000,start),/BAD_ROUND/);
+ assert.throws(()=>submit(plan,'a',round,5,round.startMs+400),/BAD_ANSWER/);
+ assert.throws(()=>submit(plan,'a',round,0,round.startMs-1),/TOO_LATE/);
+ assert.throws(()=>submit(plan,'a',round,0,round.endMs),/TOO_LATE/);
+ assert.throws(()=>submit(plan,'a',round,0,round.startMs+200,1),/STEP_ORDER/);
+ const first=submit(plan,'a',round,0,round.startMs+300);
+ assert.throws(()=>submit(first.games,'a',round,0,round.startMs+350,1),/TOO_FAST/);
+ assert.throws(()=>dogSubmitMiniAnswer(plan,roster,'a',round.round,0,start+4000,0),/NOT_RUNNING/);
 });
-test('Timed reactions require actual server-side press time, not a client success flag',()=>{
- let selected=null;
- for(let i=0;i<24;i++){
-  const plan=dogCreateMiniGames(100,n=>i%n);
-  const round=plan.rounds.find(r=>r.kind==='reaction');
-  if(round){selected={plan,round};break;}
+
+test('Reaction meter accelerates monotonically and the server scores tap timing',()=>{
+ const {plan,round}=select('reaction',80);
+ assert.equal(round.maxSteps,3);
+ const crossings=[];
+ for(let step=0;step<3;step++){
+  const min=round.startMs+Math.floor(step*8000/3)+430;
+  const max=round.startMs+Math.floor((step+1)*8000/3)-130;
+  let at=-1;
+  for(let t=min;t<max;t+=10)
+   if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){
+    at=t;break;
+   }
+  assert.ok(at>=0,'each reaction window should contain a green zone');
+  crossings.push(at);
  }
- assert.ok(selected);
- const {plan,round}=selected;
- const success=dogSubmitMiniAnswer(plan,roster,'a',round.round,1,
-  now+round.targetMs,now);
- assert.equal(success.correct,true);
- const miss=dogSubmitMiniAnswer(plan,roster,'b',round.round,1,
-  now+round.startMs+100,now);
- assert.equal(miss.correct,false);
-});
-test('Moving weakpoint is recomputed from server timestamps',()=>{
- let selected=null;
- for(let i=0;i<24;i++){
-  const plan=dogCreateMiniGames(100,n=>i%n);
-  const round=plan.rounds.find(r=>r.kind==='target');
-  if(round){selected={plan,round};break;}
+ let state=plan;
+ for(let step=0;step<3;step++){
+  const result=submit(state,'a',round,1,crossings[step],step);
+  assert.equal(result.correct,true);
+  state=result.games;
  }
- assert.ok(selected);
- const {plan,round}=selected,at=round.startMs+round.stepMs*2+240;
- const lane=dogMiniTargetIndex(round,at);
- const success=dogSubmitMiniAnswer(plan,roster,'a',round.round,lane,now+at,now);
- assert.equal(success.correct,true);
- const miss=dogSubmitMiniAnswer(plan,roster,'b',round.round,
-  (lane+1)%round.lanes,now+at,now);
- assert.equal(miss.correct,false);
+ assert.equal(state.answers.a[round.round].correctCount,3);
+ const bad=submit(plan,'b',round,0,crossings[0]);
+ assert.equal(bad.correct,false);
+ // The frequency coefficient rises with elapsed seconds.
+ const frequency=t=>.68+2*(.075+.004*round.difficulty)*t;
+ assert.ok(frequency(8)>frequency(4)&&frequency(4)>frequency(0));
+});
+
+test('Three visual dodges score safe lanes and missed strikes as failed',()=>{
+ const {plan,round}=select('dodge',100);
+ assert.equal(round.attacks.length,3);
+ assert.equal(round.maxSteps,3);
+ let state=plan;
+ const lane=i=>Array.from({length:round.lanes},(_,n)=>n).find(n=>
+  n!==round.attacks[i].dangerIndex&&n!==round.attacks[i].secondDangerIndex);
+ const first=submit(state,'a',round,lane(0),round.attacks[0].startMs+500,0);
+ assert.equal(first.correct,true);state=first.games;
+ // Skip the second strike; its real impact closes its window.
+ assert.throws(()=>submit(state,'a',round,lane(1),round.attacks[1].impactMs+1,1),/TOO_LATE/);
+ const third=submit(state,'a',round,lane(2),round.attacks[2].startMs+350,2);
+ assert.equal(third.correct,true);
+ const attempts=third.games.answers.a[round.round].attempts;
+ assert.deepEqual(attempts.map(a=>a.correct),[true,false,true]);
+ assert.ok(Math.abs(dogMiniDodgePenalty(third.games,'a')-.025)<1e-10);
+ assert.equal(dogMiniStrongRoundCount(third.games,'a'),1);
+ assert.throws(()=>submit(plan,'b',round,lane(0),round.attacks[0].impactMs+2,0),/TOO_LATE/);
+});
+
+test('Three moving weakpoints use server time and do not leak correct placement',()=>{
+ const {plan,round}=select('target',100);
+ let state=plan;
+ for(let step=0;step<3;step++){
+  const at=round.startMs+420+step*2000;
+  const right=dogMiniTargetIndex(round,at);
+  const attempt=submit(state,'a',round,right,at,step);
+  assert.equal(attempt.correct,true);
+  state=attempt.games;
+ }
+ assert.equal(state.answers.a[round.round].correctCount,3);
+ const at=round.startMs+500;
+ const wrong=(dogMiniTargetIndex(round,at)+1)%round.lanes;
+ assert.equal(submit(plan,'b',round,wrong,at).correct,false);
+});
+
+test('In-progress legacy v1 fights retain single-answer timing and 10% score rules',()=>{
+ const old={version:1,gate:10,rounds:[
+  {kind:'math',round:0,startMs:3000,endMs:10000,
+   question:'7 + 15 = ?',options:[18,20,22],correctIndex:2},
+  {kind:'reaction',round:1,startMs:10000,endMs:17000,targetMs:13000},
+  {kind:'target',round:2,startMs:17000,endMs:24000,
+   initialIndex:0,lanes:3,stepMs:1250}
+ ],answers:{}};
+ const publicView=dogPublicMiniGames(old,'a');
+ assert.ok(!JSON.stringify(publicView).includes('correctIndex'));
+ let state=dogSubmitMiniAnswer(old,roster,'a',0,2,start+4500,start).games;
+ const again=dogSubmitMiniAnswer(state,roster,'a',0,1,start+4700,start);
+ assert.equal(again.replayed,true);
+ state=dogSubmitMiniAnswer(state,roster,'a',1,1,start+13000,start).games;
+ state=dogSubmitMiniAnswer(state,roster,'a',2,dogMiniTargetIndex(old.rounds[2],19000),
+  start+19000,start).games;
+ assert.equal(dogMiniStrongRoundCount(state,'a'),3);
+ assert.ok(Math.abs(dogMiniBonus(state,'a')-.10)<1e-12);
 });
