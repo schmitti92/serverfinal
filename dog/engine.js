@@ -116,7 +116,10 @@ function candidateMoves(s,seat,card,as){
     for(const p of ours.filter(x=>x.place==='home')){
       const target={place:'track',pos:owner*16,owner};
       const occupant=pieceAt(s,target,p.id);
-      if(!occupant) moves.push({type:'start',cardId:card.id,as,pieceId:p.id});
+      // A figure on a foreign-colour start square is not protected: entering
+      // from home captures it. A figure on its own start square remains
+      // protected and blocks everybody, including the owner's reserve.
+      if(!occupant || !protectedPiece(occupant)) moves.push({type:'start',cardId:card.id,as,pieceId:p.id});
     }
   }
   if(as==='swap'){
@@ -237,6 +240,12 @@ export function takeAction(original,seat,action,rng=Math.random){
     if(!validateCardChoice(c,action.as))throw Error('BAD_JOKER_CHOICE');
     if(action.type==='start'){
       const p=s.pieces.find(p=>p.id===action.pieceId);
+      const target={place:'track',pos:p.owner*16,owner:p.owner};
+      const occupant=pieceAt(s,target,p.id);
+      if(occupant){
+        if(protectedPiece(occupant))throw Error('PROTECTED_FIELD');
+        occupant.place='home';occupant.pos=-1;
+      }
       p.place='track';p.pos=p.owner*16;
     }else if(action.type==='swap'){
       const a=s.pieces.find(p=>p.id===action.pieceId),b=s.pieces.find(p=>p.id===action.targetId);
