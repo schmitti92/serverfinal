@@ -22,7 +22,7 @@ export const DOG_CINEMATIC_WINDOWS=Object.freeze([
  Object.freeze({startMs:25000,endMs:33000}),
  Object.freeze({startMs:37500,endMs:45500})
 ]);
-/* v5: 60s, v6: 64s (12s maths), v7: 92s with four 14s cinematics.
+/* v5: 60s, v6: 64s, v7: 92s (14s cinematics), v8: 99s (+7s dodge).
  * All persisted earlier versions retain their original windows.
  */
 export const DOG_ENDGAME_WINDOWS=Object.freeze([
@@ -46,6 +46,15 @@ export const DOG_SHOW_ENDGAME_WINDOWS=Object.freeze([
  Object.freeze({startMs:26000,endMs:34000}),
  Object.freeze({startMs:48000,endMs:56000}),
  Object.freeze({startMs:70000,endMs:78000})
+]);
+// v8: each of the three dodge strikes now has 5s (instead of 2.67s).
+// Each strike telegraphs for 3.3s, followed by ~1.7s impact/recovery.
+// Four cinematic intervals remain exactly 14s each.
+export const DOG_SLOW_DODGE_ENDGAME_WINDOWS=Object.freeze([
+ Object.freeze({startMs:0,endMs:12000}),
+ Object.freeze({startMs:26000,endMs:41000}),
+ Object.freeze({startMs:55000,endMs:63000}),
+ Object.freeze({startMs:77000,endMs:85000})
 ]);
 const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
 const LEGACY_WINDOWS=[{startMs:3000,endMs:10000},
@@ -129,8 +138,9 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
  if(kind==='dodge'){
   const attacks=Array.from({length:3},(_,step)=>{
    const dangerIndex=draw(rand,d.choices);
-   return {step,startMs:startMs+Math.floor(step*8000/3),
-    impactMs:startMs+Math.floor((step+0.66)*8000/3),
+   const phaseMs=endMs-startMs;
+   return {step,startMs:startMs+Math.floor(step*phaseMs/3),
+    impactMs:startMs+Math.floor((step+0.66)*phaseMs/3),
     dangerIndex,secondDangerIndex:d.choices===3?
      (dangerIndex+1+draw(rand,2))%3:null};
   });
@@ -147,8 +157,8 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
   const endgame=exchange==='endgame',cinematic=exchange==='cinematic';
-  return {version:endgame?7:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>
-   createRound(kind,i,gate,rand,endgame?DOG_SHOW_ENDGAME_WINDOWS:
+  return {version:endgame?8:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>
+   createRound(kind,i,gate,rand,endgame?DOG_SLOW_DODGE_ENDGAME_WINDOWS:
     cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS)),answers:{}};
  }
  const available=[...DOG_MINIGAME_KINDS];
@@ -199,8 +209,9 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS){
   const lanes=d.choices;
   if(!Array.isArray(round.attacks)||round.attacks.length!==3)return null;
   const attacks=round.attacks.map((attack,step)=>{
-   const startMs=fixed.startMs+Math.floor(step*8000/3);
-   const impactMs=fixed.startMs+Math.floor((step+.66)*8000/3);
+   const phaseMs=fixed.endMs-fixed.startMs;
+   const startMs=fixed.startMs+Math.floor(step*phaseMs/3);
+   const impactMs=fixed.startMs+Math.floor((step+.66)*phaseMs/3);
    const dangerIndex=int(attack?.dangerIndex,0,lanes-1,0);
    const second=int(attack?.secondDangerIndex,0,lanes-1,-1);
    return {step,startMs,impactMs,dangerIndex,secondDangerIndex:
@@ -214,7 +225,7 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS){
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -223,7 +234,8 @@ export function dogNormalizeMiniGames(raw){
   raw.version===4?DOG_CINEMATIC_WINDOWS:
    raw.version===5?DOG_ENDGAME_WINDOWS:
    raw.version===6?DOG_EXTENDED_ENDGAME_WINDOWS:
-    raw.version===7?DOG_SHOW_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
+    raw.version===7?DOG_SHOW_ENDGAME_WINDOWS:
+     raw.version===8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
    (raw.version>=3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
@@ -424,7 +436,7 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null)
  });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
- return {version:games.version,durationMs:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
+ return {version:games.version,durationMs:games.version===8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
   shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
   cumulativeExtraDamage:typeof heroBaseDamage==='function'?
    earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
