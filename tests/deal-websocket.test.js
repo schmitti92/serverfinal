@@ -548,3 +548,29 @@ test('30-case nine-case reveal still credits the one-cent Christmas pack to its 
  assert.equal(repeat.statusCode,409);
  assert.equal(docs.get('deal_or_no_deal_christmas_v1/'+owner)?.opened,1,'reward can never repeat');
 });
+
+
+test('Monster-wheel Giftzwerg unlock survives character selection and reaches every game spectator',async()=>{
+ const {api,Socket,invoke,docs}=harness(['a','b']);
+ const base='/api/deal-or-no-deal/:code';
+ // Only players who actually won the avatar are allowed to choose it.
+ const locked=await invoke('POST',base+'/avatar','a',{avatar:15});
+ assert.notEqual(locked.statusCode,200,'still locked before the real Monster-wheel prize');
+ docs.set('deal_or_no_deal_christmas_v1/a',{monsterGiftzwergUnlocked:true});
+ const chosen=await invoke('POST',base+'/avatar','a',{avatar:15});
+ assert.equal(chosen.statusCode,200,JSON.stringify(chosen.body));
+ assert.equal(chosen.body.avatar,15);
+ assert.equal(chosen.body.avatars.a,15);
+ const viewer=new Socket();
+ api.attachSocket(viewer);
+ viewer.message({type:'subscribe',code:'123',token:'b'});
+ await flush();
+ const start=await invoke('POST',base+'/start','a',{caseCount:30});
+ assert.equal(start.statusCode,200,JSON.stringify(start.body));
+ assert.equal(start.body.game.players.find(p=>p.id==='a')?.avatar,15,
+  'the Giftzwerg ID must not be dropped after the selection-to-match transition');
+ assert.equal(docs.get('deal_or_no_deal_matches_v1/123').game.players.find(p=>p.id==='a')?.avatar,15);
+ assert.equal(viewer.sent.filter(x=>x.type==='deal-state').at(-1)?.game.players.find(p=>p.id==='a')?.avatar,15,
+  'all spectator clients must receive the Giftzwerg ID for portrait and comments');
+ viewer.close();
+});
