@@ -9,9 +9,9 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
-export const DOG_BOSS10_DURATION_MS=30_000;
+export const DOG_BOSS10_DURATION_MS=40_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
 export const DOG_BOSS10_RECEIPTS_COLLECTION='dog_gate_boss10_receipts_v1';
 const REQUIRED_NORMALS=Object.freeze([1,2,3,4,6,7,8,9]);
@@ -63,7 +63,9 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&boss.ready.length>=1,
   eligible:eligible(progress.people[uid]),members,
   ...boss,...(skipCooldown?{phase:'waiting',ready:[],cooldownUntil:0}:{}),
-  miniGames:dogPublicMiniGames(boss.miniGames,uid),won:progress.sharedBosses.includes(10),
+  miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
+    ...(dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt)?
+    {exchange:dogMiniExchangeView(boss.miniGames,boss.roster,now-boss.startedAt)}:{})},won:progress.sharedBosses.includes(10),
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
   cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
@@ -93,7 +95,7 @@ const startEncounter=(progress,team,ready,heroByUid,now,rand=randomInt)=>{
  return {...progress,boss10:{...boss10State(progress.boss10),
   ready:[...ready],phase:'fighting',roster,startedAt:now,
   endsAt:now+DOG_BOSS10_DURATION_MS,chancePercent,reactions:[],
-  miniGames:dogCreateMiniGames(10,rand)},updatedAt:now};
+  miniGames:dogCreateMiniGames(10,rand,{exchange:true})},updatedAt:now};
 };
 export function boss10Ready(progressRaw,teamRaw,uid,heroByUid={},now=Date.now(),rand=randomInt){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
@@ -144,7 +146,8 @@ export function boss10DamagePotential(roster=[],reacted=[],miniGames=null){
   const reaction=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):reacting.has(m.uid)?1.1:1;
   return sum+DOG_BOSS10_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
    (.67+.21*attack)*survival*reaction;
- },0);
+ },0)*(dogNormalizeMiniGames(miniGames)?.version===3?
+  (.94+.06*dogMiniTeamShield(miniGames,roster)/100):1);
 }
 const fullyPrepared=m=>m.weaponLevel>=1&&m.armorLevel>=1&&
  m.skillPower>=5&&m.skillDestruction>=5&&m.skillDefense>=5&&m.skillGuard>=5;
