@@ -1,7 +1,7 @@
 'use strict';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS} from '../deal-or-no-deal.js';
+import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS,BANKER_REWARD_ODDS,drawBankerPack,drawBankerHammer,pickBankerStyle} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -144,7 +144,7 @@ test('opening event permanently identifies the acting player and exposes it to e
  }
 });
 
-test('banker offer is positive, capped at 115% of fair expected value, and records valuation',()=>{
+test('banker offer is positive, capped at 125% of fair expected value, and records valuation',()=>{
  for(let count=1;count<=4;count++){
   let g=create(Array.from({length:count},(_,i)=>({id:'p'+i})),rand);
   for(let i=0;i<count;i++)g=send(g,g.order[i],'select',{case:i});
@@ -156,8 +156,8 @@ test('banker offer is positive, capped at 115% of fair expected value, and recor
     const remaining=publicRemaining(g);
     const expected=remaining.reduce((sum,v)=>sum+v,0)/remaining.length;
     assert.equal(g.history.at(-1).expectedValue,expected);
-    assert.ok(g.offer>=1&&g.offer<=Math.max(1,Math.round(expected*1.15)),
-     'Banker offers are intentionally permitted up to 115% of expected value');
+    assert.ok(g.offer>=1&&g.offer<=Math.max(1,Math.round(expected*1.25)),
+     'Banker offers are intentionally permitted up to 125% of expected value');
     checks++;
     const ballot=g.history.at(-1);
     for(const id of ballot.participants)g=send(g,id,'decide',{deal:false});
@@ -199,13 +199,63 @@ test('the 12 equal hammer-wheel slots are exactly 5 single, 5 double, 2 lucky',(
  assert.equal(outcomes.filter(x=>x==='double').length,5);
  assert.equal(outcomes.filter(x=>x==='lucky').length,2);
 });
-test('Banker special bonus has exact 5% Hütchen, 5% Monster spin and 90% none',()=>{
- assert.deepEqual(BANKER_SPECIAL_ODDS,{minigame:5,monster:5});
+test('Banker special bonus has exact 3% Hütchen, 3% Monster spin and 94% none',()=>{
+ assert.deepEqual(BANKER_SPECIAL_ODDS,{minigame:3,monster:3});
  const outcome=Array.from({length:100},(_,roll)=>drawBankerSpecial(n=>{assert.equal(n,100);return roll}));
- assert.equal(outcome.filter(x=>x==='minigame').length,5);
- assert.equal(outcome.filter(x=>x==='monster').length,5);
- assert.equal(outcome.filter(x=>x===null).length,90);
+ assert.equal(outcome.filter(x=>x==='minigame').length,3);
+ assert.equal(outcome.filter(x=>x==='monster').length,3);
+ assert.equal(outcome.filter(x=>x===null).length,94);
  for(const roll of [-1,100,1.5,NaN])assert.throws(()=>drawBankerSpecial(()=>roll),/INVALID_BANKER_SPECIAL_ROLL/);
+});
+
+
+test('every new match has a saved banker personality, with meaningful variety between matches',()=>{
+ const counts={stingy:0,balanced:0,generous:0,volatile:0};
+ for(let n=0;n<100;n++)counts[pickBankerStyle(max=>{assert.equal(max,100);return n})]++;
+ assert.deepEqual(counts,{stingy:25,balanced:35,generous:25,volatile:15});
+ const game=create([{id:'a'}],n=>0);
+ assert.equal(game.bankerStyle,'stingy');
+ assert.equal(publicView(game).bankerStyle,undefined,'private personality cannot spoil the surprise');
+ for(const invalid of [-1,100,NaN,1.5])assert.throws(()=>pickBankerStyle(()=>invalid),/INVALID_BANKER_STYLE_ROLL/);
+});
+
+test('same case values yield cheaper or more generous offers depending on the banker style',()=>{
+ const baseline=create([{id:'a',name:'A'}],()=>0);
+ baseline.players[0].case=0;
+ baseline.phase='reveal';
+ baseline.pending={case:1,actor:'a',eventId:'one'};
+ baseline.roundOpened=4;
+ const stableRandom=max=>max===10001?5000:Math.floor(max/2);
+ const actual={};
+ for(const style of ['stingy','balanced','generous','volatile']){
+  const g=structuredClone(baseline);g.bankerStyle=style;
+  const result=apply(g,'a',{id:'call-'+style,revision:0,type:'ack-reveal'},stableRandom);
+  assert.equal(result.phase,'decision');
+  actual[style]=result.offer;
+  assert.equal(result.history[0].expectedValue,publicRemaining(result).reduce((a,b)=>a+b,0)/publicRemaining(result).length);
+ }
+ assert.ok(actual.stingy<actual.balanced,'stingy match must be visibly lower');
+ assert.ok(actual.generous>actual.balanced,'generous match must be visibly higher');
+ assert.ok(actual.generous/actual.stingy>1.5,'offers should differ noticeably between matches');
+ const volatileOffers=[0,10000].map(value=>{
+  const g=structuredClone(baseline);g.bankerStyle='volatile';
+  const rng=max=>max===10001?value:Math.floor(max/2);
+  return apply(g,'a',{id:'variable-'+value,revision:0,type:'ack-reveal'},rng).offer;
+ });
+ assert.ok(volatileOffers[1]>volatileOffers[0],'unpredictable Banker varies strongly from call to call');
+});
+
+test('Banker bonus items are moderately rarer without changing prize-wheel proportions',()=>{
+ assert.deepEqual(BANKER_REWARD_ODDS,{pack:7,hammer:7});
+ const packs=Array.from({length:1000},(_,roll)=>drawBankerPack(max=>{assert.equal(max,1000);return roll}));
+ assert.equal(packs.filter(x=>x==='premium').length,7);
+ assert.equal(packs.filter(x=>x==='large').length,28);
+ assert.equal(packs.filter(x=>x==='small').length,35);
+ assert.equal(packs.filter(x=>x===null).length,930);
+ const hammerCount=Array.from({length:100},(_,roll)=>drawBankerHammer(max=>max===100?roll:0)).filter(Boolean);
+ assert.equal(hammerCount.length,7);
+ for(const invalid of [-1,1000,NaN,1.3])assert.throws(()=>drawBankerPack(()=>invalid),/INVALID_BANKER_PACK_ROLL/);
+ for(const invalid of [-1,100,NaN,1.3])assert.throws(()=>drawBankerHammer(()=>invalid),/INVALID_BANKER_HAMMER_ROLL/);
 });
 
 test('Banker offers publish the special voucher or Monster prize for all players',()=>{
