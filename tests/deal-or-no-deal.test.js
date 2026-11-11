@@ -36,7 +36,9 @@ for(const count of [26,27,28,29,30]){
   game=send(game,'a','select',{case:0});
   let guard=0;
   while(game.phase!=='final'&&guard++<200){
-   if(game.phase==='open')game=send(game,'a','open',{case:free(game)[0]});
+   if(game.phase==='batch-pick')game=send(game,'a','open',{case:free(game)[0]});
+    else if(game.phase==='batch-reveal'){game.openingBatch.endsAt=Date.now()-1;game=send(game,'a','ack-batch');}
+    else if(game.phase==='open')game=send(game,'a','open',{case:free(game)[0]});
    else if(game.phase==='reveal')game=send(game,'a','ack-reveal');
    else if(game.phase==='decision')game=send(game,'a','decide',{deal:false});
    else throw Error('Unexpected phase '+game.phase);
