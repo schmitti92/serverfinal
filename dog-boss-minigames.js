@@ -235,11 +235,34 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   throw Error('DOG_MINIGAME_NOT_PARTICIPANT');
  if(!Number.isSafeInteger(roundIndex)||roundIndex<0||roundIndex>2)
   throw Error('DOG_MINIGAME_BAD_ROUND');
- if(!Number.isSafeInteger(value)||value<0||value>4)
+ if(!Array.isArray(value)&&(!Number.isSafeInteger(value)||value<0||value>4))
   throw Error('DOG_MINIGAME_BAD_ANSWER');
  if(!Number.isSafeInteger(now)||!Number.isSafeInteger(startedAt)||startedAt<=0)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
  const round=games.rounds[roundIndex],elapsed=now-startedAt,mine=games.answers[uid]||{};
+ // Maths is a very fast eight-second sprint. A SINGLE receipt for all
+ // locally answered puzzles avoids 8 consecutive network round-trips.
+ // The server still checks every secret answer and rejects extra attempts.
+ // Up to two seconds transfer grace prevents punishing a final-moment submit.
+ if(Array.isArray(value)){
+  if(games.version!==2||round.kind!=='math'||step!==0||
+   value.length<1||value.length>8||
+   value.some(n=>!Number.isSafeInteger(n)||n<0||n>2))
+   throw Error('DOG_MINIGAME_BAD_ANSWER');
+  if(elapsed<round.startMs||elapsed>=round.endMs+2000)
+   throw Error('DOG_MINIGAME_TOO_LATE');
+  if(mine[roundIndex]?.attempts?.length)
+   throw Error('DOG_MINIGAME_STEP_ORDER');
+  const attempts=value.map((choice,index)=>({
+   step:index,correct:choice===round.puzzles[index].correctIndex,at:now
+  }));
+  const correctCount=attempts.filter(a=>a.correct).length;
+  const entry={attempts,correct:correctCount>0,correctCount,at:now};
+  const next={...games,answers:{...games.answers,
+   [uid]:{...mine,[roundIndex]:entry}}};
+  return {games:next,correct:correctCount>0,replayed:false,
+   step:0,correctCount};
+ }
  if(games.version===1){
   if(mine[roundIndex])return {games,correct:mine[roundIndex].correct,replayed:true,step:0};
   if(step!==0)throw Error('DOG_MINIGAME_BAD_STEP');
