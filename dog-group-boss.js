@@ -9,7 +9,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
-import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from './dog-gates.js';
+import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
@@ -52,8 +52,9 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
  ensureGate(gate);
  const team=bossTeam(teamRaw),progress=dogGateProgress(raw);
  const boss=stateAt(progress,gate);
+ const skipCooldown=boss.phase==='cooldown'&&dogDeveloperCooldownBypass(progress,team,uid);
  const members=team.members.map(m=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
-  ready:boss.ready.includes(m.uid),reacted:boss.reactions.includes(m.uid),
+  ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(gate,progress,m.uid)}));
  const won=progress.sharedBosses.includes(gate);
  return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:dogGroupBossHp(gate),
@@ -62,11 +63,14 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   participantCount:['fighting','cooldown','victory'].includes(boss.phase)?
    boss.roster.length:boss.ready.length,
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&!won,
-  ...boss,miniGames:dogPublicMiniGames(boss.miniGames,uid),phase:won?'victory':boss.phase,won,
+  ...boss,...(skipCooldown?{ready:[],cooldownUntil:0}:{}),
+  miniGames:dogPublicMiniGames(boss.miniGames,uid),
+  phase:won?'victory':skipCooldown?'waiting':boss.phase,won,
+  developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   forgeLevel:Math.min(10,gate/10+1),
   finalBoss:gate===100,dogUnlocked:progress.sharedBosses.includes(100),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
-  cooldownRemainingMs:boss.phase==='cooldown'?Math.max(0,boss.cooldownUntil-now):0};
+  cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
 }
 const prepareRoster=(gate,ready,team,heroes)=>{
  const allowed=new Set(bossTeam(team).members.map(m=>m.uid));
@@ -153,7 +157,7 @@ export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.n
  if(state.phase==='fighting')throw Error('DOG_GROUP_RUNNING');
  if(state.phase==='victory')throw Error('DOG_GROUP_ALREADY_WON');
  if(state.phase==='cooldown'){
-  if(now<state.cooldownUntil)throw Error('DOG_GROUP_COOLDOWN');
+  if(now<state.cooldownUntil&&!dogDeveloperCooldownBypass(p,team,uid))throw Error('DOG_GROUP_COOLDOWN');
   state={...initial(),attempt:state.attempt+1};
  }
  if(state.ready.includes(uid))return p;
