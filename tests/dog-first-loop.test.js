@@ -142,7 +142,7 @@ test('Three well prepared heroes deal enough damage to win without rare duo luck
  assert.equal(boss10ResolveCombat(weak,[],()=>0).win,false);
 });
 
-test('Three ready commands start exactly one 50-second encounter',()=>{
+test('Three ready commands start exactly one 60-second encounter',()=>{
  let state=progress();
  state=boss10Ready(state,team,'hero-a',heroes(),now);
  assert.equal(state.boss10.phase,'waiting');
