@@ -510,3 +510,41 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  assert.equal(docs.get('deal_or_no_deal_wallets_v1/a').balance,5000000000);
  ws.close();
 });
+
+
+test('30-case nine-case reveal still credits the one-cent Christmas pack to its opener only once',async()=>{
+ const {invoke,docs}=harness(['a','b','c']),root='/api/deal-or-no-deal/:code';
+ let r=await invoke('POST',root+'/start','a',{caseCount:30});
+ assert.equal(r.statusCode,200,JSON.stringify(r.body));
+ let game=r.body.game;
+ const stored=docs.get('deal_or_no_deal_matches_v1/123').game;
+ const oneCent=stored.values.indexOf(1);
+ assert.ok(oneCent>=0);
+ const protectedCases=Array.from({length:30},(_,i)=>i).filter(i=>i!==oneCent).slice(0,3);
+ const act=async(uid,type,extra={})=>{
+  const res=await invoke('POST',root+'/action',uid,{id:crypto.randomUUID(),revision:game.revision,type,...extra});
+  assert.equal(res.statusCode,200,JSON.stringify(res.body));
+  game=res.body.game;
+ };
+ for(let i=0;i<3;i++)await act(game.order[i],'select',{case:protectedCases[i]});
+ assert.equal(game.phase,'batch-pick');
+ const owner=game.order[0];
+ const queue=[oneCent,...Array.from({length:30},(_,i)=>i).filter(i=>i!==oneCent&&!protectedCases.includes(i)).slice(0,8)];
+ for(let i=0;i<9;i++)await act(game.order[Math.floor(i/3)],'open',{case:queue[i]});
+ assert.equal(game.phase,'batch-reveal');
+ assert.equal(game.openedAmounts.length,0);
+ stored.openingBatch=docs.get('deal_or_no_deal_matches_v1/123').game.openingBatch;
+ stored.openingBatch.endsAt=Date.now()-1;
+ // A different player may complete the shared reveal; the reward goes to the opener.
+ await act(game.order[2],'ack-batch');
+ assert.equal(game.phase,'decision');
+ const cent=game.events.find(e=>e.type==='opened'&&e.amount===1);
+ assert.equal(cent.playerId,owner);
+ const reward=docs.get('deal_christmas_cent_rewards_v1/'+game.id+'_'+cent.eventId);
+ assert.equal(reward?.uid,owner);
+ assert.ok(reward?.revealed?.length>0);
+ assert.equal(docs.get('deal_or_no_deal_christmas_v1/'+owner)?.opened,1);
+ const repeat=await invoke('POST',root+'/action',game.order[2],{id:crypto.randomUUID(),revision:game.revision,type:'ack-batch'});
+ assert.equal(repeat.statusCode,409);
+ assert.equal(docs.get('deal_or_no_deal_christmas_v1/'+owner)?.opened,1,'reward can never repeat');
+});
