@@ -12,6 +12,8 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
+import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
+ dogMiniBonus,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_GROUP_BOSS_GATES=Object.freeze([20,30,40,50,60,70,80,90,100]);
 export const DOG_GROUP_BOSS_NAMES=Object.freeze({
@@ -27,7 +29,7 @@ const ensureGate=g=>{if(!validGate(g))throw Error('DOG_GROUP_INVALID_GATE');retu
 const obj=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
 const validId=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{12,90}$/.test(x);
 const initial=()=>({phase:'waiting',ready:[],reactions:[],startedAt:0,
- endsAt:0,cooldownUntil:0,attempt:1,roster:[],chancePercent:0,result:null});
+ endsAt:0,cooldownUntil:0,attempt:1,roster:[],chancePercent:0,miniGames:null,result:null});
 const skillCap=gate=>Math.min(50,(gate/10)*5);
 const gearCap=gate=>gate/10;
 export function groupBossState(gate,raw){
@@ -60,7 +62,7 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   participantCount:['fighting','cooldown','victory'].includes(boss.phase)?
    boss.roster.length:boss.ready.length,
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&!won,
-  ...boss,phase:won?'victory':boss.phase,won,
+  ...boss,miniGames:dogPublicMiniGames(boss.miniGames,uid),phase:won?'victory':boss.phase,won,
   forgeLevel:Math.min(10,gate/10+1),
   finalBoss:gate===100,dogUnlocked:progress.sharedBosses.includes(100),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
@@ -81,7 +83,7 @@ const prepareRoster=(gate,ready,team,heroes)=>{
    skillGuard:Math.min(cap,lv.blocking)};
  });
 };
-export function groupBossDamagePotential(gate,roster=[],reactions=[]){
+export function groupBossDamagePotential(gate,roster=[],reactions=[],miniGames=null){
  ensureGate(gate);
  if(!Array.isArray(roster)||roster.length<1||roster.length>3)return 0;
  const seen=new Set(reactions),cap=skillCap(gate),armorReference=dogArmorBase(gearCap(gate));
@@ -90,7 +92,7 @@ export function groupBossDamagePotential(gate,roster=[],reactions=[]){
   const defense=(Math.min(cap,m.skillDefense)+Math.min(cap,m.skillGuard))/(cap*2);
   const armor=Math.min(1,dogArmorBase(m.armorLevel)/armorReference);
   const survival=(.74+.26*defense)*(.80+.20*armor);
-  const multiplier=seen.has(m.uid)?1.10:1;
+  const multiplier=miniGames?1+dogMiniBonus(miniGames,m.uid):seen.has(m.uid)?1.10:1;
   return sum+DOG_GROUP_BOSS_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
    (.91+.30*attack)*survival*multiplier;
  },0);
@@ -98,7 +100,7 @@ export function groupBossDamagePotential(gate,roster=[],reactions=[]){
 const maxed=(gate,m)=>m.weaponLevel>=gearCap(gate)&&m.armorLevel>=gearCap(gate)&&
  ['skillPower','skillDestruction','skillDefense','skillGuard']
   .every(k=>m[k]>=skillCap(gate));
-export function groupBossResolveCombat(gate,roster,reactions=[],rand=randomInt){
+export function groupBossResolveCombat(gate,roster,reactions=[],rand=randomInt,miniGames=null){
  ensureGate(gate);
  if(!Array.isArray(roster)||!roster.length||roster.length>3)
   throw Error('DOG_GROUP_INVALID_ROSTER');
@@ -107,10 +109,13 @@ export function groupBossResolveCombat(gate,roster,reactions=[],rand=randomInt){
   throw Error('DOG_GROUP_INVALID_RANDOM');
  const luck=.82+.34*(1-roll/9999);
  const reacted=roster.filter(m=>reactions.includes(m.uid)).map(m=>m.uid);
- let damage=groupBossDamagePotential(gate,roster,reacted)*luck,rareCritical=false;
+ let damage=groupBossDamagePotential(gate,roster,reacted,miniGames)*luck,rareCritical=false;
  if(roster.length===1)damage=Math.min(damage,hp-1);
  if(roster.length===2){
-  const possible=roster.every(m=>maxed(gate,m))&&reacted.length===2;
+  const miniReady=miniGames?
+   roster.every(m=>Object.values(dogNormalizeMiniGames(miniGames)?.answers[m.uid]||{})
+    .filter(answer=>answer.correct).length>=2):reacted.length===2;
+  const possible=roster.every(m=>maxed(gate,m))&&miniReady;
   if(possible){
    const special=rand(10000);
    if(!Number.isSafeInteger(special)||special<0||special>=10000)
@@ -126,7 +131,7 @@ export function groupBossResolveCombat(gate,roster,reactions=[],rand=randomInt){
  return {win,bossHp:hp,damage:dealt,hpRemaining:Math.max(0,hp-dealt),
   participants:roster.length,rareCritical,roll,reactionCount:reacted.length};
 }
-const startFight=(gate,progress,team,ready,heroes,now)=>{
+const startFight=(gate,progress,team,ready,heroes,now,rand=randomInt)=>{
  const roster=prepareRoster(gate,ready,team,heroes);
  const hp=dogGroupBossHp(gate);
  const forecast=groupBossDamagePotential(gate,roster,[]);
@@ -136,9 +141,9 @@ const startFight=(gate,progress,team,ready,heroes,now)=>{
  const previous=stateAt(progress,gate);
  return withState(progress,gate,{...previous,ready:[...ready],roster,
   phase:'fighting',startedAt:now,endsAt:now+DOG_BOSS10_DURATION_MS,
-  chancePercent,reactions:[]},now);
+  chancePercent,reactions:[],miniGames:dogCreateMiniGames(gate,rand)},now);
 };
-export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.now()){
+export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.now(),rand=randomInt){
  ensureGate(gate);
  const team=bossTeam(teamRaw),p=dogGateProgress(progressRaw);
  if(!team.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
@@ -154,9 +159,9 @@ export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.n
  if(state.ready.includes(uid))return p;
  const ready=[...state.ready,uid],next=withState(p,gate,{...state,ready},now);
  return team.members.length===3&&ready.length===3?
-  startFight(gate,next,team,ready,heroes,now):next;
+  startFight(gate,next,team,ready,heroes,now,rand):next;
 }
-export function groupBossStart(gate,raw,teamRaw,uid,heroes={},now=Date.now()){
+export function groupBossStart(gate,raw,teamRaw,uid,heroes={},now=Date.now(),rand=randomInt){
  ensureGate(gate);
  const p=dogGateProgress(raw),team=bossTeam(teamRaw),state=stateAt(p,gate);
  if(!team.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
@@ -165,7 +170,7 @@ export function groupBossStart(gate,raw,teamRaw,uid,heroes={},now=Date.now()){
  if(state.phase==='cooldown')throw Error('DOG_GROUP_COOLDOWN');
  if(!state.ready.includes(uid)||!state.ready.length)throw Error('DOG_GROUP_NOT_READY');
  if(!state.ready.every(id=>eligible(gate,p,id)))throw Error('DOG_GROUP_PREREQUISITES');
- return startFight(gate,p,team,state.ready,heroes,now);
+ return startFight(gate,p,team,state.ready,heroes,now,rand);
 }
 export function groupBossReact(gate,raw,uid,now=Date.now()){
  ensureGate(gate);
@@ -173,15 +178,27 @@ export function groupBossReact(gate,raw,uid,now=Date.now()){
  if(state.phase!=='fighting'||now<state.startedAt||now>=state.endsAt)
   throw Error('DOG_GROUP_NOT_RUNNING');
  if(!state.roster.some(m=>m.uid===uid))throw Error('DOG_GROUP_NOT_PARTICIPANT');
+ if(state.miniGames)throw Error('DOG_GROUP_USE_MINIGAMES');
  if(state.reactions.includes(uid))return p;
  return withState(p,gate,{...state,reactions:[...state.reactions,uid]},now);
+}
+export function groupBossMiniAnswer(gate,raw,uid,round,answer,now=Date.now()){
+ ensureGate(gate);
+ const progress=dogGateProgress(raw),state=stateAt(progress,gate);
+ if(state.phase!=='fighting'||now>=state.endsAt||now<state.startedAt)
+  throw Error('DOG_MINIGAME_NOT_RUNNING');
+ const answered=dogSubmitMiniAnswer(state.miniGames,state.roster,uid,round,answer,now,state.startedAt);
+ return {progress:withState(progress,gate,{...state,miniGames:answered.games},now),
+  result:{type:'minigame',round,correct:answered.correct,
+   replayed:answered.replayed,
+   bonusPercent:Math.round(dogMiniBonus(answered.games,uid)*1000)/10}};
 }
 export function groupBossFinish(gate,raw,now=Date.now(),rand=randomInt){
  ensureGate(gate);
  const p=dogGateProgress(raw),state=stateAt(p,gate);
  if(state.phase!=='fighting')throw Error('DOG_GROUP_NOT_RUNNING');
  if(now<state.endsAt)throw Error('DOG_GROUP_STILL_FIGHTING');
- const combat=groupBossResolveCombat(gate,state.roster,state.reactions,rand);
+ const combat=groupBossResolveCombat(gate,state.roster,state.reactions,rand,state.miniGames);
  const finished={...state,phase:combat.win?'victory':'cooldown',
   result:{...combat,chancePercent:state.chancePercent},
   cooldownUntil:combat.win?0:state.endsAt+DOG_BOSS10_COOLDOWN_MS};
@@ -204,7 +221,10 @@ const HTTP_ERRORS={
  DOG_GROUP_NOT_RUNNING:409,DOG_GROUP_STILL_FIGHTING:409,
  DOG_GROUP_NOT_PARTICIPANT:403,NOT_DOG_TEAM_MEMBER:403,
  DOG_GROUP_INVALID_ROSTER:409,DOG_GROUP_INVALID_RANDOM:500,
- DOG_GROUP_RECEIPT_CONFLICT:409
+ DOG_GROUP_RECEIPT_CONFLICT:409,DOG_GROUP_USE_MINIGAMES:409,
+ DOG_MINIGAME_MISSING:409,DOG_MINIGAME_NOT_RUNNING:409,
+ DOG_MINIGAME_NOT_PARTICIPANT:403,DOG_MINIGAME_BAD_ROUND:400,
+ DOG_MINIGAME_BAD_ANSWER:400,DOG_MINIGAME_TOO_LATE:409
 };
 /** Authenticated and idempotent API. Only a signed-in team member can
  * read or write the group's boss state, reactions, or reward. */
@@ -254,10 +274,10 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
    return res.json({ok:true,...groupBossView(gate,team,progress,uid,clock())});
   }catch(e){return error(res,e);}
  });
- for(const command of ['ready','start','react','finish']){
+ for(const command of ['ready','start','react','minigame','finish']){
   app.post('/api/dog/gates/boss/:gate/'+command,auth,async(req,res)=>{
    try{
-    const gate=gateOf(req),{requestId}=obj(req.body);
+    const gate=gateOf(req),{requestId,round,answer}=obj(req.body);
     if(!validId(requestId))throw Error('INVALID_REQUEST_ID');
     const {db,teamRef,progressRef}=refs(),uid=req.dogGroupUid;
     const receiptRef=db.collection(DOG_GROUP_BOSS_RECEIPTS_COLLECTION)
@@ -282,12 +302,15 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
        db.collection(DOG_HERO_COLLECTION).doc(m.uid))));
       roster.forEach((m,i)=>{heroes[m.uid]=snaps[i].exists?snaps[i].data():null;});
       next=command==='ready'?
-       groupBossReady(gate,progress,team,uid,heroes,now):
-       groupBossStart(gate,progress,team,uid,heroes,now);
+       groupBossReady(gate,progress,team,uid,heroes,now,rand):
+       groupBossStart(gate,progress,team,uid,heroes,now,rand);
       result={type:command,started:stateAt(next,gate).phase==='fighting'};
      }else if(command==='react'){
       next=groupBossReact(gate,progress,uid,now);
       result={type:'reaction',accepted:true};
+     }else if(command==='minigame'){
+      const completed=groupBossMiniAnswer(gate,progress,uid,round,answer,now);
+      next=completed.progress;result=completed.result;
      }else{
       next=groupBossFinish(gate,progress,now,rand).progress;
       result={type:'finish',...stateAt(next,gate).result};
