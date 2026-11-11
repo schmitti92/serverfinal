@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
+ DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,DOG_ENDGAME_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
  dogPublicMiniGames,dogSubmitMiniAnswer,dogMiniTargetIndex,
  dogMiniReactionPosition,dogMiniTeamShield,dogMiniExchangeView,
  dogMiniBonus,dogMiniStrongRoundCount
@@ -54,7 +54,7 @@ function solveAll(start){
 }
 test('New encounter has four fixed phases and exactly four 2s exchanges in 40s',()=>{
  const games=make();
- assert.equal(DOG_BOSS10_DURATION_MS,50000);
+ assert.equal(DOG_BOSS10_DURATION_MS,60000);
  assert.equal(games.version,3);
  assert.deepEqual(games.rounds.map(r=>r.kind),names);
  assert.deepEqual(games.rounds.map(r=>[r.startMs,r.endMs]),
@@ -119,7 +119,7 @@ test('Shield is meaningful but does not outweigh the party equipment or leak dat
 test('50s cinematic encounters preserve all 4x8s tasks and add four 4.5s pauses',()=>{
  const cinema=dogCreateMiniGames(10,()=>0,{exchange:'cinematic'});
  const old=dogCreateMiniGames(10,()=>0,{exchange:true});
- assert.equal(DOG_BOSS10_DURATION_MS,50000);
+ assert.equal(DOG_BOSS10_DURATION_MS,60000);
  assert.equal(cinema.version,4);
  assert.equal(old.version,3);
  assert.deepEqual(cinema.rounds.map(x=>[x.startMs,x.endMs]),
@@ -176,4 +176,46 @@ test('50s cinematic shield penalties still affect combat without inventing final
   skillPower:5,skillDestruction:5,skillDefense:5,skillGuard:5}];
  assert.ok(boss10DamagePotential(equipped,[],solveAll(dogCreateMiniGames(10,()=>0,{exchange:'cinematic'})))>
   boss10DamagePotential(equipped,[],plan));
+});
+
+test('60s endgame fight uses four 8s challenges and four 7s cinematic windows',()=>{
+ const game=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
+ assert.equal(DOG_BOSS10_DURATION_MS,60_000);
+ assert.equal(game.version,5);
+ assert.deepEqual(game.rounds.map(r=>[r.startMs,r.endMs]),
+  DOG_ENDGAME_WINDOWS.map(r=>[r.startMs,r.endMs]));
+ assert.deepEqual(game.rounds.map(r=>r.kind),['math','dodge','target','reaction']);
+ assert.deepEqual(game.rounds.map((r,i)=>
+  (game.rounds[i+1]?.startMs??60_000)-r.endMs),[7000,7000,7000,7000]);
+ assert.equal(dogNormalizeMiniGames(game).version,5);
+ assert.equal(dogMiniExchangeView(game,roster,59_000).durationMs,60_000);
+ // Older v3 and v4 persisted battles must keep their original windows.
+ assert.equal(dogMiniExchangeView(dogCreateMiniGames(10,()=>0,{exchange:true}),roster,39_000).durationMs,40_000);
+ assert.equal(dogMiniExchangeView(dogCreateMiniGames(10,()=>0,{exchange:'cinematic'}),roster,49_000).durationMs,50_000);
+});
+test('three dodge directions and verified success are safely synchronized to all players',()=>{
+ let game=dogCreateMiniGames(70,()=>0,{exchange:'endgame'});
+ const dodge=game.rounds.find(r=>r.kind==='dodge');
+ assert.equal(dodge.lanes,3);
+ const first=dodge.attacks[0];
+ const correct=[0,1,2].find(i=>i!==first.dangerIndex&&i!==first.secondDangerIndex);
+ const wrong=first.dangerIndex;
+ const a=dogSubmitMiniAnswer(game,roster,'a',dodge.round,correct,
+  now+first.startMs+250,now,0);
+ assert.equal(a.correct,true);
+ game=a.games;
+ const b=dogSubmitMiniAnswer(game,roster,'b',dodge.round,wrong,
+  now+first.startMs+350,now,0);
+ assert.equal(b.correct,false);game=b.games;
+ const other=dogPublicMiniGames(game,'c');
+ const one=other.dodgeActions.find(a=>a.uid==='a'&&a.step===0);
+ const two=other.dodgeActions.find(a=>a.uid==='b'&&a.step===0);
+ assert.deepEqual([one.choice,one.correct,two.choice,two.correct],
+  [correct,true,wrong,false]);
+ assert.equal(other.myAnswers[dodge.round],undefined,
+  'another player must not see my private answer history');
+ const late=()=>dogSubmitMiniAnswer(game,roster,'c',dodge.round,correct,
+  now+first.impactMs+1,now,0);
+ assert.throws(late,/DOG_MINIGAME_TOO_LATE/,
+  'no answer may be accepted after the actual strike');
 });
