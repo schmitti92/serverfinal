@@ -79,16 +79,16 @@ test('One or two may start manually, three auto-start, and only participants may
   const started=groupBossStart(gate,p,team,'a',build(gate),now);
   assert.equal(groupBossState(gate,started.groupBosses[gate]).roster.length,1);
   assert.throws(()=>groupBossReact(gate,started,'b',now+100),/NOT_PARTICIPANT/);
-  const solo=groupBossFinish(gate,started,now+30001,()=>0);
+  const solo=groupBossFinish(gate,started,now+40001,()=>0);
   assert.equal(solo.result.win,false);
-  assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+630000);
+  assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+640000);
 
   p=makeProgress(gate);
   for(const m of team.members)p=groupBossReady(gate,p,team,m.uid,build(gate),now);
   assert.equal(groupBossState(gate,p.groupBosses[gate]).phase,'fighting');
   assert.equal(groupBossState(gate,p.groupBosses[gate]).roster.length,3);
-  assert.throws(()=>groupBossFinish(gate,p,now+29999,()=>0),/STILL_FIGHTING/);
-  const won=groupBossFinish(gate,p,now+30001,()=>4500);
+  assert.throws(()=>groupBossFinish(gate,p,now+39999,()=>0),/STILL_FIGHTING/);
+  const won=groupBossFinish(gate,p,now+40001,()=>4500);
   assert.equal(won.result.win,true);
   assert.ok(won.progress.sharedBosses.includes(gate));
   assert.equal(won.progress.people.a.currentGate,Math.min(100,gate+1));
@@ -186,34 +186,42 @@ function fixture(gate=20,initialRoll=0){
 /** Submit all actual v2 sub-actions through the authenticated API at the
  * original server-clock timestamps. Test-only fixture sees secret answers;
  * production clients do not. */
+/** Complete each of the four 8s challenge types through real API receipts. */
 async function completeRound(f,gate,index,players,wrongUser=null){
  const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
  const round=f.docs.get(key).groupBosses[gate].miniGames.rounds[index];
- assert.ok(['math','reaction'].includes(round.kind));
  for(let step=0;step<round.maxSteps;step++){
-  let at;
-  if(round.kind==='math')at=round.startMs+300+step*850;
-  else{
+  let at,right,wrong;
+  if(round.kind==='math'){
+   at=round.startMs+300+step*850;
+   right=round.puzzles[step].correctIndex;wrong=(right+1)%3;
+  }else if(round.kind==='dodge'){
+   const attack=round.attacks[step];
+   at=attack.startMs+400;
+   right=Array.from({length:round.lanes},(_,i)=>i).find(i=>
+    i!==attack.dangerIndex&&i!==attack.secondDangerIndex);
+   wrong=attack.dangerIndex;
+  }else if(round.kind==='target'){
+   at=round.startMs+400+step*2000;
+   right=dogMiniTargetIndex(round,at);wrong=(right+1)%round.lanes;
+  }else{
    const min=round.startMs+Math.floor(step*8000/3)+450;
    const max=round.startMs+Math.floor((step+1)*8000/3)-220;
    at=NaN;
    for(let t=min;t<max;t+=10)
-    if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){
-     at=t;break;
-    }
-   assert.ok(Number.isFinite(at),'green reaction zone must exist');
+    if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){at=t;break;}
+   assert.ok(Number.isFinite(at),'reaction window exists');
+   right=1;wrong=0;
   }
-  assert.ok(now+at>=f.time(),'challenge steps must be chronological');
+  assert.ok(now+at>=f.time(),'input must arrive chronologically');
   f.advance(now+at-f.time());
   for(const uid of players){
-   const right=round.kind==='math'?round.puzzles[step].correctIndex:1;
-   const answer=uid===wrongUser?(right+1)%3:right;
-   const result=await f.call('POST','/minigame',{
-    requestId:'multi-'+gate+'-'+index+'-'+uid+'-'+step+'-receipt',
-    round:index,step,answer
+   const response=await f.call('POST','/minigame',{
+    requestId:'four-'+gate+'-'+index+'-'+uid+'-'+step+'-receipt',
+    round:index,step,answer:uid===wrongUser?wrong:right
    },uid);
-   assert.equal(result.statusCode,200,'round '+index+' player '+uid+' step '+step);
-   assert.equal(result.body.result.correct,uid!==wrongUser);
+   assert.equal(response.statusCode,200,round.kind+' '+uid+' '+step);
+   assert.equal(response.body.result.correct,uid!==wrongUser);
   }
  }
 }
@@ -227,7 +235,7 @@ test('Authenticated API: solo start loses, cooldown survives refresh and outside
  const start=await f.call('POST','/start',{requestId:'solo-start-00000001'});
  assert.equal(start.statusCode,200);
  assert.equal(start.body.view.roster.length,1);
- f.advance(30001);
+ f.advance(40001);
  const seen=await f.call('GET');
  assert.equal(seen.statusCode,200);
  assert.equal(seen.body.phase,'cooldown');
@@ -251,7 +259,7 @@ test('Authenticated API: rare duo win persists and unlocks following forge tier 
  assert.equal(start.statusCode,200);
  await completeRound(f,20,0,['a','b']);
  await completeRound(f,20,1,['a','b']);
- f.advance(now+30001-f.time());
+ f.advance(now+40001-f.time());
  const result=await f.call('POST','/finish',{requestId:'duo-finish-00000001'});
  assert.equal(result.statusCode,200);
  assert.equal(result.body.result.win,true);
@@ -276,7 +284,7 @@ test('Boss 100 victory survives reconnect and makes DOG unlock flag true for all
    requestId:'final-ready-'+user+'-0001'},user);
   assert.equal(r.statusCode,200);
  }
- f.advance(30001);
+ f.advance(40001);
  const recovered=await f.call('GET','',{},'b');
  assert.equal(recovered.statusCode,200);
  assert.equal(recovered.body.won,true);
@@ -305,20 +313,20 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
   assert.equal(loaded.body.phase,'fighting');
   assert.equal(loaded.body.roster.length,3);
   assert.deepEqual(loaded.body.miniGames.myAnswers,{});
-  assert.equal(loaded.body.miniGames.rounds.length,3);
+  assert.equal(loaded.body.miniGames.rounds.length,4);
   assert.equal(loaded.body.startedAt,now);
   views.push(loaded.body);
  }
  assert.deepEqual(views[0].miniGames.rounds,views[1].miniGames.rounds);
  assert.deepEqual(views[1].miniGames.rounds,views[2].miniGames.rounds);
- assert.equal(new Set(views[0].miniGames.rounds.map(round=>round.kind)).size,3);
+ assert.equal(new Set(views[0].miniGames.rounds.map(round=>round.kind)).size,4);
  assert.ok(!JSON.stringify(views[0].miniGames).includes('correctIndex'),
   'the server never leaks the math answer');
  await completeRound(f,100,0,players);
  const reconnect=await f.call('GET','',{},'b');
  assert.equal(reconnect.body.phase,'fighting');
  assert.equal(reconnect.body.miniGames.myAnswers[0].correct,true);
- assert.equal(reconnect.body.miniGames.myAnswers[0].attempts.length,3);
+ assert.equal(reconnect.body.miniGames.myAnswers[0].attempts.length,8);
  assert.equal(Object.keys(reconnect.body.miniGames.myAnswers).length,1);
  assert.equal(reconnect.body.miniGames.completedBy.a,1);
  assert.equal(reconnect.body.miniGames.completedBy.b,1);
@@ -328,10 +336,10 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  const b=await f.call('GET','',{},'b');
  const c=await f.call('GET','',{},'c');
  assert.equal(a.body.miniGames.myAnswers[1].correct,true);
- assert.equal(a.body.miniGames.myAnswers[1].attempts.length,8);
+ assert.equal(a.body.miniGames.myAnswers[1].attempts.length,3);
  assert.equal(b.body.miniGames.myAnswers[1].correct,false);
- assert.equal(c.body.miniGames.myAnswers[1],undefined);
- f.advance(now+30001-f.time());
+ assert.equal(c.body.miniGames.myAnswers[0],undefined);
+ f.advance(now+40001-f.time());
  const late=await f.call('POST','/minigame',{
   requestId:'trio-100-late-c-001',round:1,answer:0},'c');
  assert.equal(late.statusCode,409);
@@ -353,7 +361,7 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
   .sharedBosses,priorWins(100).concat(100));
  assert.equal(f.writes.filter(key=>key===
   DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,29,
-  'exactly 3 ready, 9 reaction actions, 16 math actions and 1 result');
+  'three Ready, 24 math answers, six dodges and one settlement');
 });
 
 test('Group boss receipts are bound to the exact minigame round and answer',async()=>{
@@ -441,19 +449,19 @@ test('HTTP arithmetic batch submits eight answers in one write and receipt repla
    requestId:'batch-ready-'+uid+'-0000001'},uid);
   assert.equal(ready.statusCode,200);
  }
- // Seeded round 1 is Blitz-Mathe (round 0 is Reaction).
- f.advance(18500);
- const privateRound=f.docs.get(key).groupBosses[20].miniGames.rounds[1];
+ // Four-stage boss always opens with Blitz-Mathe.
+ f.advance(8400);
+ const privateRound=f.docs.get(key).groupBosses[20].miniGames.rounds[0];
  assert.equal(privateRound.kind,'math');
  const answers=privateRound.puzzles.map(p=>p.correctIndex);
  const requestId='group-math-batch-same-request-0001';
  const priorWrites=f.writes.filter(x=>x===key).length;
  const first=await f.call('POST','/minigame',{
-  requestId,round:1,step:0,answer:answers},'a');
+  requestId,round:0,step:0,answer:answers},'a');
  assert.equal(first.statusCode,200);
  assert.equal(first.body.result.correct,true);
  assert.equal(first.body.result.bonusPercent,6);
- assert.equal(first.body.view.miniGames.myAnswers[1].attempts.length,8);
+ assert.equal(first.body.view.miniGames.myAnswers[0].attempts.length,8);
  assert.equal(f.writes.filter(x=>x===key).length,priorWrites+1,
   'eight rapid math answers must require one progress write');
  const replay=await f.call('POST','/minigame',{
@@ -462,9 +470,9 @@ test('HTTP arithmetic batch submits eight answers in one write and receipt repla
  assert.equal(replay.body.replayed,true);
  assert.equal(f.writes.filter(x=>x===key).length,priorWrites+1);
  const changed=await f.call('POST','/minigame',{
-  requestId,round:1,step:0,answer:answers.map((n,i)=>i===0?(n+1)%3:n)},'a');
+  requestId,round:0,step:0,answer:answers.map((n,i)=>i===0?(n+1)%3:n)},'a');
  assert.equal(changed.statusCode,409);
  assert.equal(changed.body.error,'DOG_GROUP_RECEIPT_CONFLICT');
  const notMine=await f.call('GET','',{},'b');
- assert.equal(notMine.body.miniGames.myAnswers[1],undefined);
+ assert.equal(notMine.body.miniGames.myAnswers[0],undefined);
 });
