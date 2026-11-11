@@ -7,6 +7,7 @@ import {
  groupBossDamagePotential,groupBossResolveCombat,installDogGroupBossApi
 } from '../dog-group-boss.js';
 import {dogGroupBossHp} from '../dog-balance.js';
+import {dogMiniReactionPosition} from '../dog-boss-minigames.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
@@ -180,7 +181,41 @@ function fixture(gate=20,initialRoll=0){
   }
   return res;
  }
- return {docs,reads,writes,call,advance:ms=>time+=ms,roll:n=>roll=n};
+ return {docs,reads,writes,call,advance:ms=>time+=ms,time:()=>time,roll:n=>roll=n};
+}
+/** Submit all actual v2 sub-actions through the authenticated API at the
+ * original server-clock timestamps. Test-only fixture sees secret answers;
+ * production clients do not. */
+async function completeRound(f,gate,index,players,wrongUser=null){
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ const round=f.docs.get(key).groupBosses[gate].miniGames.rounds[index];
+ assert.ok(['math','reaction'].includes(round.kind));
+ for(let step=0;step<round.maxSteps;step++){
+  let at;
+  if(round.kind==='math')at=round.startMs+300+step*850;
+  else{
+   const min=round.startMs+Math.floor(step*8000/3)+450;
+   const max=round.startMs+Math.floor((step+1)*8000/3)-220;
+   at=NaN;
+   for(let t=min;t<max;t+=10)
+    if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){
+     at=t;break;
+    }
+   assert.ok(Number.isFinite(at),'green reaction zone must exist');
+  }
+  assert.ok(now+at>=f.time(),'challenge steps must be chronological');
+  f.advance(now+at-f.time());
+  for(const uid of players){
+   const right=round.kind==='math'?round.puzzles[step].correctIndex:1;
+   const answer=uid===wrongUser?(right+1)%3:right;
+   const result=await f.call('POST','/minigame',{
+    requestId:'multi-'+gate+'-'+index+'-'+uid+'-'+step+'-receipt',
+    round:index,step,answer
+   },uid);
+   assert.equal(result.statusCode,200,'round '+index+' player '+uid+' step '+step);
+   assert.equal(result.body.result.correct,uid!==wrongUser);
+  }
+ }
 }
 test('Authenticated API: solo start loses, cooldown survives refresh and outsider cannot join',async()=>{
  const f=fixture(20);
@@ -214,21 +249,9 @@ test('Authenticated API: rare duo win persists and unlocks following forge tier 
  }
  const start=await f.call('POST','/start',{requestId:'duo-start-00000001'});
  assert.equal(start.statusCode,200);
- f.advance(6000);
- for(const user of ['a','b']){
-  const reaction=await f.call('POST','/minigame',{
-   requestId:'duo-timing-'+user+'-000001',round:0,answer:1},user);
-  assert.equal(reaction.statusCode,200);
-  assert.equal(reaction.body.result.correct,true);
- }
- f.advance(4500);
- for(const user of ['a','b']){
-  const math=await f.call('POST','/minigame',{
-   requestId:'duo-arithmetic-'+user+'-001',round:1,answer:0},user);
-  assert.equal(math.statusCode,200);
-  assert.equal(math.body.result.correct,true);
- }
- f.advance(19500);
+ await completeRound(f,20,0,['a','b']);
+ await completeRound(f,20,1,['a','b']);
+ f.advance(now+30001-f.time());
  const result=await f.call('POST','/finish',{requestId:'duo-finish-00000001'});
  assert.equal(result.statusCode,200);
  assert.equal(result.body.result.win,true);
@@ -291,36 +314,24 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  assert.equal(new Set(views[0].miniGames.rounds.map(round=>round.kind)).size,3);
  assert.ok(!JSON.stringify(views[0].miniGames).includes('correctIndex'),
   'the server never leaks the math answer');
- f.advance(6000);
- for(const player of players){
-  const reaction=await f.call('POST','/minigame',{
-   requestId:'trio-100-reaction-'+player+'-01',round:0,answer:1},player);
-  assert.equal(reaction.statusCode,200);
-  assert.equal(reaction.body.result.correct,true);
- }
- // Player B reconnects after the first challenge; another user's answer
- // cannot be confused with B's own result.
+ await completeRound(f,100,0,players);
  const reconnect=await f.call('GET','',{},'b');
  assert.equal(reconnect.body.phase,'fighting');
  assert.equal(reconnect.body.miniGames.myAnswers[0].correct,true);
+ assert.equal(reconnect.body.miniGames.myAnswers[0].attempts.length,3);
  assert.equal(Object.keys(reconnect.body.miniGames.myAnswers).length,1);
  assert.equal(reconnect.body.miniGames.completedBy.a,1);
  assert.equal(reconnect.body.miniGames.completedBy.b,1);
  assert.equal(reconnect.body.miniGames.completedBy.c,1);
- f.advance(4500);
- const good=await f.call('POST','/minigame',{
-  requestId:'trio-100-math-a-001',round:1,answer:0},'a');
- const wrong=await f.call('POST','/minigame',{
-  requestId:'trio-100-math-b-001',round:1,answer:1},'b');
- assert.equal(good.body.result.correct,true);
- assert.equal(wrong.body.result.correct,false);
+ await completeRound(f,100,1,['a','b'],'b');
  const a=await f.call('GET','',{},'a');
  const b=await f.call('GET','',{},'b');
  const c=await f.call('GET','',{},'c');
  assert.equal(a.body.miniGames.myAnswers[1].correct,true);
+ assert.equal(a.body.miniGames.myAnswers[1].attempts.length,8);
  assert.equal(b.body.miniGames.myAnswers[1].correct,false);
  assert.equal(c.body.miniGames.myAnswers[1],undefined);
- f.advance(19501);
+ f.advance(now+30001-f.time());
  const late=await f.call('POST','/minigame',{
   requestId:'trio-100-late-c-001',round:1,answer:0},'c');
  assert.equal(late.statusCode,409);
@@ -341,8 +352,8 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
   .sharedBosses,priorWins(100).concat(100));
  assert.equal(f.writes.filter(key=>key===
-  DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,9,
-  'exactly three Ready, five score writes and one settlement');
+  DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,29,
+  'exactly 3 ready, 9 reaction actions, 16 math actions and 1 result');
 });
 
 test('Group boss receipts are bound to the exact minigame round and answer',async()=>{
