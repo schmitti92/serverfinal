@@ -316,7 +316,7 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  // The server still checks every secret answer and rejects extra attempts.
  // Up to two seconds transfer grace prevents punishing a final-moment submit.
  if(Array.isArray(value)){
-  if(games.version!==2||round.kind!=='math'||step!==0||
+  if(games.version<2||round.kind!=='math'||step!==0||
    value.length<1||value.length>8||
    value.some(n=>!Number.isSafeInteger(n)||n<0||n>2))
    throw Error('DOG_MINIGAME_BAD_ANSWER');
