@@ -9,7 +9,7 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_BOSS10_DURATION_MS=30_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
@@ -141,7 +141,7 @@ export function boss10DamagePotential(roster=[],reacted=[],miniGames=null){
   const armorBase=dogArmorBase(m.armorLevel)/dogArmorBase(1);
   const armorReadiness=Math.min(1,armorBase);
   const survival=(.8+.2*defense)*(.75+.25*armorReadiness);
-  const reaction=miniGames?1+dogMiniBonus(miniGames,m.uid):reacting.has(m.uid)?1.1:1;
+  const reaction=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):reacting.has(m.uid)?1.1:1;
   return sum+DOG_BOSS10_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
    (.67+.21*attack)*survival*reaction;
  },0);
@@ -163,8 +163,7 @@ export function boss10ResolveCombat(roster,reactions=[],rand=randomInt,miniGames
  let damage=boss10DamagePotential(roster,reactionUids,miniGames)*luckFactor;
  let rareCritical=false;
  const duoReady=miniGames?
-  roster.every(m=>Object.values(dogNormalizeMiniGames(miniGames)?.answers[m.uid]||{})
-   .filter(answer=>answer.correct).length>=2):reactionUids.length===2;
+  roster.every(m=>dogMiniStrongRoundCount(miniGames,m.uid)>=2):reactionUids.length===2;
  if(roster.length===2&&roster.every(fullyPrepared)&&duoReady){
   const bonusRoll=rand(10000);
   if(!Number.isSafeInteger(bonusRoll)||bonusRoll<0||bonusRoll>=10000)
@@ -188,13 +187,13 @@ export function boss10React(progressRaw,uid,now=Date.now()){
 }
 /** Server validates a single timed answer. The challenge and result are
  * shared, but each player has an independent score (max 10% damage boost). */
-export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now()){
+export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now(),step=0){
  const progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
  if(boss.phase!=='fighting'||now>=boss.endsAt||now<boss.startedAt)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
- const result=dogSubmitMiniAnswer(boss.miniGames,boss.roster,uid,round,answer,now,boss.startedAt);
+ const result=dogSubmitMiniAnswer(boss.miniGames,boss.roster,uid,round,answer,now,boss.startedAt,step);
  return {progress:result.replayed?progress:{...progress,boss10:{...boss,miniGames:result.games},updatedAt:now},
-  result:{type:'minigame',round,correct:result.correct,replayed:result.replayed,
+  result:{type:'minigame',round,step,correct:result.correct,replayed:result.replayed,
    bonusPercent:Math.round(dogMiniBonus(result.games,uid)*1000)/10}};
 }
 export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
@@ -227,7 +226,8 @@ const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  DOG_BOSS10_NOT_RUNNING:409,DOG_BOSS10_STILL_FIGHTING:409,
  DOG_MINIGAME_MISSING:409,DOG_MINIGAME_NOT_RUNNING:409,
  DOG_MINIGAME_NOT_PARTICIPANT:403,DOG_MINIGAME_BAD_ROUND:400,
- DOG_MINIGAME_BAD_ANSWER:400,DOG_MINIGAME_TOO_LATE:409,
+ DOG_MINIGAME_BAD_ANSWER:400,DOG_MINIGAME_BAD_STEP:400,
+ DOG_MINIGAME_STEP_ORDER:409,DOG_MINIGAME_TOO_FAST:429,DOG_MINIGAME_TOO_LATE:409,
  DOG_BOSS10_USE_MINIGAMES:409,
  NOT_DOG_TEAM_MEMBER:403,DOG_BOSS10_RECEIPT_CONFLICT:409,DOG_BOSS10_RANDOM_INVALID:500};
 export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
@@ -288,7 +288,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
  for(const command of ['ready','start','react','minigame','finish']){
   app.post('/api/dog/gates/boss10/'+command,auth,async(req,res)=>{
    try{
-    const {requestId,round,answer:choice}=obj(req.body);
+    const {requestId,round,answer:choice,step=0}=obj(req.body);
     if(!validId(requestId))throw Error('INVALID_REQUEST_ID');
     const {db,teamRef,progressRef}=refs(),uid=req.dogBoss10Uid;
     const receiptRef=db.collection(DOG_BOSS10_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
@@ -302,7 +302,8 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      if(receipt.exists){
       const prior=receipt.data();
       if(prior.command!==command||
-         (command==='minigame'&&(prior.round!==round||prior.answer!==choice)))
+         (command==='minigame'&&(prior.round!==round||prior.answer!==choice||
+       (prior.step??0)!==step)))
        throw Error('DOG_BOSS10_RECEIPT_CONFLICT');
       return {view:boss10View(team,progress,uid,clock()),result:receipt.data().result,replayed:true};
      }
@@ -338,7 +339,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       next=boss10React(progress,uid,now);
       result={type:'reaction',accepted:true};
      }else if(command==='minigame'){
-      const solved=boss10MiniAnswer(progress,uid,round,choice,now);
+      const solved=boss10MiniAnswer(progress,uid,round,choice,now,step);
       next=solved.progress;result=solved.result;
       unchanged=solved.result.replayed===true;
      }else{
@@ -349,7 +350,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      // receipt, but does not rewrite the shared progress document.
      if(!unchanged)tx.set(progressRef,next);
      tx.create(receiptRef,{uid,command,requestId,
-      ...(command==='minigame'?{round,answer:choice}:{}),
+      ...(command==='minigame'?{round,answer:choice,step}:{}),
       createdAt:now,result});
      return {view:boss10View(team,next,uid,now),result,replayed:false};
     });
