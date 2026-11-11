@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_EXCHANGE_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
+ DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
  dogPublicMiniGames,dogSubmitMiniAnswer,dogMiniTargetIndex,
  dogMiniReactionPosition,dogMiniTeamShield,dogMiniExchangeView,
  dogMiniBonus,dogMiniStrongRoundCount
@@ -113,4 +113,67 @@ test('Shield is meaningful but does not outweigh the party equipment or leak dat
  assert.ok(boss10DamagePotential(prepared,[],make())>
   boss10DamagePotential(weak,[],make()));
  assert.equal(dogMiniExchangeView(make(),roster,1000).stages.length,4);
+});
+
+
+test('50s cinematic encounters preserve all 4x8s tasks and add four 4.5s pauses',()=>{
+ const cinema=dogCreateMiniGames(10,()=>0,{exchange:'cinematic'});
+ const old=dogCreateMiniGames(10,()=>0,{exchange:true});
+ assert.equal(DOG_BOSS10_DURATION_MS,50000);
+ assert.equal(cinema.version,4);
+ assert.equal(old.version,3);
+ assert.deepEqual(cinema.rounds.map(x=>[x.startMs,x.endMs]),
+  [[0,8000],[12500,20500],[25000,33000],[37500,45500]]);
+ assert.deepEqual(cinema.rounds.map(x=>[x.startMs,x.endMs]),
+  DOG_CINEMATIC_WINDOWS.map(x=>[x.startMs,x.endMs]));
+ for(const round of cinema.rounds)assert.equal(round.endMs-round.startMs,8000);
+ assert.deepEqual(cinema.rounds.map((r,i)=>{
+  const next=cinema.rounds[i+1];
+  return (next?.startMs??50000)-r.endMs;
+ },[4500,4500,4500,4500]);
+ assert.equal(dogNormalizeMiniGames(cinema).version,4);
+ assert.deepEqual(dogNormalizeMiniGames(old).rounds.map(r=>r.startMs),
+  DOG_EXCHANGE_WINDOWS.map(r=>r.startMs));
+ assert.equal(dogMiniExchangeView(cinema,roster,22000).durationMs,50000);
+ assert.equal(dogMiniExchangeView(old,roster,22000).durationMs,40000);
+});
+
+test('Equipment-derived extra attack potential is per phase, cumulative and private until completion',()=>{
+ const cinematic=solveAll(dogCreateMiniGames(10,()=>0,{exchange:'cinematic'}));
+ const potentialPerHero=hero=>hero.uid==='a'?1100:hero.uid==='b'?1500:1900;
+ const before=dogMiniExchangeView(cinematic,roster,6000,potentialPerHero);
+ assert.equal(before.stages[0].completed,false);
+ assert.equal(before.stages[0].correct,null);
+ assert.equal(before.stages[0].bonusDamage,null);
+ assert.equal(before.cumulativeExtraDamage,0);
+ const hit1=dogMiniExchangeView(cinematic,roster,9000,potentialPerHero);
+ assert.equal(hit1.stages[0].correct,24);
+ assert.equal(hit1.stages[0].max,24);
+ assert.equal(hit1.stages[0].bonusPercent,6);
+ assert.equal(hit1.stages[0].bonusDamage,270);
+ assert.equal(hit1.cumulativeExtraDamage,270);
+ assert.equal(hit1.stages[2].bonusDamage,null);
+ const block=dogMiniExchangeView(cinematic,roster,22000,potentialPerHero);
+ assert.equal(block.stages[1].shield,100);
+ assert.equal(block.cumulativeExtraDamage,270);
+ const hit2=dogMiniExchangeView(cinematic,roster,34500,potentialPerHero);
+ assert.equal(hit2.stages[2].bonusPercent,3);
+ assert.equal(hit2.stages[2].bonusDamage,135);
+ assert.equal(hit2.cumulativeExtraDamage,405);
+ const final=dogMiniExchangeView(cinematic,roster,50000,potentialPerHero);
+ assert.equal(final.shield,100);
+ assert.equal(final.cumulativeExtraDamage,405);
+ assert.ok(!JSON.stringify(dogPublicMiniGames(cinematic,'a')).includes('correctIndex'));
+ assert.equal(dogMiniBonus(cinematic,'a'),.09);
+});
+
+test('50s cinematic shield penalties still affect combat without inventing final HP',()=>{
+ const plan=dogCreateMiniGames(10,()=>0,{exchange:'cinematic'});
+ assert.equal(dogMiniTeamShield(plan,roster),50);
+ assert.equal(dogMiniExchangeView(plan,roster,39000).shield,75);
+ assert.equal(dogMiniExchangeView(plan,roster,50000).shield,50);
+ const equipped=[{uid:'a',weaponLevel:1,armorLevel:1,
+  skillPower:5,skillDestruction:5,skillDefense:5,skillGuard:5}];
+ assert.ok(boss10DamagePotential(equipped,[],solveAll(dogCreateMiniGames(10,()=>0,{exchange:'cinematic'})))>
+  boss10DamagePotential(equipped,[],plan));
 });
