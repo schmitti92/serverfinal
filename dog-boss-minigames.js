@@ -16,6 +16,12 @@ export const DOG_EXCHANGE_WINDOWS=Object.freeze([
  Object.freeze({startMs:20000,endMs:28000}),
  Object.freeze({startMs:30000,endMs:38000})
 ]);
+export const DOG_CINEMATIC_WINDOWS=Object.freeze([
+ Object.freeze({startMs:0,endMs:8000}),
+ Object.freeze({startMs:12500,endMs:20500}),
+ Object.freeze({startMs:25000,endMs:33000}),
+ Object.freeze({startMs:37500,endMs:45500})
+]);
 const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
 const LEGACY_WINDOWS=[{startMs:3000,endMs:10000},
  {startMs:10000,endMs:17000},{startMs:17000,endMs:24000}];
@@ -80,8 +86,11 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
   stepMs:d.targetStepMs,hint:'Treffe drei wandernde Schwachpunkte!'};
 }
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
- if(exchange)return {version:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>
-  createRound(kind,i,gate,rand,DOG_EXCHANGE_WINDOWS)),answers:{}};
+ if(exchange){
+  const cinematic=exchange==='cinematic';
+  return {version:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>
+   createRound(kind,i,gate,rand,cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS)),answers:{}};
+ }
  const available=[...DOG_MINIGAME_KINDS];
  for(let i=available.length-1;i>0;i--){
   const j=draw(rand,i+1);[available[i],available[j]]=[available[j],available[i]];
@@ -145,15 +154,16 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS){
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3].includes(raw.version)||
-  !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version===3?4:3)||
+ if(!isObj(raw)||![1,2,3,4].includes(raw.version)||
+  !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
  const windows=raw.version===1?LEGACY_WINDOWS:
-  raw.version===3?DOG_EXCHANGE_WINDOWS:DOG_MINIGAME_WINDOWS;
+  raw.version===3?DOG_EXCHANGE_WINDOWS:
+  raw.version===4?DOG_CINEMATIC_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
-   (raw.version===3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
+   (raw.version>=3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
    round.startMs!==windows[i].startMs||
    round.endMs!==windows[i].endMs)return null;
   return raw.version===1?normalizeV1Round(round,i,raw.gate):
@@ -238,7 +248,7 @@ export function dogMiniBonus(raw,uid){
  const games=dogNormalizeMiniGames(raw);if(!games)return 0;
  if(games.version===1)return Math.min(.10,
   Object.values(games.answers[uid]||{}).filter(a=>a.correct).length/3*.10);
- const weights=games.version===3?{math:.06,dodge:0,reaction:0,target:.03}:
+ const weights=games.version>=3?{math:.06,dodge:0,reaction:0,target:.03}:
   {math:.06,dodge:.02,reaction:.04,target:.03};
  return Math.min(.15,games.rounds.reduce((score,round)=>{
   const count=(games.answers[uid]?.[round.round]?.attempts||[]).filter(a=>a.correct).length;
@@ -252,7 +262,7 @@ export function dogMiniBonus(raw,uid){
  * or reaction counters. Initial value 100, absolute floor 50. */
 export function dogMiniTeamShield(raw,roster=[],throughRound=3){
  const games=dogNormalizeMiniGames(raw);
- if(games?.version!==3)return 100;
+ if(!games||games.version<3)return 100;
  const participants=Array.isArray(roster)?roster.filter(m=>m?.uid):[];
  if(!participants.length)return 100;
  let shield=100;
@@ -269,9 +279,9 @@ export function dogMiniTeamShield(raw,roster=[],throughRound=3){
 }
 /** Read-only synchronized stage summary derived entirely from persisted
  * server-verified team answers, never from client-submitted hit values. */
-export function dogMiniExchangeView(raw,roster=[],elapsed=0){
+export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null){
  const games=dogNormalizeMiniGames(raw);
- if(games?.version!==3)return null;
+ if(!games||games.version<3)return null;
  const participants=Array.isArray(roster)?roster.filter(m=>m?.uid):[];
  const stages=games.rounds.map((round,index)=>{
   const attempts=participants.flatMap(m=>
@@ -281,19 +291,31 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0){
   const resolved=elapsed>=round.endMs;
   const defensive=round.kind==='dodge'||round.kind==='reaction';
   const shield=resolved&&defensive?dogMiniTeamShield(games,participants,index):null;
+  const bonusWeight=round.kind==='math'?.06:round.kind==='target'?.03:0;
+  // Equipment-based potential; not an invented final damage/HP result.
+  const bonusDamage=resolved&&!defensive&&typeof heroBaseDamage==='function'?
+   Math.max(0,Math.round(participants.reduce((sum,hero)=>{
+    const count=(games.answers[hero.uid]?.[index]?.attempts||[])
+     .filter(a=>a.correct).length;
+    return sum+Math.max(0,heroBaseDamage(hero))*bonusWeight*
+     (round.maxSteps?count/round.maxSteps:0);
+   },0))):null;
   return {round:index,kind:round.kind,defensive,
-   completed:resolved,correct,max,
-   bonusPercent:!defensive&&max?
-    Math.round(100*(round.kind==='math'?.06:.03)*correct/max*10)/10:0,
-   shield};
+   completed:resolved,correct:resolved?correct:null,max,
+   bonusPercent:resolved&&!defensive&&max?
+    Math.round(100*bonusWeight*correct/max*10)/10:0,
+   bonusDamage,shield};
  });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
- return {version:3,durationMs:40000,shield:
-  shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
+ const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
+ return {version:games.version,durationMs:games.version===4?50000:40000,
+  shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
+  cumulativeExtraDamage:typeof heroBaseDamage==='function'?
+   earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
   stages};
 }
 export function dogMiniDodgePenalty(raw,uid){
- const games=dogNormalizeMiniGames(raw);if(!games||games.version===1||games.version===3)return 0;
+ const games=dogNormalizeMiniGames(raw);if(!games||games.version===1||games.version>=3)return 0;
  const dodge=games.rounds.find(r=>r.kind==='dodge');if(!dodge)return 0;
  const correct=(games.answers[uid]?.[dodge.round]?.attempts||[])
   .filter(a=>a.correct).length;
