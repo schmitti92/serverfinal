@@ -431,3 +431,40 @@ test('Group boss repeated Ready returns receipt without rewriting expedition pro
  }
  assert.equal((await f.call('GET','',{},'b')).body.phase,'fighting');
 });
+
+
+test('HTTP arithmetic batch submits eight answers in one write and receipt replays by value',async()=>{
+ const f=fixture(20);
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ for(const uid of ['a','b','c']){
+  const ready=await f.call('POST','/ready',{
+   requestId:'batch-ready-'+uid+'-0000001'},uid);
+  assert.equal(ready.statusCode,200);
+ }
+ // Seeded round 1 is Blitz-Mathe (round 0 is Reaction).
+ f.advance(18500);
+ const privateRound=f.docs.get(key).groupBosses[20].miniGames.rounds[1];
+ assert.equal(privateRound.kind,'math');
+ const answers=privateRound.puzzles.map(p=>p.correctIndex);
+ const requestId='group-math-batch-same-request-0001';
+ const priorWrites=f.writes.filter(x=>x===key).length;
+ const first=await f.call('POST','/minigame',{
+  requestId,round:1,step:0,answer:answers},'a');
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.result.correct,true);
+ assert.equal(first.body.result.bonusPercent,6);
+ assert.equal(first.body.view.miniGames.myAnswers[1].attempts.length,8);
+ assert.equal(f.writes.filter(x=>x===key).length,priorWrites+1,
+  'eight rapid math answers must require one progress write');
+ const replay=await f.call('POST','/minigame',{
+  requestId,round:1,step:0,answer:[...answers]},'a');
+ assert.equal(replay.statusCode,200);
+ assert.equal(replay.body.replayed,true);
+ assert.equal(f.writes.filter(x=>x===key).length,priorWrites+1);
+ const changed=await f.call('POST','/minigame',{
+  requestId,round:1,step:0,answer:answers.map((n,i)=>i===0?(n+1)%3:n)},'a');
+ assert.equal(changed.statusCode,409);
+ assert.equal(changed.body.error,'DOG_GROUP_RECEIPT_CONFLICT');
+ const notMine=await f.call('GET','',{},'b');
+ assert.equal(notMine.body.miniGames.myAnswers[1],undefined);
+});
