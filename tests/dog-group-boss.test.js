@@ -368,3 +368,36 @@ test('Group boss receipts are bound to the exact minigame round and answer',asyn
  const view=await f.call('GET');
  assert.equal(Object.keys(view.body.miniGames.myAnswers).length,1);
 });
+
+test('Group boss ready avoids unnecessary gear reads through the 100 gates',async()=>{
+ for(const gate of [20,50,100]){
+  const f=fixture(gate);
+  const gear=()=>f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/'));
+  for(const [i,uid] of ['a','b','c'].entries()){
+   const result=await f.call('POST','/ready',
+    {requestId:'gear-ready-'+gate+'-'+uid+'-001'},uid);
+   assert.equal(result.statusCode,200);
+   assert.equal(result.body.view.phase,i===2?'fighting':'waiting');
+   assert.equal(gear().length,i===2?3:0);
+  }
+  const stable=await f.call('GET','',{},'b');
+  assert.equal(stable.body.phase,'fighting');
+  assert.equal(stable.body.roster.length,3);
+  assert.equal(stable.body.endsAt-stable.body.startedAt,30000);
+ }
+});
+
+test('Group boss manual duo start loads only the participating heroes',async()=>{
+ const f=fixture(30);
+ for(const uid of ['a','b']){
+  const ready=await f.call('POST','/ready',
+   {requestId:'duo-gear-ready-'+uid+'-0001'},uid);
+  assert.equal(ready.statusCode,200);
+ }
+ assert.equal(f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/')).length,0);
+ const started=await f.call('POST','/start',{requestId:'duo-gear-start-000001'},'a');
+ assert.equal(started.statusCode,200);
+ assert.deepEqual(f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/')),
+  [DOG_HERO_COLLECTION+'/a',DOG_HERO_COLLECTION+'/b']);
+ assert.deepEqual(started.body.view.roster.map(x=>x.uid),['a','b']);
+});

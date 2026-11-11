@@ -295,13 +295,20 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      const now=clock();
      let next,result;
      if(command==='ready'||command==='start'){
-      const heroes={};
-      // Read all possible participant builds before writes; only ready
-      // participants are frozen into the encounter when it starts.
-      const roster=bossTeam(team).members;
-      const snapshots=await Promise.all(roster.map(m=>tx.get(
-       db.collection(DOG_HERO_COLLECTION).doc(m.uid))));
-      roster.forEach((m,i)=>{heroes[m.uid]=snapshots[i].exists?snapshots[i].data():null;});
+      const heroes={},roster=bossTeam(team).members;
+      const state=boss10State(dogGateProgress(progress).boss10);
+      // The first two Ready clicks merely register readiness. Freeze gear
+      // at the actual start instead of reading all three profiles for
+      // every click. This saves six reads per full three-player attempt.
+      const autoStart=command==='ready'&&roster.length===3&&
+       state.phase==='waiting'&&state.ready.length===2&&!state.ready.includes(uid);
+      if(command==='start'||autoStart){
+       const needed=command==='start'?
+        roster.filter(member=>state.ready.includes(member.uid)):roster;
+       const snapshots=await Promise.all(needed.map(m=>tx.get(
+        db.collection(DOG_HERO_COLLECTION).doc(m.uid))));
+       needed.forEach((m,i)=>{heroes[m.uid]=snapshots[i].exists?snapshots[i].data():null;});
+      }
       next=command==='ready'?
        boss10Ready(progress,team,uid,heroes,now,rand):
        boss10Start(progress,team,uid,heroes,now,rand);

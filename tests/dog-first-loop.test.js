@@ -265,13 +265,13 @@ test('Existing weapon levels beyond 10 remain saved but cannot be forged higher'
 });
 
 function fixture(){
- const docs=new Map(),routes=new Map();
+ const docs=new Map(),routes=new Map(),reads=[];
  let time=now;let dice=0;
  const snapshot=k=>({exists:docs.has(k),data:()=>structuredClone(docs.get(k))});
  const db={collection:c=>({doc:id=>({key:c+'/'+id,get:async()=>snapshot(c+'/'+id)})}),
   runTransaction:async fn=>{
    const changes=[];let writes=false;
-   const tx={get:async ref=>{assert.equal(writes,false,'read before writes');return snapshot(ref.key)},
+   const tx={get:async ref=>{assert.equal(writes,false,'read before writes');reads.push(ref.key);return snapshot(ref.key)},
     set:(ref,val)=>{writes=true;changes.push(['set',ref.key,structuredClone(val)])},
     create:(ref,val)=>{writes=true;changes.push(['create',ref.key,structuredClone(val)])}};
    const result=await fn(tx);
@@ -309,7 +309,7 @@ function fixture(){
   }
   return res;
  }
- return {docs,call,advance:ms=>time+=ms,roll:n=>dice=n};
+ return {docs,reads,call,advance:ms=>time+=ms,roll:n=>dice=n};
 }
 
 test('After everyone disconnects, a later boss view settles the fight exactly once',async()=>{
@@ -511,4 +511,33 @@ test('Boss 10 receipt retry checks the original minigame round and answer',async
  }
  const state=await f.call('GET','/api/dog/gates/boss10',{},'a');
  assert.equal(Object.keys(state.body.miniGames.myAnswers).length,1);
+});
+
+test('Boss 10 ready does not read equipment until all three players start together',async()=>{
+ const f=fixture(),route='/api/dog/gates/boss10/ready';
+ const gearReads=()=>f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/'));
+ for(const [i,token] of ['a','b','c'].entries()){
+  const r=await f.call('POST',route,{requestId:'gear-ready-'+i+'-00001'},token);
+  assert.equal(r.statusCode,200);
+  assert.equal(r.body.view.phase,i===2?'fighting':'waiting');
+  assert.equal(gearReads().length,i===2?3:0,'only final Ready freezes the equipment');
+ }
+ const joined=(await f.call('GET','/api/dog/gates/boss10',{},'b')).body;
+ assert.equal(joined.phase,'fighting');
+ assert.equal(joined.roster.length,3);
+ assert.equal(joined.endsAt-joined.startedAt,DOG_BOSS10_DURATION_MS);
+});
+
+test('Boss 10 manual solo battle fetches equipment only for its participant',async()=>{
+ const f=fixture();
+ const ready=await f.call('POST','/api/dog/gates/boss10/ready',
+  {requestId:'solo-gear-ready-0001'},'a');
+ assert.equal(ready.statusCode,200);
+ assert.equal(f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/')).length,0);
+ const started=await f.call('POST','/api/dog/gates/boss10/start',
+  {requestId:'solo-gear-start-0001'},'a');
+ assert.equal(started.statusCode,200);
+ assert.deepEqual(f.reads.filter(key=>key.startsWith(DOG_HERO_COLLECTION+'/')),
+  [DOG_HERO_COLLECTION+'/hero-a']);
+ assert.deepEqual(started.body.view.roster.map(x=>x.uid),['hero-a']);
 });

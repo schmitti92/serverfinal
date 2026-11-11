@@ -300,9 +300,18 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
      const now=clock();let next,result;
      if(command==='ready'||command==='start'){
       const roster=bossTeam(team).members,heroes={};
-      const snaps=await Promise.all(roster.map(m=>tx.get(
-       db.collection(DOG_HERO_COLLECTION).doc(m.uid))));
-      roster.forEach((m,i)=>{heroes[m.uid]=snaps[i].exists?snaps[i].data():null;});
+      const state=stateAt(dogGateProgress(progress),gate);
+      // Read gear only if this click launches the team battle. Manual
+      // battles read only the 1–3 heroes who actually participate.
+      const autoStart=command==='ready'&&roster.length===3&&
+       state.phase==='waiting'&&state.ready.length===2&&!state.ready.includes(uid);
+      if(command==='start'||autoStart){
+       const needed=command==='start'?
+        roster.filter(member=>state.ready.includes(member.uid)):roster;
+       const snaps=await Promise.all(needed.map(m=>tx.get(
+        db.collection(DOG_HERO_COLLECTION).doc(m.uid))));
+       needed.forEach((m,i)=>{heroes[m.uid]=snaps[i].exists?snaps[i].data():null;});
+      }
       next=command==='ready'?
        groupBossReady(gate,progress,team,uid,heroes,now,rand):
        groupBossStart(gate,progress,team,uid,heroes,now,rand);
