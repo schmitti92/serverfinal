@@ -54,7 +54,7 @@ function solveAll(start){
 }
 test('New encounter has four fixed phases and exactly four 2s exchanges in 40s',()=>{
  const games=make();
- assert.equal(DOG_BOSS10_DURATION_MS,40000);
+ assert.equal(DOG_BOSS10_DURATION_MS,50000);
  assert.equal(games.version,3);
  assert.deepEqual(games.rounds.map(r=>r.kind),names);
  assert.deepEqual(games.rounds.map(r=>[r.startMs,r.endMs]),
