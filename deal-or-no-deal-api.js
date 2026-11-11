@@ -1,4 +1,4 @@
-import {create,apply,publicView,payoutFor} from './deal-or-no-deal.js';
+import {create,apply,publicView,payoutFor,cashCreditFor} from './deal-or-no-deal.js';
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
@@ -243,10 +243,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  };
  const settleFinal=async(db,code)=>{const matchRef=db.collection(collection).doc(code);return db.runTransaction(async tx=>{const match=await tx.get(matchRef);if(!match.exists)return false;const game=match.data().game;if(!game||!['final','done'].includes(game.phase)||!Array.isArray(game.values))return false;
  const chestContext=await chestAwardContext(db,tx);
- const payouts=game.players.map(p=>({uid:p.id,amount:payoutFor(game,p)}));if(payouts.some(p=>!Number.isSafeInteger(p.amount)||p.amount<0))throw Error('INVALID_PAYOUT');const maximum=Math.max(...payouts.map(p=>p.amount));
+ const payouts=game.players.map(p=>({uid:p.id,amount:payoutFor(game,p),credit:cashCreditFor(game,p)}));if(payouts.some(p=>!Number.isSafeInteger(p.amount)||p.amount<0||!Number.isSafeInteger(p.credit)))throw Error('INVALID_PAYOUT');const maximum=Math.max(...payouts.map(p=>p.amount));
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
- for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.amount,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.amount,createdAt:Date.now()});changed=true}return game.id})};
+ for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,createdAt:Date.now()});changed=true}return game.id})};
  app.get('/api/deal-or-no-deal/shop/catalog',auth,(req,res)=>res.json({ok:true,items:SHOP_ITEMS,minPrice:100000000}));
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
@@ -847,7 +847,7 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    }
   }
   if(before.phase!=='final'&&after.phase==='final'){
-   const payouts=after.players.map(p=>({id:p.id,payout:payoutFor(after,p)}));
+   const payouts=after.players.map(p=>({id:p.id,payout:payoutFor(after,p),credit:cashCreditFor(after,p)}));
    const max=Math.max(...payouts.map(p=>p.payout));
    // One free Christmas wheel prize for the highest payout (first player wins a tie).
    // The pack and cards are fixed and credited exactly once when the match ends.
@@ -873,11 +873,11 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    const snapshots=await Promise.all(entries.map(async e=>({wallet:await tx.get(e.account),receipt:await tx.get(e.receipt),materials:await tx.get(e.materials)})));
    for(let i=0;i<entries.length;i++){const e=entries[i],snap=snapshots[i];if(snap.receipt.exists)continue;
     const previous=snap.wallet.exists?snap.wallet.data():{};
-    tx.set(e.account,{balance:(previous.balance||0)+e.payout,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),updatedAt:Date.now()},{merge:true});
+    tx.set(e.account,{balance:(previous.balance||0)+e.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),updatedAt:Date.now()},{merge:true});
     // A payout receipt is also the exactly-once DOG chest receipt for this game/player.
     // Only new, server-settled Deal matches grant materials; a replay never does.
     tx.set(e.materials,chestForSettledDeal(e.id,snap.materials.exists?snap.materials.data():null,chestContext));
-    tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
+    tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.credit,baseAmount:e.payout,bonusAmount:e.credit-e.payout,createdAt:Date.now()});
    }
   }
   awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);broadcastGame(code,game);
