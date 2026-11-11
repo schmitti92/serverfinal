@@ -1,0 +1,22 @@
+name: Real 100-Tore Two-Bot Pilot
+on:
+  push:
+    paths:
+      - 'dog-live-bots.js'
+      - 'dog-gates.js'
+      - 'dog-boss10.js'
+      - 'dog-group-boss.js'
+      - 'server.js'
+      - 'tests/dog-live-bots.test.js'
+      - '.github/workflows/dog-live-bots.yml'
+  workflow_dispatch:
+jobs:
+  two-bot-pilot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: node --test tests/dog-live-bots.test.js tests/dog-gates.test.js tests/dog-boss-minigames.test.js tests/dog-group-boss.test.js
