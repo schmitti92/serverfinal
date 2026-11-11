@@ -2,7 +2,10 @@ import {create,apply,publicView} from './deal-or-no-deal.js';
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
-import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory} from './dog-materials.js';
+import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
+import {dogChestOffer} from './dog-balance.js';
+import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
+import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
 const SHOP_ITEMS=Object.freeze([{"id":"brille","name":"Goldene Sonnenbrille","price":100000000,"category":"Accessoires","emoji":"🕶️"},{"id":"pirat","name":"Piratenhut","price":150000000,"category":"Accessoires","emoji":"🏴‍☠️"},{"id":"mikro","name":"Show-Mikrofon","price":200000000,"category":"Extras","emoji":"🎙️"},{"id":"silberrahmen","name":"Silberner Profilrahmen","price":300000000,"category":"Rahmen","emoji":"🪞"},{"id":"silberkoffer","name":"Silberkoffer","price":500000000,"category":"Koffer","emoji":"💼"},{"id":"krone","name":"Königskrone","price":750000000,"category":"Accessoires","emoji":"👑"},{"id":"goldrahmen","name":"Goldener Profilrahmen","price":1000000000,"category":"Rahmen","emoji":"🖼️"},{"id":"goldkoffer","name":"Goldkoffer","price":1500000000,"category":"Koffer","emoji":"🧳"},{"id":"vip","name":"VIP-Abzeichen","price":2500000000,"category":"Extras","emoji":"🌟"},{"id":"studio","name":"Exklusives Studio","price":4000000000,"category":"Hintergründe","emoji":"🎬"},{"id":"diamant","name":"Diamantkoffer","price":7500000000,"category":"Koffer","emoji":"💎"},{"id":"trophaee","name":"Legendäre Show-Trophäe","price":10000000000,"category":"Extras","emoji":"🏆"}]);
 import {randomInt} from 'node:crypto';
@@ -219,11 +222,29 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   if(settledGames.size>300)settledGames.delete(settledGames.keys().next().value);
   return promise;
  };
+ // Event chest credits remain inside the existing exactly-once Deal
+ // payout transaction. Only expedition members receive 100-Tore chests;
+ // all other players keep their previous chest type and inventory.
+ const chestAwardContext=async(db,tx)=>{
+  const teamRef=db.collection(DOG_BOSS_TEAM_COLLECTION).doc(DOG_BOSS_TEAM_ID);
+  const teamSnap=await tx.get(teamRef);
+  const members=new Set(Array.isArray(teamSnap.exists?teamSnap.data()?.members:null)?
+   teamSnap.data().members.map(m=>m.uid):[]);
+  if(!members.size)return {members,progress:dogGateProgress(null)};
+  const progressSnap=await tx.get(db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID));
+  return {members,progress:dogGateProgress(progressSnap.exists?progressSnap.data():null)};
+ };
+ const chestForSettledDeal=(uid,raw,ctx)=>{
+  if(!ctx.members.has(uid))return addVerifiedChestToInventory(raw);
+  const progress=ctx.progress.people[uid],gate=progress?.highestGate??1;
+  return addExpeditionChestToInventory(raw,dogChestOffer(gate));
+ };
  const settleFinal=async(db,code)=>{const matchRef=db.collection(collection).doc(code);return db.runTransaction(async tx=>{const match=await tx.get(matchRef);if(!match.exists)return false;const game=match.data().game;if(!game||!['final','done'].includes(game.phase)||!Array.isArray(game.values))return false;
+ const chestContext=await chestAwardContext(db,tx);
  const payouts=game.players.map(p=>({uid:p.id,amount:p.deal??game.values[p.case]}));if(payouts.some(p=>!Number.isSafeInteger(p.amount)||p.amount<0))throw Error('INVALID_PAYOUT');const maximum=Math.max(...payouts.map(p=>p.amount));
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
- for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.amount,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,addVerifiedChestToInventory(old.materials.exists?old.materials.data():null));tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.amount,createdAt:Date.now()});changed=true}return game.id})};
+ for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.amount,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.amount,createdAt:Date.now()});changed=true}return game.id})};
  app.get('/api/deal-or-no-deal/shop/catalog',auth,(req,res)=>res.json({ok:true,items:SHOP_ITEMS,minPrice:100000000}));
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
@@ -810,6 +831,7 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
      tx.create(finalRewardRef,{uid:winner.id,gameId:after.id,packId:pack.id,packName:pack.id==='large'?'Gold-Kartenpaket':pack.name,revealed:drawn,createdAt:Date.now()})};
    }
    }
+   const chestContext=await chestAwardContext(db,tx);
    const entries=payouts.map(p=>({p,...p,account:db.collection(walletCollection).doc(p.id),receipt:db.collection(payoutCollection).doc(after.id+'_'+p.id),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.id)}));
    const snapshots=await Promise.all(entries.map(async e=>({wallet:await tx.get(e.account),receipt:await tx.get(e.receipt),materials:await tx.get(e.materials)})));
    for(let i=0;i<entries.length;i++){const e=entries[i],snap=snapshots[i];if(snap.receipt.exists)continue;
@@ -817,7 +839,7 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
     tx.set(e.account,{balance:(previous.balance||0)+e.payout,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),updatedAt:Date.now()},{merge:true});
     // A payout receipt is also the exactly-once DOG chest receipt for this game/player.
     // Only new, server-settled Deal matches grant materials; a replay never does.
-    tx.set(e.materials,addVerifiedChestToInventory(snap.materials.exists?snap.materials.data():null));
+    tx.set(e.materials,chestForSettledDeal(e.id,snap.materials.exists?snap.materials.data():null,chestContext));
     tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.payout,createdAt:Date.now()});
    }
   }
