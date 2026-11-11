@@ -130,7 +130,7 @@ test('cross-origin browser requests can send Firebase Authorization to the surpr
  const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  const cors=source.slice(source.indexOf('app.use((req, res, next) => {'),source.indexOf('app.use(express.json'));
  assert.match(cors,/req\.path\.startsWith\('\/api\/christoph-surprise'\)/);
- assert.match(cors,/Access-Control-Allow-Headers', 'Authorization,Content-Type'/);
+ assert.match(cors,/Access-Control-Allow-Headers', 'Authorization,Content-Type(?:,X-DOG-Preview-Key)?'/);
  assert.match(cors,/PROFILE_ALLOWED_ORIGINS/);
  assert.match(cors,/if \(req\.method === "OPTIONS"\) return res\.status\(204\)\.end\(\)/);
 });
