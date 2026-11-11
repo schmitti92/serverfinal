@@ -32,13 +32,28 @@ Mini-Bosse sind echte Solo-Kämpfe mit maximal vier Spielerangriffen, **ohne unf
 
 - **Gegner:** Tor 20 Schattenfürst; 30 Kristallwurm; 40 Dornenkönig; 50 Hüter der Tiefe; 60 Flammendrache; 70 Seelenrichter; 80 Eisenkoloss; 90 Festungswächter; 100 Der letzte Wächter.
 - **Zugang:** Der vorige gemeinsame Boss muss besiegt sein. Jeder teilnehmende Spieler benötigt die acht normalen Tore des aktuellen Abschnitts, Mini-Bosse bleiben optional. Beispiel: Boss 20 setzt Boss 10 sowie normale Tore 11–14 und 16–19 voraus.
-- **Teilnehmer:** Ein Spieler kann starten, gewinnt aber niemals. Zwei Spieler gewinnen ausschließlich, wenn beide die für diesen Boss maximal erreichbare Waffe, Rüstung und vier relevante Fähigkeiten besitzen, beide reagieren und der **2-%-Sondertreffer** eintritt. Drei gut aufgerüstete Spieler sollen regulär gewinnen können. Sobald alle drei bereit sind, startet der Kampf automatisch; sonst können ein oder zwei bereite Spieler manuell starten.
-- **Kampf:** 30 Sekunden, sechs Angriffe je Teilnehmer als serverseitiges Schadensaggregat. Reaktion +10 % Schaden pro aktivem Helden. Waffen, Rüstungen und Fähigkeitsstufen wirken auf den wirklichen Gesamtschaden gegen die jeweils höheren Boss-LP.
-- **Sicherheit:** Authentifizierte Aktionen und Firestore-Transaktionen. Einmalige Quittungen für Start, Bereit, Reaktion und Ende verhindern doppelte Siege. Verlorene Kämpfe verursachen 10 Minuten gemeinsame Pause ab ursprünglichem Kampfende. Beim nächsten Öffnen können abgelaufene Kämpfe zuverlässig abgeschlossen werden.
+- **Teilnehmer:** Ein Spieler kann starten, gewinnt aber niemals. Zwei Spieler gewinnen ausschließlich, wenn beide die für diesen Boss maximal erreichbare Waffe, Rüstung und vier relevante Fähigkeiten besitzen, jeder **mindestens zwei der drei zufälligen Minispiele richtig löst** und der **2-%-Sondertreffer** eintritt. Drei gut aufgerüstete Spieler sollen regulär gewinnen können. Sobald alle drei bereit sind, startet der Kampf automatisch; sonst können ein oder zwei bereite Spieler manuell starten.
+- **Kampf:** 30 Sekunden, sechs Angriffe je Teilnehmer als serverseitiges Schadensaggregat. Die drei pro Kampf zufällig ausgewählten Reaktionsminispiele geben zusammen **maximal +10 %** Schaden pro aktivem Helden, nicht +10 % je Aufgabe. Waffen, Rüstungen und Fähigkeitsstufen wirken auf den wirklichen Gesamtschaden gegen die jeweils höheren Boss-LP.
+- **Sicherheit:** Authentifizierte Aktionen und Firestore-Transaktionen. Einmalige Quittungen für Start, Bereit, jede Minispielantwort und Ende verhindern doppelte Siege. Verlorene Kämpfe verursachen 10 Minuten gemeinsame Pause ab ursprünglichem Kampfende. Beim nächsten Öffnen können abgelaufene Kämpfe zuverlässig abgeschlossen werden.
 - **Fortschritt:** Alle Gruppenmitglieder erhalten den gemeinsamen Sieg und die freigeschaltete Schmiedestufe; die persönlichen Torpositionen der tatsächlich beteiligten Helden können vorrücken, werden aber niemals zurückgesetzt. Die neun Kampfstände stehen in `groupBosses`, Boss 10 behält den älteren Zustand `boss10`.
 - **Tor 100:** Der bestätigte letzte Sieg wird in `sharedBosses` gespeichert und aktiviert das `dogUnlocked`-Kennzeichen der Eventkarte. **Eine serverseitige Sperre für das eigenständige DOG-Spiel ist noch nicht eingebaut.** Der Spielzugang darf deshalb vor Freigabe nicht als abgesichert gelten.
 
 **Noch offen:** echtes Drei-Konten-End-to-End-Testing, Belastung unter Verbindungsabbrüchen, Kampfanimationen mit Boss-Gegenangriffen, finaler DOG-Spielzugang und Zusammenführung mit den aktuellen Hauptbranches.
+
+## Taktische Boss-Minispiele (steigender Schwierigkeitsgrad)
+
+**Implementiert im Entwurfsbranch, nicht live:** Die Serverdatei `dog-boss-minigames.js` erstellt beim Start einer 30-Sekunden-Runde mit kryptografischem Zufall **genau drei unterschiedliche Aufgaben aus vier Kategorien**: Ausweichen, Reaktions-Timing, Blitz-Mathematik und beweglichen Schwachpunkt treffen. Jede Dreierkombination und ihre Reihenfolge wird nur einmal pro Kampf erzeugt, im gemeinsamen Boss-Zustand gespeichert und an alle teilnehmenden Clients verteilt. Die Antwortschlüssel für Mathe bleiben serverintern.
+
+- **Feste Fenster:** 0–3 Sek. Einführung; 3–10, 10–17, 17–24 Sek. die drei zufälligen Spiele; 24–30 Sek. letzte Attacken und Ergebnis.
+- **Tor 10–30:** Einfache Summen, zwei Ausweichmöglichkeiten, langsamerer Zielpunkt und breiteres Timingfenster.
+- **Tor 40–60:** Multiplikation, drei Ausweichfelder mit nur einem sicheren Feld, schnellere Zielbewegung und verkürztes Timing.
+- **Tor 70–80:** Division und nochmals schnellere Reaktionsmuster; drei Ausweichfelder.
+- **Tor 90–100:** Zweistufige Rechenaufgaben wie `8 × 7 + 4`, bis zu fünf Zielpositionen und engere Zeitfenster. Die Gesamtzeit bleibt 30 Sekunden.
+- **Persönlicher Bonus:** Jede der drei **korrekten und rechtzeitig** beantworteten Aufgaben gibt ein Drittel von maximal 10 % eigenem Schadensbonus. Falsche oder verpasste Antworten geben keinen Bonus. Bei zwei Teilnehmern ist der seltene Sondertreffer nur erreichbar, wenn beide mindestens zwei Aufgaben korrekt lösen **und** ihre Ausrüstung vollständig ausgebaut ist.
+- **Sicherheit:** Antworten auf `POST .../minigame` werden serverseitig gegen die festgelegte Aufgabe und Serverzeit geprüft; niemals gegen ein vom Client behauptetes `correct=true`. Höchstens eine Bewertung je Spieler und Runde; idempotente Quittungen und derselbe Kampfstand nach Verbindungsabbruch. Der historische einzelne `react`-Knopf bleibt nur für alte, noch laufende Kämpfe ohne die neue Dreierfolge aktiv, nicht als Bonus-Bypass.
+- **Last/Sync:** Keine weiteren Firestore-Abfragen pro Animationsframe. Im Browser wird der aktive Spielabschnitt anhand einer vom Server gelieferten Zeit berechnet; nur eine Antwort pro Aufgabe erzeugt eine gespeicherte Aktion. Bei bereiten Spielern kontrolliert die Oberfläche den Gruppenstart etwas häufiger, im sonstigen Leerlauf weiterhin selten.
+
+Das sind bewusst anspruchsvolle Zusatzaufgaben, **keine Ersatzregel für Waffe und Rüstung**. Die Kampfentscheidung bleibt überwiegend vom Ausrüstungsstand abhängig. Ein echter Dreikonten-Praxistest auf Handy/PC und die endgültige taktische Gestaltung fehlen vor dem Live-Rollout.
 
 ## Drei Spieler auf derselben Karte (neuer API-Entwurf)
 
