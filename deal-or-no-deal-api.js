@@ -760,8 +760,8 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
   // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
   let awardWrite=null;
   const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
-  if(openedOneCent&&req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId){
-   const uid=before.pending.actor;
+  if(openedOneCent&&((req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId)||(req.body?.type==='ack-batch'&&before.phase==='batch-reveal'))){
+   const uid=openedOneCent.playerId;
    const rewardRef=db.collection('deal_christmas_cent_rewards_v1').doc(after.id+'_'+openedOneCent.eventId);
    const christmasRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
    const [rewardSnap,christmasSnap]=await Promise.all([tx.get(rewardRef),tx.get(christmasRef)]);
