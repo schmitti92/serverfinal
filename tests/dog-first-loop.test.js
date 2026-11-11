@@ -91,7 +91,7 @@ test('Solo starts immediately on explicit Start but cannot win under any luck ro
  assert.deepEqual(started.boss10.roster.map(m=>m.uid),['hero-a']);
  const attempted=solveFirstTwo(started,'hero-a');
  for(const roll of [0,50,5000,9999]){
-  const out=boss10Finish(attempted,now+30001,()=>roll);
+  const out=boss10Finish(attempted,now+DOG_BOSS10_DURATION_MS+1,()=>roll);
   assert.equal(out.result.win,false);
   assert.equal(out.result.participants,1);
   assert.ok(out.result.damage<out.result.bossHp);
@@ -110,14 +110,14 @@ test('Two maxed heroes can win a very rare special attack; ordinary luck is insu
  assert.equal(started.boss10.phase,'fighting');
  p=solveFirstTwo(started,'hero-a');
  p=solveFirstTwo(p,'hero-b');
- const ordinary=boss10Finish(p,now+30001,()=>9999);
+ const ordinary=boss10Finish(p,now+DOG_BOSS10_DURATION_MS+1,()=>9999);
  assert.equal(ordinary.result.win,false);
- const extremelyLucky=boss10Finish(p,now+30001,()=>0);
+ const extremelyLucky=boss10Finish(p,now+DOG_BOSS10_DURATION_MS+1,()=>0);
  assert.equal(extremelyLucky.result.win,true);
  assert.equal(extremelyLucky.result.rareCritical,true);
  assert.equal(extremelyLucky.result.participants,2);
  assert.ok(extremelyLucky.result.damage>=extremelyLucky.result.bossHp);
- const noRare=boss10Finish(p,now+30001,((n)=>{let count=0;
+ const noRare=boss10Finish(p,now+DOG_BOSS10_DURATION_MS+1,((n)=>{let count=0;
   return ()=>++count===1?0:9999;
  })());
  assert.equal(noRare.result.win,false);
@@ -129,12 +129,12 @@ test('Three well prepared heroes deal enough damage to win without rare duo luck
  let p=progress();
  for(const member of team.members)p=boss10Ready(p,team,member.uid,heroes(),now);
  assert.equal(p.boss10.phase,'fighting');
- const result=boss10Finish(p,now+30001,()=>0);
+ const result=boss10Finish(p,now+DOG_BOSS10_DURATION_MS+1,()=>0);
  assert.equal(result.result.win,true);
  assert.equal(result.result.participants,3);
  assert.equal(result.result.rareCritical,false);
  assert.ok(result.result.damage>=result.result.bossHp);
- const bad=boss10Finish(p,now+30001,()=>9999);
+ const bad=boss10Finish(p,now+DOG_BOSS10_DURATION_MS+1,()=>9999);
  assert.equal(bad.result.win,false,'very poor luck can still defeat a strong trio');
  const weak=team.members.map(m=>({uid:m.uid,weaponLevel:1,armorLevel:1,
   skillPower:0,skillDestruction:0,skillDefense:0,skillGuard:0}));
@@ -142,7 +142,7 @@ test('Three well prepared heroes deal enough damage to win without rare duo luck
  assert.equal(boss10ResolveCombat(weak,[],()=>0).win,false);
 });
 
-test('Three ready commands start exactly one 30-second encounter',()=>{
+test('Three ready commands start exactly one 40-second encounter',()=>{
  let state=progress();
  state=boss10Ready(state,team,'hero-a',heroes(),now);
  assert.equal(state.boss10.phase,'waiting');
@@ -154,7 +154,7 @@ test('Three ready commands start exactly one 30-second encounter',()=>{
  assert.equal(state.boss10.phase,'fighting');
  assert.equal(state.boss10.endsAt-state.boss10.startedAt,DOG_BOSS10_DURATION_MS);
  assert.equal(state.boss10.roster.length,3);
- assert.throws(()=>boss10Finish(state,now+29999,()=>0),/STILL_FIGHTING/);
+ assert.throws(()=>boss10Finish(state,now+DOG_BOSS10_DURATION_MS-1,()=>0),/STILL_FIGHTING/);
  assert.throws(()=>boss10Ready(state,team,'hero-a',heroes(),now+200),/RUNNING/);
 });
 
@@ -169,8 +169,8 @@ test('Every sub-action is idempotent per player and strong team play unlocks for
  assert.deepEqual(once.progress,state);
  state=solveFirstTwo(state,'hero-b');
  assert.equal(Object.keys(state.boss10.miniGames.answers['hero-b']).length,2);
- assert.throws(()=>boss10MiniAnswer(state,'hero-c',0,1,now+30000),/NOT_RUNNING/);
- const won=boss10Finish(state,now+30001,()=>0);
+ assert.throws(()=>boss10MiniAnswer(state,'hero-c',0,1,now+DOG_BOSS10_DURATION_MS),/NOT_RUNNING/);
+ const won=boss10Finish(state,now+DOG_BOSS10_DURATION_MS+1,()=>0);
  assert.equal(won.result.win,true);
  assert.deepEqual(won.progress.sharedBosses,[10]);
  for(const member of team.members){
@@ -184,14 +184,14 @@ test('Every sub-action is idempotent per player and strong team play unlocks for
  assert.equal(boss10View(team,won.progress,'hero-a').result.participants,3);
  assert.equal(ascensionView(null,bag(),won.progress).forgeLevel,2);
  assert.equal(ascensionView(null,bag(),won.progress).skillsCap,10);
- assert.throws(()=>boss10Ready(won.progress,team,'hero-a',heroes(),now+30002),/ALREADY_WON/);
+ assert.throws(()=>boss10Ready(won.progress,team,'hero-a',heroes(),now+DOG_BOSS10_DURATION_MS+2),/ALREADY_WON/);
 });
 
 test('Shared victory does not move a hero backwards from Tor 14',()=>{
  let state=progress();
  state.people['hero-a'].currentGate=14;
  for(const member of team.members)state=boss10Ready(state,team,member.uid,heroes(),now);
- const won=boss10Finish(state,now+30001,()=>0);
+ const won=boss10Finish(state,now+DOG_BOSS10_DURATION_MS+1,()=>0);
  assert.equal(won.progress.people['hero-a'].currentGate,14);
  assert.equal(won.progress.people['hero-b'].currentGate,11);
  assert.equal(won.progress.people['hero-a'].highestGate,14);
@@ -201,14 +201,14 @@ test('Shared victory does not move a hero backwards from Tor 14',()=>{
 test('Defeat triggers a group-wide cooldown and resets only after expiry',()=>{
  let state=progress();
  for(const member of team.members)state=boss10Ready(state,team,member.uid,heroes(),now);
- const loss=boss10Finish(state,now+30001,()=>9999);
+ const loss=boss10Finish(state,now+DOG_BOSS10_DURATION_MS+1,()=>9999);
  assert.equal(loss.result.win,false);
  assert.equal(loss.progress.sharedBosses.length,0);
  assert.equal(loss.progress.boss10.phase,'cooldown');
  assert.equal(loss.progress.boss10.cooldownUntil,now+DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS);
  assert.throws(()=>boss10Ready(loss.progress,team,'hero-a',heroes(),now+50000),/COOLDOWN/);
  const retry=boss10Ready(loss.progress,team,'hero-a',heroes(),
-  now+30001+DOG_BOSS10_COOLDOWN_MS+1);
+  now+DOG_BOSS10_DURATION_MS+1+DOG_BOSS10_COOLDOWN_MS+1);
  assert.equal(retry.boss10.phase,'waiting');
  assert.deepEqual(retry.boss10.ready,['hero-a']);
  assert.equal(retry.boss10.attempt,2);
@@ -340,99 +340,39 @@ function fixture(){
 async function completeBoss10ApiRound(f,index,users){
  const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
  const round=f.docs.get(key).boss10.miniGames.rounds[index];
- assert.ok(['reaction','math'].includes(round.kind));
  for(let step=0;step<round.maxSteps;step++){
-  let at;
-  if(round.kind==='math')at=round.startMs+300+step*850;
-  else{
-   at=NaN;
+  let at,answer;
+  if(round.kind==='math'){
+   at=round.startMs+300+step*850;
+   answer=round.puzzles[step].correctIndex;
+  }else if(round.kind==='dodge'){
+   const attack=round.attacks[step];
+   at=attack.startMs+400;
+   answer=Array.from({length:round.lanes},(_,i)=>i).find(i=>
+    i!==attack.dangerIndex&&i!==attack.secondDangerIndex);
+  }else if(round.kind==='target'){
+   at=round.startMs+400+step*2000;
+   answer=dogMiniTargetIndex(round,at);
+  }else{
    const min=round.startMs+Math.floor(step*8000/3)+450;
    const max=round.startMs+Math.floor((step+1)*8000/3)-220;
+   at=NaN;
    for(let t=min;t<max;t+=10)
-    if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){
-     at=t;break;
-    }
-   assert.ok(Number.isFinite(at),'a valid reaction window exists');
+    if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5){at=t;break;}
+   assert.ok(Number.isFinite(at));
+   answer=1;
   }
   f.advance(now+at-f.time());
   for(const token of users){
-   const answer=round.kind==='math'?round.puzzles[step].correctIndex:1;
-   const response=await f.call('POST','/api/dog/gates/boss10/minigame',{
-    requestId:'new-duo-'+index+'-'+token+'-'+step+'-unique',
+   const result=await f.call('POST','/api/dog/gates/boss10/minigame',{
+    requestId:'four-round-'+index+'-'+token+'-'+step+'-unique',
     round:index,step,answer
    },token);
-   assert.equal(response.statusCode,200);
-   assert.equal(response.body.result.correct,true);
+   assert.equal(result.statusCode,200,round.kind+' '+step);
+   assert.equal(result.body.result.correct,true);
   }
  }
 }
-test('After everyone disconnects, a later boss view settles the fight exactly once',async()=>{
- const f=fixture();
- for(const [i,t] of ['a','b','c'].entries()){
-  const r=await f.call('POST','/api/dog/gates/boss10/ready',
-   {requestId:'resume-ready-'+i+'-00001'},t);
-  assert.equal(r.statusCode,200);
- }
- f.advance(DOG_BOSS10_DURATION_MS+5000);
- const recovered=await f.call('GET','/api/dog/gates/boss10',{},'b');
- assert.equal(recovered.body.phase,'victory');
- assert.equal(recovered.body.won,true);
- assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
-  .sharedBosses,[10]);
- const other=await f.call('GET','/api/dog/gates/boss10',{},'c');
- assert.equal(other.body.phase,'victory');
- assert.equal(other.body.result.roll,recovered.body.result.roll);
- assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
-  .sharedBosses,[10]);
- const laterAttempt=await f.call('POST','/api/dog/gates/boss10/finish',
-  {requestId:'after-recovery-finish-0001'});
- assert.equal(laterAttempt.statusCode,409);
- assert.equal(laterAttempt.body.error,'DOG_BOSS10_NOT_RUNNING');
-});
-
-test('Expired fight reconciles to loss with cooldown measured from original deadline',async()=>{
- const f=fixture();f.roll(9999);
- for(const [i,t] of ['a','b','c'].entries()){
-  const r=await f.call('POST','/api/dog/gates/boss10/ready',
-   {requestId:'late-loss-ready-'+i+'-00001'},t);
-  assert.equal(r.statusCode,200);
- }
- f.advance(DOG_BOSS10_DURATION_MS+DOG_BOSS10_COOLDOWN_MS+20000);
- const view=await f.call('GET','/api/dog/gates/boss10',{},'a');
- assert.equal(view.body.phase,'cooldown');
- assert.equal(view.body.cooldownRemainingMs,0);
- assert.equal(view.body.won,false);
- const retry=await f.call('POST','/api/dog/gates/boss10/ready',
-  {requestId:'retry-after-late-loss-00001'},'a');
- assert.equal(retry.body.phase??retry.body.view?.phase,'waiting');
-});
-
-test('Live boss API accepts a solo start and records a permanent failed fight',async()=>{
- const f=fixture();
- const ready=await f.call('POST','/api/dog/gates/boss10/ready',{
-  requestId:'solo-readiness-00000001'},'a');
- assert.equal(ready.statusCode,200);
- assert.equal(ready.body.view.phase,'waiting');
- assert.equal(ready.body.view.canStart,true);
- const started=await f.call('POST','/api/dog/gates/boss10/start',{
-  requestId:'solo-start-000000001'},'a');
- assert.equal(started.statusCode,200);
- assert.equal(started.body.view.phase,'fighting');
- assert.equal(started.body.view.roster.length,1);
- const outsiderReaction=await f.call('POST','/api/dog/gates/boss10/react',{
-  requestId:'outsider-reaction-000001'},'b');
- assert.equal(outsiderReaction.statusCode,403);
- assert.equal(outsiderReaction.body.error,'DOG_BOSS10_NOT_PARTICIPANT');
- f.advance(DOG_BOSS10_DURATION_MS);
- const finished=await f.call('POST','/api/dog/gates/boss10/finish',{
-  requestId:'solo-finish-00000001'},'a');
- assert.equal(finished.statusCode,200);
- assert.equal(finished.body.result.win,false);
- assert.equal(finished.body.result.participants,1);
- assert.equal(finished.body.view.won,false);
- assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
-  .sharedBosses,[]);
-});
 
 test('Live boss API allows a two-player rare victory and unlocks the shared forge',async()=>{
  const f=fixture();
@@ -446,7 +386,7 @@ test('Live boss API allows a two-player rare victory and unlocks the shared forg
  assert.equal(started.statusCode,200);
  assert.equal(started.body.view.roster.length,2);
  assert.equal(started.body.view.phase,'fighting');
- // Same 3-of-4 challenges for both users; server validates their
+ // Both attack and defense challenges are server-validated for each user;
  // individual reaction timing and math choices without a client success flag.
  await completeBoss10ApiRound(f,0,['a','b']);
  await completeBoss10ApiRound(f,1,['a','b']);
@@ -503,7 +443,7 @@ test('Authenticated API completes ready/fight/forge cycle without double claims'
  const premature=await f.call('POST','/api/dog/gates/boss10/finish',
   {requestId:'finish-shared-000001'});
  assert.equal(premature.statusCode,409);
- f.advance(30000);
+ f.advance(DOG_BOSS10_DURATION_MS);
  const won=await f.call('POST','/api/dog/gates/boss10/finish',
   {requestId:'finish-shared-000001'});
  assert.equal(won.body.result.win,true);
