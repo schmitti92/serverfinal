@@ -306,7 +306,7 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
      if(receipt.exists){
       const prior=receipt.data();
       if(prior.command!==command||prior.gate!==gate||
-         (command==='minigame'&&(prior.round!==round||prior.answer!==answer||
+         (command==='minigame'&&(prior.round!==round||JSON.stringify(prior.answer)!==JSON.stringify(answer)||
        (prior.step??0)!==step)))
        throw Error('DOG_GROUP_RECEIPT_CONFLICT');
       return {view:groupBossView(gate,team,progress,uid,clock()),
