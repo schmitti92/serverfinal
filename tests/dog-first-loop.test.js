@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
  boss10State,boss10View,boss10Ready,boss10Start,boss10React,boss10Finish,
- boss10ResolveCombat,boss10DamagePotential,
+ boss10ResolveCombat,boss10DamagePotential,boss10MiniAnswer,
  installDogBoss10Api,DOG_BOSS10_RECEIPTS_COLLECTION,
  DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS
 } from '../dog-boss10.js';
@@ -26,6 +26,22 @@ const bag=()=>({resources:{
  iron:40,forge_coal:10,steel_core:5,mithril:2,dragonsteel:1,
  life_dust:40,guard_crystal:10,life_essence:5,guardian_rune:2,phoenix_feather:1
  }});
+function solveFirstTwo(state,uid){
+ for(const round of state.boss10.miniGames.rounds.slice(0,2)){
+  const at=round.kind==='reaction'?round.targetMs:round.startMs+300;
+  const answer=round.kind==='reaction'?1:
+   round.kind==='math'?round.correctIndex:
+   round.kind==='target'?(round.initialIndex+
+    Math.floor((at-round.startMs)/round.stepMs))%round.lanes:
+   Array.from({length:round.lanes},(_,i)=>i).find(i=>
+    i!==round.dangerIndex&&i!==round.secondDangerIndex);
+  const result=boss10MiniAnswer(state,uid,round.round,answer,now+at);
+  assert.equal(result.result.correct,true);
+  state=result.progress;
+ }
+ return state;
+}
+
 
 test('Only participating heroes must clear Tor 9; others may prepare later',()=>{
  let p=progress();p.people['hero-b'].normals=p.people['hero-b'].normals.filter(x=>x!==9);
@@ -48,15 +64,16 @@ test('Solo starts immediately on explicit Start but cannot win under any luck ro
  assert.equal(started.boss10.phase,'fighting');
  assert.deepEqual(started.boss10.ready,['hero-a']);
  assert.deepEqual(started.boss10.roster.map(m=>m.uid),['hero-a']);
- const reacted=boss10React(started,'hero-a',now+1000);
+ const attempted=solveFirstTwo(started,'hero-a');
  for(const roll of [0,50,5000,9999]){
-  const out=boss10Finish(reacted,now+30001,()=>roll);
+  const out=boss10Finish(attempted,now+30001,()=>roll);
   assert.equal(out.result.win,false);
   assert.equal(out.result.participants,1);
   assert.ok(out.result.damage<out.result.bossHp);
   assert.deepEqual(out.progress.sharedBosses,[]);
  }
- assert.throws(()=>boss10React(started,'hero-c',now+1000),/NOT_PARTICIPANT/);
+ assert.throws(()=>boss10MiniAnswer(started,'hero-c',0,1,now+4000),
+  /NOT_PARTICIPANT/);
 });
 
 test('Two maxed heroes can win a very rare special attack; ordinary luck is insufficient',()=>{
@@ -66,8 +83,8 @@ test('Two maxed heroes can win a very rare special attack; ordinary luck is insu
  const started=boss10Start(p,team,'hero-a',heroes(),now);
  assert.equal(started.boss10.roster.length,2);
  assert.equal(started.boss10.phase,'fighting');
- p=boss10React(started,'hero-a',now+2000);
- p=boss10React(p,'hero-b',now+2000);
+ p=solveFirstTwo(started,'hero-a');
+ p=solveFirstTwo(p,'hero-b');
  const ordinary=boss10Finish(p,now+30001,()=>9999);
  assert.equal(ordinary.result.win,false);
  const extremelyLucky=boss10Finish(p,now+30001,()=>0);
@@ -116,15 +133,18 @@ test('Three ready commands start exactly one 30-second encounter',()=>{
  assert.throws(()=>boss10Ready(state,team,'hero-a',heroes(),now+200),/RUNNING/);
 });
 
-test('Reaction is one per player; shared boss success unlocks forge level 2',()=>{
+test('Timed minigames are one-shot per player and group success unlocks forge level 2',()=>{
  let state=progress();
  for(const member of team.members)state=boss10Ready(state,team,member.uid,heroes(),now);
- state=boss10React(state,'hero-a',now+3000);
- const unchanged=boss10React(state,'hero-a',now+6000);
- assert.deepEqual(unchanged,state);
- state=boss10React(state,'hero-b',now+11000);
- assert.equal(state.boss10.reactions.length,2);
- assert.throws(()=>boss10React(state,'hero-c',now+30000),/NOT_RUNNING/);
+ state=solveFirstTwo(state,'hero-a');
+ const first=state.boss10.miniGames.rounds[0];
+ const once=boss10MiniAnswer(state,'hero-a',first.round,0,
+  now+first.startMs+400);
+ assert.equal(once.result.replayed,true);
+ assert.deepEqual(once.progress,state);
+ state=solveFirstTwo(state,'hero-b');
+ assert.equal(Object.keys(state.boss10.miniGames.answers['hero-b']).length,2);
+ assert.throws(()=>boss10MiniAnswer(state,'hero-c',0,1,now+30000),/NOT_RUNNING/);
  const won=boss10Finish(state,now+30001,()=>0);
  assert.equal(won.result.win,true);
  assert.deepEqual(won.progress.sharedBosses,[10]);
@@ -372,12 +392,23 @@ test('Live boss API allows a two-player rare victory and unlocks the shared forg
  assert.equal(started.statusCode,200);
  assert.equal(started.body.view.roster.length,2);
  assert.equal(started.body.view.phase,'fighting');
+ // Same 3-of-4 challenges for both users; server validates their
+ // individual reaction timing and math choices without a client success flag.
+ f.advance(6000);
  for(const t of ['a','b']){
-  const r=await f.call('POST','/api/dog/gates/boss10/react',{
-   requestId:'duo-react-'+t+'-0000001'},t);
+  const r=await f.call('POST','/api/dog/gates/boss10/minigame',{
+   requestId:'duo-reaction-'+t+'-001',round:0,answer:1},t);
   assert.equal(r.statusCode,200);
+  assert.equal(r.body.result.correct,true);
  }
- f.advance(DOG_BOSS10_DURATION_MS);
+ f.advance(4500);
+ for(const t of ['a','b']){
+  const r=await f.call('POST','/api/dog/gates/boss10/minigame',{
+   requestId:'duo-math-'+t+'-00001',round:1,answer:0},t);
+  assert.equal(r.statusCode,200);
+  assert.equal(r.body.result.correct,true);
+ }
+ f.advance(DOG_BOSS10_DURATION_MS-10500);
  const finished=await f.call('POST','/api/dog/gates/boss10/finish',{
   requestId:'duo-finish-000000001'},'b');
  assert.equal(finished.statusCode,200);
