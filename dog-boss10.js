@@ -302,7 +302,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      if(receipt.exists){
       const prior=receipt.data();
       if(prior.command!==command||
-         (command==='minigame'&&(prior.round!==round||prior.answer!==choice||
+         (command==='minigame'&&(prior.round!==round||JSON.stringify(prior.answer)!==JSON.stringify(choice)||
        (prior.step??0)!==step)))
        throw Error('DOG_BOSS10_RECEIPT_CONFLICT');
       return {view:boss10View(team,progress,uid,clock()),result:receipt.data().result,replayed:true};
