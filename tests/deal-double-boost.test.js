@@ -81,6 +81,7 @@ test('boost requires sufficient money, participant membership and unselected own
  assert.equal(late.body.error,'BOOST_WINDOW_CLOSED');
  // Another participant who has not selected their case may still buy.
  const other=game.order[1];
+ h.docs.set('deal_or_no_deal_wallets_v1/'+other,{balance:PRICE+100000000});
  const allowed=await h.invoke('POST','/api/deal-or-no-deal/:code/double-boost',other);
  assert.equal(allowed.body.ok,true);
  assert.equal(allowed.body.game.players.find(p=>p.id===other).doublePayout,true);
