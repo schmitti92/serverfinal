@@ -56,7 +56,7 @@ test('Personal map defaults are not fabricated and contain no DOG unlock',()=>{
  const view=dogGateMapView(null,null,'hero-a');
  assert.equal(view.memberCount,0);assert.equal(view.dogUnlocked,false);
  assert.equal(view.progress.currentGate,1);
- assert.equal(view.availableBossGate,10);
+ assert.equal(view.availableBossGate,100);
  assert.equal(view.bossArenaIsTest,false);
  assert.deepEqual(view.sharedBosses,[]);
  const sanitized=dogGateProgress({people:{'hero-a':{currentGate:100,
