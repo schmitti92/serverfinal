@@ -11,6 +11,7 @@ import { installDogForgeApi } from "./dog-forge.js";
 import { installDogBossApi } from "./dog-boss.js";
 import { installDogGatesApi } from "./dog-gates.js";
 import { installDogBoss10Api } from "./dog-boss10.js";
+import { installDogGroupBossApi } from "./dog-group-boss.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
@@ -4366,6 +4367,10 @@ installDogGatesApi(app,{
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 installDogBoss10Api(app,{
+  verifyProfile:profileStatsV8.identity,
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
+installDogGroupBossApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
