@@ -996,8 +996,17 @@ test('Hub shares one Firestore watch between sockets and releases it after last 
 });
 
 
+function grantDogUnlock(h,unlocked=true){
+ h.docs.set('dog_boss_team_v1/first-three-heroes',{members:['alice','bob','cara']
+  .map(key=>({uid:h.identities[key].uid,name:h.identities[key].name}))});
+ h.docs.set('dog_gate_progress_v1/first-three-heroes',{
+  sharedBosses:unlocked?[10,20,30,40,50,60,70,80,90,100]:[10,20,30]
+ });
+}
+
 test('DOG online: same shared room, four seats with bots, private card projections and guarded moves',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ grantDogUnlock(h);
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
  const start=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  assert.equal(start.status,200);
@@ -1030,6 +1039,7 @@ test('DOG online: same shared room, four seats with bots, private card projectio
 });
 test('DOG four-human lobby hides each opponent hand',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ grantDogUnlock(h);
  for(const p of ['bob','cara','dana'])await h.api('POST','/api/hub/rooms/'+code+'/join',p);
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
  for(const p of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',p,{ready:true});
@@ -1042,4 +1052,57 @@ test('DOG four-human lobby hides each opponent hand',async()=>{
   assert.equal(view.match.dog.hands[i].length,6);
   for(let j=0;j<4;j++)if(j!==i)assert.equal(view.match.dog.hands[j].count,6);
  }
+});
+
+test('DOG unlock: before Tor 100 no access; after Tor 100 only the three heroes can host',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ const access='/api/hub/dog-access',select='/api/hub/rooms/'+code+'/select';
+ assert.equal((await h.api('GET',access,'stranger')).status,401);
+ assert.equal((await h.api('GET',access,'alice')).unlocked,false);
+ let blocked=await h.api('POST',select,'alice',{game:'dog'});
+ assert.equal(blocked.status,403);assert.equal(blocked.error,'DOG_LOCKED_UNTIL_GATE_100');
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code)).room.game,null);
+ grantDogUnlock(h,false);
+ assert.equal((await h.api('GET',access,'alice')).unlocked,false);
+ grantDogUnlock(h,true);
+ for(const person of ['alice','bob','cara'])
+  assert.equal((await h.api('GET',access,person)).unlocked,true);
+ assert.equal((await h.api('GET',access,'dana')).unlocked,false);
+ assert.equal((await h.api('POST',select,'alice',{game:'dog'})).status,200);
+ // A revoked or unavailable server victory must block even a selected game
+ // from auto-starting. The transaction must not persist the final ready.
+ grantDogUnlock(h,false);
+ blocked=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ assert.equal(blocked.status,403);assert.equal(blocked.error,'DOG_LOCKED_UNTIL_GATE_100');
+ const waiting=await h.api('GET','/api/hub/rooms/'+code);
+ assert.equal(waiting.room.phase,'preparing');
+ assert.equal(waiting.room.players[0].ready,false);
+ grantDogUnlock(h,true);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true})).room.phase,'playing');
+ const outsiderRoom=(await h.api('POST','/api/hub/rooms','dana')).room.code;
+ assert.equal((await h.api('POST','/api/hub/rooms/'+outsiderRoom+'/select','dana',{game:'dog'})).status,403);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+outsiderRoom+'/select','dana',{game:'kniffel'})).status,200);
+});
+
+test('DOG old match without verified Tor-100 unlock cannot accept direct card moves',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ grantDogUnlock(h);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ assert.equal(started.status,200);
+ const storedKey='spielesammlung_hub_v1/'+code;
+ const current=h.docs.get(storedKey);
+ assert.equal(current.match.dogUnlockVerified,true);
+ const old=structuredClone(current);
+ delete old.match.dogUnlockVerified;
+ h.docs.set(storedKey,old);
+ const match=started.room.match;
+ const cardId=match.dog.hands[0][0].id;
+ const response=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:match.id,action:{type:'exchange',cardId},expectedRevision:match.dog.revision,
+  actionId:'dog-legacy-not-verified-01'
+ });
+ assert.equal(response.status,403);
+ assert.equal(response.error,'DOG_LOCKED_UNTIL_GATE_100');
+ assert.equal(h.docs.get(storedKey).match.dog.revision,old.match.dog.revision);
 });

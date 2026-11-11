@@ -11,6 +11,8 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
+import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
+import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from './dog-gates.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -65,6 +67,19 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
+  // The shared Tor-100 victory is the only server-side DOG entitlement.
+  // Read this only for the access check, game selection, and game start.
+  // Do not add extra Firestore reads to every DOG card action or lobby poll.
+  async function dogUnlockedFor(uid,tx=null){
+    const store=db();if(!store)return false;
+    const teamRef=store.collection(DOG_BOSS_TEAM_COLLECTION).doc(DOG_BOSS_TEAM_ID);
+    const progressRef=store.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID);
+    const [teamSnap,progressSnap]=await Promise.all([teamRef,progressRef]
+      .map(ref=>tx?tx.get(ref):ref.get()));
+    const team=bossTeam(teamSnap.exists?teamSnap.data():null);
+    const progress=dogGateProgress(progressSnap.exists?progressSnap.data():null);
+    return team.members.some(m=>m.uid===uid)&&progress.sharedBosses.includes(100);
+  }
   const validCode=s=>typeof s==='string'&&CODE_PATTERN.test(s.toUpperCase())?s.toUpperCase():null;
   async function authentication(req,res,next){
     if(!db())return res.status(503).json({ok:false,error:'DATABASE_UNAVAILABLE'});
@@ -487,7 +502,7 @@ function finishEisstock(ch,members){
       const player=players[seat];
       return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
     });
-    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),dogUnlockVerified:true,members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
     room.phase='playing';
     advanceDogBots(room.match);
   }
@@ -613,7 +628,7 @@ function finishEisstock(ch,members){
     const outcome=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
-      const result=await change(room);
+      const result=await change(room,tx);
       // Record each completed match exactly once, in the same transaction as its final move.
       if(room.match?.game==='kniffel'&&room.match.kniffel?.finished&&!room.match.kniffel.statsRecorded){
         const game=room.match.kniffel;
@@ -643,6 +658,12 @@ function finishEisstock(ch,members){
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
   app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog'],challengeFoundation:true}));
+  // A public static HTML page cannot prove entitlement; the authenticated
+  // server reports it and enforces it again when a real online match starts.
+  app.use('/api/hub/dog-access',authentication);
+  app.get('/api/hub/dog-access',handler(async req=>({
+    unlocked:await dogUnlockedFor(req.hubIdentity.uid)
+  })));
   app.use('/api/hub/rooms',authentication);
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
@@ -701,8 +722,10 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),game=req.body?.game,identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(!Object.hasOwn(HUB_GAMES,game))throw error(400,'INVALID_GAME');
-    return {room:await mutate(code,identity,room=>{
+    return {room:await mutate(code,identity,async(room,tx)=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(game==='dog'&&!await dogUnlockedFor(identity.uid,tx))
+        throw error(403,'DOG_LOCKED_UNTIL_GATE_100');
       if(room.phase==='playing'&&!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
       if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
@@ -725,6 +748,10 @@ function finishEisstock(ch,members){
     const room=await mutate(code,identity,room=>{
       const match=room.match;
       if(room.phase!=='playing'||match?.game!=='dog'||match.id!==matchId)throw error(409,'DOG_MATCH_MISMATCH');
+      // Old DOG sessions created before the Tor-100 entitlement guard cannot
+      // bypass it by sending card actions directly. This avoids two extra
+      // Firestore reads on every legal turn of a verified match.
+      if(match.dogUnlockVerified!==true)throw error(403,'DOG_LOCKED_UNTIL_GATE_100');
       const seat=match.dogRoster.find(r=>r.uid===identity.uid)?.seat;
       if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
@@ -889,23 +916,29 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),ready=req.body?.ready,identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(typeof ready!=='boolean')throw error(400,'INVALID_READY');
-    return {room:await mutate(code,identity,room=>{
+    return {room:await mutate(code,identity,async(room,tx)=>{
       if(room.phase!=='preparing'||!room.game)throw error(409,'NO_GAME_SELECTED');
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
       if(player.testBot)throw error(403,'TEST_PLAYER_MANAGED_SEPARATELY');
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
-      if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge')startGame(room);
+      if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
+        if(room.game==='dog'&&!await dogUnlockedFor(room.hostUid,tx))
+          throw error(403,'DOG_LOCKED_UNTIL_GATE_100');
+        startGame(room);
+      }
     })};
   }));
   // No fake game launch: the game adapters must be implemented and tested first.
   app.post('/api/hub/rooms/:code/start',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    return {room:await mutate(code,identity,async room=>{
+    return {room:await mutate(code,identity,async(room,tx)=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||!room.game)throw error(409,'NO_GAME_SELECTED');
+      if(room.game==='dog'&&!await dogUnlockedFor(room.hostUid,tx))
+        throw error(403,'DOG_LOCKED_UNTIL_GATE_100');
       const rule=HUB_GAMES[room.game];
       const active=room.players.filter(p=>p.participating);
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');

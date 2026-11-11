@@ -5,6 +5,7 @@
  */
 import {randomInt} from 'node:crypto';
 import {DOG_MATERIALS_COLLECTION,DOG_RESOURCE_GROUPS,DOG_RESOURCES,dogInventory} from './dog-materials.js';
+import {dogEquipmentCost,dogEquipmentSuccessChance,dogUnlockedLevels} from './dog-balance.js';
 
 export const DOG_HERO_COLLECTION='dog_hero_v1';
 export const DOG_FORGE_RECEIPTS_COLLECTION='dog_forge_receipts_v1';
@@ -92,23 +93,53 @@ const costFor=(group,next)=>{
  }
  return out;
 };
-export function forgeQuote(itemId,currentLevel,resources={}){
+// Gate team and progress collection IDs are kept as constants here to avoid
+// an import cycle (dog-gates.js -> dog-forge.js).
+const EXPEDITION_TEAM_COLLECTION='dog_boss_team_v1';
+const EXPEDITION_TEAM_ID='first-three-heroes';
+const EXPEDITION_PROGRESS_COLLECTION='dog_gate_progress_v1';
+const EXPEDITION_PROGRESS_ID='first-three-heroes';
+export function forgeGateCap(progressRaw){
+ const raw=object(progressRaw);
+ const bosses=new Set(Array.isArray(raw.sharedBosses)?raw.sharedBosses:[]);
+ let count=0;for(let g=10;g<=90;g+=10)if(bosses.has(g))count++;
+ return dogUnlockedLevels(count);
+}
+export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefined){
  const definition=DOG_FORGE_ITEM_BY_ID[itemId];
  if(!definition)throw Error('INVALID_FORGE_ITEM');
+ const gateMode=progressRaw!==undefined;
+ const equipment=definition.group==='equipment';
+ const maxLevel=gateMode&&equipment?10:definition.maxLevel;
+ const cap=gateMode?forgeGateCap(progressRaw):null;
+ const unlockedMaxLevel=cap?(equipment?cap.equipment:cap.skills):maxLevel;
  const level=bounded(currentLevel,definition.baseLevel,definition.maxLevel,definition.baseLevel);
- const maxed=level>=definition.maxLevel;
+ // A prior level 11–20 remains intact in the database, never clipped.
+ const maxed=level>=maxLevel;
  const nextLevel=maxed?null:level+1;
- const cost=maxed?{}:costFor(definition.group,nextLevel);
- const successChance=definition.group==='equipment'&&!maxed?
+ const cost=maxed?{}:
+  gateMode&&equipment?dogEquipmentCost(itemId,nextLevel):costFor(definition.group,nextLevel);
+ const successChance=equipment&&!maxed?
+  gateMode?dogEquipmentSuccessChance(nextLevel):
   DOG_FORGE_TUNING.equipmentSuccess.find(x=>nextLevel<=x.max)?.chance??25:100;
- return {itemId,level,nextLevel,maxLevel:definition.maxLevel,maxed,cost,successChance,
-  affordable:!maxed&&Object.entries(cost).every(([k,n])=>Number(resources[k]||0)>=n)};
+ const locked=!maxed&&nextLevel>unlockedMaxLevel;
+ return {itemId,level,nextLevel,maxLevel,maxed,cost,successChance,
+  ...(gateMode?{locked,unlockedMaxLevel,legacy:equipment&&level>10}:{}),
+  affordable:!maxed&&!locked&&Object.entries(cost).every(([k,n])=>
+   Number(resources[k]||0)>=n)};
 }
-export function forgeView(heroRaw,inventoryRaw){
+export function forgeView(heroRaw,inventoryRaw,progressRaw=undefined){
  const hero=dogHero(heroRaw),inventory=dogInventory(inventoryRaw);
- return {hero,inventory,items:DOG_FORGE_ITEMS,groups:DOG_FORGE_GROUPS,
-  quotes:DOG_FORGE_ITEMS.map(i=>forgeQuote(i.id,hero.levels[i.id],inventory.resources)),
-  tuning:DOG_FORGE_TUNING,resourceGroups:DOG_RESOURCE_GROUPS};
+ const gateMode=progressRaw!==undefined;
+ const cap=gateMode?forgeGateCap(progressRaw):null;
+ return {hero,inventory,
+  items:gateMode?DOG_FORGE_ITEMS.map(i=>i.group==='equipment'?{...i,maxLevel:10}:i):DOG_FORGE_ITEMS,
+  groups:DOG_FORGE_GROUPS,
+  quotes:DOG_FORGE_ITEMS.map(i=>forgeQuote(i.id,hero.levels[i.id],
+   inventory.resources,progressRaw)),
+  tuning:DOG_FORGE_TUNING,resourceGroups:DOG_RESOURCE_GROUPS,
+  ...(gateMode?{forgeLevel:cap.equipment,skillsCap:cap.skills}:{}),
+ };
 }
 function spend(resources,cost){
  const next={...resources};
@@ -120,13 +151,14 @@ function spend(resources,cost){
  return next;
 }
 /** Pure application of a single attempt, with a server-supplied roll from 0 to 9999. */
-export function forgeUpgrade(heroRaw,inventoryRaw,itemId,expectedLevel,roll=0,now=Date.now()){
+export function forgeUpgrade(heroRaw,inventoryRaw,itemId,expectedLevel,roll=0,now=Date.now(),progressRaw=undefined){
  const hero=dogHero(heroRaw),inventory=dogInventory(inventoryRaw);
  const def=DOG_FORGE_ITEM_BY_ID[itemId];
  if(!def)throw Error('INVALID_FORGE_ITEM');
  if(!Number.isSafeInteger(expectedLevel)||expectedLevel!==hero.levels[itemId])throw Error('STALE_FORGE_LEVEL');
- const quote=forgeQuote(itemId,expectedLevel,inventory.resources);
+ const quote=forgeQuote(itemId,expectedLevel,inventory.resources,progressRaw);
  if(quote.maxed)throw Error('FORGE_MAX_LEVEL');
+ if(quote.locked)throw Error('DOG_FORGE_BOSS_REQUIRED');
  if(!quote.affordable)throw Error('DOG_MATERIALS_MISSING');
  if(!Number.isSafeInteger(roll)||roll<0||roll>=10000)throw Error('DOG_RANDOM_INVALID');
  const success=roll<quote.successChance*100;
@@ -166,7 +198,7 @@ export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),cou
 const HTTP_STATUS=Object.freeze({
  LOGIN_REQUIRED:401,INVALID_FORGE_REQUEST:400,INVALID_FORGE_ITEM:400,INVALID_EXCHANGE_RESOURCE:400,
  INVALID_EXCHANGE_COUNT:400,
- STALE_FORGE_LEVEL:409,FORGE_MAX_LEVEL:409,DOG_MATERIALS_MISSING:409,
+ STALE_FORGE_LEVEL:409,FORGE_MAX_LEVEL:409,DOG_FORGE_BOSS_REQUIRED:409,DOG_MATERIALS_MISSING:409,
  DOG_MATERIALS_LIMIT:409
 });
 export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomInt}){
@@ -187,12 +219,25 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
  app.get('/api/dog/forge/me',auth,async(req,res)=>{
   try{
    const database=db(),uid=req.dogForgeUid;
-   const [heroSnap,bagSnap]=await Promise.all([
+   const [heroSnap,bagSnap,teamSnap]=await Promise.all([
     database.collection(DOG_HERO_COLLECTION).doc(uid).get(),
-    database.collection(DOG_MATERIALS_COLLECTION).doc(uid).get()
+    database.collection(DOG_MATERIALS_COLLECTION).doc(uid).get(),
+    database.collection(EXPEDITION_TEAM_COLLECTION).doc(EXPEDITION_TEAM_ID).get()
    ]);
+   // Only registered members receive boss-gated forging rules. Other
+   // players retain their legacy forge until an explicit migration.
+   const isExpeditionMember=teamSnap.exists&&
+    Array.isArray(teamSnap.data()?.members)&&
+    teamSnap.data().members.some(m=>m?.uid===uid);
+   let progressRaw=undefined;
+   if(isExpeditionMember){
+    const progressSnap=await database.collection(EXPEDITION_PROGRESS_COLLECTION)
+     .doc(EXPEDITION_PROGRESS_ID).get();
+    progressRaw=progressSnap.exists?progressSnap.data():{sharedBosses:[]};
+   }
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,...forgeView(heroSnap.exists?heroSnap.data():null,bagSnap.exists?bagSnap.data():null)});
+   return res.json({ok:true,...forgeView(heroSnap.exists?heroSnap.data():null,
+    bagSnap.exists?bagSnap.data():null,progressRaw)});
   }catch(e){return err(res,e);}
  });
  const action=(type)=>async(req,res)=>{
@@ -205,18 +250,30 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
    const bagRef=database.collection(DOG_MATERIALS_COLLECTION).doc(uid);
    const receiptRef=database.collection(DOG_FORGE_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
    const response=await database.runTransaction(async tx=>{
-    const [receipt,heroSnap,bagSnap]=await Promise.all([tx.get(receiptRef),tx.get(heroRef),tx.get(bagRef)]);
-    if(receipt.exists)return {...forgeView(heroSnap.exists?heroSnap.data():null,bagSnap.exists?bagSnap.data():null),
+    const teamRef=database.collection(EXPEDITION_TEAM_COLLECTION).doc(EXPEDITION_TEAM_ID);
+    const [receipt,heroSnap,bagSnap,teamSnap]=await Promise.all([
+     tx.get(receiptRef),tx.get(heroRef),tx.get(bagRef),tx.get(teamRef)]);
+    const isExpeditionMember=teamSnap.exists&&
+     Array.isArray(teamSnap.data()?.members)&&
+     teamSnap.data().members.some(m=>m?.uid===uid);
+    let progressRaw=undefined;
+    if(isExpeditionMember){
+     const progressRef=database.collection(EXPEDITION_PROGRESS_COLLECTION).doc(EXPEDITION_PROGRESS_ID);
+     const progressSnap=await tx.get(progressRef);
+     progressRaw=progressSnap.exists?progressSnap.data():{sharedBosses:[]};
+    }
+    if(receipt.exists)return {...forgeView(heroSnap.exists?heroSnap.data():null,
+     bagSnap.exists?bagSnap.data():null,progressRaw),
      result:receipt.data().result,replayed:true};
     const hero=heroSnap.exists?heroSnap.data():null,bag=bagSnap.exists?bagSnap.data():null;
     const now=Date.now();
     let next;
     if(type==='upgrade'){
      const {itemId,expectedLevel}=object(req.body);
-     next=forgeUpgrade(hero,bag,itemId,expectedLevel,rand(10000),now);
+     next=forgeUpgrade(hero,bag,itemId,expectedLevel,rand(10000),now,progressRaw);
     }else next=forgeExchange(hero,bag,req.body?.resourceId,now,
      req.body?.count===undefined?1:req.body.count);
-    const view=forgeView(next.hero,next.inventory);
+    const view=forgeView(next.hero,next.inventory,progressRaw);
     const payload={...view,result:next.result,replayed:false};
     tx.set(heroRef,next.hero);tx.set(bagRef,next.inventory);
     // Keep receipts compact: current snapshots are read on retries.
