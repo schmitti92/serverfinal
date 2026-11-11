@@ -181,14 +181,14 @@ test('50s cinematic shield penalties still affect combat without inventing final
 test('99s endgame: 12s maths, 15s dodge, two 8s games and four 14s cinematics',()=>{
  const game=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
  assert.equal(DOG_BOSS10_DURATION_MS,99_000);
- assert.equal(game.version,8);
+ assert.equal(game.version,9);
  assert.deepEqual(game.rounds.map(r=>[r.startMs,r.endMs]),
   DOG_SLOW_DODGE_ENDGAME_WINDOWS.map(r=>[r.startMs,r.endMs]));
  assert.deepEqual(game.rounds.map(r=>r.kind),['math','dodge','target','reaction']);
  assert.deepEqual(game.rounds.map(r=>r.endMs-r.startMs),[12000,15000,8000,8000]);
  assert.deepEqual(game.rounds.map((r,i)=>
   (game.rounds[i+1]?.startMs??99_000)-r.endMs),[14000,14000,14000,14000]);
- assert.equal(dogNormalizeMiniGames(game).version,8);
+ assert.equal(dogNormalizeMiniGames(game).version,9);
  assert.equal(dogMiniExchangeView(game,roster,98_000).durationMs,99_000);
  const dodge=game.rounds[1];
  for(const [index,attack] of dodge.attacks.entries()){
@@ -198,11 +198,12 @@ test('99s endgame: 12s maths, 15s dodge, two 8s games and four 14s cinematics',(
   assert.equal((index<2?dodge.attacks[index+1].startMs:dodge.endMs)-attack.impactMs,1700,
    '1.7s remains to play the full impact/recovery before the next hit');
  }
- // An existing v5, v6 or v7 fight must retain its original schedule.
+ // An existing v5, v6, v7 or v8 fight must retain its original schedule.
  for(const [version,windows,total] of [
   [5,DOG_ENDGAME_WINDOWS,60_000],
   [6,DOG_EXTENDED_ENDGAME_WINDOWS,64_000],
-  [7,DOG_SHOW_ENDGAME_WINDOWS,92_000]]){
+  [7,DOG_SHOW_ENDGAME_WINDOWS,92_000],
+  [8,DOG_SLOW_DODGE_ENDGAME_WINDOWS,99_000]]){
   const rounds=game.rounds.map((r,i)=>{
    const fixed=windows[i];
    return {...r,startMs:fixed.startMs,endMs:fixed.endMs,
