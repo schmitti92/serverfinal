@@ -153,3 +153,26 @@ test('a base-result tie stays tied even when only one player purchased x2',async
  assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/a').wins,1);
  assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/b').wins,1);
 });
+
+
+test('live last-decision settlement chooses and rewards original winner, not a higher x2 wallet credit',async()=>{
+ const h=harness();await h.invoke('POST','/api/deal-or-no-deal/:code/start');
+ const buy=await h.invoke('POST','/api/deal-or-no-deal/:code/double-boost','a');
+ assert.equal(buy.body.ok,true);
+ const g=h.match();
+ g.players[0].case=0;g.players[0].deal=150000000;
+ g.players[1].case=1;g.players[1].deal=null;
+ g.phase='decision';g.offer=250000000;
+ g.history=[{round:1,offer:250000000,expectedValue:250000000,participants:['b'],decisions:[],bonusPack:null,bonusHammer:null,bonusSpecial:null}];
+ const finish=await h.invoke('POST','/api/deal-or-no-deal/:code/action','b',{type:'decide',deal:true,id:'settle-final-vote',revision:g.revision});
+ assert.equal(finish.body.ok,true,JSON.stringify(finish.body));
+ assert.equal(finish.body.game.phase,'final');
+ assert.equal(finish.body.game.finalValues.find(p=>p.id==='a').payout,150000000);
+ assert.equal(finish.body.game.finalValues.find(p=>p.id==='b').payout,250000000);
+ assert.equal(h.docs.get('deal_christmas_final_rewards_v1/'+g.id)?.uid,'b','winner wheel must go to genuine match winner');
+ assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/a')?.wins,0,'x2 cash does not count as a win');
+ assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/b')?.wins,1);
+ assert.equal(h.balance('a'),400000000);
+ assert.equal(h.balance('b'),PRICE+100000000+250000000);
+ assert.equal(h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_a').amount,300000000);
+});
