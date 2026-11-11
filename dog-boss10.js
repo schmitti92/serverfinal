@@ -199,11 +199,11 @@ export function boss10React(progressRaw,uid,now=Date.now()){
 }
 /** Server validates each timed minigame action, including batched math.
  * Individual bonuses are private to each participating player. */
-export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now(),step=0){
+export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now(),step=0,tapAt=null,receivedAt=now){
  const progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
  if(boss.phase!=='fighting'||now>=boss.endsAt||now<boss.startedAt)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
- const result=dogSubmitMiniAnswer(boss.miniGames,boss.roster,uid,round,answer,now,boss.startedAt,step);
+ const result=dogSubmitMiniAnswer(boss.miniGames,boss.roster,uid,round,answer,now,boss.startedAt,step,tapAt,receivedAt);
  return {progress:result.replayed?progress:{...progress,boss10:{...boss,miniGames:result.games},updatedAt:now},
   result:{type:'minigame',round,step,correct:result.correct,replayed:result.replayed,
    ...(Number.isInteger(result.correctCount)?{correctCount:result.correctCount}:{}),
@@ -301,7 +301,8 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
  for(const command of ['ready','start','react','minigame','finish']){
   app.post('/api/dog/gates/boss10/'+command,auth,async(req,res)=>{
    try{
-    const {requestId,round,answer:choice,step=0}=obj(req.body);
+    const {requestId,round,answer:choice,step=0,tapAt=null}=obj(req.body);
+     const receivedAt=clock();
     if(!validId(requestId))throw Error('INVALID_REQUEST_ID');
     const {db,teamRef,progressRef}=refs(),uid=req.dogBoss10Uid;
     const receiptRef=db.collection(DOG_BOSS10_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
@@ -316,7 +317,8 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       const prior=receipt.data();
       if(prior.command!==command||
          (command==='minigame'&&(prior.round!==round||JSON.stringify(prior.answer)!==JSON.stringify(choice)||
-       (prior.step??0)!==step)))
+       (prior.step??0)!==step||
+        (prior.tapAt??null)!==tapAt)))
        throw Error('DOG_BOSS10_RECEIPT_CONFLICT');
       return {view:boss10View(team,progress,uid,clock()),result:receipt.data().result,replayed:true};
      }
@@ -352,7 +354,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       next=boss10React(progress,uid,now);
       result={type:'reaction',accepted:true};
      }else if(command==='minigame'){
-      const solved=boss10MiniAnswer(progress,uid,round,choice,now,step);
+      const solved=boss10MiniAnswer(progress,uid,round,choice,now,step,tapAt,receivedAt);
       next=solved.progress;result=solved.result;
       unchanged=solved.result.replayed===true;
      }else{
@@ -363,7 +365,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      // receipt, but does not rewrite the shared progress document.
      if(!unchanged)tx.set(progressRef,next);
      tx.create(receiptRef,{uid,command,requestId,
-      ...(command==='minigame'?{round,answer:choice,step}:{}),
+      ...(command==='minigame'?{round,answer:choice,step,tapAt}:{}),
       createdAt:now,result});
      return {view:boss10View(team,next,uid,now),result,replayed:false};
     });
