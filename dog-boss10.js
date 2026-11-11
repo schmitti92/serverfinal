@@ -11,7 +11,7 @@ import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
  dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
-export const DOG_BOSS10_DURATION_MS=64_000;
+export const DOG_BOSS10_DURATION_MS=92_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
 export const DOG_BOSS10_RECEIPTS_COLLECTION='dog_gate_boss10_receipts_v1';
 const REQUIRED_NORMALS=Object.freeze([1,2,3,4,6,7,8,9]);
