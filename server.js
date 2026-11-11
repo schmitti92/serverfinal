@@ -13,6 +13,7 @@ import { installDogGatesApi } from "./dog-gates.js";
 import { installDogBoss10Api } from "./dog-boss10.js";
 import { installDogGroupBossApi } from "./dog-group-boss.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
+import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
@@ -4303,7 +4304,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/christoph-surprise') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || req.path.startsWith('/api/dog/gates') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/christoph-surprise') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || req.path.startsWith('/api/dog/gates') || req.path.startsWith('/api/dog/preview') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
@@ -4312,7 +4313,7 @@ app.use((req, res, next) => {
       res.setHeader('Vary', 'Origin');
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-DOG-Preview-Key');
   } else {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -4362,6 +4363,11 @@ installDogBossApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
+/* Gate preview is not public yet. Production gate routes are deliberately
+ * disabled until the three-player playtest finishes. Existing records stay
+ * stored; the preview uses a completely separate document. */
+app.use('/api/dog/gates',(_req,res)=>
+ res.status(404).json({ok:false,error:'DOG_EVENT_PRIVATE_TEST'}));
 installDogGatesApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
@@ -4377,6 +4383,10 @@ installDogGroupBossApi(app,{
 installDogAscensionApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
+installDogPrivatePreviewApi(app,{
+ verifyProfile:profileStatsV8.identity,
+ getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 // Isolated Engine 2.0 API. Existing shared lobby and game routes remain untouched.
 installEngine2Api(app,{

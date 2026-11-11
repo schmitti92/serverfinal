@@ -1,0 +1,22 @@
+name: Private 100-Tore Pilot Checks
+on:
+  push:
+    paths:
+      - 'dog-private-preview.js'
+      - 'dog-boss10.js'
+      - 'dog-group-boss.js'
+      - 'dog-gates.js'
+      - 'server.js'
+      - 'tests/dog-private-preview.test.js'
+      - '.github/workflows/dog-private-preview.yml'
+  workflow_dispatch:
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: node --test tests/dog-private-preview.test.js
