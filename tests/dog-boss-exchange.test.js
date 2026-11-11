@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,DOG_ENDGAME_WINDOWS,DOG_EXTENDED_ENDGAME_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
+ DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,DOG_ENDGAME_WINDOWS,DOG_EXTENDED_ENDGAME_WINDOWS,DOG_SHOW_ENDGAME_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
  dogPublicMiniGames,dogSubmitMiniAnswer,dogMiniTargetIndex,
  dogMiniReactionPosition,dogMiniTeamShield,dogMiniExchangeView,
  dogMiniBonus,dogMiniStrongRoundCount
@@ -54,7 +54,7 @@ function solveAll(start){
 }
 test('New encounter has four fixed phases and exactly four 2s exchanges in 40s',()=>{
  const games=make();
- assert.equal(DOG_BOSS10_DURATION_MS,64000);
+ assert.equal(DOG_BOSS10_DURATION_MS,92000);
  assert.equal(games.version,3);
  assert.deepEqual(games.rounds.map(r=>r.kind),names);
  assert.deepEqual(games.rounds.map(r=>[r.startMs,r.endMs]),
@@ -119,7 +119,7 @@ test('Shield is meaningful but does not outweigh the party equipment or leak dat
 test('50s cinematic encounters preserve all 4x8s tasks and add four 4.5s pauses',()=>{
  const cinema=dogCreateMiniGames(10,()=>0,{exchange:'cinematic'});
  const old=dogCreateMiniGames(10,()=>0,{exchange:true});
- assert.equal(DOG_BOSS10_DURATION_MS,64000);
+ assert.equal(DOG_BOSS10_DURATION_MS,92000);
  assert.equal(cinema.version,4);
  assert.equal(old.version,3);
  assert.deepEqual(cinema.rounds.map(x=>[x.startMs,x.endMs]),
@@ -178,31 +178,34 @@ test('50s cinematic shield penalties still affect combat without inventing final
   boss10DamagePotential(equipped,[],plan));
 });
 
-test('64s endgame: 12s maths, three 8s minigames, four 7s cinematic windows',()=>{
+test('92s endgame: 12s maths, three 8s games, four 14s cinematics',()=>{
  const game=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
- assert.equal(DOG_BOSS10_DURATION_MS,64_000);
- assert.equal(game.version,6);
+ assert.equal(DOG_BOSS10_DURATION_MS,92_000);
+ assert.equal(game.version,7);
  assert.deepEqual(game.rounds.map(r=>[r.startMs,r.endMs]),
-  DOG_EXTENDED_ENDGAME_WINDOWS.map(r=>[r.startMs,r.endMs]));
+  DOG_SHOW_ENDGAME_WINDOWS.map(r=>[r.startMs,r.endMs]));
  assert.deepEqual(game.rounds.map(r=>r.kind),['math','dodge','target','reaction']);
  assert.deepEqual(game.rounds.map(r=>r.endMs-r.startMs),[12000,8000,8000,8000]);
  assert.deepEqual(game.rounds.map((r,i)=>
-  (game.rounds[i+1]?.startMs??64_000)-r.endMs),[7000,7000,7000,7000]);
- assert.equal(dogNormalizeMiniGames(game).version,6);
- assert.equal(dogMiniExchangeView(game,roster,63_000).durationMs,64_000);
- // Version 5 encounters started before this change still retain 60s.
- const legacy=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
- const oldRounds=legacy.rounds.map((r,i)=>{
-  const fixed=DOG_ENDGAME_WINDOWS[i];
-  return {...r,startMs:fixed.startMs,endMs:fixed.endMs,
-   ...(r.kind==='dodge'?{attacks:r.attacks.map(a=>({
-    ...a,startMs:fixed.startMs+Math.floor(a.step*8000/3),
-    impactMs:fixed.startMs+Math.floor((a.step+.66)*8000/3)
-   }))}:{})};
- });
- const v5={...legacy,version:5,rounds:oldRounds};
- assert.equal(dogNormalizeMiniGames(v5).version,5);
- assert.equal(dogMiniExchangeView(v5,roster,59_000).durationMs,60_000);
+  (game.rounds[i+1]?.startMs??92_000)-r.endMs),[14000,14000,14000,14000]);
+ assert.equal(dogNormalizeMiniGames(game).version,7);
+ assert.equal(dogMiniExchangeView(game,roster,91_000).durationMs,92_000);
+ // Older 60s and 64s battles stay readable and finish at their original times.
+ for(const [version,windows,total] of [
+  [5,DOG_ENDGAME_WINDOWS,60_000],
+  [6,DOG_EXTENDED_ENDGAME_WINDOWS,64_000]]){
+  const rounds=game.rounds.map((r,i)=>{
+   const fixed=windows[i];
+   return {...r,startMs:fixed.startMs,endMs:fixed.endMs,
+    ...(r.kind==='dodge'?{attacks:r.attacks.map(a=>({
+     ...a,startMs:fixed.startMs+Math.floor(a.step*8000/3),
+     impactMs:fixed.startMs+Math.floor((a.step+.66)*8000/3)
+    }))}:{})};
+  });
+  const older={...game,version,rounds};
+  assert.equal(dogNormalizeMiniGames(older).version,version);
+  assert.equal(dogMiniExchangeView(older,roster,total-1000).durationMs,total);
+ }
  assert.equal(dogMiniExchangeView(dogCreateMiniGames(10,()=>0,{exchange:true}),roster,39_000).durationMs,40_000);
  assert.equal(dogMiniExchangeView(dogCreateMiniGames(10,()=>0,{exchange:'cinematic'}),roster,49_000).durationMs,50_000);
 });
