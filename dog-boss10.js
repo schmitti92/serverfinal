@@ -274,7 +274,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
  for(const command of ['ready','start','react','minigame','finish']){
   app.post('/api/dog/gates/boss10/'+command,auth,async(req,res)=>{
    try{
-    const {requestId,round,answer}=obj(req.body);
+    const {requestId,round,answer:choice}=obj(req.body);
     if(!validId(requestId))throw Error('INVALID_REQUEST_ID');
     const {db,teamRef,progressRef}=refs(),uid=req.dogBoss10Uid;
     const receiptRef=db.collection(DOG_BOSS10_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
@@ -307,7 +307,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       next=boss10React(progress,uid,now);
       result={type:'reaction',accepted:true};
      }else if(command==='minigame'){
-      const solved=boss10MiniAnswer(progress,uid,round,answer,now);
+      const solved=boss10MiniAnswer(progress,uid,round,choice,now);
       next=solved.progress;result=solved.result;
      }else{
       next=boss10Finish(progress,now,rand).progress;
