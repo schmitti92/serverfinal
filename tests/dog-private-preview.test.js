@@ -44,7 +44,7 @@ test('A solo phone starts a full three-hero 60-second boss encounter at each cha
   assert.equal(boss.phase,'fighting');
   assert.deepEqual(boss.roster.map(x=>x.uid),[...DOG_PREVIEW_BOTS,'owner']);
   assert.equal(boss.endsAt-boss.startedAt,60000);
-  const tick=advancePrivateBoss(state,start+52000,zero);
+  const tick=advancePrivateBoss(state,start+62000,zero);
   assert.equal(tick.changed,true);
   const after=gate===10?boss10State(tick.data.progress.boss10):
    groupBossState(gate,tick.data.progress.groupBosses[gate]);
@@ -62,8 +62,8 @@ test('Bot answers stay within server rules and are idempotent after fight settle
   assert.ok(Object.keys(b.miniGames.answers[id]||{}).length>=1);
  const second=advancePrivateBoss(first.data,start+15000,zero);
  assert.equal(second.changed,false,'no second writes when bots have already answered');
- const settled=advancePrivateBoss(first.data,start+53000,zero);
- const replay=advancePrivateBoss(settled.data,start+54000,zero);
+ const settled=advancePrivateBoss(first.data,start+63000,zero);
+ const replay=advancePrivateBoss(settled.data,start+64000,zero);
  assert.equal(replay.changed,false,'one fight outcome only');
 });
 test('Test-only jump and reset never create real DOG rewards or grant other users access',()=>{
