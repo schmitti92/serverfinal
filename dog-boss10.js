@@ -7,9 +7,9 @@ import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
-import {dogGroupBossHp,dogWeaponBase,dogArmorBase} from './dog-balance.js';
+import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_BOSS10_DURATION_MS=50_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
@@ -57,7 +57,15 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  const members=team.members.map(m=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(progress.people[m.uid])}));
- return {gate:10,name:'Der Aschewächter',bossHp:dogGroupBossHp(10),
+ const elapsed=Math.max(0,now-boss.startedAt);
+ const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+ const bossMaxHp=dogGroupBossHp(10);
+ const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
+  boss.result.hpRemaining:
+  dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
+   boss10DamagePotential(boss.roster,[],null));
+ return {gate:10,name:'Der Aschewächter',bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   teamReady:team.members.length===3,isMember:team.members.some(m=>m.uid===uid),
   participantCount:boss.phase==='fighting'||boss.phase==='victory'||boss.phase==='cooldown'?boss.roster.length:boss.ready.length,
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&boss.ready.length>=1,
