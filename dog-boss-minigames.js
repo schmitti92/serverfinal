@@ -186,6 +186,19 @@ export function dogMiniReactionPosition(round,relativeMs){
  const cycles=.68*t+(.075+.004*(round.difficulty||1))*t*t;
  return 1-Math.abs(1-(cycles%2));
 }
+/** Bounded network-jitter allowance: judge the last 180 ms of a
+ * synchronized SERVER timeline, never a client-provided success flag or
+ * timestamp. The reaction pointer still accelerates continuously. */
+export function dogMiniReactionValid(round,elapsed){
+ if(elapsed<round.startMs||elapsed>=round.endMs)return false;
+ for(let transferMs=0;transferMs<=180;transferMs+=15){
+  const evaluatedAt=elapsed-transferMs;
+  if(evaluatedAt<round.startMs)break;
+  if(Math.abs(dogMiniReactionPosition(round,evaluatedAt)-.5)<=round.zoneRadius)
+   return true;
+ }
+ return false;
+}
 export function dogPublicMiniGames(raw,uid){
  const games=dogNormalizeMiniGames(raw);
  if(!games)return null;
@@ -304,7 +317,7 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   correct=value<round.lanes&&value!==attack.dangerIndex&&
    value!==attack.secondDangerIndex;
  }else if(round.kind==='reaction')
-  correct=value===1&&Math.abs(dogMiniReactionPosition(round,elapsed)-.5)<=round.zoneRadius;
+  correct=value===1&&dogMiniReactionValid(round,elapsed);
  else if(round.kind==='target'&&value<round.lanes){
   correct=value===dogMiniTargetIndex(round,elapsed);
   const phase=(elapsed-round.startMs)%round.stepMs;
