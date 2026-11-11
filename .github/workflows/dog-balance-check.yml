@@ -20,6 +20,8 @@ on:
       - tests/dog-first-loop.test.js
       - tests/dog-group-boss.test.js
       - tests/dog-boss-minigames.test.js
+      - tests/dog-boss-health.test.js
+      - tests/dog-boss-exchange.test.js
       - tests/dog-gates-cors.test.js
       - tests/dog-forge.test.js
       - tests/dog-materials.test.js
@@ -43,6 +45,8 @@ on:
       - tests/dog-first-loop.test.js
       - tests/dog-group-boss.test.js
       - tests/dog-boss-minigames.test.js
+      - tests/dog-boss-health.test.js
+      - tests/dog-boss-exchange.test.js
       - tests/dog-gates-cors.test.js
       - tests/dog-forge.test.js
       - tests/dog-materials.test.js
@@ -71,10 +75,12 @@ jobs:
           node --check dog-group-boss.js
           node --check dog-boss-minigames.js
           node --check tests/dog-boss-minigames.test.js
+          node --check tests/dog-boss-health.test.js
+          node --check tests/dog-boss-exchange.test.js
           node --check tests/dog-gates-cors.test.js
           node --check tests/dog-group-boss.test.js
           node --check dog-ascension.js
           node --check tests/dog-first-loop.test.js
           node --check tests/dog-balance.test.js
       - name: Run balance simulations and unit tests
-        run: node --test tests/dog-gates-cors.test.js tests/dog-balance.test.js tests/dog-gates.test.js tests/dog-mini-rewards.test.js tests/dog-first-loop.test.js tests/dog-group-boss.test.js tests/dog-boss-minigames.test.js tests/dog-forge.test.js tests/dog-materials.test.js
+        run: node --test tests/dog-gates-cors.test.js tests/dog-balance.test.js tests/dog-gates.test.js tests/dog-mini-rewards.test.js tests/dog-first-loop.test.js tests/dog-group-boss.test.js tests/dog-boss-minigames.test.js tests/dog-boss-exchange.test.js tests/dog-forge.test.js tests/dog-materials.test.js
