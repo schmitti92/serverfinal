@@ -112,8 +112,8 @@ test('Preceding boss and eight normal gates are required for participating heroe
  joined=groupBossReady(gate,joined,team,'b',build(gate),now);
  assert.equal(joined.groupBosses[gate].ready.length,2);
  assert.equal(joined.groupBosses[gate].phase,'waiting');
- assert.throws(()=>groupBossReady(gate,joined,team,'a',build(gate),now+1)
-   .then?.(()=>null),/DOES_NOT_HAPPEN/);
+ assert.deepEqual(groupBossReady(gate,joined,team,'a',build(gate),now+1),joined,
+  'clicking Ready again must not duplicate a participant');
 });
 
 test('Boss 20 and Boss 30 store independent fight state, surviving gate normalization',()=>{
