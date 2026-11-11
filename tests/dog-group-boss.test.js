@@ -360,7 +360,7 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
   .sharedBosses,priorWins(100).concat(100));
  assert.equal(f.writes.filter(key=>key===
-  DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,29,
+  DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,34,
   'three Ready, 24 math answers, six dodges and one settlement');
 });
 
