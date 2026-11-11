@@ -93,8 +93,11 @@ function normalizeV1Round(round,i,gate){
  if(round.kind==='reaction')return {...base,targetMs:int(round.targetMs,
   fixed.startMs+2500,fixed.startMs+4500,fixed.startMs+3000),
   toleranceMs:d.reactionToleranceMs};
- if(round.kind==='target')return {...base,lanes:int(round.lanes,3,5,3),
-  initialIndex:int(round.initialIndex,0,lanes-1,0),stepMs:d.targetStepMs};
+ if(round.kind==='target'){
+  const lanes=int(round.lanes,3,5,3);
+  return {...base,lanes,
+   initialIndex:int(round.initialIndex,0,lanes-1,0),stepMs:d.targetStepMs};
+ }
  const options=Array.isArray(round.options)&&round.options.length===3?
   round.options.map(n=>int(n,0,2000,0)):[0,1,2];
  return {...base,question:String(round.question||'').slice(0,60),
