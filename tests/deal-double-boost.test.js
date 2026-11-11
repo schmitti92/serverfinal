@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
-import {create,payoutFor,publicView} from '../deal-or-no-deal.js';
+import {create,payoutFor,cashCreditFor,publicView} from '../deal-or-no-deal.js';
 
 const PRICE=300000000; // 3,000,000 EUR in cents
 function harness(){
@@ -47,7 +47,7 @@ function harness(){
  return {invoke,balance,docs,match};
 }
 
-test('x2 upgrade costs five million, belongs only to buyer, and retry never double-charges',async()=>{
+test('x2 upgrade costs three million, belongs only to buyer, and retry never double-charges',async()=>{
  const h=harness();
  const start=await h.invoke('POST','/api/deal-or-no-deal/:code/start');
  assert.equal(start.body.ok,true);
@@ -87,7 +87,8 @@ test('boost requires sufficient money, participant membership and unselected own
  assert.equal(allowed.body.game.players.find(p=>p.id===other).doublePayout,true);
 });
 
-test('both accepted deals and kept cases are x2 only for upgraded players',()=>{
+
+test('accepted Banker deals and kept cases remain original results, x2 applies only to final cash credits',()=>{
  const g=create([{id:'a'},{id:'b'}],()=>0);
  g.players[0].case=0;
  g.players[0].deal=150000000;
@@ -95,30 +96,60 @@ test('both accepted deals and kept cases are x2 only for upgraded players',()=>{
  g.players[1].case=1;
  g.players[1].deal=null;
  g.phase='final';
- assert.equal(payoutFor(g,g.players[0]),300000000);
+ assert.equal(payoutFor(g,g.players[0]),150000000);
+ assert.equal(cashCreditFor(g,g.players[0]),300000000);
  assert.equal(payoutFor(g,g.players[1]),g.values[1]);
+ assert.equal(cashCreditFor(g,g.players[1]),g.values[1]);
  const finals=publicView(g).finalValues;
- assert.equal(finals.find(p=>p.id==='a').payout,300000000);
+ assert.equal(finals.find(p=>p.id==='a').payout,150000000,'official results are not doubled');
  assert.equal(finals.find(p=>p.id==='b').payout,g.values[1]);
+ assert.equal(finals.find(p=>p.id==='a').amount,g.values[0],'case contents stay unchanged');
  g.players[1].doublePayout=true;
- assert.equal(payoutFor(g,g.players[1]),g.values[1]*2);
+ assert.equal(payoutFor(g,g.players[1]),g.values[1],'retained suitcase keeps original value');
+ assert.equal(cashCreditFor(g,g.players[1]),g.values[1]*2,'wallet receives doubled amount only');
+ assert.equal(publicView(g).finalValues[1].payout,g.values[1],'no boost in public winner ranking');
 });
 
-test('final settlement awards boosted payout exactly once and uses it for winner',async()=>{
+test('boosted player with a lower original win does not become the match winner; wallet credit is exactly once',async()=>{
  const h=harness();await h.invoke('POST','/api/deal-or-no-deal/:code/start');
  const purchased=await h.invoke('POST','/api/deal-or-no-deal/:code/double-boost','a');
  assert.equal(purchased.body.ok,true);
- const g=h.match();g.phase='final';g.players[0].case=0;g.players[0].deal=250000000;
+ const g=h.match();g.phase='final';
+ g.players[0].case=0;g.players[0].deal=150000000;
  g.players[1].case=1;g.players[1].deal=250000000;
+ assert.equal(publicView(g).finalValues[0].payout,150000000);
+ assert.equal(publicView(g).finalValues[1].payout,250000000);
  const finished=await h.invoke('GET','/api/deal-or-no-deal/:code/balances','a');
  assert.equal(finished.body.ok,true);
- assert.equal(h.balance('a'),600000000);
+ assert.equal(h.balance('a'),400000000,'100m cents left after purchase + 300m credited');
  assert.equal(h.balance('b'),PRICE+100000000+250000000);
- assert.equal(h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_a').amount,500000000);
- assert.equal(h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_b').amount,250000000);
- assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/a').wins,1);
- assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/b').wins,0);
+ const paidA=h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_a');
+ const paidB=h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_b');
+ assert.equal(paidA.amount,300000000);
+ assert.equal(paidA.baseAmount,150000000);
+ assert.equal(paidA.bonusAmount,150000000);
+ assert.equal(paidB.amount,250000000);
+ assert.equal(paidB.baseAmount,250000000);
+ assert.equal(paidB.bonusAmount,0);
+ assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/a').wins,0,'boosted player is NOT the winner');
+ assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/b').wins,1,'unboosted player with larger base result wins');
  await h.invoke('GET','/api/deal-or-no-deal/:code/balances','b');
- assert.equal(h.balance('a'),600000000,'recovery must not repeat payout');
+ assert.equal(h.balance('a'),400000000,'recovery must not repeat bonus credit');
  assert.equal(h.balance('b'),PRICE+100000000+250000000);
+});
+
+test('a base-result tie stays tied even when only one player purchased x2',async()=>{
+ const h=harness();await h.invoke('POST','/api/deal-or-no-deal/:code/start');
+ await h.invoke('POST','/api/deal-or-no-deal/:code/double-boost','a');
+ const g=h.match();g.phase='final';
+ g.players[0].case=0;g.players[0].deal=250000000;
+ g.players[1].case=1;g.players[1].deal=250000000;
+ const result=publicView(g).finalValues;
+ assert.equal(result[0].payout,result[1].payout,'draw is not broken by purchased multiplier');
+ const done=await h.invoke('GET','/api/deal-or-no-deal/:code/balances','a');
+ assert.equal(done.body.ok,true);
+ assert.equal(h.balance('a'),600000000,'×2 buyer receives extra cash');
+ assert.equal(h.balance('b'),PRICE+100000000+250000000);
+ assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/a').wins,1);
+ assert.equal(h.docs.get('deal_or_no_deal_wallets_v1/b').wins,1);
 });
