@@ -76,6 +76,19 @@ export function dogGateProgress(raw){
    .map(gate=>[String(gate),obj(x.groupBosses[String(gate)])])),
   updatedAt:clamp(x.updatedAt,0,10_000_000_000_000,0)};
 }
+// Only a real expired encounter requires settlement. Normal map polling
+// has no additional Firestore reads or writes.
+function expiredSharedBossGates(raw,now){
+ const state=dogGateProgress(raw);
+ const candidates=[[10,state.boss10],...Array.from({length:9},(_,i)=>{
+  const gate=(i+2)*10;return [gate,state.groupBosses[gate]];
+ })];
+ return candidates.filter(([,fight])=>fight?.phase==='fighting'&&
+  Number.isSafeInteger(fight.startedAt)&&fight.startedAt>0&&
+  Number.isSafeInteger(fight.endsAt)&&fight.endsAt>fight.startedAt&&
+  fight.endsAt<=now&&Array.isArray(fight.roster)&&
+  fight.roster.length>=1&&fight.roster.length<=3).map(([gate])=>gate);
+}
 export function dogGateMapView(teamRaw,progressRaw,viewerUid){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
  const isMember=team.members.some(m=>m.uid===viewerUid);
@@ -167,11 +180,33 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
  };
  app.get('/api/dog/gates/map',auth,async(req,res)=>{
   try{
-   const {teamRef,progressRef}=refs();
-   const [team,progress]=await Promise.all([teamRef.get(),progressRef.get()]);
+   const {db,teamRef,progressRef}=refs();
+   const [teamSnap,progressSnap]=await Promise.all([teamRef.get(),progressRef.get()]);
+   const team=teamSnap.exists?teamSnap.data():null,uid=req.dogGateProfile.uid;
+   let progress=progressSnap.exists?progressSnap.data():null;
+   if(bossTeam(team).members.some(m=>m.uid===uid)&&
+      expiredSharedBossGates(progress,clock()).length){
+    // If every browser closed during the fight, returning to the map
+    // must settle the server-owned outcome. Re-read under one Firestore
+    // transaction so simultaneous reconnects cannot award or roll twice.
+    const [{boss10Finish},{groupBossFinish}]=await Promise.all([
+     import('./dog-boss10.js'),import('./dog-group-boss.js')]);
+    progress=await db.runTransaction(async tx=>{
+     const latest=await tx.get(progressRef);
+     let current=latest.exists?latest.data():null;
+     const due=expiredSharedBossGates(current,clock());
+     if(!due.length)return current;
+     for(const gate of due){
+      current=gate===10?
+       boss10Finish(current,clock(),rand).progress:
+       groupBossFinish(gate,current,clock(),rand).progress;
+     }
+     tx.set(progressRef,current);
+     return current;
+    });
+   }
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,...dogGateMapView(team.exists?team.data():null,
-    progress.exists?progress.data():null,req.dogGateProfile.uid)});
+   return res.json({ok:true,...dogGateMapView(team,progress,uid)});
   }catch(e){return error(res,e);}
  });
  app.post('/api/dog/gates/join',auth,async(req,res)=>{

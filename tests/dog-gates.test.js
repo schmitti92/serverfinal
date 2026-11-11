@@ -6,7 +6,7 @@ import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
 
 function fixture(){
- const docs=new Map(),routes=new Map();
+ const docs=new Map(),routes=new Map(),writes=[];
  let time=1_800_000_000_000;
  const snapshot=key=>({exists:docs.has(key),data:()=>structuredClone(docs.get(key))});
  const db={
@@ -21,7 +21,7 @@ function fixture(){
    const result=await fn(tx);
    for(const [op,key,value] of updates){
     if(op==='create'&&docs.has(key))throw Error('ALREADY_EXISTS');
-    docs.set(key,value);
+    docs.set(key,value);writes.push(key);
    }
    return result;
   }
@@ -49,7 +49,7 @@ function fixture(){
   }
   return res;
  }
- return {docs,routes,db,call,advance:ms=>time+=ms,now:()=>time};
+ return {docs,routes,db,writes,call,advance:ms=>time+=ms,now:()=>time};
 }
 
 test('Personal map defaults are not fabricated and contain no DOG unlock',()=>{
@@ -203,4 +203,65 @@ test('An unauthenticated visitor cannot read team positions or fight',async()=>{
  const notMember=await f.call('POST','/api/dog/gates/fight',{
   gate:1,requestId:'not-member-unique-00001'},'a');
  assert.equal(notMember.statusCode,403);
+});
+
+test('Map settles expired Boss 10 for returning heroes, never for an outsider',async()=>{
+ const f=fixture();
+ for(const person of ['a','b','c'])await f.call('POST','/api/dog/gates/join',{},person);
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ const t=f.now(),uids=['hero-a','hero-b','hero-c'];
+ const roster=uids.map(uid=>({uid,weaponLevel:1,armorLevel:1,skillPower:5,
+  skillDestruction:5,skillDefense:5,skillGuard:5}));
+ f.docs.set(key,{people:Object.fromEntries(uids.map(uid=>[uid,{
+  currentGate:10,highestGate:10,normals:[1,2,3,4,6,7,8,9],minis:[]
+ }])),sharedBosses:[],boss10:{phase:'fighting',ready:uids,roster,
+  startedAt:t-32000,endsAt:t-2000,reactions:[],miniGames:null}});
+ const foreign=await f.call('GET','/api/dog/gates/map',{},'d');
+ assert.equal(foreign.statusCode,200);
+ assert.deepEqual(f.docs.get(key).sharedBosses,[],'outsider must not settle');
+ const first=await f.call('GET','/api/dog/gates/map',{},'a');
+ assert.equal(first.statusCode,200);
+ assert.deepEqual(first.body.sharedBosses,[10]);
+ assert.equal(first.body.progress.currentGate,11);
+ const count=f.writes.filter(k=>k===key).length;
+ assert.equal(count,1,'settlement writes once');
+ for(const token of ['a','b','c']){
+  const again=await f.call('GET','/api/dog/gates/map',{},token);
+  assert.deepEqual(again.body.sharedBosses,[10]);
+  assert.equal(f.writes.filter(k=>k===key).length,count);
+ }
+});
+
+test('Map settles expired final Boss 100 and awards the shared victory once',async()=>{
+ const f=fixture();
+ for(const person of ['a','b','c'])await f.call('POST','/api/dog/gates/join',{},person);
+ const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ const t=f.now(),uids=['hero-a','hero-b','hero-c'];
+ const roster=uids.map(uid=>({uid,weaponLevel:10,armorLevel:10,skillPower:50,
+  skillDestruction:50,skillDefense:50,skillGuard:50}));
+ f.docs.set(key,{people:Object.fromEntries(uids.map(uid=>[uid,{
+  currentGate:100,highestGate:100,normals:[91,92,93,94,96,97,98,99],minis:[]
+ }])),sharedBosses:[10,20,30,40,50,60,70,80,90],groupBosses:{
+  100:{phase:'fighting',ready:uids,roster,
+   startedAt:t-33000,endsAt:t-3000,reactions:[],miniGames:null}
+ }});
+ const first=await f.call('GET','/api/dog/gates/map',{},'c');
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.dogUnlocked,true);
+ assert.ok(first.body.sharedBosses.includes(100));
+ assert.equal(f.docs.get(key).groupBosses[100].phase,'victory');
+ const count=f.writes.filter(k=>k===key).length;
+ assert.equal(count,1);
+ const other=await f.call('GET','/api/dog/gates/map',{},'a');
+ assert.equal(other.body.dogUnlocked,true);
+ assert.equal(f.writes.filter(k=>k===key).length,count);
+});
+
+test('Map with no expired shared boss has no additional Firestore writes',async()=>{
+ const f=fixture();
+ for(const person of ['a','b','c'])await f.call('POST','/api/dog/gates/join',{},person);
+ const before=f.writes.length;
+ const res=await f.call('GET','/api/dog/gates/map',{},'a');
+ assert.equal(res.statusCode,200);
+ assert.equal(f.writes.length,before);
 });
