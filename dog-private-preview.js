@@ -146,6 +146,12 @@ export function actPrivateExpedition(raw,command,params={},now=Date.now(),rand=r
    result={...result,previewReward:{kind:'chest',tier:offer.tier,count:offer.count}};
   }
   data={...data,progress};
+ }else if(command==='select'){
+  // Viewing another arena is allowed without advancing any real gate or
+  // unlocking victory. The boss readiness check still guards attempts.
+  if(!validBoss(gate))throw Error('PREVIEW_INVALID_GATE');
+  data={...data,bossGate:gate};
+  result={type:'select',gate};
  }else if(command==='ready'){
   if(!validBoss(gate))throw Error('PREVIEW_INVALID_GATE');
   const heroes={[uid]:data.hero,

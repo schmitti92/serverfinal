@@ -84,3 +84,16 @@ test('Private preview does not make original gates publicly callable before regi
  assert.match(code,/X-DOG-Preview-Key/);
  assert.match(code,/installDogPrivatePreviewApi\(app/);
 });
+
+test('Preview can inspect another boss without unlocking it or modifying team progress',()=>{
+ const initial=createPrivateExpedition('owner','Spieler',start);
+ const selected=actPrivateExpedition(initial,'select',{gate:60},start+1,zero);
+ assert.equal(selected.data.bossGate,60);
+ assert.equal(selected.result.type,'select');
+ assert.deepEqual(selected.data.progress.sharedBosses,[]);
+ assert.deepEqual(initial.progress.sharedBosses,[]);
+ assert.throws(()=>actPrivateExpedition(initial,'select',{gate:13},start+1,zero),
+  /PREVIEW_INVALID_GATE/);
+ assert.throws(()=>actPrivateExpedition(selected.data,'ready',{gate:60},start+2,zero),
+  /DOG_GROUP_PREREQUISITES/);
+});
