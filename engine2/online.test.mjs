@@ -7,15 +7,20 @@ test('Engine2 supports four participants and a sealed secret door',()=>{
  room=dispatch(room,{type:'join',actorId:'p2',commandId:'join',expectedRevision:room.revision,now:1}).state;
  room=dispatch(room,{type:'prepare',actorId:'p1',matchId:'m1',gameId:'drei-schatzkammern',commandId:'prepare',expectedRevision:room.revision,now:2}).state;
  assert.equal(room.match.roster.length,4);
- const game=createGame({players:room.match.roster,lockedDoors:[2,1,0]});
+ const game=createGame({players:room.match.roster,lockedDoors:[2,1,[0,2,4]]});
  assert.equal('lockedDoors' in publicGame(game,'p1'),false);
  assert.equal('choices' in publicGame(game,'p1'),false);
  assert.equal('lockedDoors' in project(room,'p1'),false);
 });
 test('server-side door resolution eliminates every visitor of the locked door',()=>{
- let g=createGame({players:['a','b','c'],lockedDoors:[1,0,2]});
+ let g=createGame({players:['a','b','c'],lockedDoors:[1,0,[0,2,3]]});
  g=chooseDoor(g,'a',1);g=chooseDoor(g,'b',1);g=chooseDoor(g,'c',0);
  for(let i=0;i<3;i++)g=revealNext(g);
+ assert.deepEqual(g.alive,['c'],'both visitors of the locked first-room door are eliminated');
+ g=chooseDoor(g,'c',1);
+ for(let i=0;i<3;i++)g=revealNext(g);
+ g=chooseDoor(g,'c',1);
+ for(let i=0;i<5;i++)g=revealNext(g);
  assert.equal(g.finished,true);
  assert.deepEqual(getResult(g).winnerIds,['c']);
 });
