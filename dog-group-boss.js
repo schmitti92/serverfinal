@@ -197,12 +197,12 @@ export function groupBossReact(gate,raw,uid,now=Date.now()){
  if(state.reactions.includes(uid))return p;
  return withState(p,gate,{...state,reactions:[...state.reactions,uid]},now);
 }
-export function groupBossMiniAnswer(gate,raw,uid,round,answer,now=Date.now(),step=0){
+export function groupBossMiniAnswer(gate,raw,uid,round,answer,now=Date.now(),step=0,tapAt=null,receivedAt=now){
  ensureGate(gate);
  const progress=dogGateProgress(raw),state=stateAt(progress,gate);
  if(state.phase!=='fighting'||now>=state.endsAt||now<state.startedAt)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
- const answered=dogSubmitMiniAnswer(state.miniGames,state.roster,uid,round,answer,now,state.startedAt,step);
+ const answered=dogSubmitMiniAnswer(state.miniGames,state.roster,uid,round,answer,now,state.startedAt,step,tapAt,receivedAt);
  return {progress:answered.replayed?progress:withState(progress,gate,{...state,miniGames:answered.games},now),
   result:{type:'minigame',round,step,correct:answered.correct,
    replayed:answered.replayed,
@@ -304,7 +304,8 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
  for(const command of ['ready','start','react','minigame','finish']){
   app.post('/api/dog/gates/boss/:gate/'+command,auth,async(req,res)=>{
    try{
-    const gate=gateOf(req),{requestId,round,answer,step=0}=obj(req.body);
+    const gate=gateOf(req),{requestId,round,answer,step=0,tapAt=null}=obj(req.body);
+     const receivedAt=clock();
     if(!validId(requestId))throw Error('INVALID_REQUEST_ID');
     const {db,teamRef,progressRef}=refs(),uid=req.dogGroupUid;
     const receiptRef=db.collection(DOG_GROUP_BOSS_RECEIPTS_COLLECTION)
@@ -320,7 +321,8 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
       const prior=receipt.data();
       if(prior.command!==command||prior.gate!==gate||
          (command==='minigame'&&(prior.round!==round||JSON.stringify(prior.answer)!==JSON.stringify(answer)||
-       (prior.step??0)!==step)))
+       (prior.step??0)!==step||
+        (prior.tapAt??null)!==tapAt)))
        throw Error('DOG_GROUP_RECEIPT_CONFLICT');
       return {view:groupBossView(gate,team,progress,uid,clock()),
        result:receipt.data().result,replayed:true};
@@ -355,7 +357,7 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
       next=groupBossReact(gate,progress,uid,now);
       result={type:'reaction',accepted:true};
      }else if(command==='minigame'){
-      const completed=groupBossMiniAnswer(gate,progress,uid,round,answer,now,step);
+      const completed=groupBossMiniAnswer(gate,progress,uid,round,answer,now,step,tapAt,receivedAt);
       next=completed.progress;result=completed.result;
       unchanged=completed.result.replayed===true;
      }else{
@@ -366,7 +368,7 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
      // a participant is already ready or a minigame was already scored.
      if(!unchanged)tx.set(progressRef,next);
      tx.create(receiptRef,{uid,gate,command,requestId,
-      ...(command==='minigame'?{round,answer,step}:{}),
+      ...(command==='minigame'?{round,answer,step,tapAt}:{}),
       result,createdAt:now});
      return {view:groupBossView(gate,team,next,uid,now),result,replayed:false};
     });
