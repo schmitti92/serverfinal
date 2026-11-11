@@ -22,7 +22,7 @@ export const DOG_CINEMATIC_WINDOWS=Object.freeze([
  Object.freeze({startMs:25000,endMs:33000}),
  Object.freeze({startMs:37500,endMs:45500})
 ]);
-/* v5: 60s, v6: 64s, v7: 92s (14s cinematics), v8: 99s (+7s dodge).
+/* v5: 60s, v6: 64s, v7: 92s, v8: 99s, v9: precise narrow Konter.
  * All persisted earlier versions retain their original windows.
  */
 export const DOG_ENDGAME_WINDOWS=Object.freeze([
@@ -157,9 +157,16 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
   const endgame=exchange==='endgame',cinematic=exchange==='cinematic';
-  return {version:endgame?8:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>
-   createRound(kind,i,gate,rand,endgame?DOG_SLOW_DODGE_ENDGAME_WINDOWS:
-    cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS)),answers:{}};
+  return {version:endgame?9:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>{
+   const item=createRound(kind,i,gate,rand,endgame?DOG_SLOW_DODGE_ENDGAME_WINDOWS:
+    cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS);
+   if(endgame&&kind==='reaction'){
+    const tier=dogMiniDifficulty(gate).tier;
+    return {...item,zoneRadius:Math.round((.061-tier*.0027)*1000)/1000,
+     hint:'Konter: Triff die schmale grüne Zone dreimal ganz genau!'};
+   }
+   return item;
+  }),answers:{}};
  }
  const available=[...DOG_MINIGAME_KINDS];
  for(let i=available.length-1;i>0;i--){
@@ -191,7 +198,7 @@ function normalizeV1Round(round,i,gate){
  return {...base,question:String(round.question||'').slice(0,60),
   options,correctIndex:int(round.correctIndex,0,2,0)};
 }
-function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS){
+function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2){
  const fixed=windows[i],d=dogMiniDifficulty(gate);
  const base={kind:round.kind,round:i,startMs:fixed.startMs,endMs:fixed.endMs,
   difficulty:d.tier,maxSteps:TYPES[round.kind],hint:String(round.hint||'').slice(0,120)};
@@ -220,12 +227,13 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS){
   return {...base,lanes,attacks};
  }
  if(round.kind==='reaction')return {...base,
-  zoneRadius:Math.round((.12-d.tier*.005)*1000)/1000};
+  zoneRadius:rawVersion>=9?Math.round((.061-d.tier*.0027)*1000)/1000:
+   Math.round((.12-d.tier*.005)*1000)/1000};
  return {...base,lanes:int(round.lanes,3,5,3),
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -235,14 +243,14 @@ export function dogNormalizeMiniGames(raw){
    raw.version===5?DOG_ENDGAME_WINDOWS:
    raw.version===6?DOG_EXTENDED_ENDGAME_WINDOWS:
     raw.version===7?DOG_SHOW_ENDGAME_WINDOWS:
-     raw.version===8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
+     raw.version>=8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
    (raw.version>=3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
    round.startMs!==windows[i].startMs||
    round.endMs!==windows[i].endMs)return null;
   return raw.version===1?normalizeV1Round(round,i,raw.gate):
-   normalizeV2Round(round,i,raw.gate,windows);
+   normalizeV2Round(round,i,raw.gate,windows,raw.version);
  });
  if(rounds.some(x=>!x)||new Set(rounds.map(x=>x.kind)).size!==rounds.length)return null;
  const answers={};
@@ -436,7 +444,7 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null)
  });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
- return {version:games.version,durationMs:games.version===8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
+ return {version:games.version,durationMs:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
   shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
   cumulativeExtraDamage:typeof heroBaseDamage==='function'?
    earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
@@ -449,7 +457,7 @@ export function dogMiniDodgePenalty(raw,uid){
   .filter(a=>a.correct).length;
  return Math.max(0,3-correct)*.025;
 }
-export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedAt,step=0){
+export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedAt,step=0,tapAt=null,receivedAt=now){
  const games=dogNormalizeMiniGames(raw);
  if(!games)throw Error('DOG_MINIGAME_MISSING');
  if(!Array.isArray(roster)||!roster.some(m=>m.uid===uid))
@@ -511,7 +519,19 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  if(history[step])return {games,correct:history[step].correct,replayed:true,step};
  if(step!==history.length&&!(round.kind==='dodge'&&step>history.length))
   throw Error('DOG_MINIGAME_STEP_ORDER');
- if(elapsed<round.startMs||elapsed>=round.endMs)
+ const preciseReaction=games.version>=9&&round.kind==='reaction';
+ let judgedElapsed=elapsed,verifiedTap=false;
+ // Calculate clicks from the actual input timestamp, not the later Firestore
+ // transaction. The server accepts only a tightly bounded network transfer.
+ if(preciseReaction&&tapAt!==null&&tapAt!==undefined){
+  if(!Number.isSafeInteger(tapAt)||!Number.isSafeInteger(receivedAt)||
+   tapAt<startedAt+round.startMs||tapAt>=startedAt+round.endMs||
+   tapAt>receivedAt+90||receivedAt-tapAt>900)
+   throw Error('DOG_MINIGAME_BAD_TIMESTAMP');
+  judgedElapsed=tapAt-startedAt;verifiedTap=true;
+ }
+ if(elapsed<round.startMs||(elapsed>=round.endMs&&
+    !(preciseReaction&&verifiedTap&&elapsed<round.endMs+1500)))
   throw Error('DOG_MINIGAME_TOO_LATE');
  if(history.length&&round.kind!=='dodge'&&now-history[history.length-1].at<
   (round.kind==='math'?210:round.kind==='reaction'?420:300))
@@ -525,7 +545,9 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   correct=value<round.lanes&&value!==attack.dangerIndex&&
    value!==attack.secondDangerIndex;
  }else if(round.kind==='reaction')
-  correct=value===1&&dogMiniReactionValid(round,elapsed);
+  correct=value===1&&(preciseReaction?
+   Math.abs(dogMiniReactionPosition(round,judgedElapsed)-.5)<=round.zoneRadius+.004:
+   dogMiniReactionValid(round,elapsed));
  else if(round.kind==='target'&&value<round.lanes){
   correct=value===dogMiniTargetIndex(round,elapsed);
   const phase=(elapsed-round.startMs)%round.stepMs;
@@ -543,7 +565,9 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
    attempts.push({step:missing,correct:false,at:startedAt+impact});
   }
  }
- attempts.push({step,correct,at:now,...(round.kind==='dodge'?{choice:value}:{})});
+ attempts.push({step,correct,at:now,
+  ...(preciseReaction&&verifiedTap?{tappedAt:tapAt}:{}),
+  ...(round.kind==='dodge'?{choice:value}:{})});
  const entry={attempts,correct:attempts.some(a=>a.correct),at:now,
   correctCount:attempts.filter(a=>a.correct).length};
  const next={...games,answers:{...games.answers,[uid]:{...mine,[roundIndex]:entry}}};
