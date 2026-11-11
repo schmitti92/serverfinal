@@ -269,3 +269,64 @@ test('DOG official: voluntary pass, shortened card or direct goal entry are reje
  position(fromStart,0,'track',0);
  assert.equal(legalActions(fromStart,0).some(a=>a.viaGoal),false);
 });
+
+
+test('DOG Phase 1: reshuffling the discard pile after exchange respects the supplied deterministic RNG',()=>{
+ let s=createGame({rng:()=>0.27,bots:[false,false,false,false]});
+ s.hands=Array.from({length:4},(_,seat)=>[{id:2000+seat,type:'3'}]);
+ s.deck=[];s.discard=makeDeck();
+ let draws=0;
+ const random=()=>{draws++;return 0;};
+ for(let seat=0;seat<3;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id,random);
+ assert.equal(draws,0,'No reshuffle before all partner cards are exchanged');
+ s=exchangeCard(s,3,s.hands[3][0].id,random);
+ assert.equal(s.round,2);
+ assert.equal(s.phase,'exchange');
+ assert.equal(s.hands[0].length,5);
+ assert.equal(draws,113,'The exhausted deck must be reshuffled with the provided RNG');
+ assert.equal(s.hands[0][0].id,1,'The seeded shuffle has an unambiguous first dealt card');
+});
+
+test('DOG Phase 1: takeAction must forward the seeded RNG during partner exchange',()=>{
+ let s=createGame({rng:()=>0.17,bots:[false,false,false,false]});
+ s.hands=Array.from({length:4},(_,seat)=>[{id:3000+seat,type:'3'}]);
+ s.deck=[];s.discard=makeDeck();
+ let called=0;
+ const random=()=>{called++;return 0;};
+ for(let seat=0;seat<4;seat++){
+   s=takeAction(s,seat,{type:'exchange',cardId:s.hands[seat][0].id},random);
+ }
+ assert.equal(s.round,2);
+ assert.equal(called,113);
+ assert.equal(s.hands[0][0].id,1);
+});
+
+test('DOG Phase 1: turns preserve the original 110-card inventory and disallow two figures per square',()=>{
+ let s=createGame({rng:()=>0.37,bots:[true,true,true,true]});
+ const check=()=>{
+   const all=[...s.deck,...s.discard,...s.hands.flat(),...s.exchanges.filter(Boolean)];
+   assert.equal(all.length,110,'No card may disappear, duplicate or reappear after an exchange');
+   assert.equal(new Set(all.map(c=>c.id)).size,110,'Every card has a unique stable ID');
+   const positions=s.pieces.filter(p=>p.place!=='home').map(p=>p.place+':'+(p.place==='goal'?p.owner+':':'')+p.pos);
+   assert.equal(new Set(positions).size,positions.length,'No two pieces may occupy a ring square or one owner goal');
+   for(const p of s.pieces){
+     if(p.place==='track')assert.ok(p.pos>=0&&p.pos<64);
+     else if(p.place==='goal')assert.ok(p.pos>=0&&p.pos<4);
+     else assert.equal(p.pos,-1);
+   }
+ };
+ for(let turn=0;turn<900&&s.phase!=='finished';turn++){
+   check();
+   if(s.phase==='exchange'){
+     for(let seat=0;seat<4;seat++)if(!s.exchanges[seat]){
+       const move=botAction(s,seat);assert.ok(move);
+       s=exchangeCard(s,seat,move.cardId,()=>0.37);
+       check();
+     }
+   }else{
+     const move=botAction(s,s.current);assert.ok(move,'Active seat must have a legal move');
+     s=takeAction(s,s.current,move,()=>0.37);
+   }
+ }
+ check();
+});
