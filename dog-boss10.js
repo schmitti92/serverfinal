@@ -190,7 +190,7 @@ export function boss10MiniAnswer(progressRaw,uid,round,answer,now=Date.now()){
  if(boss.phase!=='fighting'||now>=boss.endsAt||now<boss.startedAt)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
  const result=dogSubmitMiniAnswer(boss.miniGames,boss.roster,uid,round,answer,now,boss.startedAt);
- return {progress:{...progress,boss10:{...boss,miniGames:result.games},updatedAt:now},
+ return {progress:result.replayed?progress:{...progress,boss10:{...boss,miniGames:result.games},updatedAt:now},
   result:{type:'minigame',round,correct:result.correct,replayed:result.replayed,
    bonusPercent:Math.round(dogMiniBonus(result.games,uid)*1000)/10}};
 }
