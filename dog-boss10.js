@@ -11,7 +11,7 @@ import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
  dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
-export const DOG_BOSS10_DURATION_MS=50_000;
+export const DOG_BOSS10_DURATION_MS=60_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
 export const DOG_BOSS10_RECEIPTS_COLLECTION='dog_gate_boss10_receipts_v1';
 const REQUIRED_NORMALS=Object.freeze([1,2,3,4,6,7,8,9]);
@@ -104,7 +104,7 @@ const startEncounter=(progress,team,ready,heroByUid,now,rand=randomInt)=>{
  return {...progress,boss10:{...boss10State(progress.boss10),
   ready:[...ready],phase:'fighting',roster,startedAt:now,
   endsAt:now+DOG_BOSS10_DURATION_MS,chancePercent,reactions:[],
-  miniGames:dogCreateMiniGames(10,rand,{exchange:'cinematic'})},updatedAt:now};
+  miniGames:dogCreateMiniGames(10,rand,{exchange:'endgame'})},updatedAt:now};
 };
 export function boss10Ready(progressRaw,teamRaw,uid,heroByUid={},now=Date.now(),rand=randomInt){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
