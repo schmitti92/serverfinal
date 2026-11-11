@@ -266,3 +266,81 @@ test('Boss 100 victory survives reconnect and makes DOG unlock flag true for all
  assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
   .sharedBosses,priorWins(100).concat(100));
 });
+
+
+test('Three authenticated profiles share one boss 100 timeline and independent minigame scores',async()=>{
+ const f=fixture(100,0),players=['a','b','c'];
+ for(const player of players){
+  const ready=await f.call('POST','/ready',{
+   requestId:'trio-100-ready-'+player+'-001'},player);
+  assert.equal(ready.statusCode,200);
+ }
+ const views=[];
+ for(const player of players){
+  const loaded=await f.call('GET','',{},player);
+  assert.equal(loaded.statusCode,200);
+  assert.equal(loaded.body.phase,'fighting');
+  assert.equal(loaded.body.roster.length,3);
+  assert.deepEqual(loaded.body.miniGames.myAnswers,{});
+  assert.equal(loaded.body.miniGames.rounds.length,3);
+  assert.equal(loaded.body.startedAt,now);
+  views.push(loaded.body);
+ }
+ assert.deepEqual(views[0].miniGames.rounds,views[1].miniGames.rounds);
+ assert.deepEqual(views[1].miniGames.rounds,views[2].miniGames.rounds);
+ assert.equal(new Set(views[0].miniGames.rounds.map(round=>round.kind)).size,3);
+ assert.ok(!JSON.stringify(views[0].miniGames).includes('correctIndex'),
+  'the server never leaks the math answer');
+ f.advance(6000);
+ for(const player of players){
+  const reaction=await f.call('POST','/minigame',{
+   requestId:'trio-100-reaction-'+player+'-01',round:0,answer:1},player);
+  assert.equal(reaction.statusCode,200);
+  assert.equal(reaction.body.result.correct,true);
+ }
+ // Player B reconnects after the first challenge; another user's answer
+ // cannot be confused with B's own result.
+ const reconnect=await f.call('GET','',{},'b');
+ assert.equal(reconnect.body.phase,'fighting');
+ assert.equal(reconnect.body.miniGames.myAnswers[0].correct,true);
+ assert.equal(Object.keys(reconnect.body.miniGames.myAnswers).length,1);
+ assert.equal(reconnect.body.miniGames.completedBy.a,1);
+ assert.equal(reconnect.body.miniGames.completedBy.b,1);
+ assert.equal(reconnect.body.miniGames.completedBy.c,1);
+ f.advance(4500);
+ const good=await f.call('POST','/minigame',{
+  requestId:'trio-100-math-a-001',round:1,answer:0},'a');
+ const wrong=await f.call('POST','/minigame',{
+  requestId:'trio-100-math-b-001',round:1,answer:1},'b');
+ assert.equal(good.body.result.correct,true);
+ assert.equal(wrong.body.result.correct,false);
+ const a=await f.call('GET','',{},'a');
+ const b=await f.call('GET','',{},'b');
+ const c=await f.call('GET','',{},'c');
+ assert.equal(a.body.miniGames.myAnswers[1].correct,true);
+ assert.equal(b.body.miniGames.myAnswers[1].correct,false);
+ assert.equal(c.body.miniGames.myAnswers[1],undefined);
+ f.advance(19501);
+ const late=await f.call('POST','/minigame',{
+  requestId:'trio-100-late-c-001',round:1,answer:0},'c');
+ assert.equal(late.statusCode,409);
+ assert.equal(late.body.error,'DOG_MINIGAME_NOT_RUNNING');
+ // The first disconnected client's GET closes the fight once. Every
+ // later client must observe the exact same persisted result.
+ const recovered=await f.call('GET','',{},'c');
+ assert.equal(recovered.body.phase,'victory');
+ assert.equal(recovered.body.dogUnlocked,true);
+ assert.equal(recovered.body.result.participants,3);
+ const once=structuredClone(recovered.body.result);
+ for(const player of players){
+  const after=await f.call('GET','',{},player);
+  assert.deepEqual(after.body.result,once);
+  assert.equal(after.body.won,true);
+  assert.equal(after.body.dogUnlocked,true);
+ }
+ assert.deepEqual(f.docs.get(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID)
+  .sharedBosses,priorWins(100).concat(100));
+ assert.equal(f.writes.filter(key=>key===
+  DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID).length,9,
+  'exactly three Ready, five score writes and one settlement');
+});
