@@ -4,14 +4,22 @@ on:
     branches: [main]
     paths:
       - 'dog-forge.js'
+      - 'dog-forge-progression.js'
+      - 'dog-gates.js'
+      - 'dog-ascension.js'
       - 'dog-materials.js'
       - 'tests/dog-forge.test.js'
+      - 'tests/dog-forge-progress.test.js'
       - '.github/workflows/dog-forge-check.yml'
   pull_request:
     paths:
       - 'dog-forge.js'
+      - 'dog-forge-progression.js'
+      - 'dog-gates.js'
+      - 'dog-ascension.js'
       - 'dog-materials.js'
       - 'tests/dog-forge.test.js'
+      - 'tests/dog-forge-progress.test.js'
       - '.github/workflows/dog-forge-check.yml'
   workflow_dispatch:
 jobs:
@@ -23,5 +31,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify forge crafting and persistent journal
-        run: node --test tests/dog-forge.test.js
+      - name: Test Forge, shared Boss-Siegel and persistent receipts
+        run: node --test tests/dog-forge.test.js tests/dog-forge-progress.test.js
