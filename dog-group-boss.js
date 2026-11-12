@@ -13,7 +13,7 @@ import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDev
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_GROUP_BOSS_GATES=Object.freeze([20,30,40,50,60,70,80,90,100]);
 export const DOG_GROUP_BOSS_NAMES=Object.freeze({
@@ -160,13 +160,15 @@ const startFight=(gate,progress,team,ready,heroes,now,rand=randomInt)=>{
  const roster=prepareRoster(gate,ready,team,heroes);
  const hp=dogGroupBossHp(gate);
  const forecast=groupBossDamagePotential(gate,roster,[]);
+ const miniGames=dogCreateMiniGames(gate,rand,{exchange:'individual'});
  const chancePercent=roster.length===1?0:roster.length===2?
   (roster.every(m=>maxed(gate,m))?2:0):
   Math.max(0,Math.min(95,Math.round(50+90*(forecast/hp-1))));
  const previous=stateAt(progress,gate);
  return withState(progress,gate,{...previous,ready:[...ready],roster,
-  phase:'fighting',startedAt:now,endsAt:now+DOG_BOSS10_DURATION_MS,
-  chancePercent,reactions:[],miniGames:dogCreateMiniGames(gate,rand,{exchange:'individual'})},now);
+  phase:'fighting',startedAt:now,
+  endsAt:now+(miniGames.version>=12?DOG_FINAL5_DURATION_MS:DOG_BOSS10_DURATION_MS),
+  chancePercent,reactions:[],miniGames},now);
 };
 export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.now(),rand=randomInt){
  ensureGate(gate);
