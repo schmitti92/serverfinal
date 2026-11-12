@@ -3,68 +3,42 @@
  * without an explicit valid upgrade and authenticated server receipt.
  */
 import {randomInt} from 'node:crypto';
-import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
+import {DOG_HERO_COLLECTION,dogHero,forgeQuote,forgeUpgrade,forgeGateCap} from './dog-forge.js';
 import {DOG_MATERIALS_COLLECTION,dogInventory} from './dog-materials.js';
-import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from './dog-gates.js';
-import {dogEquipmentCost,dogEquipmentSuccessChance,dogUnlockedLevels} from './dog-balance.js';
+import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
+
 
 export const DOG_ASCENSION_RECEIPTS_COLLECTION='dog_gate_ascension_receipts_v1';
 const obj=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
 const validId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{12,90}$/.test(id);
-const bossWins=x=>dogGateProgress(x).sharedBosses
-  .filter(b=>b>=10&&b<=90&&b%10===0).length;
-export const ascensionCap=raw=>dogUnlockedLevels(bossWins(raw));
+export const ascensionCap=raw=>forgeGateCap(raw);
 export function ascensionView(heroRaw,inventoryRaw,progressRaw){
  const hero=dogHero(heroRaw),inventory=dogInventory(inventoryRaw);
  const cap=ascensionCap(progressRaw);
- const levels=hero.levels;
  const quotes={};
  for(const type of ['weapon','armor']){
-  const current=levels[type],next=current+1;
-  const legacy=current>10;
-  const maxed=current>=10;
-  const locked=next>cap.equipment;
-  const cost=!maxed?dogEquipmentCost(type,next):{};
-  quotes[type]={type,level:current,nextLevel:maxed?null:next,
-   maxLevel:10,unlockedMaxLevel:cap.equipment,locked,
-   legacy,maxed,
-   cost,successChance:!maxed?dogEquipmentSuccessChance(next):null,
-   affordable:!maxed&&!locked&&Object.entries(cost)
-    .every(([id,count])=>(inventory.resources[id]||0)>=count)};
+  quotes[type]={...forgeQuote(type,hero.levels[type],inventory.resources,progressRaw),type};
  }
- return {hero:{levels},resources:inventory.resources,
-  forgeLevel:cap.equipment,skillsCap:cap.skills,
-  quotes};
+ return {hero:{levels:hero.levels},resources:inventory.resources,
+  forgeLevel:cap.forgeLevel,skillsCap:cap.skills,bossSeals:cap.bossSeals,
+  equipmentCap:cap.equipment,quotes};
 }
 export function ascensionUpgrade(heroRaw,inventoryRaw,progressRaw,type,expectedLevel,roll,now=Date.now()){
  if(!['weapon','armor'].includes(type))throw Error('DOG_ASCENSION_INVALID_TYPE');
- const hero=dogHero(heroRaw),inventory=dogInventory(inventoryRaw);
+ const hero=dogHero(heroRaw);
  if(!Number.isSafeInteger(expectedLevel)||expectedLevel!==hero.levels[type])
   throw Error('DOG_ASCENSION_LEVEL_STALE');
- if(expectedLevel>=10)throw Error('DOG_ASCENSION_LEGACY_LEVEL');
- const quote=ascensionView(hero,inventory,progressRaw).quotes[type];
- if(quote.locked)throw Error('DOG_ASCENSION_BOSS_REQUIRED');
- if(!quote.affordable)throw Error('DOG_ASCENSION_MATERIALS_MISSING');
- if(!Number.isSafeInteger(roll)||roll<0||roll>=10000)throw Error('DOG_ASCENSION_BAD_RANDOM');
- const success=roll<quote.successChance*100;
- const spent={...inventory.resources};
- for(const [id,count] of Object.entries(quote.cost))spent[id]-=count;
- const nextLevel=success?expectedLevel+1:expectedLevel;
- const updatedHero={...hero,
-  levels:{...hero.levels,[type]:nextLevel},
-  crafts:hero.crafts+1,successes:hero.successes+(success?1:0),
-  failures:hero.failures+(success?0:1),
-  recent:[{type:'upgrade',itemId:type,success,level:nextLevel,at:now},...hero.recent].slice(0,10),
-  updatedAt:now};
- const updatedInventory={...inventory,resources:spent,updatedAt:now};
- return {hero:updatedHero,inventory:updatedInventory,
-  result:{type,oldLevel:expectedLevel,newLevel:nextLevel,
-   success,successChance:quote.successChance,cost:quote.cost}};
+ const upgraded=forgeUpgrade(heroRaw,inventoryRaw,type,expectedLevel,roll,now,progressRaw);
+ return {...upgraded,
+  result:{type,oldLevel:upgraded.result.oldLevel,newLevel:upgraded.result.newLevel,
+   success:upgraded.result.success,successChance:upgraded.result.chance,
+   cost:upgraded.result.cost}};
 }
 const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,DOG_ASCENSION_INVALID_TYPE:400,
  DOG_ASCENSION_LEVEL_STALE:409,DOG_ASCENSION_LEGACY_LEVEL:409,
  DOG_ASCENSION_BOSS_REQUIRED:409,DOG_ASCENSION_MATERIALS_MISSING:409,
  DOG_ASCENSION_BAD_RANDOM:500,DOG_ASCENSION_RECEIPT_CONFLICT:409,
+ DOG_FORGE_BOSS_REQUIRED:409,DOG_MATERIALS_MISSING:409,FORGE_MAX_LEVEL:409,STALE_FORGE_LEVEL:409,
  NOT_DOG_TEAM_MEMBER:403};
 /* Cosmetic equipment class comes from the already-read, permanently locked
  * three-hero selection, never from untrusted request bodies. No extra Firestore reads. */
