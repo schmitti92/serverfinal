@@ -54,7 +54,8 @@ const eligible=p=>REQUIRED_NORMALS.every(g=>p?.normals?.includes(g));
 export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw),boss=boss10State(progress.boss10);
  const skipCooldown=boss.phase==='cooldown'&&dogDeveloperCooldownBypass(progress,team,uid);
- const members=team.members.map(m=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
+ const members=team.members.map((m,index)=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
+  heroClass:team.heroClasses?.[m.uid]||['krieger','magierin','waechter'][index],
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(progress.people[m.uid])}));
  const elapsed=Math.max(0,now-boss.startedAt);
