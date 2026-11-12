@@ -199,7 +199,7 @@ test('M-04: reaction batches reject fabricated timing, excessive delay and dupli
   dogSubmitMiniAnswer(games,roster,'a',round.round,values,received+200,
    start,0,stamps,received);
  assert.throws(()=>play([1,1],[s,s+100]),/BAD_TIMESTAMP/);
- assert.throws(()=>play([1],[s-1],s+10),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1],[start+round.startMs-1],s+10),/BAD_TIMESTAMP/);
  assert.throws(()=>play([1],[s+300],s+10),/BAD_TIMESTAMP/);
  assert.throws(()=>play([1],[s],s+2200),/BAD_TIMESTAMP/);
  assert.throws(()=>play([1,1,1],[s,s+500]),/BAD_TIMESTAMP/);

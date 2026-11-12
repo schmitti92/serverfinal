@@ -711,7 +711,7 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   const targetSprint=games.version>=10&&round.kind==='target';
   const chainSprint=games.version>=13&&round.kind==='chain';
   const mathSprint=games.version>=2&&round.kind==='math';
-  const reactionSprint=games.version>=9&&round.kind==='reaction';
+  const reactionSprint=games.version>=14&&round.kind==='reaction';
   const limit=reactionSprint?3:(targetSprint||chainSprint)?10:8;
   if((!targetSprint&&!chainSprint&&!mathSprint&&!reactionSprint)||step!==0||
    value.length<1||value.length>limit||
