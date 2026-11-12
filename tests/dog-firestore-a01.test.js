@@ -37,8 +37,10 @@ function fixture(count=3,botMode=false){
   {levels:{weapon:1,armor:1,attack_power:5,destruction:5,vitality:5,blocking:5}});
  if(botMode){
   const live=addLiveBots(null,null,'hero-a','Test Hero',BASE);
-  const botTeam={...live.team,heroLocks:Object.fromEntries(
-   live.team.members.map(m=>[m.uid,true]))};
+  const botTeam={...live.team,
+   heroClasses:Object.fromEntries(live.team.members.map((m,i)=>
+    [m.uid,['krieger','magierin','waechter'][i]])),
+   heroLocks:Object.fromEntries(live.team.members.map(m=>[m.uid,true]))};
   const people=Object.fromEntries(Object.entries(live.progress.people).map(
    ([id,v])=>[id,{...v,currentGate:10,highestGate:10,normals:normalGates}]));
   docs.set(key(DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID),botTeam);
