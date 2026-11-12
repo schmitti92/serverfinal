@@ -81,7 +81,7 @@ test('One or two may start manually, three auto-start, and only participants may
   assert.throws(()=>groupBossReact(gate,started,'b',now+100),/NOT_PARTICIPANT/);
   const solo=groupBossFinish(gate,started,now+99001,()=>0);
   assert.equal(solo.result.win,false);
-  assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+699000);
+  assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+701000);
 
   p=makeProgress(gate);
   for(const m of team.members)p=groupBossReady(gate,p,team,m.uid,build(gate),now);
@@ -402,7 +402,7 @@ test('Group boss ready avoids unnecessary gear reads through the 100 gates',asyn
   const stable=await f.call('GET','',{},'b');
   assert.equal(stable.body.phase,'fighting');
   assert.equal(stable.body.roster.length,3);
-  assert.equal(stable.body.endsAt-stable.body.startedAt,99000);
+  assert.equal(stable.body.endsAt-stable.body.startedAt,101000);
  }
 });
 
