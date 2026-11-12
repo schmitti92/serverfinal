@@ -9,7 +9,7 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_BOSS10_DURATION_MS=101_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
@@ -66,6 +66,10 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
   hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
  const bossMaxHp=dogGroupBossHp(10);
+ const confirmedStrikes=dogMiniConfirmedStrikes(boss.miniGames,boss.roster,
+  elapsed,bossMaxHp,boss10DamagePotential(boss.roster,[],null),
+  hero=>boss10DamagePotential([hero],[],null),
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
  const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
@@ -77,7 +81,7 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   eligible:eligible(progress.people[uid]),members,
   ...boss,...(skipCooldown?{phase:'waiting',ready:[],cooldownUntil:0}:{}),
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
-    ...(exchange?{exchange}:{})},won:progress.sharedBosses.includes(10),
+    ...(exchange?{exchange:{...exchange,strikes:confirmedStrikes}}:{})},won:progress.sharedBosses.includes(10),
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
   cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
