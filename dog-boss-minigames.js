@@ -514,7 +514,7 @@ export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage
  return Math.max(1,maxHp-Math.min(maxHp-1,guaranteed));
 }
 
-export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null){
+export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,heroMaximum=null){
  const games=dogNormalizeMiniGames(raw);
  if(!games||games.version<3)return null;
  const participants=Array.isArray(roster)?roster.filter(m=>m?.uid):[];
@@ -527,20 +527,55 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null)
   const defensive=round.kind==='dodge'||round.kind==='reaction';
   const shield=resolved&&defensive?dogMiniTeamShield(games,participants,index):null;
   const bonusWeight=round.kind==='math'?.06:round.kind==='target'?.03:0;
-  // Equipment-based potential; not an invented final damage/HP result.
+  // Verified per-player rows are published only AFTER the whole round closes.
+  // Offensive potential is allocated so the three displayed numbers add up
+  // exactly to the stage's existing rounded equipment-based bonusDamage.
+  const playerResults=[];
+  let rawAttackBonus=0;
+  if(resolved)for(const hero of participants){
+   const personalAttempts=games.answers[hero.uid]?.[index]?.attempts||[];
+   const count=Math.min(round.maxSteps,personalAttempts.filter(a=>a.correct).length);
+   const result={uid:hero.uid,correct:count,max:round.maxSteps};
+   if(defensive){
+    // Each defense phase may protect at most 25 percentage points.
+    const savedPoints=25-Math.round(25*(1-count/round.maxSteps));
+    result.protectionPoints=savedPoints;
+    if(games.version>=11&&typeof heroMaximum==='function'){
+     const hpMax=Math.max(1,Math.min(1000000,Math.round(Number(heroMaximum(hero))||145)));
+     let previousLoss=0;
+     for(const previous of games.rounds){
+      if(previous.round>=round.round)break;
+      if(!['dodge','reaction'].includes(previous.kind)||elapsed<previous.endMs)continue;
+      const prevCount=(games.answers[hero.uid]?.[previous.round]?.attempts||[])
+       .filter(a=>a.correct).length;
+      previousLoss+=Math.round(25*(1-Math.min(previous.maxSteps,prevCount)/previous.maxSteps));
+     }
+     // Exact personal HP preserved versus missing every action in THIS phase.
+     const kept=Math.max(50,100-previousLoss-(25-savedPoints));
+     const missed=Math.max(50,100-previousLoss-25);
+     result.savedHp=Math.max(0,Math.round(hpMax*kept/100)-Math.round(hpMax*missed/100));
+    }
+   }else{
+    result.bonusPercent=Math.round(bonusWeight*1000*count/round.maxSteps)/10;
+    if(typeof heroBaseDamage==='function'){
+     const raw=Math.max(0,Number(heroBaseDamage(hero))||0)*
+      bonusWeight*(count/round.maxSteps);
+     const before=Math.round(rawAttackBonus);
+     rawAttackBonus+=raw;
+     result.bonusDamage=Math.max(0,Math.round(rawAttackBonus)-before);
+    }
+   }
+   playerResults.push(result);
+  }
+  // Do not expose private correct answers or intermediate scores mid-game.
   const bonusDamage=resolved&&!defensive&&typeof heroBaseDamage==='function'?
-   Math.max(0,Math.round(participants.reduce((sum,hero)=>{
-    const count=(games.answers[hero.uid]?.[index]?.attempts||[])
-     .filter(a=>a.correct).length;
-    return sum+Math.max(0,heroBaseDamage(hero))*bonusWeight*
-     (round.maxSteps?count/round.maxSteps:0);
-   },0))):null;
+   Math.max(0,Math.round(rawAttackBonus)):null;
   return {round:index,kind:round.kind,defensive,
    completed:resolved,correct:resolved?correct:null,max,
+   playerResults:resolved?playerResults:null,
    bonusPercent:resolved&&!defensive&&max?
     Math.round(100*bonusWeight*correct/max*10)/10:0,
-   bonusDamage,shield};
- });
+   bonusDamage,shield}; });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
  return {version:games.version,durationMs:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
