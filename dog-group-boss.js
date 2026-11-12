@@ -55,6 +55,7 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
  const skipCooldown=boss.phase==='cooldown'&&dogDeveloperCooldownBypass(progress,team,uid);
  const members=team.members.map((m,index)=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
   heroClass:team.heroClasses?.[m.uid]||['krieger','magierin','waechter'][index],
+  heroLocked:team.heroLocks?.[m.uid]===true,
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(gate,progress,m.uid)}));
  const won=progress.sharedBosses.includes(gate);
@@ -235,6 +236,7 @@ const HTTP_ERRORS={
  DOG_GROUP_INVALID_GATE:400,LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  DOG_GROUP_ALREADY_WON:409,DOG_GROUP_PREREQUISITES:409,
  DOG_GROUP_NOT_READY:409,DOG_GROUP_RUNNING:409,DOG_GROUP_COOLDOWN:409,
+ DOG_HERO_SELECTION_REQUIRED:409,
  DOG_GROUP_NOT_RUNNING:409,DOG_GROUP_STILL_FIGHTING:409,
  DOG_GROUP_NOT_PARTICIPANT:403,NOT_DOG_TEAM_MEMBER:403,
  DOG_GROUP_INVALID_ROSTER:409,DOG_GROUP_INVALID_RANDOM:500,
@@ -329,6 +331,8 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
        result:receipt.data().result,replayed:true};
      }
      const now=clock();let next,result,unchanged=false;
+     if((command==='ready'||command==='start')&&bossTeam(team).heroLocks?.[uid]!==true)
+      throw Error('DOG_HERO_SELECTION_REQUIRED');
      if(command==='ready'&&botLogic?.isLiveBotTeam(team,uid)){
       const snap=await tx.get(db.collection(DOG_HERO_COLLECTION).doc(uid));
       next=botLogic.readyWithLiveBots(gate,progress,team,uid,
