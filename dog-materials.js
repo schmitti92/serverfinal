@@ -77,7 +77,11 @@ export function dogInventory(input={}){
   .filter(x=>x&&Number.isSafeInteger(x.count)&&x.count>=1&&x.count<=40)
   .map(x=>({tier:DOG_CHEST_TIERS.includes(x.tier)||
     DOG_EXPEDITION_CHEST_TIERS.includes(x.tier)?x.tier:'legacy',
-   count:x.count,items:normalizeItems(x.items),openedAt:timestamp(x.openedAt)})):[];
+   count:x.count,items:normalizeItems(x.items),
+   qualityItems:Object.fromEntries(Object.entries(object(x.qualityItems))
+    .filter(([key,n])=>DOG_RESOURCES.some(id=>[1,2,3].some(q=>key===id+':'+q))&&count(n)>0)
+    .map(([key,n])=>[key,count(n)])),
+   openedAt:timestamp(x.openedAt)})):[];
  return {
   version:3,unopened,earned:count(raw.earned),opened:count(raw.opened),
   chests,expeditionChests,resources:normalizeItems(raw.resources),
@@ -129,7 +133,9 @@ export function openExpeditionChestInInventory(input,tier,rand=randomInt,now=Dat
   qualityResources[key]=safelyAdd(qualityResources[key],value);
  return {inventory:{...old,version:3,unopened:old.unopened-1,
   opened:safelyAdd(old.opened,1),expeditionChests:updated,resources,qualityResources,
-  recent:[{tier:drop.tier,count:drop.count,items:{...drop.items},openedAt:now},...old.recent].slice(0,6),
+  recent:[{tier:drop.tier,count:drop.count,items:{...drop.items},
+   qualityItems:Object.fromEntries(Object.entries(qualityItems).filter(([,n])=>n>0)),
+   openedAt:now},...old.recent].slice(0,6),
   updatedAt:now},drop:{...drop,qualityItems}};
 }
 
@@ -169,7 +175,9 @@ export function openDogChestInInventory(input,drop,now=Date.now(),sourceTier=dro
   qualityResources[key]=safelyAdd(qualityResources[key],value);
  return {...old,qualityResources,unopened:old.unopened-1,opened:safelyAdd(old.opened,1),
   chests:{...old.chests,[sourceTier]:old.chests[sourceTier]-1},resources,
-  recent:[{tier:drop.tier,count:drop.count,items:{...drop.items},openedAt:now},...old.recent].slice(0,6),
+  recent:[{tier:drop.tier,count:drop.count,items:{...drop.items},
+   qualityItems:Object.fromEntries(Object.entries(added).filter(([,n])=>n>0)),
+   openedAt:now},...old.recent].slice(0,6),
   updatedAt:now};
 }
 const ERROR_STATUS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,INVALID_DOG_CHEST_TIER:400,
