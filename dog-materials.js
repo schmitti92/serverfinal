@@ -4,6 +4,7 @@
  */
 import {randomInt} from 'node:crypto';
 import {DOG_CHEST_TYPES,DOG_CHEST_TYPE_IDS,DOG_CHEST_STAGES,dogChestContents} from './dog-balance.js';
+import {qualityChestDrop,qualityUnlockedForChest,reconcileQualityInventory} from './dog-f01-quality-prototype.mjs';
 
 export const DOG_MATERIALS_COLLECTION='dog_material_inventory_v1';
 export const DOG_CHEST_RECEIPTS_COLLECTION='dog_material_chest_open_receipts_v1';
@@ -79,7 +80,9 @@ export function dogInventory(input={}){
    count:x.count,items:normalizeItems(x.items),openedAt:timestamp(x.openedAt)})):[];
  return {
   version:3,unopened,earned:count(raw.earned),opened:count(raw.opened),
-  chests,expeditionChests,resources:normalizeItems(raw.resources),recent,updatedAt:timestamp(raw.updatedAt)
+  chests,expeditionChests,resources:normalizeItems(raw.resources),
+  qualityResources:reconcileQualityInventory(normalizeItems(raw.resources),raw.qualityResources),
+  recent,updatedAt:timestamp(raw.updatedAt)
  };
 }
 export function rollDogChestTier(rand=randomInt){
@@ -108,22 +111,26 @@ export function addExpeditionChestToInventory(input,offer,now=Date.now()){
 
 /** Consumes the first matching SERVER-AWARDED offer, and never uses the
  * player's current gate to change its quantity or rarity retroactively. */
-export function openExpeditionChestInInventory(input,tier,rand=randomInt,now=Date.now()){
+export function openExpeditionChestInInventory(input,tier,rand=randomInt,now=Date.now(),maxQuality=1){
  const old=dogInventory(input);
  if(!DOG_EXPEDITION_CHEST_TIERS.includes(tier))throw Error('INVALID_DOG_CHEST_TIER');
  const pos=old.expeditionChests.findIndex(x=>x.tier===tier&&x.quantity>0);
  if(pos<0)throw Error('NO_DOG_CHEST_TYPE');
  const offer=old.expeditionChests[pos];
  const drop=dogChestContents(offer,rand);
+ const qualityItems=qualityChestDrop(drop,rand,Math.min(maxQuality,offer.stage>=6?3:offer.stage>=3?2:1));
  const updated=old.expeditionChests.map(x=>({...x}));
  updated[pos].quantity--;
  if(updated[pos].quantity===0)updated.splice(pos,1);
  const resources={};
  for(const key of DOG_RESOURCES)resources[key]=safelyAdd(old.resources[key],drop.items[key]);
+ const qualityResources={...old.qualityResources};
+ for(const [key,value] of Object.entries(qualityItems))
+  qualityResources[key]=safelyAdd(qualityResources[key],value);
  return {inventory:{...old,version:3,unopened:old.unopened-1,
-  opened:safelyAdd(old.opened,1),expeditionChests:updated,resources,
+  opened:safelyAdd(old.opened,1),expeditionChests:updated,resources,qualityResources,
   recent:[{tier:drop.tier,count:drop.count,items:{...drop.items},openedAt:now},...old.recent].slice(0,6),
-  updatedAt:now},drop};
+  updatedAt:now},drop:{...drop,qualityItems}};
 }
 
 /** One category (uniform), then one rarity (tier-dependent), per resource. */
@@ -146,7 +153,7 @@ export function rollDogMaterialChest(tier='small',rand=randomInt){
  return {tier,count:qty,items};
 }
 /** sourceTier is 'legacy' only for unopened pre-upgrade chests. */
-export function openDogChestInInventory(input,drop,now=Date.now(),sourceTier=drop?.tier){
+export function openDogChestInInventory(input,drop,now=Date.now(),sourceTier=drop?.tier,qualityItems=null){
  const old=dogInventory(input);
  if(old.unopened===0)throw Error('NO_DOG_CHESTS');
  if(!Object.hasOwn(old.chests,sourceTier)||old.chests[sourceTier]===0)throw Error('NO_DOG_CHEST_TYPE');
@@ -156,7 +163,11 @@ export function openDogChestInInventory(input,drop,now=Date.now(),sourceTier=dro
   DOG_RESOURCES.reduce((sum,k)=>sum+drop.items[k],0)!==drop.count)throw Error('INVALID_DOG_CHEST');
  const resources={};
  for(const key of DOG_RESOURCES)resources[key]=safelyAdd(old.resources[key],drop.items[key]);
- return {...old,unopened:old.unopened-1,opened:safelyAdd(old.opened,1),
+ const added=qualityItems||qualityChestDrop(drop,()=>0,1);
+ const qualityResources={...old.qualityResources};
+ for(const [key,value] of Object.entries(added))
+  qualityResources[key]=safelyAdd(qualityResources[key],value);
+ return {...old,qualityResources,unopened:old.unopened-1,opened:safelyAdd(old.opened,1),
   chests:{...old.chests,[sourceTier]:old.chests[sourceTier]-1},resources,
   recent:[{tier:drop.tier,count:drop.count,items:{...drop.items},openedAt:now},...old.recent].slice(0,6),
   updatedAt:now};
@@ -190,7 +201,7 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
    return res.json({ok:true,inventory:dogInventory(snap.exists?snap.data():null),
     rules:{resources:DOG_RESOURCE_GROUPS,tiers:DOG_CHEST_SIZES,
      expeditionTiers:DOG_CHEST_TYPES,expeditionStages:DOG_CHEST_STAGES,
-     rarities:DOG_RARITIES,chestMin:5,chestMax:40,
+     rarities:DOG_RARITIES,qualityUnlockBosses:[30,60],qualityConversionRate:5,chestMin:5,chestMax:40,
      verifiedGames:['deal-or-no-deal']}});
   }catch(e){return error(res,e)}
  });
@@ -202,7 +213,14 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
    const db=firestore(),ref=db.collection(DOG_MATERIALS_COLLECTION).doc(req.dogUid);
    const receiptRef=db.collection(DOG_CHEST_RECEIPTS_COLLECTION).doc(req.dogUid+'_'+requestId);
    const result=await db.runTransaction(async tx=>{
-    const [receipt,inventorySnap]=await Promise.all([tx.get(receiptRef),tx.get(ref)]);
+    const progressRef=db.collection('dog_gate_progress_v1').doc('first-three-heroes');
+   const teamRef=db.collection('dog_boss_team_v1').doc('first-three-heroes');
+   const [receipt,inventorySnap,progressSnap,teamSnap]=await Promise.all([
+    tx.get(receiptRef),tx.get(ref),tx.get(progressRef),tx.get(teamRef)]);
+   const member=teamSnap.exists&&Array.isArray(teamSnap.data()?.members)&&
+    teamSnap.data().members.some(m=>m?.uid===req.dogUid);
+   const progress=member&&progressSnap.exists?progressSnap.data():null;
+   const maxQuality=qualityUnlockedForChest(progress);
     if(receipt.exists)return {...receipt.data().result,replayed:true};
     const prior=dogInventory(inventorySnap.exists?inventorySnap.data():null);
     if(!prior.unopened)throw Error('NO_DOG_CHESTS');
@@ -213,12 +231,14 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
     ][0];
     let drop,updated;
     if(DOG_EXPEDITION_CHEST_TIERS.includes(sourceTier)){
-     ({drop,inventory:updated}=openExpeditionChestInInventory(prior,sourceTier,rand,Date.now()));
+     ({drop,inventory:updated}=openExpeditionChestInInventory(prior,sourceTier,rand,Date.now(),maxQuality));
     }else{
      if(!prior.chests[sourceTier])throw Error('NO_DOG_CHEST_TYPE');
      const awardedTier=sourceTier==='legacy'?rollDogChestTier(rand):sourceTier;
      drop=rollDogMaterialChest(awardedTier,rand);
-     updated=openDogChestInInventory(prior,drop,Date.now(),sourceTier);
+     const qualityItems=qualityChestDrop(drop,rand,maxQuality);
+     updated=openDogChestInInventory(prior,drop,Date.now(),sourceTier,qualityItems);
+     drop={...drop,qualityItems};
     }
     const response={inventory:updated,drop,replayed:false};
     tx.set(ref,updated);
