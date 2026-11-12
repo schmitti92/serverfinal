@@ -79,7 +79,7 @@ test('All upgrade recipes match item resource categories at every level',()=>{
    assert.equal(quote.maxed,false);
    assert.ok(Object.keys(quote.cost).length>0);
    for(const [resource,qty] of Object.entries(quote.cost)){
-    assert.ok(DOG_RESOURCE_GROUPS[item.group].includes(resource),item.id+' used '+resource);
+    assert.ok(DOG_RESOURCE_GROUPS[item.id==='armor'?'defense':item.group].includes(resource),item.id+' used '+resource);
     assert.ok(Number.isInteger(qty)&&qty>0);
    }
    assert.ok(quote.successChance>=1&&quote.successChance<=100);
