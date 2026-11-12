@@ -62,7 +62,14 @@ export const DOG_COLOR_TARGET_ENDGAME_WINDOWS=Object.freeze([
  Object.freeze({startMs:55000,endMs:65000}),
  Object.freeze({startMs:79000,endMs:87000})
 ]);
+// The FINAL SCHLAG follows the fourth round and gets a separate three-hit salvo.
+export const DOG_FINAL5_WINDOWS=Object.freeze([
+ ...DOG_COLOR_TARGET_ENDGAME_WINDOWS,
+ Object.freeze({startMs:101000,endMs:111000})
+]);
+export const DOG_FINAL5_DURATION_MS=125000;
 const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
+const DOG_FINAL5_ORDER=Object.freeze([...DOG_EXCHANGE_ORDER,'target']);
 export const DOG_TARGET_COLORS=Object.freeze(['red','blue','green','yellow','purple','orange','cyan','pink']);
 export const DOG_TARGET_SYMBOLS=Object.freeze(['star','shield','flame','diamond','snowflake','moon','crown','bolt']);
 const DOG_TARGET_LABELS=Object.freeze({
@@ -208,12 +215,16 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTar
 }
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
-  // v11: same synchronized 101s game, new personal defensive LP calculation.
+  // New battles v12; old stored encounters keep their original timing.
   const individual=exchange==='individual';
   const endgame=exchange==='endgame'||individual,cinematic=exchange==='cinematic';
-  return {version:individual?11:endgame?10:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>{
-   const item=createRound(kind,i,gate,rand,endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
+  const order=individual?DOG_FINAL5_ORDER:DOG_EXCHANGE_ORDER;
+  return {version:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
+   const item=createRound(kind,i,gate,rand,individual?DOG_FINAL5_WINDOWS:
+    endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
     cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS,{colorTarget:endgame&&kind==='target'});
+   if(individual&&i===4)return {...item,
+    hint:'🔥 FINALER SCHLAG: 10 Sekunden, bis zu zehn Treffer! Jeder Treffer verstärkt euren letzten Angriff.'};
    if(endgame&&kind==='reaction'){
     const tier=dogMiniDifficulty(gate).tier;
     return {...item,zoneRadius:Math.round((.061-tier*.0027)*1000)/1000,
@@ -315,8 +326,8 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11].includes(raw.version)||
-  !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=3?4:3)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12].includes(raw.version)||
+  !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=12?5:raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
  const windows=raw.version===1?LEGACY_WINDOWS:
@@ -325,17 +336,20 @@ export function dogNormalizeMiniGames(raw){
    raw.version===5?DOG_ENDGAME_WINDOWS:
    raw.version===6?DOG_EXTENDED_ENDGAME_WINDOWS:
     raw.version===7?DOG_SHOW_ENDGAME_WINDOWS:
+     raw.version>=12?DOG_FINAL5_WINDOWS:
      raw.version>=10?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
       raw.version>=8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
-   (raw.version>=3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
+   (raw.version>=3&&round.kind!==(raw.version>=12?
+     DOG_FINAL5_ORDER[i]:DOG_EXCHANGE_ORDER[i]))||
    round.startMs!==windows[i].startMs||
    round.endMs!==windows[i].endMs)return null;
   return raw.version===1?normalizeV1Round(round,i,raw.gate):
    normalizeV2Round(round,i,raw.gate,windows,raw.version);
  });
- if(rounds.some(x=>!x)||new Set(rounds.map(x=>x.kind)).size!==rounds.length)return null;
+ if(rounds.some(x=>!x)||
+  (raw.version<12&&new Set(rounds.map(x=>x.kind)).size!==rounds.length))return null;
  const answers={};
  if(isObj(raw.answers))for(const [uid,records] of Object.entries(raw.answers).slice(0,3)){
   if(!uidOkay(uid)||!isObj(records))continue;
@@ -427,7 +441,8 @@ export function dogMiniBonus(raw,uid){
   {math:.06,dodge:.02,reaction:.04,target:.03};
  return Math.min(.15,games.rounds.reduce((score,round)=>{
   const count=(games.answers[uid]?.[round.round]?.attempts||[]).filter(a=>a.correct).length;
-  return score+weights[round.kind]*Math.min(1,count/round.maxSteps);
+  const weight=games.version>=12&&round.round===4?.05:weights[round.kind];
+  return score+weight*Math.min(1,count/round.maxSteps);
  },0));
 }
 /** Missing or failed dodges have an actual defensive penalty (max 7.5 %).
@@ -506,11 +521,12 @@ export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage
  const resolved=games.rounds.filter(r=>
   !['dodge','reaction'].includes(r.kind)&&elapsed>=r.endMs).length;
  if(!resolved)return maxHp;
- const fraction=resolved===1?.43:.83;
- // Verified minigame success contributes only when its offensive phase
- // has settled on the server. 0.85 is below the minimum final 0.90×0.97.
+ const fraction=resolved===1?.43:resolved===2?.83:1;
+ // The final attack releases the remaining conservative slice of team
+ // power; the smaller stage-five scale preserves the lowest possible luck.
+ const safeScale=games.version>=12&&resolved>=3?.77:.85;
  const guaranteed=Math.floor((Math.max(0,Number(baseDamage)||0)*fraction+
-  Math.max(0,Number(earnedExtraDamage)||0))*.85);
+  Math.max(0,Number(earnedExtraDamage)||0))*safeScale);
  return Math.max(1,maxHp-Math.min(maxHp-1,guaranteed));
 }
 
@@ -526,7 +542,8 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,
   const resolved=elapsed>=round.endMs;
   const defensive=round.kind==='dodge'||round.kind==='reaction';
   const shield=resolved&&defensive?dogMiniTeamShield(games,participants,index):null;
-  const bonusWeight=round.kind==='math'?.06:round.kind==='target'?.03:0;
+  const bonusWeight=games.version>=12&&round.round===4?.05:
+   round.kind==='math'?.06:round.kind==='target'?.03:0;
   // Verified per-player rows are published only AFTER the whole round closes.
   // Offensive potential is allocated so the three displayed numbers add up
   // exactly to the stage's existing rounded equipment-based bonusDamage.
@@ -578,7 +595,7 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,
    bonusDamage,shield}; });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
- return {version:games.version,durationMs:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
+ return {version:games.version,durationMs:games.version>=12?DOG_FINAL5_DURATION_MS:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
   shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
   cumulativeExtraDamage:typeof heroBaseDamage==='function'?
    earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
@@ -755,7 +772,7 @@ export function dogMiniConfirmedStrikes(raw,roster=[],elapsed=0,
     bossMaxHp,baseDamage,earned);
    const confirmedLoss=Math.max(0,priorBossHp-resultingHp);
    priorBossHp=resultingHp;
-   const fraction=round.round===0?.43:.40;
+   const fraction=round.round===0?.43:round.round===4?.17:.40;
    const weights=players.map(hero=>{
     const personal=stage.playerResults?.find(p=>p.uid===hero.uid);
     return Math.max(0,Number(heroBaseDamage(hero))||0)*fraction+
