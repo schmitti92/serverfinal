@@ -106,7 +106,7 @@ function reactionMs(round,step){
   if(Math.abs(dogMiniReactionPosition(round,t)-.5)<=round.zoneRadius*.5)return t;
  throw Error('no valid reaction time for step '+step);
 }
-async function fullFight(count){
+async function fullFight(count,{pollMs=0}={}){
  const f=fixture(count),base='/api/dog/gates/boss10';
  // A clean status read has exactly two Firestore document gets.
  const first=await f.call('GET',base);
@@ -125,6 +125,22 @@ async function fullFight(count){
  assert.equal(state.phase,'fighting');
  assert.equal(state.miniGames.version,14);
  let actionNo=0;
+ // Optional deliberately simplified HTTP polling model: one status GET per
+ // signed-in browser every pollMs milliseconds. This is NOT measured client
+ // traffic, does not reproduce interlude bursts/auth caches/SDK retries, and
+ // must not be labelled as billed Firestore consumption.
+ let nextPollMs=pollMs;
+ async function pollsThrough(ms){
+  if(!pollMs)return;
+  while(nextPollMs<=Math.min(ms,134999)){
+   f.setTime(BASE+nextPollMs);
+   for(const member of f.members){
+    const status=await f.call('GET',base,{},member.uid);
+    assert.equal(status.statusCode,200,'poll '+nextPollMs+' '+member.uid);
+   }
+   nextPollMs+=pollMs;
+  }
+ }
  for(const round of state.miniGames.rounds){
   const posts=[];
   if(['math','target','chain'].includes(round.kind)){
@@ -142,6 +158,7 @@ async function fullFight(count){
     posts.push({time:reactionMs(round,step),step,answer:1});
   }
   for(const item of posts){
+   await pollsThrough(item.time);
    f.setTime(BASE+item.time);
    for(const member of f.members){
     const x=await f.call('POST',base+'/minigame',{
@@ -151,6 +168,7 @@ async function fullFight(count){
    }
   }
  }
+ await pollsThrough(134999);
  f.setTime(BASE+135001);
  const fin=await f.call('POST',base+'/finish',
   {requestId:'baseline-finish-unique-0001'},f.members[0].uid);
@@ -190,6 +208,28 @@ test('A-01 count actual API-code mock operations for one, two and three heroes',
   });
  }
 });
+test('A-01 deterministic 3-second per-browser HTTP polling model: GET overhead only',async t=>{
+ // 3s is a fixed illustrative rate, not the measured real UI refresh pattern.
+ // Polls at 3s, 6s, ..., 132s: 44 extra GETs per browser (2 reads/GET).
+ const originals=[{reads:41,writes:24},{reads:72,writes:44},{reads:100,writes:62}];
+ for(let heroes=1;heroes<=3;heroes++){
+  await t.test(heroes+' human browser(s)',async()=>{
+   const r=await fullFight(heroes,{pollMs:3000});
+   const expectedGets=2+44*heroes;
+   assert.equal(r.grouped.GET.requests,expectedGets);
+   assert.equal(r.grouped.GET.reads,expectedGets*2);
+   assert.equal(r.grouped.GET.writes,0);
+   assert.equal(r.stats.reads,originals[heroes-1].reads+44*heroes*2);
+   assert.equal(r.stats.writes,originals[heroes-1].writes);
+   assert.ok(r.history.every(x=>x.status===200));
+   console.log('[A-01 synthetic per-browser HTTP polling model]',JSON.stringify({
+    humans:heroes,intervalMs:3000,extraGETs:44*heroes,...r.stats,
+    caveat:'not observed browser traffic or billable Firestore Usage',
+   }));
+  });
+ }
+});
+
 test('A-01 idle read baseline: 20 unmodified waiting-page GETs, no writes',async()=>{
  const f=fixture(1),base='/api/dog/gates/boss10';
  for(let i=0;i<20;i++){
