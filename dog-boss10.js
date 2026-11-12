@@ -9,7 +9,7 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_BOSS10_DURATION_MS=101_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
@@ -74,6 +74,8 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
    boss10DamagePotential(boss.roster,[],null),Number(exchange?.cumulativeExtraDamage)||0);
+ const cinematicVitals=dogMiniCinematicVitals(bossLiveHp,groupHealth,
+  confirmedStrikes,elapsed,bossMaxHp);
  return {gate:10,name:'Der Aschewächter',bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   teamReady:team.members.length===3,isMember:team.members.some(m=>m.uid===uid),
   participantCount:boss.phase==='fighting'||boss.phase==='victory'||boss.phase==='cooldown'?boss.roster.length:boss.ready.length,
@@ -81,7 +83,8 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   eligible:eligible(progress.people[uid]),members,
   ...boss,...(skipCooldown?{phase:'waiting',ready:[],cooldownUntil:0}:{}),
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
-    ...(exchange?{exchange:{...exchange,strikes:confirmedStrikes}}:{})},won:progress.sharedBosses.includes(10),
+    ...(exchange?{exchange:{...exchange,strikes:confirmedStrikes,
+      ...cinematicVitals}}:{})},won:progress.sharedBosses.includes(10),
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
   cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
