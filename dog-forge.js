@@ -73,8 +73,9 @@ export function dogHero(raw){
   recent:normalizeJournal(d.recent),
   updatedAt:bounded(d.updatedAt,0,10_000_000_000_000,0)};
 }
-const costFor=(group,next)=>{
- const r=DOG_RESOURCE_GROUPS[group];
+const costFor=(group,next,itemId=null)=>{
+ // Armor keeps using defense materials even beyond equipment level ten.
+ const r=DOG_RESOURCE_GROUPS[itemId==='armor'?'defense':group];
  if(!r)throw Error('INVALID_FORGE_ITEM');
  const out={};
  const add=(index,amount)=>{out[r[index]]=amount;};
@@ -121,7 +122,7 @@ export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefine
  const maxed=level>=maxLevel;
  const nextLevel=maxed?null:level+1;
  const cost=maxed?{}:
-  gateMode&&equipment&&nextLevel<=10?dogEquipmentCost(itemId,nextLevel):costFor(definition.group,nextLevel);
+  gateMode&&equipment&&nextLevel<=10?dogEquipmentCost(itemId,nextLevel):costFor(definition.group,nextLevel,itemId);
  const successChance=equipment&&!maxed?
   gateMode&&nextLevel<=10?dogEquipmentSuccessChance(nextLevel):
   nextLevel>10?Math.max(45,88-Math.floor((nextLevel-11)/5)*5):
