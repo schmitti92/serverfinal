@@ -60,7 +60,7 @@ function normalizeJournal(value){
   }
   if(e.type==='refine'&&DOG_RESOURCES.includes(e.resourceId))
    return [{type:'refine',resourceId:e.resourceId,fromQuality:bounded(e.fromQuality,1,2,1),
-    count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),at}];
+    count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),success:e.success===true,at}];
   if(e.type==='exchange'&&DOG_RESOURCES.includes(e.from)&&DOG_RESOURCES.includes(e.to))
    return [{type:'exchange',from:e.from,to:e.to,
      count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),at}];
@@ -155,6 +155,7 @@ export function forgeView(heroRaw,inventoryRaw,progressRaw=undefined){
    equipmentCap:cap.equipment,bossSeals:cap.bossSeals,
    earnedBossSeals:cap.earnedBossSeals,
    qualityUnlocked:qualityUnlockedFromBosses(progressRaw),
+   qualityRefinementChances:DOG_QUALITY_REFINEMENT_CHANCE,
    forgeLevelMax:10}:{}),
  };
 }
@@ -222,24 +223,35 @@ export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),cou
    spent,received:count,...(count===1?{}:{count}),...(quality===1?{}:{quality})}};
 }
 /** Atomic 5:1 quality refinement. Never possible before the corresponding group boss seal. */
+export const DOG_QUALITY_REFINEMENT_CHANCE=Object.freeze({2:90,3:75});
 export function forgeRefine(heroRaw,inventoryRaw,resourceId,fromQuality,count=1,
- now=Date.now(),progressRaw=undefined){
+ now=Date.now(),progressRaw=undefined,roll=0){
  if(!DOG_RESOURCES.includes(resourceId)||![1,2].includes(fromQuality))
   throw Error('INVALID_REFINEMENT');
  if(!Number.isSafeInteger(count)||count<1||count>DOG_FORGE_TUNING.exchangeMaxBatch)
   throw Error('INVALID_EXCHANGE_COUNT');
  if(qualityUnlockedFromBosses(progressRaw)<fromQuality+1)throw Error('DOG_QUALITY_LOCKED');
+ if(!Number.isSafeInteger(roll)||roll<0||roll>=10000)throw Error('DOG_RANDOM_INVALID');
+ const successChance=DOG_QUALITY_REFINEMENT_CHANCE[fromQuality+1];
+ const success=roll<successChance*100;
  const hero=dogHero(heroRaw),inventory=dogInventory(inventoryRaw);
  const spent=count*5,target=qualityKey(resourceId,fromQuality+1);
  if(inventory.qualityResources[target]+count>1_000_000||hero.exchanges+count>1_000_000)
   throw Error('DOG_MATERIALS_LIMIT');
- const qualityResources=refineQuality(inventory.qualityResources,resourceId,fromQuality,count);
- const resources={...inventory.resources,[resourceId]:inventory.resources[resourceId]-spent+count};
+ // Validate affordability even when this particular attempt will fail.
+ const source=qualityKey(resourceId,fromQuality);
+ if(inventory.qualityResources[source]<spent)throw Error('DOG_MATERIALS_MISSING');
+ const qualityResources=success?
+  refineQuality(inventory.qualityResources,resourceId,fromQuality,count):
+  {...inventory.qualityResources,[source]:inventory.qualityResources[source]-spent};
+ const resources={...inventory.resources,
+  [resourceId]:inventory.resources[resourceId]-spent+(success?count:0)};
  return {inventory:{...inventory,resources,qualityResources,updatedAt:now},
   hero:{...hero,exchanges:hero.exchanges+count,
-   recent:[{type:'refine',resourceId,fromQuality,count,at:now},...hero.recent]
+   recent:[{type:'refine',resourceId,fromQuality,count,success,at:now},...hero.recent]
     .slice(0,FORGE_JOURNAL_LIMIT),updatedAt:now},
-  result:{type:'refine',resourceId,fromQuality,toQuality:fromQuality+1,spent,received:count}};
+  result:{type:'refine',resourceId,fromQuality,toQuality:fromQuality+1,
+   spent,received:success?count:0,success,chance:successChance}};
 }
 const HTTP_STATUS=Object.freeze({
  LOGIN_REQUIRED:401,INVALID_FORGE_REQUEST:400,INVALID_FORGE_ITEM:400,INVALID_EXCHANGE_RESOURCE:400,
@@ -332,7 +344,7 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
      next=forgeUpgrade(hero,bag,itemId,expectedLevel,rand(10000),now,progressRaw);
     }else if(type==='refine'){
      next=forgeRefine(hero,bag,req.body?.resourceId,req.body?.fromQuality,
-      req.body?.count===undefined?1:req.body.count,now,progressRaw);
+      req.body?.count===undefined?1:req.body.count,now,progressRaw,rand(10000));
     }else next=forgeExchange(hero,bag,req.body?.resourceId,now,
      req.body?.count===undefined?1:req.body.count,req.body?.quality??1);
     const view=forgeView(next.hero,next.inventory,progressRaw);
