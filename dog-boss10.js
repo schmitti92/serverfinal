@@ -9,10 +9,10 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
-// Applies only to newly started v12 fights; already stored encounters retain endsAt.
-export const DOG_BOSS10_DURATION_MS=125_000;
+// Legacy duration is retained for existing v10/v11 fights and compatibility.
+export const DOG_BOSS10_DURATION_MS=101_000;
 export const DOG_BOSS10_COOLDOWN_MS=10*60_000;
 export const DOG_BOSS10_RECEIPTS_COLLECTION='dog_gate_boss10_receipts_v1';
 const REQUIRED_NORMALS=Object.freeze([1,2,3,4,6,7,8,9]);
@@ -108,14 +108,15 @@ const startEncounter=(progress,team,ready,heroByUid,now,rand=randomInt)=>{
  const roster=qualifiedRoster(ready,team,heroByUid);
  if(roster.length!==ready.length)throw Error('DOG_BOSS10_NOT_READY');
  const forecast=boss10DamagePotential(roster,[]);
+ const miniGames=dogCreateMiniGames(10,rand,{exchange:'individual'});
  const hp=dogGroupBossHp(10);
  const chancePercent=roster.length===1?0:roster.length===2?
   (roster.every(fullyPrepared)?2:0):
   Math.max(5,Math.min(95,Math.round(40+75*(forecast/hp-0.85))));
  return {...progress,boss10:{...boss10State(progress.boss10),
   ready:[...ready],phase:'fighting',roster,startedAt:now,
-  endsAt:now+DOG_BOSS10_DURATION_MS,chancePercent,reactions:[],
-  miniGames:dogCreateMiniGames(10,rand,{exchange:'individual'})},updatedAt:now};
+  endsAt:now+(miniGames.version>=12?DOG_FINAL5_DURATION_MS:DOG_BOSS10_DURATION_MS),
+  chancePercent,reactions:[],miniGames},updatedAt:now};
 };
 export function boss10Ready(progressRaw,teamRaw,uid,heroByUid={},now=Date.now(),rand=randomInt){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
