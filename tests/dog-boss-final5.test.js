@@ -22,9 +22,9 @@ const maxHp=dogGroupBossHp(10);
 
 test('Every new expedition has five correctly clocked challenges and a final 14-second three-hero attack',()=>{
  const game=full();
- assert.equal(game.version,12);
+ assert.equal(game.version,13);
  assert.equal(game.rounds.length,5);
- assert.deepEqual(game.rounds.map(x=>x.kind),['math','dodge','target','reaction','target']);
+ assert.deepEqual(game.rounds.map(x=>x.kind),['math','dodge','target','reaction','chain']);
  assert.deepEqual(game.rounds.map(r=>[r.startMs,r.endMs]),
   DOG_FINAL5_WINDOWS.map(r=>[r.startMs,r.endMs]));
  assert.deepEqual([game.rounds[4].startMs,game.rounds[4].endMs,DOG_FINAL5_DURATION_MS],
@@ -78,6 +78,32 @@ test('Existing stored v11 four-round encounters remain readable and terminate af
  assert.ok(dogPublicMiniGames(old,'a'));
 });
 
+test('v12 stored rune ending stays valid even after the new chain-breaker rollout',()=>{
+ const old=dogCreateMiniGames(10,()=>0,{exchange:'individual-runes'});
+ assert.equal(old.version,12);
+ assert.equal(old.rounds[4].kind,'target');
+ assert.equal(dogNormalizeMiniGames(old).rounds[4].kind,'target');
+ assert.equal(dogPublicMiniGames(old,'a').rounds[4].puzzles.length,10);
+ const current=full();
+ assert.equal(current.version,13);
+ assert.equal(current.rounds[4].kind,'chain');
+ assert.ok(!JSON.stringify(dogPublicMiniGames(current,'a')).includes('correctIndex'));
+ const published=dogPublicMiniGames(current,'a').rounds[4];
+ assert.equal(published.puzzles[0].target,current.rounds[4].puzzles[0].target);
+});
+test('Forged chain targets are rejected and cannot mint extra damage',()=>{
+ const game=full();
+ const invalid={...game,rounds:game.rounds.map((r,i)=>i===4?{
+  ...r,puzzles:r.puzzles.map((p,n)=>n===0?{...p,target:99}:p)
+ }:r)};
+ assert.equal(dogNormalizeMiniGames(invalid),null);
+ const bogus={...game,rounds:game.rounds.map((r,i)=>i===4?{
+  ...r,lanes:0
+ }:r)};
+ assert.equal(dogNormalizeMiniGames(bogus),null);
+ assert.throws(()=>dogSubmitMiniAnswer(game,team,'a',4,[99],now+111100,now,0),
+  /BAD_ANSWER/);
+});
 test('Fifth stage is only answerable in its own server-clock window',()=>{
  const games=full(),final=games.rounds[4],answers=final.puzzles.map(x=>x.correctIndex);
  assert.throws(()=>dogSubmitMiniAnswer(games,team,'a',4,answers,
