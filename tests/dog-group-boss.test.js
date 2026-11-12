@@ -80,7 +80,7 @@ test('One or two may start manually, three auto-start, and only participants may
   const started=groupBossStart(gate,p,team,'a',build(gate),now);
   assert.equal(groupBossState(gate,started.groupBosses[gate]).roster.length,1);
   assert.throws(()=>groupBossReact(gate,started,'b',now+100),/NOT_PARTICIPANT/);
-  const solo=groupBossFinish(gate,started,now+125001,()=>0);
+  const solo=groupBossFinish(gate,started,now+135001,()=>0);
   assert.equal(solo.result.win,false);
   assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+725000);
 
@@ -89,7 +89,7 @@ test('One or two may start manually, three auto-start, and only participants may
   assert.equal(groupBossState(gate,p.groupBosses[gate]).phase,'fighting');
   assert.equal(groupBossState(gate,p.groupBosses[gate]).roster.length,3);
   assert.throws(()=>groupBossFinish(gate,p,now+49999,()=>0),/STILL_FIGHTING/);
-  const won=groupBossFinish(gate,p,now+125001,()=>4500);
+  const won=groupBossFinish(gate,p,now+135001,()=>4500);
   assert.equal(won.result.win,true);
   assert.ok(won.progress.sharedBosses.includes(gate));
   assert.equal(won.progress.people.a.currentGate,Math.min(100,gate+1));
@@ -253,7 +253,7 @@ test('Authenticated API: solo start loses, cooldown survives refresh and outside
  const start=await f.call('POST','/start',{requestId:'solo-start-00000001'});
  assert.equal(start.statusCode,200);
  assert.equal(start.body.view.roster.length,1);
- f.advance(125001);
+ f.advance(135001);
  const seen=await f.call('GET');
  assert.equal(seen.statusCode,200);
  assert.equal(seen.body.phase,'cooldown');
@@ -277,7 +277,7 @@ test('Authenticated API: rare duo win persists and unlocks following forge tier 
  assert.equal(start.statusCode,200);
  await completeRound(f,20,0,['a','b']);
  await completeRound(f,20,1,['a','b']);
- f.advance(now+125001-f.time());
+ f.advance(now+135001-f.time());
  const result=await f.call('POST','/finish',{requestId:'duo-finish-00000001'});
  assert.equal(result.statusCode,200);
  assert.equal(result.body.result.win,true);
@@ -302,7 +302,7 @@ test('Boss 100 victory survives reconnect and makes DOG unlock flag true for all
    requestId:'final-ready-'+user+'-0001'},user);
   assert.equal(r.statusCode,200);
  }
- f.advance(125001);
+ f.advance(135001);
  const recovered=await f.call('GET','',{},'b');
  assert.equal(recovered.statusCode,200);
  assert.equal(recovered.body.won,true);
@@ -357,7 +357,7 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  assert.equal(a.body.miniGames.myAnswers[1].attempts.length,3);
  assert.equal(b.body.miniGames.myAnswers[1].correct,false);
  assert.equal(c.body.miniGames.myAnswers[1],undefined);
- f.advance(now+125001-f.time());
+ f.advance(now+135001-f.time());
  const late=await f.call('POST','/minigame',{
   requestId:'trio-100-late-c-001',round:1,answer:0},'c');
  assert.equal(late.statusCode,409);
@@ -420,7 +420,7 @@ test('Group boss ready avoids unnecessary gear reads through the 100 gates',asyn
   const stable=await f.call('GET','',{},'b');
   assert.equal(stable.body.phase,'fighting');
   assert.equal(stable.body.roster.length,3);
-  assert.equal(stable.body.endsAt-stable.body.startedAt,125000);
+  assert.equal(stable.body.endsAt-stable.body.startedAt,135000);
  }
 });
 
