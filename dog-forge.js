@@ -63,7 +63,7 @@ function normalizeJournal(value){
     count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),success:e.success===true,at}];
   if(e.type==='exchange'&&DOG_RESOURCES.includes(e.from)&&DOG_RESOURCES.includes(e.to))
    return [{type:'exchange',from:e.from,to:e.to,
-     count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),at}];
+     count:bounded(e.count,1,DOG_FORGE_TUNING.exchangeMaxBatch,1),...(e.quality>1?{quality:bounded(e.quality,1,3,1)}:{}),at}];
   return [];
  });
 }
@@ -219,7 +219,7 @@ export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),cou
   [target]:inventory.qualityResources[target]+count};
  return {inventory:{...inventory,resources,qualityResources,updatedAt:now},
   hero:{...hero,exchanges:hero.exchanges+count,
-   recent:[{type:'exchange',from:resourceId,to:nextResource,count,at:now},...hero.recent]
+   recent:[{type:'exchange',from:resourceId,to:nextResource,count,...(quality===1?{}:{quality}),at:now},...hero.recent]
     .slice(0,FORGE_JOURNAL_LIMIT),updatedAt:now},
   result:{type:'exchange',from:resourceId,to:nextResource,
    spent,received:count,...(count===1?{}:{count}),...(quality===1?{}:{quality})}};
