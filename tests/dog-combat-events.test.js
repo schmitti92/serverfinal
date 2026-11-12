@@ -100,13 +100,21 @@ test('S-02 victory with overkill: HP subtraction and rolled total are both exact
   .reduce((n,e)=>n+e.rawDamage,0),125);
 });
 
-test('S-02 does not fabricate a finisher if server result contradicts stage damage',()=>{
+test('S-02 legacy low-luck result exposes verified boss guard instead of fake damage',()=>{
  const r=buildDogCombatStream({...args,endsAt:135000,result:{
-  win:false,damage:50,hpRemaining:50,roll:5000,rareCritical:false
+  win:false,damage:50,hpRemaining:50,roll:9999,rareCritical:false
  }});
- assert.equal(r.reconciliation.reconciled,false);
- assert.equal(r.events.length,4);
- assert.equal(r.events.at(-1).kind,'boss-strike');
+ assert.equal(r.reconciliation.reconciled,true);
+ assert.equal(r.reconciliation.guardRecovered,15);
+ assert.equal(r.events.length,5);
+ assert.equal(r.events.at(-1).kind,'boss-guard');
+ assert.equal(r.events.at(-1).amount,-15);
+ assert.equal(r.events.at(-1).hpBefore,35);
+ assert.equal(r.events.at(-1).hpAfter,50);
+ assert.equal(r.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.damage,0),50);
+ assert.equal(r.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.rawDamage,0),50);
 });
 
 test('S-02 no result or equal final damage never manufactures another hit',()=>{
@@ -116,4 +124,12 @@ test('S-02 no result or equal final damage never manufactures another hit',()=>{
  }});
  assert.equal(equal.reconciliation.reconciled,true);
  assert.equal(equal.events.length,4);
+});
+
+test('S-02 contradictory final result is flagged, not silently balanced',()=>{
+ const r=buildDogCombatStream({...args,endsAt:135000,result:{
+  win:true,damage:50,hpRemaining:0,roll:4000,rareCritical:false
+ }});
+ assert.equal(r.reconciliation.reconciled,false);
+ assert.equal(r.events.length,4);
 });

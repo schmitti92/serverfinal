@@ -72,10 +72,11 @@ export function buildDogCombatStream({
   // A tuned/legacy result that disagrees with the existing stage events
   // cannot be "corrected" by fabricating negative damage. Expose a
   // mismatch for inspection instead of inventing an event.
-  const reconciled=extraApplied>=0&&extraRaw>=extraApplied&&
-   appliedDamage<=rawDamage&&
-   Math.max(0,initialBossHp-rawDamage)===finalHp;
-  if(reconciled&&(extraApplied>0||extraRaw>0)){
+  const reconciled=appliedDamage<=rawDamage&&
+   Math.max(0,initialBossHp-rawDamage)===finalHp&&
+   (extraApplied>=0?extraRaw>=extraApplied:
+    extraRaw===extraApplied);
+  if(reconciled&&(extraApplied!==0||extraRaw!==0)){
    const sequence=events.length+1;
    const lastRound=events.reduce((m,e)=>Math.max(m,e.round),0);
    const atMs=Math.max(nonNegative(endsAt-startedAt),
@@ -84,14 +85,20 @@ export function buildDogCombatStream({
     result.roll:null;
    const luckFactor=roll===null?null:Number((Number(gate)===10?
     1.15-.25*(roll/10000):.82+.34*(1-roll/9999)).toFixed(5));
+   // Earlier stored v11 battles may have over-estimated the cinematic
+   // conservative damage at the lowest group-boss luck factor.
+   // A negative adjustment is disclosed as a server-verified guard,
+   // never hidden, never attributed to a hero and never rerolled.
+   const guarded=extraApplied<0;
+   const kind=guarded?'boss-guard':'team-finisher';
    events.push({
     eventId:fightId+':'+sequence,sequence,fightId,
     gate:nonNegative(gate),round:lastRound,
     uid:null,heroId:null,slot:players.length,
-    actorId:'team',targetId:'boss',
-    kind:'team-finisher',attackType:'team-finisher',
+    actorId:guarded?'boss':'team',targetId:'boss',
+    kind,attackType:kind,
     damage:extraApplied,amount:extraApplied,
-    rawDamage:extraRaw,overkillDamage:extraRaw-extraApplied,
+    rawDamage:extraRaw,overkillDamage:guarded?0:extraRaw-extraApplied,
     hpBefore:bossRemaining,hpAfter:finalHp,
     atMs,impactAt:startedAt+atMs,
     blocked:false,correct:null,
@@ -100,7 +107,8 @@ export function buildDogCombatStream({
    });
   }
   reconciliation={reconciled,rawDamage,appliedDamage,
-   stageDamage,finisherDamage:reconciled?extraApplied:null,
+   stageDamage,finisherDamage:reconciled?Math.max(0,extraApplied):null,
+   guardRecovered:reconciled?Math.max(0,-extraApplied):null,
    overkillDamage,finalBossHp:finalHp,
    rareCritical:result.rareCritical===true};
  }
