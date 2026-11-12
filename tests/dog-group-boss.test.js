@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
  DOG_GROUP_BOSS_GATES,DOG_GROUP_BOSS_NAMES,DOG_GROUP_BOSS_DUO_CRITICAL_BP,
  DOG_GROUP_BOSS_RECEIPTS_COLLECTION,groupBossState,groupBossView,
- groupBossReady,groupBossStart,groupBossReact,groupBossFinish,
+ groupBossReady as groupBossReadyV15,groupBossStart as groupBossStartV15,
+ groupBossReact,groupBossFinish,
  groupBossDamagePotential,groupBossResolveCombat,installDogGroupBossApi
 } from '../dog-group-boss.js';
 import {dogGroupBossHp} from '../dog-balance.js';
@@ -11,6 +12,16 @@ import {dogMiniReactionPosition} from '../dog-boss-minigames.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
+// These legacy victory and unlock tests intentionally use the prior v14
+// defense rule. A separate K-04 test covers lethal v15 team survival.
+const legacyGroup=(gate,p)=>{
+ const state=p?.groupBosses?.[gate];
+ if(state?.miniGames?.version!==15)return p;
+ return {...p,groupBosses:{...p.groupBosses,[gate]:{
+  ...state,miniGames:{...state.miniGames,version:14}}}};
+};
+const groupBossReady=(gate,...args)=>legacyGroup(gate,groupBossReadyV15(gate,...args));
+const groupBossStart=(gate,...args)=>legacyGroup(gate,groupBossStartV15(gate,...args));
 const now=1_800_000_000_000;
 const team={members:[{uid:'a',name:'Hero A'},{uid:'b',name:'Hero B'},{uid:'c',name:'Hero C'}],
  heroClasses:{a:'krieger',b:'magierin',c:'waechter'},heroLocks:{a:true,b:true,c:true}};
@@ -179,6 +190,11 @@ function fixture(gate=20,initialRoll=0){
    if(fn.length===3)await new Promise((resolve,reject)=>{
     Promise.resolve(fn(req,res,resolve)).catch(reject);
    });else await fn(req,res);
+  }
+  if(method==='POST'&&['/ready','/start'].includes(suffix)){
+   const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+   const p=docs.get(key),updated=legacyGroup(requestedGate,p);
+   if(updated!==p)docs.set(key,updated);
   }
   return res;
  }

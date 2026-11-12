@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- boss10State,boss10View,boss10Ready,boss10Start,boss10React,boss10Finish,
+ boss10State,boss10View,boss10Ready as boss10ReadyV15,boss10Start as boss10StartV15,boss10React,boss10Finish,
  boss10ResolveCombat,boss10DamagePotential,boss10MiniAnswer,
  installDogBoss10Api,DOG_BOSS10_RECEIPTS_COLLECTION,
  DOG_BOSS10_COOLDOWN_MS
@@ -13,6 +13,12 @@ import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_MATERIALS_COLLECTION} from '../dog-materials.js';
 import {DOG_HERO_COLLECTION,forgeQuote,forgeUpgrade,forgeView,installDogForgeApi} from '../dog-forge.js';
 
+// Historical tests deliberately retain the nonlethal v14 fight rules.
+ // Separate K-04 tests verify v15 can kill and continue with survivors.
+const legacyBoss=p=>p?.boss10?.miniGames?.version===15?
+ {...p,boss10:{...p.boss10,miniGames:{...p.boss10.miniGames,version:14}}}:p;
+const boss10Ready=(...args)=>legacyBoss(boss10ReadyV15(...args));
+const boss10Start=(...args)=>legacyBoss(boss10StartV15(...args));
 const now=1_800_000_000_000;
 const normals=[1,2,3,4,6,7,8,9];
 const team={members:[
@@ -333,6 +339,13 @@ function fixture(){
      .then(()=>{if(!settled)resolve()},reject);
    });
    else await fn(req,res);
+  }
+  // This fixture tests the established v14 forge/reward API contract.
+  // Newly started production fights use v15; old saves keep their rules.
+  if(method==='POST'&&['/ready','/start'].some(x=>route.endsWith(x))){
+   const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+   const p=docs.get(key),boss=p?.boss10;
+   if(boss?.miniGames?.version===15)docs.set(key,legacyBoss(p));
   }
   return res;
  }

@@ -123,7 +123,7 @@ async function fullFight(count,{pollMs=0}={}){
  }
  const state=f.docs.get(f.progressKey).boss10;
  assert.equal(state.phase,'fighting');
- assert.equal(state.miniGames.version,14);
+ assert.equal(state.miniGames.version,15);
  let actionNo=0;
  // Optional deliberately simplified HTTP polling model: one status GET per
  // signed-in browser every pollMs milliseconds. This is NOT measured client
