@@ -3,7 +3,7 @@
  * First mini-boss wins award loot atomically; DOG unlock and legacy boss stay separate.
  */
 import {randomInt} from 'node:crypto';
-import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam} from './dog-boss.js';
+import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam,bossSelectHero,dogHeroClass} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {dogNormalGateChance,dogResolveNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
 import {dogDrawMiniReward,dogMiniRewardDocument,DOG_MINI_REWARD_COLLECTIONS} from './dog-mini-rewards.js';
@@ -107,9 +107,9 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
  const isMember=team.members.some(m=>m.uid===viewerUid);
  // Only the participating heroes may read each other's names and gate
  // positions. Visitors can see free capacity, not private player data.
- const members=(isMember?team.members:[]).map(m=>{
+ const members=(isMember?team.members:[]).map((m,index)=>{
   const p=progress.people[m.uid];
-  return {uid:m.uid,name:cleanName(m.name),currentGate:p?.currentGate??1,
+  return {uid:m.uid,name:cleanName(m.name),heroClass:dogHeroClass(team.heroClasses?.[m.uid],['krieger','magierin','waechter'][index]),currentGate:p?.currentGate??1,
    highestGate:p?.highestGate??1,
    wonNormals:p?.normals.length??0,wonMinis:p?.minis.length??0,
    lastAttemptAt:p?.lastAttemptAt??0,lastResult:p?.lastResult??null,
@@ -169,7 +169,7 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
 const ERRORS={LOGIN_REQUIRED:401,DOG_GATE_INVALID:400,INVALID_REQUEST_ID:400,
  DOG_GATE_RECEIPT_CONFLICT:409,DOG_GATE_PREVIOUS_REQUIRED:409,
  DOG_GATE_ALREADY_WON:409,DOG_GATE_BOSS_REQUIRED:409,DOG_GATE_COOLDOWN:429,
- DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403};
+ DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403,DOG_HERO_CLASS_INVALID:400};
 export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
  const auth=async(req,res,next)=>{
   try{
@@ -246,6 +246,22 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
     const next=bossJoin(team,uid,name,null,clock());
     tx.set(teamRef,next);
     return dogGateMapView(next,progressSnap.exists?progressSnap.data():null,uid);
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...value});
+  }catch(e){return error(res,e);}
+ });
+ // The shared team stores the visual hero class; battles still use server gear.
+ app.post('/api/dog/gates/hero',auth,async(req,res)=>{
+  try{
+   const {teamRef,progressRef,db}=refs(),uid=req.dogGateProfile.uid;
+   const heroClass=req.body?.heroClass;
+   const value=await db.runTransaction(async tx=>{
+    const [teamSnap,progressSnap]=await Promise.all([tx.get(teamRef),tx.get(progressRef)]);
+    const team=bossTeam(teamSnap.exists?teamSnap.data():null);
+    const updated=bossSelectHero(team,uid,heroClass,clock());
+    if(team.heroClasses?.[uid]!==heroClass)tx.set(teamRef,updated);
+    return dogGateMapView(updated,progressSnap.exists?progressSnap.data():null,uid);
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...value});
