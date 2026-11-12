@@ -300,15 +300,18 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
    Math.round((.12-d.tier*.005)*1000)/1000};
  if(round.kind==='target'&&rawVersion>=10){
   if(!Array.isArray(round.puzzles)||round.puzzles.length!==10)return null;
-  const size=d.tier<=3?4:d.tier<=6?6:8;
+  // Fifth-stage rune combinations are intentionally harder than the earlier
+  // color-only sprint, even at boss 10. Validate their tier-adjusted options.
+  const colorTier=rawVersion>=12&&i===4?Math.max(4,d.tier):d.tier;
+  const size=colorTier<=3?4:colorTier<=6?6:8;
   const puzzles=round.puzzles.map((p,step)=>{
    const mode=p?.mode;
    if(!['color','symbol','both'].includes(mode)||
      !DOG_TARGET_COLORS.includes(p.targetColor)||
      !DOG_TARGET_SYMBOLS.includes(p.targetSymbol)||
      !Array.isArray(p.options)||p.options.length!==size)return null;
-   if((d.tier>=4&&mode!=='both')||
-     (d.tier<=3&&mode!==(step%2?'symbol':'color')))return null;
+   if((colorTier>=4&&mode!=='both')||
+     (colorTier<=3&&mode!==(step%2?'symbol':'color')))return null;
    const options=p.options.map(o=>({color:o?.color,symbol:o?.symbol}));
    if(options.some(o=>!DOG_TARGET_COLORS.includes(o.color)||
       !DOG_TARGET_SYMBOLS.includes(o.symbol)))return null;
