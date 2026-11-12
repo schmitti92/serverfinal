@@ -70,3 +70,50 @@ test('S-04 independent groups have isolated event sequence and no private payloa
    assert.equal(Object.hasOwn(m,key),false);
  }
 });
+
+test('S-04 unauthenticated WS upgrade expires without Firestore reads or leaked subscription',async()=>{
+ const timers=new Map();let id=0,reads=0,auths=0;
+ const hub=createDogBossPushHub({
+  verifyProfile:async()=>{auths++;return {uid:'hero-a'}},
+  getFirestore:()=>({collection:()=>({doc:()=>({get:async()=>{reads++;
+   return {exists:true,data:()=>({members:[{uid:'hero-a'}]})}
+  }})})}),
+  setTimer:(fn,ms)=>{const key=++id;timers.set(key,{fn,ms});return key},
+  clearTimer:key=>timers.delete(key)
+ });
+ const ws=new EventEmitter();ws.readyState=1;ws.bufferedAmount=0;ws.sent=[];
+ ws.send=value=>ws.sent.push(JSON.parse(value));
+ ws.close=(code,reason)=>{ws.readyState=3;ws.closed={code,reason};ws.emit('close')};
+ hub.attach(ws);
+ assert.equal(timers.size,1);
+ assert.equal([...timers.values()][0].ms,10000);
+ const entry=[...timers.values()][0];entry.fn();
+ assert.equal(ws.closed.code,1008);
+ assert.equal(hub.subscribers(),0);
+ assert.equal(timers.size,0);
+ assert.equal(reads,0);
+ assert.equal(auths,0);
+});
+
+test('S-04 successful team subscription cancels unauthenticated handshake timeout',async()=>{
+ const timers=new Map();let id=0;
+ const hub=createDogBossPushHub({
+  verifyProfile:async()=>({uid:'hero-a'}),
+  getFirestore:()=>({collection:()=>({doc:()=>({get:async()=>({
+   exists:true,data:()=>({members:[{uid:'hero-a'}]})
+  })})})}),
+  setTimer:(fn,ms)=>{const key=++id;timers.set(key,{fn,ms});return key},
+  clearTimer:key=>timers.delete(key)
+ });
+ const ws=new EventEmitter();ws.readyState=1;ws.bufferedAmount=0;ws.sent=[];
+ ws.send=value=>ws.sent.push(JSON.parse(value));
+ ws.close=(code,reason)=>{ws.readyState=3;ws.closed={code,reason};ws.emit('close')};
+ hub.attach(ws);
+ ws.emit('message',JSON.stringify({type:'subscribe',idToken:'test',gate:10}));
+ for(let i=0;i<20;i++)await Promise.resolve();
+ assert.equal(hub.subscribers(),1);
+ assert.equal(timers.size,1,'only the 5-minute authorized lifetime timer remains');
+ assert.equal([...timers.values()][0].ms,5*60*1000);
+ ws.close(1000,'client closes');
+ assert.equal(timers.size,0,'authorized connection cleanup');
+});
