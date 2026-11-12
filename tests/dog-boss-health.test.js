@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dogHeroHp,dogGroupBossHp} from '../dog-balance.js';
-import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
+import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniExchangeView,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
 import {boss10View,boss10DamagePotential} from '../dog-boss10.js';
 import {groupBossView,groupBossDamagePotential} from '../dog-group-boss.js';
 
@@ -112,4 +112,47 @@ test('old v10 battles keep their shared-shield rules after the personal-defense 
  const upgraded=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
  assert.equal(upgraded.rounds[1].startMs,historical.rounds[1].startMs);
  assert.equal(upgraded.rounds[3].endMs,historical.rounds[3].endMs);
+});
+
+test('v11 exchange publishes exact personal bonus and HP saved only after each round closes',()=>{
+ let games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const math=games.rounds[0];
+ const partlyCorrect=math.puzzles.map((p,i)=>i<6?p.correctIndex:
+  p.correctIndex===0?1:0);
+ games=dogSubmitMiniAnswer(games,roster,'a',0,partlyCorrect,
+  now+math.endMs+100,now,0).games;
+ games=dogSubmitMiniAnswer(games,roster,'b',0,
+  math.puzzles.map(p=>p.correctIndex),
+  now+math.endMs+120,now,0).games;
+ const attackBase=hero=>hero.uid==='a'?1100:hero.uid==='b'?1500:1900;
+ const early=dogMiniExchangeView(games,roster,math.endMs-1,attackBase,hp);
+ assert.equal(early.stages[0].playerResults,null,
+  'individual scores must not be exposed mid-minigame');
+ const score=dogMiniExchangeView(games,roster,math.endMs+1,attackBase,hp);
+ const [a,b,c]=score.stages[0].playerResults;
+ assert.deepEqual([a.correct,b.correct,c.correct],[6,8,0]);
+ assert.deepEqual([a.max,b.max,c.max],[8,8,8]);
+ assert.ok(a.bonusDamage>0&&b.bonusDamage>a.bonusDamage);
+ assert.equal(c.bonusDamage,0);
+ assert.equal(a.bonusDamage+b.bonusDamage+c.bonusDamage,
+  score.stages[0].bonusDamage,'personal bonus allocations sum to exact team bonus');
+ const dodge=games.rounds[1];
+ for(const strike of dodge.attacks){
+  const safe=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
+   i!==strike.dangerIndex&&i!==strike.secondDangerIndex);
+  games=dogSubmitMiniAnswer(games,roster,'a',1,safe,
+   now+strike.startMs+500,now,strike.step).games;
+ }
+ const before=dogMiniExchangeView(games,roster,dodge.endMs-1,attackBase,hp);
+ assert.equal(before.stages[1].playerResults,null);
+ const after=dogMiniExchangeView(games,roster,dodge.endMs+1,attackBase,hp);
+ const [saveA,saveB,saveC]=after.stages[1].playerResults;
+ assert.equal(saveA.correct,3);
+ assert.equal(saveA.protectionPoints,25);
+ assert.equal(saveA.savedHp,Math.round(hp(roster[0]))-
+  Math.round(hp(roster[0])*.75));
+ assert.equal(saveB.savedHp,0);
+ assert.equal(saveC.savedHp,0);
+ assert.equal(saveB.protectionPoints,0);
+ assert.equal(after.stages[0].bonusDamage,score.stages[0].bonusDamage);
 });
