@@ -12,13 +12,14 @@ import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from '../dog-gates.js
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
 import {dogMiniReactionPosition} from '../dog-boss-minigames.js';
+import {addLiveBots,isLiveBotTeam,readyWithLiveBots,advanceLiveBotFight} from '../dog-live-bots.js';
 
 const BASE=1_800_000_000_000;
 const normalGates=[1,2,3,4,6,7,8,9];
 const players=['hero-a','hero-b','hero-c'];
 const idToken=uid=>uid.slice(-1);
 
-function fixture(count=3){
+function fixture(count=3,botMode=false){
  const members=players.slice(0,count).map((uid,i)=>({uid,name:'Test '+(i+1)}));
  const team={members,heroClasses:Object.fromEntries(members.map((m,i)=>
   [m.uid,['krieger','magierin','waechter'][i]])),
@@ -34,6 +35,16 @@ function fixture(count=3){
  docs.set(key(DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID),progress);
  for(const member of members)docs.set(key(DOG_HERO_COLLECTION,member.uid),
   {levels:{weapon:1,armor:1,attack_power:5,destruction:5,vitality:5,blocking:5}});
+ if(botMode){
+  const live=addLiveBots(null,null,'hero-a','Test Hero',BASE);
+  const botTeam={...live.team,heroLocks:Object.fromEntries(
+   live.team.members.map(m=>[m.uid,true]))};
+  const people=Object.fromEntries(Object.entries(live.progress.people).map(
+   ([id,v])=>[id,{...v,currentGate:10,highestGate:10,normals:normalGates}]));
+  docs.set(key(DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID),botTeam);
+  docs.set(key(DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID),
+   {...live.progress,people});
+ }
  const snapshot=k=>({exists:docs.has(k),data:()=>structuredClone(docs.get(k))});
  const db={
   collection:collection=>({doc:id=>({key:key(collection,id),get:async()=>{
@@ -59,7 +70,8 @@ function fixture(count=3){
  installDogBoss10Api(app,{getFirestore:()=>db,
   verifyProfile:async token=>players.includes('hero-'+token)?
    {uid:'hero-'+token,name:'Test '+token}:null,
-  clock:()=>time,rand:()=>0});
+  clock:()=>time,rand:()=>0,
+  botLogic:botMode?{isLiveBotTeam,readyWithLiveBots,advanceLiveBotFight}:null});
  async function call(method,route,body={},user='hero-a'){
   const before={reads,writes,transactions};
   const handler=routes.get(method+' '+route);
@@ -194,4 +206,64 @@ test('A-01 polling read baseline: a GET never writes without bot/expiry changes'
   assert.equal(result.statusCode,200);
  }
  assert.deepEqual(f.stats(),{reads:180,writes:0,transactions:0,requests:90});
+});
+
+test('A-01 synthetic owner + Nova/Titan: measure GET-driven bot writes every five seconds',async()=>{
+ const f=fixture(1,true),base='/api/dog/gates/boss10';
+ const initial=await f.call('GET',base);
+ assert.equal(initial.statusCode,200);
+ const ready=await f.call('POST',base+'/ready',{
+  requestId:'baseline-bots-ready-long-001'},'hero-a');
+ assert.equal(ready.statusCode,200,'bot ready: '+JSON.stringify(ready.body));
+ const game=f.docs.get(f.progressKey).boss10;
+ assert.equal(game.phase,'fighting');
+ assert.equal(game.roster.length,3);
+ const actions=[];
+ for(const round of game.miniGames.rounds){
+  if(['math','target','chain'].includes(round.kind)){
+   actions.push({at:round.endMs-100,round:round.round,step:0,
+    answer:round.puzzles.map(p=>p.correctIndex)});
+  }else if(round.kind==='dodge'){
+   for(let step=0;step<3;step++){
+    const attack=round.attacks[step];
+    const safe=Array.from({length:round.lanes},(_,i)=>i)
+     .find(i=>i!==attack.dangerIndex&&i!==attack.secondDangerIndex);
+    actions.push({at:attack.startMs+400,round:round.round,step,answer:safe});
+   }
+  }else if(round.kind==='reaction'){
+   for(let step=0;step<3;step++)
+    actions.push({at:reactionMs(round,step),round:round.round,step,answer:1});
+  }
+ }
+ const timeline=[
+  ...actions.map((a,i)=>({...a,kind:'POST',n:i})),
+  ...Array.from({length:28},(_,i)=>({at:i*5000,kind:'GET'}))
+ ].sort((a,b)=>a.at-b.at||(a.kind==='POST'?-1:1));
+ for(const event of timeline){
+  f.setTime(BASE+event.at);
+  const result=event.kind==='GET'?
+   await f.call('GET',base):
+   await f.call('POST',base+'/minigame',{
+    requestId:'baseline-bots-answer-'+event.n+'-0001',
+    round:event.round,step:event.step,answer:event.answer
+   },'hero-a');
+  assert.equal(result.statusCode,200,event.kind+' at '+event.at+
+   ' '+JSON.stringify(result.body).slice(0,420));
+ }
+ const finished=f.docs.get(f.progressKey).boss10;
+ assert.ok(['victory','cooldown'].includes(finished.phase),
+  'final scheduled GET must settle the completed boss');
+ const botWrites=f.history.filter(x=>x.method==='GET'&&x.writes>0);
+ const botReads=botWrites.reduce((sum,x)=>sum+x.reads,0);
+ assert.ok(botWrites.length>1,'bots must generate changes during real-clock battle');
+ assert.ok(botWrites.every(x=>x.reads>=3&&x.writes===1));
+ assert.equal(f.history.filter(x=>x.route.endsWith('/minigame')).length,9);
+ console.log('[A-01 synthetic bot fight]',JSON.stringify({
+  humans:1,bots:2,...f.stats(),GETs:f.history.filter(x=>x.method==='GET').length,
+  botUpdateGETs:botWrites.length,
+  getWithWriteReads:botReads,
+  getWrites:botWrites.reduce((sum,x)=>sum+x.writes,0),
+  excludes:['auth profile reads','pilot owner 30s reads','Firestore retry charges',
+   'real network duration','other site activity']
+ }));
 });
