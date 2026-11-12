@@ -12,7 +12,8 @@ import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress} from 
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
 const now=1_800_000_000_000;
-const team={members:[{uid:'a',name:'Hero A'},{uid:'b',name:'Hero B'},{uid:'c',name:'Hero C'}]};
+const team={members:[{uid:'a',name:'Hero A'},{uid:'b',name:'Hero B'},{uid:'c',name:'Hero C'}],
+ heroClasses:{a:'krieger',b:'magierin',c:'waechter'},heroLocks:{a:true,b:true,c:true}};
 const priorWins=gate=>Array.from({length:gate/10-1},(_,i)=>(i+1)*10);
 const required=gate=>Array.from({length:9},(_,i)=>gate-9+i).filter(n=>n%5!==0&&n%10!==0);
 const makeProgress=gate=>({
