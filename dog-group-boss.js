@@ -53,7 +53,8 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
  const team=bossTeam(teamRaw),progress=dogGateProgress(raw);
  const boss=stateAt(progress,gate);
  const skipCooldown=boss.phase==='cooldown'&&dogDeveloperCooldownBypass(progress,team,uid);
- const members=team.members.map(m=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
+ const members=team.members.map((m,index)=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
+  heroClass:team.heroClasses?.[m.uid]||['krieger','magierin','waechter'][index],
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(gate,progress,m.uid)}));
  const won=progress.sharedBosses.includes(gate);
