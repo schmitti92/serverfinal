@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_FINAL5_WINDOWS,DOG_FINAL5_DURATION_MS,
+ DOG_FINAL5_WINDOWS,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_WINDOWS,DOG_CHAIN20_DURATION_MS,
  dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
  dogMiniBonus,dogMiniExchangeView,dogMiniBossLiveHp,dogMiniConfirmedStrikes,
  dogSubmitMiniAnswer
@@ -22,20 +22,20 @@ const maxHp=dogGroupBossHp(10);
 
 test('Every new expedition has five correctly clocked challenges and a final 14-second three-hero attack',()=>{
  const game=full();
- assert.equal(game.version,13);
+ assert.equal(game.version,14);
  assert.equal(game.rounds.length,5);
  assert.deepEqual(game.rounds.map(x=>x.kind),['math','dodge','target','reaction','chain']);
  assert.deepEqual(game.rounds.map(r=>[r.startMs,r.endMs]),
-  DOG_FINAL5_WINDOWS.map(r=>[r.startMs,r.endMs]));
- assert.deepEqual([game.rounds[4].startMs,game.rounds[4].endMs,DOG_FINAL5_DURATION_MS],
-  [101000,111000,125000]);
+  DOG_CHAIN20_WINDOWS.map(r=>[r.startMs,r.endMs]));
+ assert.deepEqual([game.rounds[4].startMs,game.rounds[4].endMs,DOG_CHAIN20_DURATION_MS],
+  [101000,121000,135000]);
  assert.equal(dogNormalizeMiniGames(game).rounds.length,5);
- assert.equal(dogMiniExchangeView(game,team,115000).durationMs,125000);
- const hits=dogMiniConfirmedStrikes(game,team,111000,maxHp,base,single,m=>145);
+ assert.equal(dogMiniExchangeView(game,team,125000).durationMs,135000);
+ const hits=dogMiniConfirmedStrikes(game,team,121000,maxHp,base,single,m=>145);
  const closing=hits.filter(x=>x.round===4);
  assert.equal(closing.length,3);
  assert.deepEqual(closing.map(x=>x.uid),['a','b','c']);
- assert.ok(closing.every(x=>x.kind==='hero-strike'&&x.atMs>111000&&x.atMs<122000));
+ assert.ok(closing.every(x=>x.kind==='hero-strike'&&x.atMs>121000&&x.atMs<132000));
 });
 
 test('The final strike is a genuine +5% equipment-based bonus; results are private until stage completion',()=>{
@@ -85,7 +85,7 @@ test('v12 stored rune ending stays valid even after the new chain-breaker rollou
  assert.equal(dogNormalizeMiniGames(old).rounds[4].kind,'target');
  assert.equal(dogPublicMiniGames(old,'a').rounds[4].puzzles.length,10);
  const current=full();
- assert.equal(current.version,13);
+ assert.equal(current.version,14);
  assert.equal(current.rounds[4].kind,'chain');
  assert.ok(!JSON.stringify(dogPublicMiniGames(current,'a')).includes('correctIndex'));
  const published=dogPublicMiniGames(current,'a').rounds[4];
@@ -103,6 +103,16 @@ test('Forged chain targets are rejected and cannot mint extra damage',()=>{
  assert.equal(dogNormalizeMiniGames(bogus),null);
  assert.throws(()=>dogSubmitMiniAnswer(game,team,'a',4,[99],now+111100,now,0),
   /BAD_ANSWER/);
+});
+test('v13 chains keep 10-second windows after v14 extends new encounters',()=>{
+ const previous=dogCreateMiniGames(10,()=>0,{exchange:'individual-chain10'});
+ assert.equal(previous.version,13);
+ assert.equal(previous.rounds[4].endMs,111000);
+ assert.equal(dogNormalizeMiniGames(previous).rounds[4].endMs,111000);
+ assert.equal(dogMiniExchangeView(previous,team,115000).durationMs,125000);
+ assert.equal(DOG_FINAL5_DURATION_MS,125000);
+ assert.deepEqual(previous.rounds.map(r=>[r.startMs,r.endMs]),
+  DOG_FINAL5_WINDOWS.map(r=>[r.startMs,r.endMs]));
 });
 test('Fifth stage is only answerable in its own server-clock window',()=>{
  const games=full(),final=games.rounds[4],answers=final.puzzles.map(x=>x.correctIndex);
