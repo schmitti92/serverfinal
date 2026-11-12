@@ -337,7 +337,7 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  }
  assert.deepEqual(views[0].miniGames.rounds,views[1].miniGames.rounds);
  assert.deepEqual(views[1].miniGames.rounds,views[2].miniGames.rounds);
- assert.equal(new Set(views[0].miniGames.rounds.map(round=>round.kind)).size,4);
+ assert.equal(new Set(views[0].miniGames.rounds.map(round=>round.kind)).size,5);
  assert.ok(!JSON.stringify(views[0].miniGames).includes('correctIndex'),
   'the server never leaks the math answer');
  await completeRound(f,100,0,players);
