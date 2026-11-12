@@ -82,7 +82,7 @@ test('One or two may start manually, three auto-start, and only participants may
   assert.throws(()=>groupBossReact(gate,started,'b',now+100),/NOT_PARTICIPANT/);
   const solo=groupBossFinish(gate,started,now+135001,()=>0);
   assert.equal(solo.result.win,false);
-  assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+725000);
+  assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+735000);
 
   p=makeProgress(gate);
   for(const m of team.members)p=groupBossReady(gate,p,team,m.uid,build(gate),now);
