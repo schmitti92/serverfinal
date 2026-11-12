@@ -46,8 +46,11 @@ export function trioSample(trials=50,minutesPerDeal=15){
   const q=p=>rows[Math.floor((rows.length-1)*p)]??null;
   const median=q(.5);
   return {boss:(chapter+1)*10,samples:rows.length,
-   trioTotalDealsMedian:median===null?null:heroes.reduce((sum,runs)=>
-    sum+runs[Math.floor(trials/2)].chapters[chapter]?.totalMatches,0),
+   trioTotalDealsMedian:median===null?null:(()=>{
+    const totals=Array.from({length:trials},(_,i)=>heroes.reduce((sum,runs)=>
+     sum+(runs[i].chapters[chapter]?.totalMatches??0),0)).sort((a,b)=>a-b);
+    return totals[Math.floor((totals.length-1)*.5)];
+   })(),
    slowestHeroDealsP10:q(.1),slowestHeroDealsMedian:median,slowestHeroDealsP90:q(.9),
    sequentialHoursMedian:median===null?null:Math.round(median*3*minutesPerDeal/60),
    parallelHoursMedian:median===null?null:Math.round(median*minutesPerDeal/60)};
