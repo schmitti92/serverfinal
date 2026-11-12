@@ -252,7 +252,7 @@ test('Authenticated API: solo start loses, cooldown survives refresh and outside
  const start=await f.call('POST','/start',{requestId:'solo-start-00000001'});
  assert.equal(start.statusCode,200);
  assert.equal(start.body.view.roster.length,1);
- f.advance(99001);
+ f.advance(101001);
  const seen=await f.call('GET');
  assert.equal(seen.statusCode,200);
  assert.equal(seen.body.phase,'cooldown');
@@ -301,7 +301,7 @@ test('Boss 100 victory survives reconnect and makes DOG unlock flag true for all
    requestId:'final-ready-'+user+'-0001'},user);
   assert.equal(r.statusCode,200);
  }
- f.advance(99001);
+ f.advance(101001);
  const recovered=await f.call('GET','',{},'b');
  assert.equal(recovered.statusCode,200);
  assert.equal(recovered.body.won,true);
