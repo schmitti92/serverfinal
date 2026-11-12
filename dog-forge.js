@@ -201,6 +201,14 @@ const HTTP_STATUS=Object.freeze({
  STALE_FORGE_LEVEL:409,FORGE_MAX_LEVEL:409,DOG_FORGE_BOSS_REQUIRED:409,DOG_MATERIALS_MISSING:409,
  DOG_MATERIALS_LIMIT:409
 });
+/* Cosmetic equipment class comes from the already-read, permanently locked
+ * three-hero selection, never from untrusted request bodies. No extra Firestore reads. */
+const equipmentHeroClass=(snap,uid)=>{
+ const team=snap?.exists?snap.data():null;
+ const hero=team?.heroClasses?.[uid];
+ return team?.heroLocks?.[uid]===true&&
+  ['krieger','magierin','waechter'].includes(hero)?hero:null;
+};
 export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomInt}){
  const auth=async(req,res,next)=>{
   try{
@@ -237,7 +245,8 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
    }
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...forgeView(heroSnap.exists?heroSnap.data():null,
-    bagSnap.exists?bagSnap.data():null,progressRaw)});
+    bagSnap.exists?bagSnap.data():null,progressRaw),
+    heroClass:equipmentHeroClass(teamSnap,uid)});
   }catch(e){return err(res,e);}
  });
  const action=(type)=>async(req,res)=>{
@@ -264,6 +273,7 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
     }
     if(receipt.exists)return {...forgeView(heroSnap.exists?heroSnap.data():null,
      bagSnap.exists?bagSnap.data():null,progressRaw),
+     heroClass:equipmentHeroClass(teamSnap,uid),
      result:receipt.data().result,replayed:true};
     const hero=heroSnap.exists?heroSnap.data():null,bag=bagSnap.exists?bagSnap.data():null;
     const now=Date.now();
@@ -274,7 +284,8 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
     }else next=forgeExchange(hero,bag,req.body?.resourceId,now,
      req.body?.count===undefined?1:req.body.count);
     const view=forgeView(next.hero,next.inventory,progressRaw);
-    const payload={...view,result:next.result,replayed:false};
+    const payload={...view,heroClass:equipmentHeroClass(teamSnap,uid),
+     result:next.result,replayed:false};
     tx.set(heroRef,next.hero);tx.set(bagRef,next.inventory);
     // Keep receipts compact: current snapshots are read on retries.
     tx.create(receiptRef,{uid,requestId,createdAt:now,result:next.result});

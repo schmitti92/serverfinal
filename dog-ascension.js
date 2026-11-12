@@ -66,6 +66,14 @@ const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,DOG_ASCENSION_INVALID_TY
  DOG_ASCENSION_BOSS_REQUIRED:409,DOG_ASCENSION_MATERIALS_MISSING:409,
  DOG_ASCENSION_BAD_RANDOM:500,DOG_ASCENSION_RECEIPT_CONFLICT:409,
  NOT_DOG_TEAM_MEMBER:403};
+/* Cosmetic equipment class comes from the already-read, permanently locked
+ * three-hero selection, never from untrusted request bodies. No extra Firestore reads. */
+const equipmentHeroClass=(snap,uid)=>{
+ const team=snap?.exists?snap.data():null;
+ const hero=team?.heroClasses?.[uid];
+ return team?.heroLocks?.[uid]===true&&
+  ['krieger','magierin','waechter'].includes(hero)?hero:null;
+};
 export function installDogAscensionApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now}){
  const auth=async(req,res,next)=>{
   try{const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -95,7 +103,8 @@ export function installDogAscensionApi(app,{verifyProfile,getFirestore,rand=rand
     throw Error('NOT_DOG_TEAM_MEMBER');
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...ascensionView(hero.exists?hero.data():null,
-    inventory.exists?inventory.data():null,progress.exists?progress.data():null)});
+    inventory.exists?inventory.data():null,progress.exists?progress.data():null),
+    heroClass:equipmentHeroClass(team,req.dogAscensionUid)});
   }catch(e){return fail(res,e);}
  });
  app.post('/api/dog/gates/ascension/upgrade',auth,async(req,res)=>{
@@ -119,13 +128,15 @@ export function installDogAscensionApi(app,{verifyProfile,getFirestore,rand=rand
      const prior=receipt.data();
      if(prior.type!==type||prior.expectedLevel!==expectedLevel)
       throw Error('DOG_ASCENSION_RECEIPT_CONFLICT');
-     return {view:ascensionView(hero,inventory,progress),result:prior.result,replayed:true};
+     return {view:{...ascensionView(hero,inventory,progress),
+      heroClass:equipmentHeroClass(teamSnap,uid)},result:prior.result,replayed:true};
     }
     const upgrade=ascensionUpgrade(hero,inventory,progress,type,expectedLevel,rand(10000),clock());
     tx.set(heroRef,upgrade.hero);
     tx.set(inventoryRef,upgrade.inventory);
     tx.create(receiptRef,{uid,requestId,type,expectedLevel,result:upgrade.result,createdAt:clock()});
-    return {view:ascensionView(upgrade.hero,upgrade.inventory,progress),
+    return {view:{...ascensionView(upgrade.hero,upgrade.inventory,progress),
+      heroClass:equipmentHeroClass(teamSnap,uid)},
      result:upgrade.result,replayed:false};
    });
    res.set('Cache-Control','no-store');return res.json({ok:true,...response});
