@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {forgeRefine,forgeQuote,DOG_QUALITY_REFINEMENT_CHANCE} from '../dog-forge.js';
+import {dogInventory,addExpeditionChestToInventory,openExpeditionChestInInventory} from '../dog-materials.js';
+import {qualityUnlockedFromBosses,qualityUnlockedForChest,qualityKey} from '../dog-f01-quality-prototype.mjs';
+const seals=[10,20,30,40,50,60];
+test('Quality unlock requires server-stored boss 30 and 60 wins, not reached gate',()=>{
+ assert.equal(qualityUnlockedFromBosses({people:{player:{highestGate:100}},sharedBosses:[10,20]}),1);
+ assert.equal(qualityUnlockedFromBosses({sharedBosses:[10,20,30]}),2);
+ assert.equal(qualityUnlockedFromBosses({sharedBosses:seals}),3);
+ assert.equal(qualityUnlockedForChest({sharedBosses:seals},{stage:2}),1);
+ assert.equal(qualityUnlockedForChest({sharedBosses:seals},{stage:4}),2);
+ assert.equal(qualityUnlockedForChest({sharedBosses:seals},{stage:6}),3);
+});
+test('Atomic refinement pays five materials, emits one on success and none on failure',()=>{
+ const before=dogInventory({resources:{iron:25}});
+ const progress={sharedBosses:[10,20,30]};
+ const success=forgeRefine(null,before,'iron',1,1,100,progress,0);
+ assert.equal(success.result.success,true);
+ assert.equal(success.result.chance,90);
+ assert.equal(success.inventory.qualityResources['iron:1'],20);
+ assert.equal(success.inventory.qualityResources['iron:2'],1);
+ assert.equal(success.inventory.resources.iron,21);
+ assert.equal(before.resources.iron,25);
+ const fail=forgeRefine(null,before,'iron',1,1,100,progress,9999);
+ assert.equal(fail.result.success,false);
+ assert.equal(fail.result.received,0);
+ assert.equal(fail.inventory.resources.iron,20);
+ assert.equal(fail.inventory.qualityResources['iron:1'],20);
+ assert.equal(fail.inventory.qualityResources['iron:2'],0);
+ assert.deepEqual(DOG_QUALITY_REFINEMENT_CHANCE,{2:90,3:75});
+});
+test('Quality 3 can be forged only after boss 60 and consumes exact quality 2',()=>{
+ const input=dogInventory({resources:{iron:5},qualityResources:{'iron:2':5}});
+ assert.throws(()=>forgeRefine(null,input,'iron',2,1,100,{sharedBosses:[10,20,30]},0),/DOG_QUALITY_LOCKED/);
+ const upgraded=forgeRefine(null,input,'iron',2,1,100,{sharedBosses:seals},0);
+ assert.equal(upgraded.result.chance,75);
+ assert.equal(upgraded.inventory.qualityResources['iron:2'],0);
+ assert.equal(upgraded.inventory.qualityResources['iron:3'],1);
+ assert.equal(upgraded.inventory.resources.iron,1);
+ assert.throws(()=>forgeRefine(null,input,'iron',1,2,100,{sharedBosses:seals},0),/DOG_MATERIALS_MISSING/);
+});
+test('Old chest stage cannot retroactively give later quality; eligible new chest can',()=>{
+ const old={version:4,tier:'iron',stage:2,count:2};
+ const fresh={version:4,tier:'iron',stage:3,count:2};
+ const low=addExpeditionChestToInventory(null,old);
+ const hi=addExpeditionChestToInventory(null,fresh);
+ const draw=n=>n-1;
+ const oldDrop=openExpeditionChestInInventory(low,'iron',draw,100,3);
+ const newDrop=openExpeditionChestInInventory(hi,'iron',draw,100,2);
+ assert.equal(Object.entries(oldDrop.drop.qualityItems).filter(([key])=>key.endsWith(':2')).reduce((s,[,n])=>s+n,0),0);
+ assert.equal(Object.entries(newDrop.drop.qualityItems).filter(([key])=>key.endsWith(':2')).reduce((s,[,n])=>s+n,0),2);
+ assert.equal(Object.values(newDrop.drop.qualityItems).reduce((a,b)=>a+b,0),2);
+});
+test('Tier-specific materials are required for high-level upgrades',()=>{
+ const progress={sharedBosses:seals,forgeLevel:7};
+ const low=dogInventory({resources:{iron:100,forge_coal:100,steel_core:100,mithril:100,dragonsteel:100}});
+ const q=forgeQuote('weapon',30,low.resources,progress,low.qualityResources);
+ assert.equal(q.qualityLevel,3);
+ assert.equal(q.affordable,false);
+ assert.ok(Object.keys(q.cost).length>0);
+ assert.equal(qualityKey('iron',3),'iron:3');
+});
