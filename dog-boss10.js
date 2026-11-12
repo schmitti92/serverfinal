@@ -61,7 +61,8 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   eligible:eligible(progress.people[m.uid])}));
  const elapsed=Math.max(0,now-boss.startedAt);
  const exchange=dogMiniExchangeView(boss.miniGames,boss.roster,elapsed,
-  hero=>boss10DamagePotential([hero],[],null));
+  hero=>boss10DamagePotential([hero],[],null),
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
  const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
   hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
  const bossMaxHp=dogGroupBossHp(10);
