@@ -190,6 +190,23 @@ function fixture(gate=20,initialRoll=0){
 async function completeRound(f,gate,index,players,wrongUser=null){
  const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
  const round=f.docs.get(key).groupBosses[gate].miniGames.rounds[index];
+ if(round.kind==='target'&&Array.isArray(round.puzzles)){
+  const at=round.endMs-100;
+  assert.ok(now+at>=f.time(),'target batch stays chronological');
+  f.advance(now+at-f.time());
+  for(const uid of players){
+   const answer=round.puzzles.map(p=>uid===wrongUser?
+    (p.correctIndex+1)%p.options.length:p.correctIndex);
+   const response=await f.call('POST','/minigame',{
+    requestId:'ten-target-'+gate+'-'+index+'-'+uid+'-receipt',
+    round:index,step:0,answer
+   },uid);
+   assert.equal(response.statusCode,200,'10 targets '+uid);
+   assert.equal(response.body.result.correct,uid!==wrongUser);
+   assert.equal(response.body.result.correctCount,uid===wrongUser?0:10);
+  }
+  return;
+ }
  for(let step=0;step<round.maxSteps;step++){
   let at,right,wrong;
   if(round.kind==='math'){
