@@ -13,7 +13,7 @@ import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDev
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_GROUP_BOSS_GATES=Object.freeze([20,30,40,50,60,70,80,90,100]);
 export const DOG_GROUP_BOSS_NAMES=Object.freeze({
@@ -167,7 +167,8 @@ const startFight=(gate,progress,team,ready,heroes,now,rand=randomInt)=>{
  const previous=stateAt(progress,gate);
  return withState(progress,gate,{...previous,ready:[...ready],roster,
   phase:'fighting',startedAt:now,
-  endsAt:now+(miniGames.version>=12?DOG_FINAL5_DURATION_MS:DOG_BOSS10_DURATION_MS),
+  endsAt:now+(miniGames.version>=14?DOG_CHAIN20_DURATION_MS:
+   miniGames.version>=12?DOG_FINAL5_DURATION_MS:DOG_BOSS10_DURATION_MS),
   chancePercent,reactions:[],miniGames},now);
 };
 export function groupBossReady(gate,progressRaw,teamRaw,uid,heroes={},now=Date.now(),rand=randomInt){
