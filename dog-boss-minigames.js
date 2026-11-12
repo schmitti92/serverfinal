@@ -4,7 +4,7 @@
  * v1 encounters remain loadable and finishable without changing their rules.
  */
 import {randomInt} from 'node:crypto';
-export const DOG_MINIGAME_KINDS=Object.freeze(['dodge','reaction','math','target']);
+export const DOG_MINIGAME_KINDS=Object.freeze(['dodge','reaction','math','target','chain']);
 export const DOG_MINIGAME_WINDOWS=Object.freeze([
  Object.freeze({startMs:3000,endMs:11000}),
  Object.freeze({startMs:11000,endMs:19000}),
@@ -70,6 +70,13 @@ export const DOG_FINAL5_WINDOWS=Object.freeze([
 export const DOG_FINAL5_DURATION_MS=125000;
 const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
 const DOG_FINAL5_ORDER=Object.freeze([...DOG_EXCHANGE_ORDER,'target']);
+const DOG_CHAIN_BREAKER_ORDER=Object.freeze([...DOG_EXCHANGE_ORDER,'chain']);
+// v13 switches only new encounters; stored v12 rune finals still load.
+const chainLanes=gate=>gate>=80?5:gate>=40?4:3;
+const chainPuzzle=(lanes,rand)=>{
+ const target=draw(rand,lanes);
+ return {target,correctIndex:target};
+};
 export const DOG_TARGET_COLORS=Object.freeze(['red','blue','green','yellow','purple','orange','cyan','pink']);
 export const DOG_TARGET_SYMBOLS=Object.freeze(['star','shield','flame','diamond','snowflake','moon','crown','bolt']);
 const DOG_TARGET_LABELS=Object.freeze({
@@ -115,7 +122,7 @@ const colorPuzzle=(tier,rand,step)=>{
 };
 const LEGACY_WINDOWS=[{startMs:3000,endMs:10000},
  {startMs:10000,endMs:17000},{startMs:17000,endMs:24000}];
-const TYPES={math:8,dodge:3,reaction:3,target:3};
+const TYPES={math:8,dodge:3,reaction:3,target:3,chain:10};
 const isObj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const uidOkay=x=>typeof x==='string'&&x.length>0&&x.length<=200;
 const int=(n,lo,hi,def=lo)=>Number.isSafeInteger(n)&&n>=lo&&n<=hi?n:def;
@@ -203,6 +210,9 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTar
   return {...base,lanes:d.choices,attacks,
    hint:'Drei Einschläge! Weiche vor jedem Schlag in ein sicheres Feld aus.'};
  }
+ if(kind==='chain')return {...base,maxSteps:10,lanes:chainLanes(gate),
+  puzzles:Array.from({length:10},()=>chainPuzzle(chainLanes(gate),rand)),
+  hint:'⛓️ KETTENBRECHER: Wische über die glühende Kette! Bis zu zehn Brüche in zehn Sekunden.'};
  if(kind==='target'&&colorTarget)return {...base,maxSteps:10,
   puzzles:Array.from({length:10},(_,step)=>colorPuzzle(d.tier,rand,step)),
   hint:'10 Sekunden · Bis zu zehn Farb-/Symbol-Treffer · Tippe so schnell du kannst!'};
@@ -216,13 +226,16 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTar
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
   // New battles v12; old stored encounters keep their original timing.
-  const individual=exchange==='individual';
+  const individual=exchange==='individual'||exchange==='individual-runes';
+  const breaker=exchange==='individual';
   const endgame=exchange==='endgame'||individual,cinematic=exchange==='cinematic';
-  const order=individual?DOG_FINAL5_ORDER:DOG_EXCHANGE_ORDER;
-  return {version:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
+  const order=breaker?DOG_CHAIN_BREAKER_ORDER:individual?DOG_FINAL5_ORDER:DOG_EXCHANGE_ORDER;
+  return {version:breaker?13:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
    const item=createRound(kind,i,gate,rand,individual?DOG_FINAL5_WINDOWS:
     endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
     cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS,{colorTarget:endgame&&kind==='target'});
+   if(breaker&&i===4)return {...item,
+    hint:'⛓️ KETTENBRECHER · 10 SEKUNDEN: Wische über die glühende Kette. Jeder Bruch verstärkt euren letzten Schlag!'};
    if(individual&&i===4)return {...item,
     // Unlike the earlier color sprint, the finishing rune combo requires
     // matching BOTH color and symbol (6–8 rune choices, tier-scaled).
@@ -237,7 +250,7 @@ export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
    return item;
   }),answers:{}};
  }
- const available=[...DOG_MINIGAME_KINDS];
+ const available=DOG_MINIGAME_KINDS.filter(kind=>kind!=='chain');
  for(let i=available.length-1;i>0;i--){
   const j=draw(rand,i+1);[available[i],available[j]]=[available[j],available[i]];
  }
@@ -298,6 +311,17 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
  if(round.kind==='reaction')return {...base,
   zoneRadius:rawVersion>=9?Math.round((.061-d.tier*.0027)*1000)/1000:
    Math.round((.12-d.tier*.005)*1000)/1000};
+ if(round.kind==='chain'&&rawVersion>=13){
+  const lanes=chainLanes(gate);
+  if(i!==4||round.lanes!==lanes||round.maxSteps!==10||
+    !Array.isArray(round.puzzles)||round.puzzles.length!==10)return null;
+  const puzzles=round.puzzles.map(p=>{
+   if(!Number.isSafeInteger(p?.target)||p.target<0||p.target>=lanes)
+    return null;
+   return {target:p.target,correctIndex:p.target};
+  });
+  return puzzles.some(p=>!p)?null:{...base,lanes,maxSteps:10,puzzles};
+ }
  if(round.kind==='target'&&rawVersion>=10){
   if(!Array.isArray(round.puzzles)||round.puzzles.length!==10)return null;
   // Fifth-stage rune combinations are intentionally harder than the earlier
@@ -333,7 +357,7 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12,13].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=12?5:raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -348,7 +372,8 @@ export function dogNormalizeMiniGames(raw){
       raw.version>=8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
-   (raw.version>=3&&round.kind!==(raw.version>=12?
+   (raw.version>=3&&round.kind!==(raw.version>=13?
+     DOG_CHAIN_BREAKER_ORDER[i]:raw.version>=12?
      DOG_FINAL5_ORDER[i]:DOG_EXCHANGE_ORDER[i]))||
    round.startMs!==windows[i].startMs||
    round.endMs!==windows[i].endMs)return null;
@@ -416,7 +441,8 @@ export function dogPublicMiniGames(raw,uid){
  return {version:games.version,gate:games.gate,
   rounds:games.rounds.map(round=>{
    if(games.version===1){const {correctIndex,...publicFields}=round;return publicFields;}
-   if(round.kind==='math'||(games.version>=10&&round.kind==='target'))return {...round,
+   if(round.kind==='math'||(games.version>=10&&round.kind==='target')||
+      (games.version>=13&&round.kind==='chain'))return {...round,
     puzzles:round.puzzles.map(({correctIndex,...p})=>p)};
    return {...round};
   }),
@@ -631,11 +657,13 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  // No network wait between taps; server checks every private correctIndex.
  if(Array.isArray(value)){
   const targetSprint=games.version>=10&&round.kind==='target';
+  const chainSprint=games.version>=13&&round.kind==='chain';
   const mathSprint=games.version>=2&&round.kind==='math';
-  if((!targetSprint&&!mathSprint)||step!==0||
-   value.length<1||value.length>(targetSprint?10:8)||
+  if((!targetSprint&&!chainSprint&&!mathSprint)||step!==0||
+   value.length<1||value.length>((targetSprint||chainSprint)?10:8)||
    value.some((choice,i)=>!Number.isSafeInteger(choice)||choice<0||
-    choice>=(targetSprint?round.puzzles[i].options.length:3)))
+    choice>=(targetSprint?round.puzzles[i].options.length:
+     chainSprint?round.lanes:3)))
    throw Error('DOG_MINIGAME_BAD_ANSWER');
   // A short transit grace lets the final visible tap be scored even if the
   // network arrives just after the window. Never accept a future round early.
@@ -653,7 +681,7 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   return {games:next,correct:correctCount>0,replayed:false,
    step:0,correctCount};
  }
- if(games.version>=10&&round.kind==='target')
+ if(games.version>=10&&['target','chain'].includes(round.kind))
   throw Error('DOG_MINIGAME_BAD_ANSWER');
  if(games.version===1){
   if(mine[roundIndex])return {games,correct:mine[roundIndex].correct,replayed:true,step:0};
