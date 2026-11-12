@@ -550,15 +550,18 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  if(!Number.isSafeInteger(now)||!Number.isSafeInteger(startedAt)||startedAt<=0)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
  const round=games.rounds[roundIndex],elapsed=now-startedAt,mine=games.answers[uid]||{};
- // Maths is a fast 8s/12s sprint. A SINGLE receipt for all
- // locally answered puzzles avoids 8 consecutive network round-trips.
- // The server still checks every secret answer and rejects extra attempts.
- // Up to two seconds transfer grace prevents punishing a final-moment submit.
+ // Both fast sprints submit once: 8 math choices or up to 10 symbol targets.
+ // No network wait between taps; server checks every private correctIndex.
  if(Array.isArray(value)){
-  if(games.version<2||round.kind!=='math'||step!==0||
-   value.length<1||value.length>8||
-   value.some(n=>!Number.isSafeInteger(n)||n<0||n>2))
+  const targetSprint=games.version>=10&&round.kind==='target';
+  const mathSprint=games.version>=2&&round.kind==='math';
+  if((!targetSprint&&!mathSprint)||step!==0||
+   value.length<1||value.length>(targetSprint?10:8)||
+   value.some((choice,i)=>!Number.isSafeInteger(choice)||choice<0||
+    choice>=(targetSprint?round.puzzles[i].options.length:3)))
    throw Error('DOG_MINIGAME_BAD_ANSWER');
+  // A short transit grace lets the final visible tap be scored even if the
+  // network arrives just after the window. Never accept a future round early.
   if(elapsed<round.startMs||elapsed>=round.endMs+2000)
    throw Error('DOG_MINIGAME_TOO_LATE');
   if(mine[roundIndex]?.attempts?.length)
@@ -573,6 +576,8 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   return {games:next,correct:correctCount>0,replayed:false,
    step:0,correctCount};
  }
+ if(games.version>=10&&round.kind==='target')
+  throw Error('DOG_MINIGAME_BAD_ANSWER');
  if(games.version===1){
   if(mine[roundIndex])return {games,correct:mine[roundIndex].correct,replayed:true,step:0};
   if(step!==0)throw Error('DOG_MINIGAME_BAD_STEP');
