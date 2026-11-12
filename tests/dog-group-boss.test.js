@@ -79,7 +79,7 @@ test('One or two may start manually, three auto-start, and only participants may
   const started=groupBossStart(gate,p,team,'a',build(gate),now);
   assert.equal(groupBossState(gate,started.groupBosses[gate]).roster.length,1);
   assert.throws(()=>groupBossReact(gate,started,'b',now+100),/NOT_PARTICIPANT/);
-  const solo=groupBossFinish(gate,started,now+99001,()=>0);
+  const solo=groupBossFinish(gate,started,now+101001,()=>0);
   assert.equal(solo.result.win,false);
   assert.equal(solo.progress.groupBosses[gate].cooldownUntil,now+701000);
 
@@ -88,7 +88,7 @@ test('One or two may start manually, three auto-start, and only participants may
   assert.equal(groupBossState(gate,p.groupBosses[gate]).phase,'fighting');
   assert.equal(groupBossState(gate,p.groupBosses[gate]).roster.length,3);
   assert.throws(()=>groupBossFinish(gate,p,now+49999,()=>0),/STILL_FIGHTING/);
-  const won=groupBossFinish(gate,p,now+99001,()=>4500);
+  const won=groupBossFinish(gate,p,now+101001,()=>4500);
   assert.equal(won.result.win,true);
   assert.ok(won.progress.sharedBosses.includes(gate));
   assert.equal(won.progress.people.a.currentGate,Math.min(100,gate+1));
@@ -276,7 +276,7 @@ test('Authenticated API: rare duo win persists and unlocks following forge tier 
  assert.equal(start.statusCode,200);
  await completeRound(f,20,0,['a','b']);
  await completeRound(f,20,1,['a','b']);
- f.advance(now+99001-f.time());
+ f.advance(now+101001-f.time());
  const result=await f.call('POST','/finish',{requestId:'duo-finish-00000001'});
  assert.equal(result.statusCode,200);
  assert.equal(result.body.result.win,true);
@@ -356,7 +356,7 @@ test('Three authenticated profiles share one boss 100 timeline and independent m
  assert.equal(a.body.miniGames.myAnswers[1].attempts.length,3);
  assert.equal(b.body.miniGames.myAnswers[1].correct,false);
  assert.equal(c.body.miniGames.myAnswers[1],undefined);
- f.advance(now+99001-f.time());
+ f.advance(now+101001-f.time());
  const late=await f.call('POST','/minigame',{
   requestId:'trio-100-late-c-001',round:1,answer:0},'c');
  assert.equal(late.statusCode,409);
