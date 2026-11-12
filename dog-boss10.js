@@ -56,6 +56,7 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  const skipCooldown=boss.phase==='cooldown'&&dogDeveloperCooldownBypass(progress,team,uid);
  const members=team.members.map((m,index)=>({uid:m.uid,name:m.name,isMe:m.uid===uid,
   heroClass:team.heroClasses?.[m.uid]||['krieger','magierin','waechter'][index],
+  heroLocked:team.heroLocks?.[m.uid]===true,
   ready:!skipCooldown&&boss.ready.includes(m.uid),reacted:!skipCooldown&&boss.reactions.includes(m.uid),
   eligible:eligible(progress.people[m.uid])}));
  const elapsed=Math.max(0,now-boss.startedAt);
@@ -236,7 +237,7 @@ export function boss10Finish(progressRaw,now=Date.now(),rand=randomInt){
 const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  DOG_BOSS10_NOT_READY:409,DOG_BOSS10_NOT_PARTICIPANT:403,DOG_BOSS10_INVALID_ROSTER:409,
  DOG_BOSS10_PREREQUISITES:409,DOG_BOSS10_ALREADY_WON:409,
- DOG_BOSS10_RUNNING:409,DOG_BOSS10_COOLDOWN:409,
+ DOG_BOSS10_RUNNING:409,DOG_BOSS10_COOLDOWN:409,DOG_HERO_SELECTION_REQUIRED:409,
  DOG_BOSS10_NOT_RUNNING:409,DOG_BOSS10_STILL_FIGHTING:409,
  DOG_MINIGAME_MISSING:409,DOG_MINIGAME_NOT_RUNNING:409,
  DOG_MINIGAME_NOT_PARTICIPANT:403,DOG_MINIGAME_BAD_ROUND:400,
@@ -325,6 +326,8 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      }
      const now=clock();
      let next,result,unchanged=false;
+     if((command==='ready'||command==='start')&&bossTeam(team).heroLocks?.[uid]!==true)
+      throw Error('DOG_HERO_SELECTION_REQUIRED');
      if(command==='ready'&&botLogic?.isLiveBotTeam(team,uid)){
       const snap=await tx.get(db.collection(DOG_HERO_COLLECTION).doc(uid));
       next=botLogic.readyWithLiveBots(10,progress,team,uid,
