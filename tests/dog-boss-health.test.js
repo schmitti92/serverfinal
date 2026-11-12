@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dogHeroHp,dogGroupBossHp} from '../dog-balance.js';
-import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniExchangeView,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
+import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniExchangeView,dogMiniConfirmedStrikes,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
 import {boss10View,boss10DamagePotential} from '../dog-boss10.js';
 import {groupBossView,groupBossDamagePotential} from '../dog-group-boss.js';
 
@@ -155,4 +155,54 @@ test('v11 exchange publishes exact personal bonus and HP saved only after each r
  assert.equal(saveC.savedHp,0);
  assert.equal(saveB.protectionPoints,0);
  assert.equal(after.stages[0].bonusDamage,score.stages[0].bonusDamage);
+});
+
+test('cinematic hit numbers come exclusively from already-verified stage HP changes',()=>{
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const max=dogGroupBossHp(10),base=boss10DamagePotential(roster,[],null);
+ const single=hero=>boss10DamagePotential([hero],[],null);
+ const math=games.rounds[0],dodge=games.rounds[1],target=games.rounds[2];
+ assert.deepEqual(dogMiniConfirmedStrikes(games,roster,math.endMs-1,max,
+  base,single,hp),[],'no per-player damage shown before stage settles');
+ const first=dogMiniConfirmedStrikes(games,roster,math.endMs,max,
+  base,single,hp);
+ assert.equal(first.length,3);
+ assert.deepEqual(first.map(x=>x.uid),['a','b','c']);
+ assert.ok(first.every(x=>x.kind==='hero-strike'&&x.amount>=0));
+ assert.ok(first.every(x=>x.atMs>=math.endMs&&x.atMs<
+  dodge.startMs-3000),'damage popups occur in three staggered attack slots');
+ const stageOne=dogMiniBossLiveHp(games,roster,math.endMs,max,base,0);
+ assert.equal(first.reduce((n,x)=>n+x.amount,0),max-stageOne,
+  'all attacks together equal the stage-confirmed boss HP loss exactly');
+ const ready=dogMiniConfirmedStrikes(games,roster,dodge.endMs,max,
+  base,single,hp),guard=ready.filter(x=>x.round===1);
+ assert.equal(guard.length,3);
+ assert.ok(guard.every(x=>x.kind==='boss-strike'));
+ const before=dogMiniGroupHealth(games,roster,dodge.endMs-1,hp);
+ const after=dogMiniGroupHealth(games,roster,dodge.endMs,hp);
+ for(let i=0;i<3;i++)
+  assert.equal(guard[i].amount,before.heroes[i].hp-after.heroes[i].hp);
+ const throughTarget=dogMiniConfirmedStrikes(games,roster,target.endMs,max,
+  base,single,hp).filter(x=>x.round===2);
+ const stageTwo=dogMiniBossLiveHp(games,roster,target.endMs,max,base,0);
+ assert.equal(throughTarget.reduce((n,x)=>n+x.amount,0),stageOne-stageTwo,
+  'the second offensive phase contains only its new confirmed HP delta');
+});
+test('a personally perfect dodge yields a block popup only for that player',()=>{
+ let games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const dodge=games.rounds[1],base=boss10DamagePotential(roster,[],null);
+ for(const strike of dodge.attacks){
+  const correct=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
+   i!==strike.dangerIndex&&i!==strike.secondDangerIndex);
+  games=dogSubmitMiniAnswer(games,roster,'a',1,correct,
+   now+strike.startMs+500,now,strike.step).games;
+ }
+ const events=dogMiniConfirmedStrikes(games,roster,dodge.endMs,
+  dogGroupBossHp(10),base,m=>boss10DamagePotential([m],[],null),hp)
+  .filter(x=>x.round===1);
+ assert.equal(events[0].amount,0);
+ assert.equal(events[0].blocked,true);
+ assert.ok(events[1].amount>0);
+ assert.ok(events[2].amount>0);
+ assert.equal(events[1].blocked,false);
 });
