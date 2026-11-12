@@ -126,8 +126,8 @@ test('two-, three- and four-player matches include exactly the other players',as
   assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,1);
  }
 });
-test('the last selected opponent case works with 26, 27, 28 and 29 cases',async()=>{
- for(const caseCount of [26,27,28,29]){
+test('the last selected opponent case works with 26–30 cases',async()=>{
+ for(const caseCount of [26,27,28,29,30]){
   const t=setup({caseCount});
   const last=caseCount-1;
   const res=await t.request(path,{case:last,requestId:'peek-last-case-'+caseCount+'-12345'});
@@ -137,6 +137,24 @@ test('the last selected opponent case works with 26, 27, 28 and 29 cases',async(
   assert.equal(res.value.balance,1);
   assert.equal(t.writes.length,2);
  }
+});
+test('30-case Joker reveals last personal case privately, with one debit and safe retry',async()=>{
+ const t=setup({caseCount:30,balance:1});
+ const game=t.docs.get('deal_or_no_deal_matches_v1/123').game;
+ game.values[29]=5000000000;
+ const request={case:29,requestId:'peek-thirtieth-50000000-123'};
+ const first=await t.request(path,request);
+ assert.equal(first.statusCode,200);
+ assert.equal(first.value.ok,true);
+ assert.equal(first.value.mode,'opponents');
+ assert.equal(first.value.cases.find(p=>p.id==='dave').amount,5000000000);
+ assert.equal(first.value.cases.some(p=>p.id==='alice'),false);
+ assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,0);
+ assert.deepEqual(game.opened,[]);
+ const replay=await t.request(path,request);
+ assert.equal(replay.value.replayed,true);
+ assert.deepEqual(replay.value.cases,first.value.cases);
+ assert.equal(t.writes.length,2,'recovery never charges a second Joker');
 });
 test('29th opponent case may hold ten million, and remains private',async()=>{
  const t=setup({caseCount:29,balance:1});
@@ -182,10 +200,10 @@ test('without balance, the private receipt is not created',async()=>{
  assert.equal(t.docs.has('deal_peek_inventory_v1/alice/receipts/'+payload.requestId),false);
 });
 test('out-of-range case indexes are never accepted or charged',async()=>{
- for(const [caseCount,index] of [[26,26],[27,27],[28,28],[29,29],[28,29],[27,28]]){
+ for(const [caseCount,index] of [[26,26],[27,27],[28,28],[29,29],[30,30],[28,29],[27,28],[29,30]]){
   const t=setup({caseCount});
   const res=await t.request(path,{case:index,requestId:'peek-invalid-index-12345'});
-  assert.equal(res.value.error,index>28?'INVALID_REQUEST':'INVALID_CASE');
+  assert.equal(res.value.error,index>29?'INVALID_REQUEST':'INVALID_CASE');
   assert.equal(t.writes.length,0);
  }
 });
@@ -197,8 +215,8 @@ test('inventory remains a user-only read, never a shared room mutation',async()=
  assert.equal(t.writes.length,0);
 });
 
-test('all 26-29 modes let players choose own case or opponents without mixing results',async()=>{
- for(const count of [26,27,28,29]){
+test('all 26–30 modes let players choose own case or opponents without mixing results',async()=>{
+ for(const count of [26,27,28,29,30]){
   const t=setup({caseCount:count,balance:2});
   const own=await t.request(path,{case:0,requestId:'peek-own-'+count+'-test-0001'});
   assert.equal(own.statusCode,200);
