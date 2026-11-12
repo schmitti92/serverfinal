@@ -132,14 +132,14 @@ export function advanceLiveBotFight(gate,progressRaw,teamRaw,uid,now=Date.now(),
  for(const [index,id] of DOG_LIVE_BOT_IDS.entries()){
   for(const round of state.miniGames?.rounds||[]){
    // One server receipt per 10-target sprint, same rule as real players.
-   if(round.kind==='target'&&Array.isArray(round.puzzles)){
+   if(['target','chain'].includes(round.kind)&&Array.isArray(round.puzzles)){
     if(state.miniGames?.answers?.[id]?.[round.round]?.attempts?.length)continue;
     const at=round.endMs-80;
     if(now<state.startedAt+at)continue;
     const answers=round.puzzles.map((p,step)=>{
      const pass=(state.attempt*17+gate+index*31+round.round*23+step*13)%100<
       (index===0?82:68);
-     return pass?p.correctIndex:(p.correctIndex+1)%p.options.length;
+     return pass?p.correctIndex:(p.correctIndex+1)%(round.kind==='chain'?round.lanes:p.options.length);
     });
     const result=gate===10?boss10MiniAnswer(next,id,round.round,answers,
       state.startedAt+at,0):
