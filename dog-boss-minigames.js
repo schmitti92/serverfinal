@@ -281,11 +281,39 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
  if(round.kind==='reaction')return {...base,
   zoneRadius:rawVersion>=9?Math.round((.061-d.tier*.0027)*1000)/1000:
    Math.round((.12-d.tier*.005)*1000)/1000};
+ if(round.kind==='target'&&rawVersion>=10){
+  if(!Array.isArray(round.puzzles)||round.puzzles.length!==10)return null;
+  const size=d.tier<=3?4:d.tier<=6?6:8;
+  const puzzles=round.puzzles.map((p,step)=>{
+   const mode=p?.mode;
+   if(!['color','symbol','both'].includes(mode)||
+     !DOG_TARGET_COLORS.includes(p.targetColor)||
+     !DOG_TARGET_SYMBOLS.includes(p.targetSymbol)||
+     !Array.isArray(p.options)||p.options.length!==size)return null;
+   if((d.tier>=4&&mode!=='both')||
+     (d.tier<=3&&mode!==(step%2?'symbol':'color')))return null;
+   const options=p.options.map(o=>({color:o?.color,symbol:o?.symbol}));
+   if(options.some(o=>!DOG_TARGET_COLORS.includes(o.color)||
+      !DOG_TARGET_SYMBOLS.includes(o.symbol)))return null;
+   const matches=options.map(o=>mode==='color'?o.color===p.targetColor:
+    mode==='symbol'?o.symbol===p.targetSymbol:
+     o.color===p.targetColor&&o.symbol===p.targetSymbol);
+   if(matches.filter(Boolean).length!==1||
+     new Set(options.map(o=>o.color+'|'+o.symbol)).size!==size)return null;
+   return {mode,targetColor:p.targetColor,targetSymbol:p.targetSymbol,
+    options,correctIndex:matches.indexOf(true),
+    prompt:mode==='color'?'TRIFF '+DOG_TARGET_LABELS.colors[p.targetColor].toUpperCase()+'!':
+     mode==='symbol'?'TRIFF '+DOG_TARGET_LABELS.symbols[p.targetSymbol].toUpperCase()+'!':
+      'TRIFF '+DOG_TARGET_LABELS.colors[p.targetColor].toUpperCase()+' + '+
+       DOG_TARGET_LABELS.symbols[p.targetSymbol].toUpperCase()+'!'};
+  });
+  return puzzles.some(p=>!p)?null:{...base,maxSteps:10,puzzles};
+ }
  return {...base,lanes:int(round.lanes,3,5,3),
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8,9].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -295,7 +323,8 @@ export function dogNormalizeMiniGames(raw){
    raw.version===5?DOG_ENDGAME_WINDOWS:
    raw.version===6?DOG_EXTENDED_ENDGAME_WINDOWS:
     raw.version===7?DOG_SHOW_ENDGAME_WINDOWS:
-     raw.version>=8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
+     raw.version>=10?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
+      raw.version>=8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
  const rounds=raw.rounds.map((round,i)=>{
   if(!DOG_MINIGAME_KINDS.includes(round?.kind)||round.round!==i||
    (raw.version>=3&&round.kind!==DOG_EXCHANGE_ORDER[i])||
@@ -364,7 +393,7 @@ export function dogPublicMiniGames(raw,uid){
  return {version:games.version,gate:games.gate,
   rounds:games.rounds.map(round=>{
    if(games.version===1){const {correctIndex,...publicFields}=round;return publicFields;}
-   if(round.kind==='math')return {...round,
+   if(round.kind==='math'||(games.version>=10&&round.kind==='target'))return {...round,
     puzzles:round.puzzles.map(({correctIndex,...p})=>p)};
    return {...round};
   }),
@@ -496,7 +525,7 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null)
  });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
- return {version:games.version,durationMs:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
+ return {version:games.version,durationMs:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
   shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
   cumulativeExtraDamage:typeof heroBaseDamage==='function'?
    earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
