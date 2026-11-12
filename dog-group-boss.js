@@ -13,7 +13,7 @@ import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDev
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_GROUP_BOSS_GATES=Object.freeze([20,30,40,50,60,70,80,90,100]);
 export const DOG_GROUP_BOSS_NAMES=Object.freeze({
@@ -74,6 +74,8 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
    groupBossDamagePotential(gate,boss.roster,[],null),Number(exchange?.cumulativeExtraDamage)||0);
+ const cinematicVitals=dogMiniCinematicVitals(bossLiveHp,groupHealth,
+  confirmedStrikes,elapsed,bossMaxHp);
  return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   isMember:members.some(m=>m.uid===uid),teamReady:members.length===3,
   eligible:eligible(gate,progress,uid),members,
@@ -82,7 +84,8 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&!won,
   ...boss,...(skipCooldown?{ready:[],cooldownUntil:0}:{}),
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
-    ...(exchange?{exchange:{...exchange,strikes:confirmedStrikes}}:{})},
+    ...(exchange?{exchange:{...exchange,strikes:confirmedStrikes,
+      ...cinematicVitals}}:{})},
   phase:won?'victory':skipCooldown?'waiting':boss.phase,won,
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
   forgeLevel:Math.min(10,gate/10+1),
