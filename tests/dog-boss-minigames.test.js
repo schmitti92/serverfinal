@@ -208,6 +208,16 @@ test('M-04: reaction batches reject fabricated timing, excessive delay and dupli
  assert.throws(()=>play([1],[start+round.endMs],start+round.endMs+100),/BAD_TIMESTAMP/);
  assert.throws(()=>play([1],[s],start+round.endMs+2000),/TOO_LATE/);
 });
+test('M-04: an early partial reaction batch is still valid when flushed at round end',()=>{
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const round=games.rounds.find(r=>r.kind==='reaction');
+ const t=start+round.startMs+200;
+ const recv=start+round.endMs+200;
+ const accepted=dogSubmitMiniAnswer(games,roster,'a',round.round,[1],
+  recv+100,start,0,[t],recv);
+ assert.equal(accepted.games.answers.a[round.round].attempts.length,1);
+ assert.equal(accepted.games.answers.a[round.round].attempts[0].tappedAt,t);
+});
 test('M-04: partial reaction batches report only confirmed scores and legacy single taps remain valid',()=>{
  const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
  const round=games.rounds.find(r=>r.kind==='reaction'),t=start+round.startMs+1200;

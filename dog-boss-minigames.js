@@ -736,7 +736,10 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
       tapAt[0]<startedAt+round.startMs||
       tapAt[tapAt.length-1]>=startedAt+round.endMs||
       tapAt[tapAt.length-1]>receivedAt+150||
-      receivedAt-tapAt[tapAt.length-1]>2000||
+      // If fewer than three taps were made, the batch is sent at round end.
+      // Preserve those genuine early inputs, but require receipt in the round-end grace.
+      (receivedElapsed<round.endMs&&
+       receivedAt-tapAt[tapAt.length-1]>2000)||
       tapAt.some((stamp,i)=>i>0&&stamp-tapAt[i-1]<420))
     throw Error('DOG_MINIGAME_BAD_TIMESTAMP');
   }
