@@ -340,6 +340,19 @@ function fixture(){
 async function completeBoss10ApiRound(f,index,users){
  const key=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
  const round=f.docs.get(key).boss10.miniGames.rounds[index];
+ if(round.kind==='target'&&Array.isArray(round.puzzles)){
+  const at=round.endMs-100;
+  f.advance(now+at-f.time());
+  for(const token of users){
+   const result=await f.call('POST','/api/dog/gates/boss10/minigame',{
+    requestId:'ten-target-'+index+'-'+token+'-unique',
+    round:index,step:0,answer:round.puzzles.map(p=>p.correctIndex)
+   },token);
+   assert.equal(result.statusCode,200,'ten color-symbol targets');
+   assert.equal(result.body.result.correctCount,10);
+  }
+  return;
+ }
  for(let step=0;step<round.maxSteps;step++){
   let at,answer;
   if(round.kind==='math'){
