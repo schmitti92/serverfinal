@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dogHeroHp,dogGroupBossHp} from '../dog-balance.js';
-import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniExchangeView,dogMiniConfirmedStrikes,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
+import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniExchangeView,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
 import {boss10View,boss10DamagePotential} from '../dog-boss10.js';
 import {groupBossView,groupBossDamagePotential} from '../dog-group-boss.js';
 
@@ -205,4 +205,30 @@ test('a personally perfect dodge yields a block popup only for that player',()=>
  assert.ok(events[1].amount>0);
  assert.ok(events[2].amount>0);
  assert.equal(events[1].blocked,false);
+});
+
+test('cinematic visible HP stays full until each impact and drops by that exact amount',()=>{
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const max=dogGroupBossHp(10),base=boss10DamagePotential(roster,[],null);
+ const perHero=m=>boss10DamagePotential([m],[],null);
+ const firstEnd=games.rounds[0].endMs;
+ const hits=dogMiniConfirmedStrikes(games,roster,firstEnd,max,base,perHero,hp);
+ const after=dogMiniBossLiveHp(games,roster,firstEnd,max,base,0);
+ const health=dogMiniGroupHealth(games,roster,firstEnd,hp);
+ assert.equal(dogMiniCinematicVitals(after,health,hits,firstEnd,max).displayBossHp,max);
+ const firstHit=hits[0];
+ const visible=dogMiniCinematicVitals(after,health,hits,firstHit.atMs,max);
+ assert.equal(visible.displayBossHp,max-firstHit.amount);
+ assert.equal(dogMiniCinematicVitals(after,health,hits,hits.at(-1).atMs,max).displayBossHp,after);
+ assert.equal(visible.displayTeamHealth.hp,health.hp,'offensive hits do not alter hero LP');
+ const dodge=games.rounds[1];
+ const defenseHits=dogMiniConfirmedStrikes(games,roster,dodge.endMs,max,base,perHero,hp)
+  .filter(x=>x.round===1);
+ const afterDefense=dogMiniGroupHealth(games,roster,dodge.endMs,hp);
+ const displayBefore=dogMiniCinematicVitals(after,afterDefense,defenseHits,dodge.endMs,max);
+ assert.equal(displayBefore.displayTeamHealth.hp,health.hp,
+  'defense HP is only subtracted at each targeted boss strike');
+ const last=dogMiniCinematicVitals(after,afterDefense,defenseHits,defenseHits.at(-1).atMs,max);
+ assert.equal(last.displayTeamHealth.hp,afterDefense.hp);
+ assert.deepEqual(last.displayTeamHealth.heroes.map(x=>x.hp),afterDefense.heroes.map(x=>x.hp));
 });
