@@ -4,6 +4,8 @@ import {dogGateProgress,dogGateMapView,dogGateFight,installDogGatesApi,
  DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,DOG_GATE_RECEIPTS_COLLECTION} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
+import {boss10View} from '../dog-boss10.js';
+import {groupBossView} from '../dog-group-boss.js';
 
 function fixture(){
  const docs=new Map(),routes=new Map(),writes=[];
@@ -264,4 +266,35 @@ test('Map with no expired shared boss has no additional Firestore writes',async(
  const res=await f.call('GET','/api/dog/gates/map',{},'a');
  assert.equal(res.statusCode,200);
  assert.equal(f.writes.length,before);
+});
+
+
+test('Three expedition hero appearances are saved per player without changing combat balance',async()=>{
+ const f=fixture();
+ for(const token of ['a','b','c'])
+  assert.equal((await f.call('POST','/api/dog/gates/join',{},token)).statusCode,200);
+ const initialWrites=f.writes.length;
+ const choice=await f.call('POST','/api/dog/gates/hero',{heroClass:'waechter'},'a');
+ assert.equal(choice.statusCode,200);
+ assert.equal(choice.body.members[0].heroClass,'waechter');
+ assert.equal(choice.body.members[1].heroClass,'magierin');
+ assert.equal(choice.body.members[2].heroClass,'waechter');
+ assert.equal(f.writes.length,initialWrites+1,'only one new write for a selection');
+ const repeated=await f.call('POST','/api/dog/gates/hero',{heroClass:'waechter'},'a');
+ assert.equal(repeated.statusCode,200);
+ assert.equal(f.writes.length,initialWrites+1,'repeating the same selection makes no write');
+ const fromB=await f.call('POST','/api/dog/gates/hero',{heroClass:'krieger'},'b');
+ assert.equal(fromB.statusCode,200);
+ assert.deepEqual(fromB.body.members.map(x=>x.heroClass),['waechter','krieger','waechter']);
+ const outsider=await f.call('POST','/api/dog/gates/hero',{heroClass:'magierin'},'d');
+ assert.equal(outsider.statusCode,403);
+ const invalid=await f.call('POST','/api/dog/gates/hero',{heroClass:'dragon'},'a');
+ assert.equal(invalid.statusCode,400);
+ const team=f.docs.get(DOG_BOSS_TEAM_COLLECTION+'/'+DOG_BOSS_TEAM_ID);
+ assert.deepEqual(team.heroClasses,{'hero-a':'waechter','hero-b':'krieger'});
+ const at=f.now();
+ assert.deepEqual(boss10View(team,null,'hero-a',at).members.map(x=>x.heroClass),
+  ['waechter','krieger','waechter']);
+ assert.deepEqual(groupBossView(20,team,null,'hero-a',at).members.map(x=>x.heroClass),
+  ['waechter','krieger','waechter']);
 });
