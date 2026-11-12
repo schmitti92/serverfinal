@@ -4,7 +4,7 @@ import {dogChestOffer,dogChestContents} from './dog-balance.js';
 import {DOG_RESOURCES,dogInventory} from './dog-materials.js';
 import {dogHero,forgeQuote,forgeUpgrade} from './dog-forge.js';
 export const TARGET_ITEMS=['weapon','armor','attack_power','vitality'];
-export function simulate(seed=1,maxMatches=200000){
+export function simulate(seed=1,maxMatches=3000){
  let state=seed>>>0;const rand=n=>{state=(Math.imul(1664525,state)+1013904223)>>>0;return state%n;};
  let resources={...dogInventory().resources},levels={...dogHero().levels};
  let matches=0,failures=0;const chapters=[];
@@ -31,7 +31,8 @@ export function simulate(seed=1,maxMatches=200000){
    failures:failures-oldFailures,completed});
   if(!completed)break;
  }
- return {seed,matches,failures,chapters,completed:chapters.length===10&&chapters[9].completed};
+ return {seed,matches,failures,chapters,completed:chapters.length===10&&chapters[9].completed,
+  blocked:chapters.some(ch=>!ch.completed),maxMatches};
 }
 /** Independent personal inventories; group gate unlock is shared, not a material pool. */
 export function trioSample(trials=50,minutesPerDeal=15){
@@ -40,7 +41,7 @@ export function trioSample(trials=50,minutesPerDeal=15){
   simulate(1+hero*100000+i)));
  return Array.from({length:10},(_,chapter)=>{
   const rows=Array.from({length:trials},(_,i)=>{
-   const counts=heroes.map(runs=>runs[i].chapters[chapter]?.totalMatches);
+   const counts=heroes.map(runs=>runs[i].chapters[chapter]?.completed?runs[i].chapters[chapter].totalMatches:null);
    return counts.every(Number.isFinite)?Math.max(...counts):null;
   }).filter(Number.isFinite).sort((a,b)=>a-b);
   const q=p=>rows[Math.floor((rows.length-1)*p)]??null;
@@ -59,10 +60,10 @@ export function trioSample(trials=50,minutesPerDeal=15){
 export function sample(trials=50){
  const runs=Array.from({length:trials},(_,i)=>simulate(i+1));
  return Array.from({length:10},(_,i)=>{
-  const values=runs.map(r=>r.chapters[i]?.totalMatches).filter(Number.isFinite).sort((a,b)=>a-b);
+  const values=runs.map(r=>r.chapters[i]?.completed?r.chapters[i].totalMatches:null).filter(Number.isFinite).sort((a,b)=>a-b);
   const q=p=>values[Math.floor((values.length-1)*p)]??null;
   return {boss:(i+1)*10,samples:values.length,p10:q(.1),median:q(.5),p90:q(.9)};
  });
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)
- console.log(JSON.stringify({assumptions:'One player, one stage-dependent chest per Deal match, weapon/armor/attack_power/vitality to forge chapter cap, boss wins assumed, no exchange or playtime',chapters:sample(Number(process.argv[2]||50)),trio:trioSample(Number(process.argv[2]||50))},null,2));
+ console.log(JSON.stringify({assumptions:'Strict four-item level-cap target, no rarity exchange, bounded at 3000 matches per trial; incomplete chapters have no time estimate. No live balance change.',chapters:sample(Number(process.argv[2]||50)),trio:trioSample(Number(process.argv[2]||50))},null,2));
