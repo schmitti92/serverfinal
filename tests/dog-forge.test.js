@@ -63,8 +63,8 @@ test('Forge is independently expandable: 2 equipment + 5 attack + 6 defense item
  assert.equal(DOG_FORGE_ITEMS.filter(i=>i.group==='equipment').length,2);
  assert.equal(DOG_FORGE_ITEMS.filter(i=>i.group==='attack').length,5);
  assert.equal(DOG_FORGE_ITEMS.filter(i=>i.group==='defense').length,6);
- assert.equal(DOG_FORGE_ITEMS.find(i=>i.id==='weapon').maxLevel,20);
- assert.equal(DOG_FORGE_ITEMS.find(i=>i.id==='armor').maxLevel,20);
+ assert.equal(DOG_FORGE_ITEMS.find(i=>i.id==='weapon').maxLevel,50);
+ assert.equal(DOG_FORGE_ITEMS.find(i=>i.id==='armor').maxLevel,50);
  assert.equal(DOG_FORGE_ITEMS.filter(i=>i.group!=='equipment').every(i=>i.maxLevel===50),true);
  assert.equal(dogHero(null).levels.weapon,1);
  assert.equal(dogHero(null).levels.armor,1);
