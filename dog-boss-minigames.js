@@ -603,6 +603,53 @@ export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage
  return Math.max(1,maxHp-Math.min(maxHp-1,guaranteed));
 }
 
+/** M-06: all five games contribute an equal one-fifth of the performance
+ * score. Three-hit defense, eight-question math and ten-hit offense are each
+ * normalized FIRST. This is informational: existing damage, shields, health,
+ * win chance and rewards still use their deliberately different combat rules.
+ * Pending rounds reveal neither a tentative result nor a final percentage.
+ * Pure projection from the same already-verified attempts, no extra reads.
+ */
+function dogFiveGameEvaluation(games,players,stages){
+ if(games.version<12||games.rounds.length!==5||!players.length)return null;
+ const percent=(correct,max)=>max>0?Math.round(1000*Math.max(0,
+  Math.min(max,correct))/max)/10:0;
+ const rounds=games.rounds.map((round,i)=>{
+  const stage=stages[i],completed=stage?.completed===true;
+  const max=round.maxSteps*players.length;
+  if(!completed)return {round:i,kind:round.kind,completed:false,
+   weightPercent:20,correct:null,max,percent:null,players:null};
+  const persons=players.map(hero=>{
+   const result=stage.playerResults?.find(item=>item.uid===hero.uid);
+   // A fallen hero cannot receive phantom scores for unplayed challenges.
+   const correct=result?.fallen?0:Math.max(0,Math.min(round.maxSteps,
+    Number(result?.correct)||0));
+   return {uid:hero.uid,correct,max:round.maxSteps,
+    percent:percent(correct,round.maxSteps),
+    ...(result?.fallen?{fallen:true}:{})};
+  });
+  const correct=persons.reduce((sum,x)=>sum+x.correct,0);
+  return {round:i,kind:round.kind,completed:true,
+   weightPercent:20,correct,max,percent:percent(correct,max),players:persons};
+ });
+ const completedRounds=rounds.filter(r=>r.completed).length;
+ const ready=completedRounds===5;
+ const personal=ready?players.map(hero=>{
+  const records=rounds.map(r=>r.players.find(p=>p.uid===hero.uid));
+  const accuracy=records.reduce((sum,record)=>sum+record.correct/record.max,0)/5;
+  const correct=records.reduce((sum,record)=>sum+record.correct,0);
+  const max=records.reduce((sum,record)=>sum+record.max,0);
+  const perfect=records.every(record=>record.correct===record.max);
+  return {uid:hero.uid,correct,max,
+   percent:perfect?100:Math.min(99.9,percent(accuracy,1)),perfect};
+ }):null;
+ const perfect=ready&&personal.every(p=>p.perfect);
+ const teamAccuracy=ready?rounds.reduce((sum,r)=>sum+r.correct/r.max,0)/5:0;
+ return {weighting:'equal',weightPercentPerGame:20,
+  games:5,completedRounds,rounds,
+  teamPercent:ready?(perfect?100:Math.min(99.9,percent(teamAccuracy,1))):null,
+  perfect:ready?perfect:null,players:personal};
+}
 export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,heroMaximum=null){
  const games=dogNormalizeMiniGames(raw);
  if(!games||games.version<3)return null;
@@ -676,12 +723,14 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,
    bonusPercent:resolved&&!defensive&&max?
     Math.round(100*bonusWeight*correct/max*10)/10:0,
    bonusDamage,shield}; });
+ const evaluation=dogFiveGameEvaluation(games,participants,stages);
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
  return {version:games.version,durationMs:games.version>=14?DOG_CHAIN20_DURATION_MS:games.version>=12?DOG_FINAL5_DURATION_MS:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
   shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
   cumulativeExtraDamage:typeof heroBaseDamage==='function'?
    earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
+  ...(evaluation?{evaluation}:{}),
   stages};
 }
 export function dogMiniDodgePenalty(raw,uid){
