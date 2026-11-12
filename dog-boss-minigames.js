@@ -783,3 +783,26 @@ export function dogMiniConfirmedStrikes(raw,roster=[],elapsed=0,
  }
  return hits;
 }
+
+
+/** View-only HP progression: completed-stage losses are held until the exact
+ * corresponding target's server-clock hit time. The authoritative result and
+ * underlying resolved HP remain untouched. Used by both boss frontends.
+ */
+export function dogMiniCinematicVitals(bossHp,teamHealth,strikes=[],elapsed=0,bossMaxHp=1){
+ const completed=Array.isArray(strikes)?strikes:[];
+ const pending=completed.filter(s=>Number(s.atMs)>elapsed&&Number(s.amount)>0);
+ const bossDue=pending.filter(s=>s.kind==='hero-strike')
+  .reduce((sum,s)=>sum+Number(s.amount),0);
+ const displayBossHp=Math.max(0,Math.min(Math.max(1,Number(bossMaxHp)||1),
+  Math.round(Number(bossHp)||0)+bossDue));
+ const heroes=(teamHealth?.heroes||[]).map(hero=>{
+  const pendingLoss=pending.filter(s=>s.kind==='boss-strike'&&s.uid===hero.uid)
+   .reduce((sum,s)=>sum+Number(s.amount),0);
+  return {...hero,hp:Math.min(hero.maxHp,Math.max(0,hero.hp+pendingLoss))};
+ });
+ const hp=heroes.reduce((sum,h)=>sum+h.hp,0);
+ return {displayBossHp,displayTeamHealth:{
+  ...teamHealth,heroes,hp,lost:Math.max(0,(teamHealth?.maxHp||0)-hp)
+ }};
+}
