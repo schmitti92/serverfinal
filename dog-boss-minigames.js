@@ -22,7 +22,7 @@ export const DOG_CINEMATIC_WINDOWS=Object.freeze([
  Object.freeze({startMs:25000,endMs:33000}),
  Object.freeze({startMs:37500,endMs:45500})
 ]);
-/* v5: 60s, v6: 64s, v7: 92s, v8: 99s, v9: precise narrow Konter.
+/* v5: 60s, v6: 64s, v7: 92s, v8: 99s, v9: precise narrow Konter, v10: color/symbol sprint 101s.
  * All persisted earlier versions retain their original windows.
  */
 export const DOG_ENDGAME_WINDOWS=Object.freeze([
@@ -56,7 +56,56 @@ export const DOG_SLOW_DODGE_ENDGAME_WINDOWS=Object.freeze([
  Object.freeze({startMs:55000,endMs:63000}),
  Object.freeze({startMs:77000,endMs:85000})
 ]);
+export const DOG_COLOR_TARGET_ENDGAME_WINDOWS=Object.freeze([
+ Object.freeze({startMs:0,endMs:12000}),
+ Object.freeze({startMs:26000,endMs:41000}),
+ Object.freeze({startMs:55000,endMs:65000}),
+ Object.freeze({startMs:79000,endMs:87000})
+]);
 const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
+export const DOG_TARGET_COLORS=Object.freeze(['red','blue','green','yellow','purple','orange','cyan','pink']);
+export const DOG_TARGET_SYMBOLS=Object.freeze(['star','shield','flame','diamond','snowflake','moon','crown','bolt']);
+const DOG_TARGET_LABELS=Object.freeze({
+ colors:Object.freeze({red:'Rot',blue:'Blau',green:'Grün',yellow:'Gelb',
+  purple:'Lila',orange:'Orange',cyan:'Türkis',pink:'Pink'}),
+ symbols:Object.freeze({star:'Stern',shield:'Schild',flame:'Flamme',
+  diamond:'Diamant',snowflake:'Schneeflocke',moon:'Mond',crown:'Krone',bolt:'Blitz'})
+});
+const shuffle=(values,rand)=>{
+ const arr=[...values];for(let i=arr.length-1;i>0;i--){
+  const j=draw(rand,i+1);[arr[i],arr[j]]=[arr[j],arr[i]];
+ }return arr;
+};
+const colorPuzzle=(tier,rand,step)=>{
+ const mode=tier<=3?(step%2?'symbol':'color'):'both';
+ const count=tier<=3?4:tier<=6?6:8;
+ const targetColor=DOG_TARGET_COLORS[draw(rand,DOG_TARGET_COLORS.length)];
+ const targetSymbol=DOG_TARGET_SYMBOLS[draw(rand,DOG_TARGET_SYMBOLS.length)];
+ let options;
+ if(mode==='color'){
+  options=shuffle([targetColor,...shuffle(DOG_TARGET_COLORS.filter(c=>c!==targetColor),rand).slice(0,count-1)],rand)
+   .map(color=>({color,symbol:DOG_TARGET_SYMBOLS[draw(rand,DOG_TARGET_SYMBOLS.length)]}));
+ }else if(mode==='symbol'){
+  options=shuffle([targetSymbol,...shuffle(DOG_TARGET_SYMBOLS.filter(c=>c!==targetSymbol),rand).slice(0,count-1)],rand)
+   .map(symbol=>({color:DOG_TARGET_COLORS[draw(rand,DOG_TARGET_COLORS.length)],symbol}));
+ }else{
+  const sameColor=shuffle(DOG_TARGET_SYMBOLS.filter(x=>x!==targetSymbol),rand)[0];
+  const sameSymbol=shuffle(DOG_TARGET_COLORS.filter(x=>x!==targetColor),rand)[0];
+  const all=DOG_TARGET_COLORS.flatMap(color=>DOG_TARGET_SYMBOLS.map(symbol=>({color,symbol})));
+  const used=new Set([targetColor+'-'+targetSymbol,targetColor+'-'+sameColor,sameSymbol+'-'+targetSymbol]);
+  const wrong=shuffle(all.filter(o=>!used.has(o.color+'-'+o.symbol)),rand);
+  options=shuffle([{color:targetColor,symbol:targetSymbol},
+   {color:targetColor,symbol:sameColor},{color:sameSymbol,symbol:targetSymbol},
+   ...wrong.slice(0,count-3)],rand);
+ }
+ const correctIndex=options.findIndex(o=>mode==='color'?o.color===targetColor:
+  mode==='symbol'?o.symbol===targetSymbol:o.color===targetColor&&o.symbol===targetSymbol);
+ return {mode,targetColor,targetSymbol,options,correctIndex,
+  prompt:mode==='color'?'TRIFF '+DOG_TARGET_LABELS.colors[targetColor].toUpperCase()+'!':
+   mode==='symbol'?'TRIFF '+DOG_TARGET_LABELS.symbols[targetSymbol].toUpperCase()+'!':
+    'TRIFF '+DOG_TARGET_LABELS.colors[targetColor].toUpperCase()+' + '+
+     DOG_TARGET_LABELS.symbols[targetSymbol].toUpperCase()+'!'};
+};
 const LEGACY_WINDOWS=[{startMs:3000,endMs:10000},
  {startMs:10000,endMs:17000},{startMs:17000,endMs:24000}];
 const TYPES={math:8,dodge:3,reaction:3,target:3};
@@ -127,7 +176,7 @@ const mathPuzzle=(difficulty,rand,step=0)=>{
  });
  return {question,options,correctIndex};
 };
-function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
+function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTarget=false}={}){
  const {startMs,endMs}=windows[round],d=dogMiniDifficulty(gate);
  const base={kind,round,startMs,endMs,difficulty:d.tier,
   maxSteps:TYPES[kind]};
@@ -147,6 +196,9 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
   return {...base,lanes:d.choices,attacks,
    hint:'Drei Einschläge! Weiche vor jedem Schlag in ein sicheres Feld aus.'};
  }
+ if(kind==='target'&&colorTarget)return {...base,maxSteps:10,
+  puzzles:Array.from({length:10},(_,step)=>colorPuzzle(d.tier,rand,step)),
+  hint:'10 Sekunden · Bis zu zehn Farb-/Symbol-Treffer · Tippe so schnell du kannst!'};
  if(kind==='reaction')return {...base,
   zoneRadius:Math.round((.12-d.tier*.005)*1000)/1000,
   hint:'Triff dreimal die grüne Zone. Der Zeiger wird ständig schneller!'};
@@ -157,9 +209,9 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS){
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
   const endgame=exchange==='endgame',cinematic=exchange==='cinematic';
-  return {version:endgame?9:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>{
-   const item=createRound(kind,i,gate,rand,endgame?DOG_SLOW_DODGE_ENDGAME_WINDOWS:
-    cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS);
+  return {version:endgame?10:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>{
+   const item=createRound(kind,i,gate,rand,endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
+    cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS,{colorTarget:endgame&&kind==='target'});
    if(endgame&&kind==='reaction'){
     const tier=dogMiniDifficulty(gate).tier;
     return {...item,zoneRadius:Math.round((.061-tier*.0027)*1000)/1000,
