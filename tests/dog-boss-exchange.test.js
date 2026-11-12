@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,DOG_ENDGAME_WINDOWS,DOG_EXTENDED_ENDGAME_WINDOWS,DOG_SHOW_ENDGAME_WINDOWS,DOG_SLOW_DODGE_ENDGAME_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
+ DOG_EXCHANGE_WINDOWS,DOG_CINEMATIC_WINDOWS,DOG_ENDGAME_WINDOWS,DOG_EXTENDED_ENDGAME_WINDOWS,DOG_SHOW_ENDGAME_WINDOWS,DOG_SLOW_DODGE_ENDGAME_WINDOWS,DOG_COLOR_TARGET_ENDGAME_WINDOWS,dogCreateMiniGames,dogNormalizeMiniGames,
  dogPublicMiniGames,dogSubmitMiniAnswer,dogMiniTargetIndex,
  dogMiniReactionPosition,dogMiniTeamShield,dogMiniExchangeView,
  dogMiniBonus,dogMiniStrongRoundCount
@@ -54,7 +54,7 @@ function solveAll(start){
 }
 test('New encounter has four fixed phases and exactly four 2s exchanges in 40s',()=>{
  const games=make();
- assert.equal(DOG_BOSS10_DURATION_MS,99000);
+ assert.equal(DOG_BOSS10_DURATION_MS,101000);
  assert.equal(games.version,3);
  assert.deepEqual(games.rounds.map(r=>r.kind),names);
  assert.deepEqual(games.rounds.map(r=>[r.startMs,r.endMs]),
@@ -119,7 +119,7 @@ test('Shield is meaningful but does not outweigh the party equipment or leak dat
 test('50s cinematic encounters preserve all 4x8s tasks and add four 4.5s pauses',()=>{
  const cinema=dogCreateMiniGames(10,()=>0,{exchange:'cinematic'});
  const old=dogCreateMiniGames(10,()=>0,{exchange:true});
- assert.equal(DOG_BOSS10_DURATION_MS,99000);
+ assert.equal(DOG_BOSS10_DURATION_MS,101000);
  assert.equal(cinema.version,4);
  assert.equal(old.version,3);
  assert.deepEqual(cinema.rounds.map(x=>[x.startMs,x.endMs]),
@@ -178,18 +178,18 @@ test('50s cinematic shield penalties still affect combat without inventing final
   boss10DamagePotential(equipped,[],plan));
 });
 
-test('99s endgame: 12s maths, 15s dodge, two 8s games and four 14s cinematics',()=>{
+test('101s endgame: 12s maths, 15s dodge, 10s targets, 8s Konter and four 14s cinematics',()=>{
  const game=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
- assert.equal(DOG_BOSS10_DURATION_MS,99_000);
- assert.equal(game.version,9);
+ assert.equal(DOG_BOSS10_DURATION_MS,101_000);
+ assert.equal(game.version,10);
  assert.deepEqual(game.rounds.map(r=>[r.startMs,r.endMs]),
-  DOG_SLOW_DODGE_ENDGAME_WINDOWS.map(r=>[r.startMs,r.endMs]));
+  DOG_COLOR_TARGET_ENDGAME_WINDOWS.map(r=>[r.startMs,r.endMs]));
  assert.deepEqual(game.rounds.map(r=>r.kind),['math','dodge','target','reaction']);
- assert.deepEqual(game.rounds.map(r=>r.endMs-r.startMs),[12000,15000,8000,8000]);
+ assert.deepEqual(game.rounds.map(r=>r.endMs-r.startMs),[12000,15000,10000,8000]);
  assert.deepEqual(game.rounds.map((r,i)=>
-  (game.rounds[i+1]?.startMs??99_000)-r.endMs),[14000,14000,14000,14000]);
- assert.equal(dogNormalizeMiniGames(game).version,9);
- assert.equal(dogMiniExchangeView(game,roster,98_000).durationMs,99_000);
+  (game.rounds[i+1]?.startMs??101_000)-r.endMs),[14000,14000,14000,14000]);
+ assert.equal(dogNormalizeMiniGames(game).version,10);
+ assert.equal(dogMiniExchangeView(game,roster,100_000).durationMs,101_000);
  const dodge=game.rounds[1];
  for(const [index,attack] of dodge.attacks.entries()){
   assert.equal(attack.startMs,dodge.startMs+index*5000);
@@ -198,12 +198,13 @@ test('99s endgame: 12s maths, 15s dodge, two 8s games and four 14s cinematics',(
   assert.equal((index<2?dodge.attacks[index+1].startMs:dodge.endMs)-attack.impactMs,1700,
    '1.7s remains to play the full impact/recovery before the next hit');
  }
- // An existing v5, v6, v7 or v8 fight must retain its original schedule.
+ // Existing v5-v9 fights must retain their original schedule and scoring.
  for(const [version,windows,total] of [
   [5,DOG_ENDGAME_WINDOWS,60_000],
   [6,DOG_EXTENDED_ENDGAME_WINDOWS,64_000],
   [7,DOG_SHOW_ENDGAME_WINDOWS,92_000],
-  [8,DOG_SLOW_DODGE_ENDGAME_WINDOWS,99_000]]){
+  [8,DOG_SLOW_DODGE_ENDGAME_WINDOWS,99_000],
+  [9,DOG_SLOW_DODGE_ENDGAME_WINDOWS,99_000]]){
   const rounds=game.rounds.map((r,i)=>{
    const fixed=windows[i];
    return {...r,startMs:fixed.startMs,endMs:fixed.endMs,
@@ -222,10 +223,13 @@ test('99s endgame: 12s maths, 15s dodge, two 8s games and four 14s cinematics',(
 test('v9 narrow Konter stays on the actual tap, not the later server transaction',()=>{
  const game=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
  const reaction=game.rounds[3],start=now;
- assert.equal(game.version,9);
+ assert.equal(game.version,10);
  assert.ok(reaction.zoneRadius<.065&&reaction.zoneRadius>.05,
   'the green center is narrower than previous 20%+ hit width');
- const older={...game,version:8};
+ const older={...game,version:8,rounds:game.rounds.map((r,i)=>({
+   ...r,startMs:DOG_SLOW_DODGE_ENDGAME_WINDOWS[i].startMs,
+   endMs:DOG_SLOW_DODGE_ENDGAME_WINDOWS[i].endMs
+  }))};
  const oldRadius=dogNormalizeMiniGames(older).rounds[3].zoneRadius;
  assert.ok(reaction.zoneRadius<oldRadius*.6,'old v8 fights retain the wider target');
  let tap=-1;
