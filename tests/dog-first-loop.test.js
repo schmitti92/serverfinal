@@ -17,7 +17,9 @@ const now=1_800_000_000_000;
 const normals=[1,2,3,4,6,7,8,9];
 const team={members:[
  {uid:'hero-a',name:'Christoph'}, {uid:'hero-b',name:'David'},
- {uid:'hero-c',name:'Vanessa'}]};
+ {uid:'hero-c',name:'Vanessa'}],
+ heroClasses:{'hero-a':'krieger','hero-b':'magierin','hero-c':'waechter'},
+ heroLocks:{'hero-a':true,'hero-b':true,'hero-c':true}};
 const progress=()=>({people:Object.fromEntries(team.members.map(m=>
  [m.uid,{currentGate:10,normals,minis:[],lastAttemptAt:0}])),
  sharedBosses:[],updatedAt:0});
