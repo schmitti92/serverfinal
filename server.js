@@ -13,6 +13,7 @@ import { installDogGatesApi } from "./dog-gates.js";
 import { installDogDeveloperApi } from "./dog-developer.js";
 import { installDogBoss10Api } from "./dog-boss10.js";
 import { installDogGroupBossApi } from "./dog-group-boss.js";
+import { createDogBossPushHub } from "./dog-boss-push.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
 import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 import { installDogLivePilotApi,isLiveBotTeam,mirrorLiveBotVictory,
@@ -4372,6 +4373,7 @@ installDogLivePilotApi(app,{
  verifyProfile:profileStatsV8.identity,
  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
+let dogBossPush=null;
 const liveBotLogic={isLiveBotTeam,mirrorLiveBotVictory,readyWithLiveBots,
  advanceLiveBotFight,advanceAllLiveBotFights};
 installDogDeveloperApi(app,{
@@ -4384,11 +4386,13 @@ installDogGatesApi(app,{
   botLogic:liveBotLogic
 });
 installDogBoss10Api(app,{
+  notifyChange:(gate,actorUid)=>dogBossPush?.notify(gate,actorUid),
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
   botLogic:liveBotLogic
 });
 installDogGroupBossApi(app,{
+  notifyChange:(gate,actorUid)=>dogBossPush?.notify(gate,actorUid),
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
   botLogic:liveBotLogic
@@ -4918,6 +4922,10 @@ app.post("/room/:code/spin-colors", (req, res) => {
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+dogBossPush=createDogBossPushHub({
+ verifyProfile:profileStatsV8.identity,
+ getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+});
 // KreuzKunter: eigener WS-Pfad und eigene Firestore-Sammlung. Die vorhandenen
 // Spiele und ihre Root-WebSocket-Verbindungen bleiben unverändert.
 const kkOnline = createKreuzKunter({ verifyProfile:profileStatsV8.identity,recordStats:profileStatsV8.book,hubSeat:sharedLobby.kreuzSeat,getFirestore: () => {
@@ -5876,6 +5884,9 @@ function requireTurn(room, clientId, ws) {
 const eisstockOnline = installEisstockOnline(wss, app);
 const fallingOnline = installFallingOnline(app);
 wss.on("connection", (ws, req) => {
+  if(new URL(req.url || "/", "http://localhost").pathname === "/dog/updates"){
+    dogBossPush.attach(ws);return;
+  }
   if(new URL(req.url || "/", "http://localhost").pathname === "/falling") { fallingOnline(ws); return; }
   if(new URL(req.url || '/', 'http://localhost').pathname === '/eisstock'){
     eisstockOnline(ws);

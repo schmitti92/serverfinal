@@ -269,7 +269,7 @@ const HTTP_ERRORS={
 };
 /** Authenticated and idempotent API. Only a signed-in team member can
  * read or write the group's boss state, reactions, or reward. */
-export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
+export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null,notifyChange=null}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -299,27 +299,32 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
    let progress=progressSnap.exists?progressSnap.data():null;
    const tick=botLogic?.advanceLiveBotFight(gate,progress,team,uid,clock(),rand);
    if(tick?.changed){
-    progress=await db.runTransaction(async tx=>{
+    const committed=await db.runTransaction(async tx=>{
      const snapshot=await tx.get(progressRef);
      const latest=botLogic.advanceLiveBotFight(gate,
       snapshot.exists?snapshot.data():null,team,uid,clock(),rand);
      if(latest.changed)tx.set(progressRef,latest.progress);
-     return latest.progress;
+     return latest;
     });
+    progress=committed.progress;
+    if(committed.changed)try{notifyChange?.(gate,uid)}catch{}
    }
    const active=stateAt(dogGateProgress(progress),gate);
    if(active.phase==='fighting'&&active.endsAt&&clock()>=active.endsAt){
     // Reconnect settlement is one Firestore transaction, never one roll
     // per reconnecting browser. The first successful commit persists it.
-    progress=await db.runTransaction(async tx=>{
+    const settled=await db.runTransaction(async tx=>{
      const fresh=await tx.get(progressRef);
      const current=fresh.exists?fresh.data():null;
      const state=stateAt(dogGateProgress(current),gate);
-     if(state.phase!=='fighting'||clock()<state.endsAt)return current;
+     if(state.phase!=='fighting'||clock()<state.endsAt)
+      return {progress:current,changed:false};
      const updated=groupBossFinish(gate,current,clock(),rand).progress;
      tx.set(progressRef,updated);
-     return updated;
+     return {progress:updated,changed:true};
     });
+    progress=settled.progress;
+    if(settled.changed)try{notifyChange?.(gate,uid)}catch{}
    }
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...groupBossView(gate,team,progress,uid,clock())});
@@ -396,9 +401,11 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
      tx.create(receiptRef,{uid,gate,command,requestId,
       ...(command==='minigame'?{round,answer,step,tapAt}:{}),
       result,createdAt:now});
-     return {view:groupBossView(gate,team,next,uid,now),result,replayed:false};
+     return {view:groupBossView(gate,team,next,uid,now),result,replayed:false,_changed:!unchanged};
     });
-    res.set('Cache-Control','no-store');return res.json({ok:true,...response});
+    if(response._changed)try{notifyChange?.(gate,uid)}catch{}
+    const {_changed,...publicResponse}=response;
+    res.set('Cache-Control','no-store');return res.json({ok:true,...publicResponse});
    }catch(e){return error(res,e);}
   });
  }

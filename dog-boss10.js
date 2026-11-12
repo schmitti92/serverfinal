@@ -266,7 +266,7 @@ const ERRORS={LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,
  DOG_MINIGAME_STEP_ORDER:409,DOG_MINIGAME_TOO_FAST:429,DOG_MINIGAME_TOO_LATE:409,
  DOG_BOSS10_USE_MINIGAMES:409,
  NOT_DOG_TEAM_MEMBER:403,DOG_BOSS10_RECEIPT_CONFLICT:409,DOG_BOSS10_RANDOM_INVALID:500};
-export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
+export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null,notifyChange=null}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -292,13 +292,15 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
     throw Error('NOT_DOG_TEAM_MEMBER');
    const tick=botLogic?.advanceLiveBotFight(10,progress,team,uid,clock(),rand);
    if(tick?.changed){
-    progress=await db.runTransaction(async tx=>{
+    const committed=await db.runTransaction(async tx=>{
      const snapshot=await tx.get(progressRef);
      const latest=botLogic.advanceLiveBotFight(10,snapshot.exists?snapshot.data():null,
       team,uid,clock(),rand);
      if(latest.changed)tx.set(progressRef,latest.progress);
-     return latest.progress;
+     return latest;
     });
+    progress=committed.progress;
+    if(committed.changed)try{notifyChange?.(10,uid)}catch{}
    }
    const existing=boss10State(dogGateProgress(progress).boss10);
    // Reconcile only after the 30-second deadline. If all three browsers
@@ -306,16 +308,18 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
    // A transaction re-reads the authoritative state before any write, so
    // concurrent reconnects can never roll or award the shared victory twice.
    if(existing.phase==='fighting'&&existing.endsAt>0&&clock()>=existing.endsAt){
-    progress=await db.runTransaction(async tx=>{
+    const settled=await db.runTransaction(async tx=>{
      const currentSnap=await tx.get(progressRef);
      const current=currentSnap.exists?currentSnap.data():null;
      const battle=boss10State(dogGateProgress(current).boss10);
      if(battle.phase!=='fighting'||battle.endsAt===0||clock()<battle.endsAt)
-      return current;
+      return {progress:current,changed:false};
      const updated=boss10Finish(current,clock(),rand).progress;
      tx.set(progressRef,updated);
-     return updated;
+     return {progress:updated,changed:true};
     });
+    progress=settled.progress;
+    if(settled.changed)try{notifyChange?.(10,uid)}catch{}
    }
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...boss10View(team,progress,uid,clock())});
@@ -392,9 +396,11 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
      tx.create(receiptRef,{uid,command,requestId,
       ...(command==='minigame'?{round,answer:choice,step,tapAt}:{}),
       createdAt:now,result});
-     return {view:boss10View(team,next,uid,now),result,replayed:false};
+     return {view:boss10View(team,next,uid,now),result,replayed:false,_changed:!unchanged};
     });
-    res.set('Cache-Control','no-store');return res.json({ok:true,...answer});
+    if(answer._changed)try{notifyChange?.(10,uid)}catch{}
+    const {_changed,...publicResponse}=answer;
+    res.set('Cache-Control','no-store');return res.json({ok:true,...publicResponse});
    }catch(e){return fail(res,e);}
   });
  }
