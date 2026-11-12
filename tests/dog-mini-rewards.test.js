@@ -94,7 +94,8 @@ function fixture(firstRewardRoll=0,heroOverrides={}){
   uid:users[token],name:'Hero '+token}:null,
   getFirestore:()=>db,rand,clock:()=>time});
  docs.set(DOG_BOSS_TEAM_COLLECTION+'/'+DOG_BOSS_TEAM_ID,
-  {members:[{uid,name:'Hero A'},{uid:'hero-mini-b',name:'Hero B'}]});
+  {members:[{uid,name:'Hero A'},{uid:'hero-mini-b',name:'Hero B'}],
+   heroClasses:{[uid]:'krieger','hero-mini-b':'krieger'},heroLocks:{[uid]:true,'hero-mini-b':true}});
  docs.set(DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID,
   {people:{[uid]:{currentGate:5,highestGate:5,normals:[1,2,3,4],minis:[],lastAttemptAt:0}}});
  docs.set(DOG_HERO_COLLECTION+'/'+uid,{levels:{
