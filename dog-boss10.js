@@ -106,7 +106,7 @@ const startEncounter=(progress,team,ready,heroByUid,now,rand=randomInt)=>{
  return {...progress,boss10:{...boss10State(progress.boss10),
   ready:[...ready],phase:'fighting',roster,startedAt:now,
   endsAt:now+DOG_BOSS10_DURATION_MS,chancePercent,reactions:[],
-  miniGames:dogCreateMiniGames(10,rand,{exchange:'endgame'})},updatedAt:now};
+  miniGames:dogCreateMiniGames(10,rand,{exchange:'individual'})},updatedAt:now};
 };
 export function boss10Ready(progressRaw,teamRaw,uid,heroByUid={},now=Date.now(),rand=randomInt){
  const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
