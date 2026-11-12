@@ -33,6 +33,26 @@ export function simulate(seed=1,maxMatches=200000){
  }
  return {seed,matches,failures,chapters,completed:chapters.length===10&&chapters[9].completed};
 }
+/** Independent personal inventories; group gate unlock is shared, not a material pool. */
+export function trioSample(trials=50,minutesPerDeal=15){
+ if(!Number.isFinite(minutesPerDeal)||minutesPerDeal<=0)throw Error('INVALID_DEAL_DURATION');
+ const heroes=Array.from({length:3},(_,hero)=>Array.from({length:trials},(_,i)=>
+  simulate(1+hero*100000+i)));
+ return Array.from({length:10},(_,chapter)=>{
+  const rows=Array.from({length:trials},(_,i)=>{
+   const counts=heroes.map(runs=>runs[i].chapters[chapter]?.totalMatches);
+   return counts.every(Number.isFinite)?Math.max(...counts):null;
+  }).filter(Number.isFinite).sort((a,b)=>a-b);
+  const q=p=>rows[Math.floor((rows.length-1)*p)]??null;
+  const median=q(.5);
+  return {boss:(chapter+1)*10,samples:rows.length,
+   trioTotalDealsMedian:median===null?null:heroes.reduce((sum,runs)=>
+    sum+runs[Math.floor(trials/2)].chapters[chapter]?.totalMatches,0),
+   slowestHeroDealsP10:q(.1),slowestHeroDealsMedian:median,slowestHeroDealsP90:q(.9),
+   sequentialHoursMedian:median===null?null:Math.round(median*3*minutesPerDeal/60),
+   parallelHoursMedian:median===null?null:Math.round(median*minutesPerDeal/60)};
+ });
+}
 export function sample(trials=50){
  const runs=Array.from({length:trials},(_,i)=>simulate(i+1));
  return Array.from({length:10},(_,i)=>{
@@ -42,4 +62,4 @@ export function sample(trials=50){
  });
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)
- console.log(JSON.stringify({assumptions:'One player, one stage-dependent chest per Deal match, weapon/armor/attack_power/vitality to forge chapter cap, boss wins assumed, no exchange or playtime',chapters:sample(Number(process.argv[2]||50))},null,2));
+ console.log(JSON.stringify({assumptions:'One player, one stage-dependent chest per Deal match, weapon/armor/attack_power/vitality to forge chapter cap, boss wins assumed, no exchange or playtime',chapters:sample(Number(process.argv[2]||50)),trio:trioSample(Number(process.argv[2]||50))},null,2));
