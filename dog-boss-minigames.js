@@ -208,8 +208,10 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTar
 }
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
-  const endgame=exchange==='endgame',cinematic=exchange==='cinematic';
-  return {version:endgame?10:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>{
+  // v11: same synchronized 101s game, new personal defensive LP calculation.
+  const individual=exchange==='individual';
+  const endgame=exchange==='endgame'||individual,cinematic=exchange==='cinematic';
+  return {version:individual?11:endgame?10:cinematic?4:3,gate,rounds:DOG_EXCHANGE_ORDER.map((kind,i)=>{
    const item=createRound(kind,i,gate,rand,endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
     cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS,{colorTarget:endgame&&kind==='target'});
    if(endgame&&kind==='reaction'){
@@ -313,7 +315,7 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -464,9 +466,25 @@ export function dogMiniGroupHealth(raw,roster=[],elapsed=0,heroMaximum=()=>145){
  const defensiveRounds=exchange?.stages?.filter(stage=>stage.completed&&stage.defensive)||[];
  const remainingPercent=defensiveRounds.length?
   Math.max(50,Math.min(100,Number(defensiveRounds.at(-1).shield)||100)):100;
+ const personalDefense=games?.version>=11;
  const heroes=players.map(p=>{
   const maxHp=Math.max(1,Math.min(1000000,Math.round(Number(heroMaximum(p))||145)));
-  const hp=Math.round(maxHp*remainingPercent/100);
+  // In new encounters each hero earns their own protection; teammates can
+  // no longer lose LP because another player missed an avoidance/reaction.
+  // The server validates every action. Old persisted v3-v10 fights keep their
+  // original shared-defense health calculation.
+  let personalPercent=remainingPercent;
+  if(personalDefense){
+   let loss=0;
+   for(const round of games.rounds){
+    if(!['dodge','reaction'].includes(round.kind)||elapsed<round.endMs)continue;
+    const correct=(games.answers[p.uid]?.[round.round]?.attempts||[])
+     .filter(a=>a.correct).length;
+    loss+=Math.round(25*(1-Math.min(round.maxSteps,correct)/round.maxSteps));
+   }
+   personalPercent=Math.max(50,Math.min(100,100-loss));
+  }
+  const hp=Math.round(maxHp*personalPercent/100);
   return {uid:p.uid,hp,maxHp};
  });
  const maxHp=heroes.reduce((v,m)=>v+m.maxHp,0);
