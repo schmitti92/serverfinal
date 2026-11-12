@@ -124,6 +124,20 @@ export function advancePrivateBoss(raw,now=Date.now(),rand=randomInt){
  if(boss.phase!=='fighting')return {data,changed};
  for(const [i,id] of DOG_PREVIEW_BOTS.entries()){
   for(const round of boss.miniGames?.rounds||[]){
+   if(round.kind==='target'&&Array.isArray(round.puzzles)){
+    if(boss.miniGames?.answers?.[id]?.[round.round]?.attempts?.length)continue;
+    const at=round.endMs-80;
+    if(now<boss.startedAt+at)continue;
+    const answers=round.puzzles.map((p,step)=>{
+     const roll=(boss.attempt*17+gate+i*31+round.round*23+step*13)%100;
+     return roll<(i===0?82:68)?p.correctIndex:(p.correctIndex+1)%p.options.length;
+    });
+    const result=gate===10?boss10MiniAnswer(progress,id,round.round,answers,
+      boss.startedAt+at,0):
+     groupBossMiniAnswer(gate,progress,id,round.round,answers,boss.startedAt+at,0);
+    progress=result.progress;changed=true;boss=active(progress,gate);
+    continue;
+   }
    for(let step=0;step<(round.maxSteps||1);step++){
     const prior=boss.miniGames?.answers?.[id]?.[round.round];
     if(round.maxSteps?prior?.attempts?.[step]:prior)continue;
