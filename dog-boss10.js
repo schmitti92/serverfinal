@@ -81,7 +81,9 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  // S-01: derived once from already confirmed strikes. Read-only, no DB calls.
  const combat=buildDogCombatStream({
   gate:10,attempt:boss.attempt,startedAt:boss.startedAt,
-  roster:boss.roster,bossHp:bossMaxHp,strikes:confirmedStrikes,
+  endsAt:boss.endsAt,roster:boss.roster,bossHp:bossMaxHp,
+  strikes:confirmedStrikes,
+  result:boss.miniGames?.version>=11?boss.result:null,
   heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel)
  });
  return {gate:10,name:'Der Aschewächter',bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,

@@ -54,3 +54,66 @@ test('S-01 current boss views expose the same server protocol, without gameplay 
  assert.equal(group.combat.version,1);
  assert.deepEqual(group.combat.events,[]);
 });
+
+test('S-02 loss: final cinematic adjustment produces exactly remaining HP loss',()=>{
+ const base={...args,endsAt:135000,result:{
+  win:false,damage:85,hpRemaining:15,roll:5000,rareCritical:false
+ }};
+ const projection=buildDogCombatStream(base);
+ const finisher=projection.events.at(-1);
+ assert.equal(finisher.kind,'team-finisher');
+ assert.equal(finisher.sequence,5);
+ assert.equal(finisher.uid,null);
+ assert.equal(finisher.actorId,'team');
+ assert.equal(finisher.hpBefore,35);
+ assert.equal(finisher.hpAfter,15);
+ assert.equal(finisher.amount,20);
+ assert.equal(finisher.rawDamage,20);
+ assert.equal(finisher.overkillDamage,0);
+ assert.equal(finisher.atMs,35000);
+ assert.equal(finisher.impactAt,135000);
+ assert.equal(projection.reconciliation.reconciled,true);
+ assert.equal(projection.reconciliation.appliedDamage,85);
+ assert.equal(projection.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.damage,0),85);
+ assert.equal(projection.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.rawDamage,0),85);
+ assert.deepEqual(buildDogCombatStream(base),projection,
+  'reconnected clients receive the same finisher and sequence');
+});
+
+test('S-02 victory with overkill: HP subtraction and rolled total are both exact',()=>{
+ const r=buildDogCombatStream({...args,endsAt:135000,result:{
+  win:true,damage:125,hpRemaining:0,roll:0,rareCritical:true
+ }});
+ const finisher=r.events.at(-1);
+ assert.equal(finisher.hpBefore,35);
+ assert.equal(finisher.hpAfter,0);
+ assert.equal(finisher.damage,35);
+ assert.equal(finisher.rawDamage,60);
+ assert.equal(finisher.overkillDamage,25);
+ assert.equal(finisher.rareCritical,true);
+ assert.equal(r.reconciliation.overkillDamage,25);
+ assert.equal(r.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.damage,0),100);
+ assert.equal(r.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.rawDamage,0),125);
+});
+
+test('S-02 does not fabricate a finisher if server result contradicts stage damage',()=>{
+ const r=buildDogCombatStream({...args,endsAt:135000,result:{
+  win:false,damage:50,hpRemaining:50,roll:5000,rareCritical:false
+ }});
+ assert.equal(r.reconciliation.reconciled,false);
+ assert.equal(r.events.length,4);
+ assert.equal(r.events.at(-1).kind,'boss-strike');
+});
+
+test('S-02 no result or equal final damage never manufactures another hit',()=>{
+ assert.equal(buildDogCombatStream({...args,endsAt:135000}).events.length,4);
+ const equal=buildDogCombatStream({...args,endsAt:135000,result:{
+  win:false,damage:65,hpRemaining:35,roll:5000,rareCritical:false
+ }});
+ assert.equal(equal.reconciliation.reconciled,true);
+ assert.equal(equal.events.length,4);
+});

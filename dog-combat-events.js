@@ -1,14 +1,14 @@
-/* S-01 · Server-authored, deterministic combat event protocol.
- * Pure projection of the ALREADY confirmed cinematic strikes (no independent
- * damage rolls, Firestore reads/writes, local time, or persisted documents).
- * It intentionally does not invent the final random combat adjustment:
- * settling the full result is S-02, which must reconcile that delta.
+/* S-01/S-02 · Deterministic server-authored combat event protocol.
+ * Stage strikes keep their already-confirmed HP deltas. Only after the
+ * authoritative outcome is persisted can the server append the difference
+ * between cinematic phase damage and final rolled damage. No extra random
+ * rolls, DB operations, side effects, or client-generated damage.
  */
 const nonNegative=value=>Math.max(0,Math.round(Number(value)||0));
 const safeHero=value=>typeof value==='string'&&value.length>0&&value.length<=200;
 
 export function buildDogCombatStream({
- gate,attempt=1,startedAt=0,roster=[],bossHp=0,strikes=[],heroMaximum=()=>145
+ gate,attempt=1,startedAt=0,endsAt=0,roster=[],bossHp=0,strikes=[],result=null,heroMaximum=()=>145
 }={}){
  const initialBossHp=nonNegative(bossHp);
  const players=Array.isArray(roster)?roster.filter(p=>safeHero(p?.uid)).slice(0,3):[];
@@ -48,12 +48,62 @@ export function buildDogCombatStream({
    uid:hit.uid,heroId:hit.uid,slot:hit.slot,
    actorId:hit.kind==='hero-strike'?hit.uid:'boss',
    targetId,attackType:hit.kind,kind:hit.kind,
-   damage,amount:damage,hpBefore:before,hpAfter:after,
+   damage,amount:damage,rawDamage:damage,overkillDamage:0,
+   hpBefore:before,hpAfter:after,
    atMs,impactAt:startedAt+atMs,
    blocked:hit.kind==='boss-strike'&&damage===0,
    correct:hit.correct??null
   });
  }
+ // Finished battles alone may reveal the random roll, rare critical
+ // and their difference from the conservative cinematic stage damage.
+ // A visible LP loss is never larger than the remaining boss LP.
+ let reconciliation=null;
+ if(result&&typeof result.win==='boolean'&&
+    Number.isSafeInteger(result.damage)&&result.damage>=0&&
+    Number.isSafeInteger(result.hpRemaining)&&result.hpRemaining>=0){
+  const finalHp=Math.min(initialBossHp,result.hpRemaining);
+  const rawDamage=result.damage;
+  const stageDamage=initialBossHp-bossRemaining;
+  const appliedDamage=initialBossHp-finalHp;
+  const extraApplied=bossRemaining-finalHp;
+  const extraRaw=rawDamage-stageDamage;
+  const overkillDamage=Math.max(0,rawDamage-appliedDamage);
+  // A tuned/legacy result that disagrees with the existing stage events
+  // cannot be "corrected" by fabricating negative damage. Expose a
+  // mismatch for inspection instead of inventing an event.
+  const reconciled=extraApplied>=0&&extraRaw>=extraApplied&&
+   appliedDamage<=rawDamage&&
+   Math.max(0,initialBossHp-rawDamage)===finalHp;
+  if(reconciled&&(extraApplied>0||extraRaw>0)){
+   const sequence=events.length+1;
+   const lastRound=events.reduce((m,e)=>Math.max(m,e.round),0);
+   const atMs=Math.max(nonNegative(endsAt-startedAt),
+    events.length?events.at(-1).atMs+1:0);
+   const roll=Number.isSafeInteger(result.roll)&&result.roll>=0&&result.roll<10000?
+    result.roll:null;
+   const luckFactor=roll===null?null:Number((Number(gate)===10?
+    1.15-.25*(roll/10000):.82+.34*(1-roll/9999)).toFixed(5));
+   events.push({
+    eventId:fightId+':'+sequence,sequence,fightId,
+    gate:nonNegative(gate),round:lastRound,
+    uid:null,heroId:null,slot:players.length,
+    actorId:'team',targetId:'boss',
+    kind:'team-finisher',attackType:'team-finisher',
+    damage:extraApplied,amount:extraApplied,
+    rawDamage:extraRaw,overkillDamage:extraRaw-extraApplied,
+    hpBefore:bossRemaining,hpAfter:finalHp,
+    atMs,impactAt:startedAt+atMs,
+    blocked:false,correct:null,
+    rareCritical:result.rareCritical===true,
+    luckRoll:roll,luckFactor
+   });
+  }
+  reconciliation={reconciled,rawDamage,appliedDamage,
+   stageDamage,finisherDamage:reconciled?extraApplied:null,
+   overkillDamage,finalBossHp:finalHp,
+   rareCritical:result.rareCritical===true};
+ }
  return {version:1,fightId,latestSequence:events.length,
-  initialBossHp,initialHeroHp,events};
+  initialBossHp,initialHeroHp,events,reconciliation};
 }
