@@ -68,6 +68,13 @@ export const DOG_FINAL5_WINDOWS=Object.freeze([
  Object.freeze({startMs:101000,endMs:111000})
 ]);
 export const DOG_FINAL5_DURATION_MS=125000;
+// v14: 20-second Kettenbrecher and 14-second closing show.
+// Persisted v12 (runes) and v13 (10-second chains) retain their timelines.
+export const DOG_CHAIN20_WINDOWS=Object.freeze([
+ ...DOG_COLOR_TARGET_ENDGAME_WINDOWS,
+ Object.freeze({startMs:101000,endMs:121000})
+]);
+export const DOG_CHAIN20_DURATION_MS=135000;
 const DOG_EXCHANGE_ORDER=Object.freeze(['math','dodge','target','reaction']);
 const DOG_FINAL5_ORDER=Object.freeze([...DOG_EXCHANGE_ORDER,'target']);
 const DOG_CHAIN_BREAKER_ORDER=Object.freeze([...DOG_EXCHANGE_ORDER,'chain']);
@@ -226,16 +233,21 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTar
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
   // New battles v12; old stored encounters keep their original timing.
-  const individual=exchange==='individual'||exchange==='individual-runes';
-  const breaker=exchange==='individual';
+  const breaker20=exchange==='individual';
+  const breaker10=exchange==='individual-chain10';
+  const breaker=breaker20||breaker10;
+  const individual=breaker||exchange==='individual-runes';
   const endgame=exchange==='endgame'||individual,cinematic=exchange==='cinematic';
   const order=breaker?DOG_CHAIN_BREAKER_ORDER:individual?DOG_FINAL5_ORDER:DOG_EXCHANGE_ORDER;
-  return {version:breaker?13:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
-   const item=createRound(kind,i,gate,rand,individual?DOG_FINAL5_WINDOWS:
+  return {version:breaker20?14:breaker10?13:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
+   const item=createRound(kind,i,gate,rand,breaker20?DOG_CHAIN20_WINDOWS:
+    individual?DOG_FINAL5_WINDOWS:
     endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
     cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS,{colorTarget:endgame&&kind==='target'});
    if(breaker&&i===4)return {...item,
-    hint:'⛓️ KETTENBRECHER · 10 SEKUNDEN: Wische über die glühende Kette. Jeder Bruch verstärkt euren letzten Schlag!'};
+    hint:breaker20?
+     '⛓️ KETTENBRECHER · 20 SEKUNDEN: Tippe auf die glühende Kette oder wische darüber. Zehn Schnitte für euren letzten Schlag!':
+     '⛓️ KETTENBRECHER · 10 SEKUNDEN: Wische über die glühende Kette. Jeder Bruch verstärkt euren letzten Schlag!'};
    if(individual&&i===4)return {...item,
     // Unlike the earlier color sprint, the finishing rune combo requires
     // matching BOTH color and symbol (6–8 rune choices, tier-scaled).
@@ -357,7 +369,7 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12,13].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12,13,14].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=12?5:raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -367,6 +379,7 @@ export function dogNormalizeMiniGames(raw){
    raw.version===5?DOG_ENDGAME_WINDOWS:
    raw.version===6?DOG_EXTENDED_ENDGAME_WINDOWS:
     raw.version===7?DOG_SHOW_ENDGAME_WINDOWS:
+     raw.version>=14?DOG_CHAIN20_WINDOWS:
      raw.version>=12?DOG_FINAL5_WINDOWS:
      raw.version>=10?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
       raw.version>=8?DOG_SLOW_DODGE_ENDGAME_WINDOWS:DOG_MINIGAME_WINDOWS;
@@ -628,7 +641,7 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,
    bonusDamage,shield}; });
  const shieldStages=stages.filter(stage=>stage.completed&&stage.defensive);
  const earned=stages.filter(stage=>stage.completed&&!stage.defensive);
- return {version:games.version,durationMs:games.version>=12?DOG_FINAL5_DURATION_MS:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
+ return {version:games.version,durationMs:games.version>=14?DOG_CHAIN20_DURATION_MS:games.version>=12?DOG_FINAL5_DURATION_MS:games.version>=10?101000:games.version>=8?99000:games.version===7?92000:games.version===6?64000:games.version===5?60000:games.version===4?50000:40000,
   shield:shieldStages.length?shieldStages[shieldStages.length-1].shield:100,
   cumulativeExtraDamage:typeof heroBaseDamage==='function'?
    earned.reduce((sum,stage)=>sum+(stage.bonusDamage||0),0):null,
