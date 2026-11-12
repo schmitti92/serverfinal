@@ -109,7 +109,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
  // positions. Visitors can see free capacity, not private player data.
  const members=(isMember?team.members:[]).map((m,index)=>{
   const p=progress.people[m.uid];
-  return {uid:m.uid,name:cleanName(m.name),heroClass:dogHeroClass(team.heroClasses?.[m.uid],['krieger','magierin','waechter'][index]),currentGate:p?.currentGate??1,
+  return {uid:m.uid,name:cleanName(m.name),heroClass:dogHeroClass(team.heroClasses?.[m.uid],['krieger','magierin','waechter'][index]),heroLocked:team.heroLocks?.[m.uid]===true,currentGate:p?.currentGate??1,
    highestGate:p?.highestGate??1,
    wonNormals:p?.normals.length??0,wonMinis:p?.minis.length??0,
    lastAttemptAt:p?.lastAttemptAt??0,lastResult:p?.lastResult??null,
@@ -169,7 +169,8 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
 const ERRORS={LOGIN_REQUIRED:401,DOG_GATE_INVALID:400,INVALID_REQUEST_ID:400,
  DOG_GATE_RECEIPT_CONFLICT:409,DOG_GATE_PREVIOUS_REQUIRED:409,
  DOG_GATE_ALREADY_WON:409,DOG_GATE_BOSS_REQUIRED:409,DOG_GATE_COOLDOWN:429,
- DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403,DOG_HERO_CLASS_INVALID:400};
+ DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403,DOG_HERO_CLASS_INVALID:400,
+ DOG_HERO_ALREADY_LOCKED:409,DOG_HERO_SELECTION_REQUIRED:409};
 export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
  const auth=async(req,res,next)=>{
   try{
@@ -254,13 +255,18 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
  // The shared team stores the visual hero class; battles still use server gear.
  app.post('/api/dog/gates/hero',auth,async(req,res)=>{
   try{
-   const {teamRef,progressRef,db}=refs(),uid=req.dogGateProfile.uid;
+   const {teamRef,progressRef,db}=refs(),{uid,name}=req.dogGateProfile;
    const heroClass=req.body?.heroClass;
    const value=await db.runTransaction(async tx=>{
     const [teamSnap,progressSnap]=await Promise.all([tx.get(teamRef),tx.get(progressRef)]);
     const team=bossTeam(teamSnap.exists?teamSnap.data():null);
-    const updated=bossSelectHero(team,uid,heroClass,clock());
-    if(team.heroClasses?.[uid]!==heroClass)tx.set(teamRef,updated);
+    // First selection enrolls an unjoined player, if the three-seat team has space.
+    // Keep existing progress, bots, and inventory intact.
+    const member=team.members.some(m=>m.uid===uid);
+    if(!member&&team.members.length>=3)throw Error('DOG_GATE_TEAM_FULL');
+    const joined=member?team:bossJoin(team,uid,name,null,clock());
+    const updated=bossSelectHero(joined,uid,heroClass,clock());
+    if(!member||team.heroLocks?.[uid]!==true)tx.set(teamRef,updated);
     return dogGateMapView(updated,progressSnap.exists?progressSnap.data():null,uid);
    });
    res.set('Cache-Control','no-store');
@@ -288,6 +294,7 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
      if(before.gate!==gate)throw Error('DOG_GATE_RECEIPT_CONFLICT');
      return {result:before.result,map:dogGateMapView(teamData,saved,uid),replayed:true};
     }
+    if(teamData.heroLocks?.[uid]!==true)throw Error('DOG_HERO_SELECTION_REQUIRED');
     const now=clock();
     const outcome=dogGateFight(saved,uid,gate,hero.exists?hero.data():null,rand,now);
     let result=outcome.result;
