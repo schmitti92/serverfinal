@@ -712,3 +712,74 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  const next={...games,answers:{...games.answers,[uid]:{...mine,[roundIndex]:entry}}};
  return {games:next,correct,replayed:false,step,correctCount:entry.correctCount};
 }
+
+
+/** Server-confirmed stage HP is apportioned across the three cinematic hits.
+ * These are shares of the ALREADY confirmed stage loss, not extra combat
+ * rolls or writes. Each share adds up exactly to the corresponding HP loss.
+ * No events/scores are exposed before the minigame's server-clock end.
+ * v1-v10 retain the historical presentation rather than invent new hits.
+ */
+export function dogMiniConfirmedStrikes(raw,roster=[],elapsed=0,
+ bossMaxHp=1,baseDamage=0,heroBaseDamage=null,heroMaximum=null){
+ const games=dogNormalizeMiniGames(raw),players=Array.isArray(roster)?
+  roster.filter(p=>p?.uid).slice(0,3):[];
+ if(!games||games.version<11||!players.length||
+  typeof heroBaseDamage!=='function'||typeof heroMaximum!=='function')return [];
+ const exchange=dogMiniExchangeView(games,players,elapsed,heroBaseDamage,heroMaximum);
+ const hits=[];
+ let priorBossHp=Math.max(1,Math.round(Number(bossMaxHp)||1));
+ for(const round of games.rounds){
+  if(elapsed<round.endMs)break;
+  const stage=exchange?.stages?.[round.round];
+  if(!stage?.completed)continue;
+  const next=games.rounds[round.round+1];
+  const end=next?.startMs??exchange.durationMs;
+  // Last three seconds are reserved for the transition countdown.
+  const actionMs=Math.max(0,end-round.endMs-3000);
+  const perHeroMs=actionMs/players.length;
+  const defensive=round.kind==='dodge'||round.kind==='reaction';
+  let amounts=[];
+  if(defensive){
+   const before=dogMiniGroupHealth(games,players,round.endMs-1,heroMaximum);
+   const after=dogMiniGroupHealth(games,players,round.endMs,heroMaximum);
+   amounts=players.map(hero=>{
+    const old=before.heroes.find(h=>h.uid===hero.uid)?.hp||0;
+    const latest=after.heroes.find(h=>h.uid===hero.uid)?.hp||0;
+    return Math.max(0,old-latest);
+   });
+  }else{
+   const earned=exchange.stages.filter(s=>s.round<=round.round&&
+     s.completed&&!s.defensive).reduce((sum,s)=>sum+(s.bonusDamage||0),0);
+   const resultingHp=dogMiniBossLiveHp(games,players,round.endMs,
+    bossMaxHp,baseDamage,earned);
+   const confirmedLoss=Math.max(0,priorBossHp-resultingHp);
+   priorBossHp=resultingHp;
+   const fraction=round.round===0?.43:.40;
+   const weights=players.map(hero=>{
+    const personal=stage.playerResults?.find(p=>p.uid===hero.uid);
+    return Math.max(0,Number(heroBaseDamage(hero))||0)*fraction+
+     Math.max(0,Number(personal?.bonusDamage)||0);
+   });
+   const total=weights.reduce((sum,n)=>sum+n,0);
+   let previous=0,rolling=0;
+   amounts=weights.map((weight,i)=>{
+    rolling+=total>0?weight:1;
+    const cumulative=Math.round(confirmedLoss*rolling/(total||players.length));
+    const amount=Math.max(0,cumulative-previous);
+    previous=cumulative;return amount;
+   });
+  }
+  for(const [slot,hero] of players.entries()){
+   const correct=stage.playerResults?.find(p=>p.uid===hero.uid)?.correct??null;
+   hits.push({round:round.round,uid:hero.uid,slot,
+    kind:defensive?'boss-strike':'hero-strike',
+    amount:amounts[slot],correct,
+    atMs:Math.round(round.endMs+(slot+.54)*perHeroMs),
+    // Distinguishes actual HP loss from a wholly blocked boss hit.
+    blocked:defensive&&amounts[slot]===0
+   });
+  }
+ }
+ return hits;
+}
