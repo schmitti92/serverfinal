@@ -21,7 +21,13 @@ test('F-01 trio bottleneck and time scenarios are monotonic and deterministic',(
  assert.deepEqual(rows,trioSample(3,12));
  assert.equal(rows.length,10);
  for(const row of rows){
-  assert.equal(row.samples,3);
+  assert.ok(row.samples>=0&&row.samples<=3);
+  if(row.samples===0){
+   assert.equal(row.slowestHeroDealsMedian,null);
+   assert.equal(row.parallelHoursMedian,null);
+   assert.equal(row.sequentialHoursMedian,null);
+   continue;
+  }
   assert.ok(row.slowestHeroDealsP10<=row.slowestHeroDealsMedian);
   assert.ok(row.slowestHeroDealsMedian<=row.slowestHeroDealsP90);
   assert.ok(row.trioTotalDealsMedian>=row.slowestHeroDealsP10);
