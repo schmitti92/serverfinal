@@ -84,10 +84,17 @@ export function bossMaxHp(heroRaw){
  const l=dogHero(heroRaw).levels;
  return Math.max(100,100+4*l.armor+3*l.vitality);
 }
+export const DOG_HERO_CLASSES=Object.freeze(['krieger','magierin','waechter']);
+export const dogHeroClass=(value,fallback='krieger')=>DOG_HERO_CLASSES.includes(value)?value:fallback;
 export function bossTeam(raw){
  const d=object(raw),members=Array.isArray(d.members)?
   d.members.slice(0,DOG_BOSS_MAX_MEMBERS).filter(x=>validUid(x?.uid))
    .map(x=>({uid:x.uid,name:cleanName(x.name)})):[];
+ const heroClasses={};
+ for(const [index,member] of members.entries()){
+  const value=d.heroClasses?.[member.uid];
+  if(DOG_HERO_CLASSES.includes(value))heroClasses[member.uid]=value;
+ }
  const heroes={};
  for(const member of members){
   const h=object(d.heroes?.[member.uid]);
@@ -104,7 +111,7 @@ export function bossTeam(raw){
    num(d.bossTurn,0,1_000_000,0),num(d.attempt,1,1_000_000,1)),
   combatStats:bossStats(d.combatStats),
   cooldownUntil:phase==='cooldown'?num(d.cooldownUntil,0,MAX_TIME,0):0,
-  members,heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
+  members,...(Object.keys(heroClasses).length?{heroClasses}:{}),heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
    .map(x=>x.slice(0,140)):[],updatedAt:num(d.updatedAt,0,MAX_TIME,0)};
 }
 export function bossView(raw,uid,now=Date.now()){
@@ -142,6 +149,14 @@ export function bossJoin(raw,uid,name,heroRaw,now=Date.now()){
   heroes:{...state.heroes,[uid]:{hp:maxHp,maxHp,guard:false}},
   log:[cleanName(name)+' ist der Heldengruppe beigetreten.',...state.log].slice(0,10),
   updatedAt:now};
+}
+/** A character choice changes only how the hero looks, never gear or damage. */
+export function bossSelectHero(raw,uid,heroClass,now=Date.now()){
+ const team=bossTeam(raw);
+ if(!team.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
+ if(!DOG_HERO_CLASSES.includes(heroClass))throw Error('DOG_HERO_CLASS_INVALID');
+ if(team.heroClasses?.[uid]===heroClass)return team;
+ return {...team,heroClasses:{...team.heroClasses,[uid]:heroClass},updatedAt:now};
 }
 export function bossRestart(raw,heroByUid,uid,now=Date.now()){
  const state=bossTeam(raw);
