@@ -138,6 +138,22 @@ test('the last selected opponent case works with 26–30 cases',async()=>{
   assert.equal(t.writes.length,2);
  }
 });
+test('30-case first batch allows own and opponent Joker, but selecting personal case does not',async()=>{
+ for(const phase of ['batch-pick','batch-reveal']){
+  for(const selectedCase of [0,29]){
+   const t=setup({caseCount:30,phase,balance:1});
+   const res=await t.request(path,{case:selectedCase,requestId:'peek-batch-'+phase+'-'+selectedCase+'-123'});
+   assert.equal(res.statusCode,200,phase+' case '+selectedCase);
+   assert.equal(res.value.mode,selectedCase===0?'own':'opponents');
+   assert.equal(t.docs.get('deal_peek_inventory_v1/alice').balance,0);
+   assert.equal(t.writes.length,2);
+  }
+ }
+ const notReady=setup({caseCount:30,phase:'select'});
+ const denied=await notReady.request(path,{case:0,requestId:'peek-before-selection-12345'});
+ assert.equal(denied.value.error,'JOKER_NOT_AVAILABLE');
+ assert.equal(notReady.writes.length,0);
+});
 test('30-case Joker reveals last personal case privately, with one debit and safe retry',async()=>{
  const t=setup({caseCount:30,balance:1});
  const game=t.docs.get('deal_or_no_deal_matches_v1/123').game;

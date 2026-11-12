@@ -61,7 +61,7 @@ export function installPeekJoker(app,{verifyProfile,getFirestore}) {
      return {case:caseIndex,mode:receiptMode,cases:privateCases,balance:receipt.balance,replayed:true};
     }
     if(!game.players.some(p=>String(p.id)===req.peekUid&&p.deal===null))throw Error('NOT_ACTIVE_PLAYER');
-    if(!['open','decision','reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
+    if(!['open','decision','reveal','batch-pick','batch-reveal'].includes(game.phase))throw Error('JOKER_NOT_AVAILABLE');
     if(!isOwn&&!otherCases.length)throw Error('NO_OTHER_PLAYER_CASES');
     const privateCases=isOwn?[ownCase]:otherCases;
     if(!privateCases.every(p=>Number.isSafeInteger(p.amount)&&p.amount>=0))throw Error('GAME_INVALID');
