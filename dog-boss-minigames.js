@@ -224,7 +224,11 @@ export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
     endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
     cinematic?DOG_CINEMATIC_WINDOWS:DOG_EXCHANGE_WINDOWS,{colorTarget:endgame&&kind==='target'});
    if(individual&&i===4)return {...item,
-    hint:'🔥 FINALER SCHLAG: 10 Sekunden, bis zu zehn Treffer! Jeder Treffer verstärkt euren letzten Angriff.'};
+    // Unlike the earlier color sprint, the finishing rune combo requires
+    // matching BOTH color and symbol (6–8 rune choices, tier-scaled).
+    puzzles:Array.from({length:10},(_,step)=>
+     colorPuzzle(Math.max(4,dogMiniDifficulty(gate).tier),rand,step)),
+    hint:'🔥 FINALER SCHLAG: 10 Sekunden! Triff gleichzeitig Farbe UND Symbol, um euren letzten Angriff zu verstärken.'};
    if(endgame&&kind==='reaction'){
     const tier=dogMiniDifficulty(gate).tier;
     return {...item,zoneRadius:Math.round((.061-tier*.0027)*1000)/1000,
