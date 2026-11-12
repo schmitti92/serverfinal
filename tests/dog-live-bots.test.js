@@ -65,7 +65,7 @@ test('The real Boss-10 endpoint can automatically ready two bots and the human',
  const state=boss10State(ready.boss10);
  assert.equal(state.phase,'fighting');
  assert.deepEqual(state.roster.map(x=>x.uid),[...DOG_LIVE_BOT_IDS,'real-owner']);
- assert.equal(state.endsAt-state.startedAt,125000);
+ assert.equal(state.endsAt-state.startedAt,135000);
  const result=advanceLiveBotFight(10,ready,team,'real-owner',now+127000,rand);
  assert.equal(result.changed,true);
  const finished=boss10State(result.progress.boss10);
