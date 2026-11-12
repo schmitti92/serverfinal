@@ -196,7 +196,7 @@ export function forgeUpgrade(heroRaw,inventoryRaw,itemId,expectedLevel,roll=0,no
    cost:quote.cost,qualityLevel:quote.qualityLevel,chance:quote.successChance}};
 }
 /** Exchange up to 100 units in ONE inventory transaction, with legacy count=1. */
-export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),count=1,quality=1){
+export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),count=1,quality=1,progressRaw=undefined){
  const group=Object.values(DOG_RESOURCE_GROUPS).find(x=>x.includes(resourceId));
  if(!group||group.indexOf(resourceId)===group.length-1)throw Error('INVALID_EXCHANGE_RESOURCE');
  if(!Number.isSafeInteger(count)||count<1||count>DOG_FORGE_TUNING.exchangeMaxBatch)
@@ -204,9 +204,11 @@ export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),cou
  const inventory=dogInventory(inventoryRaw),hero=dogHero(heroRaw);
  const nextResource=group[group.indexOf(resourceId)+1];
  if(![1,2,3].includes(quality))throw Error('INVALID_QUALITY_LEVEL');
+ if(quality>qualityUnlockedFromBosses(progressRaw))throw Error('DOG_QUALITY_LOCKED');
  const spent=count*DOG_FORGE_TUNING.exchangeRate;
  const source=qualityKey(resourceId,quality),target=qualityKey(nextResource,quality);
  if(inventory.qualityResources[source]<spent)throw Error('DOG_MATERIALS_MISSING');
+ if(inventory.qualityResources[target]+count>1_000_000)throw Error('DOG_MATERIALS_LIMIT');
  if(inventory.resources[nextResource]+count>1_000_000||hero.exchanges+count>1_000_000)
   throw Error('DOG_MATERIALS_LIMIT');
  const resources={...inventory.resources,
@@ -346,7 +348,7 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
      next=forgeRefine(hero,bag,req.body?.resourceId,req.body?.fromQuality,
       req.body?.count===undefined?1:req.body.count,now,progressRaw,rand(10000));
     }else next=forgeExchange(hero,bag,req.body?.resourceId,now,
-     req.body?.count===undefined?1:req.body.count,req.body?.quality??1);
+     req.body?.count===undefined?1:req.body.count,req.body?.quality??1,progressRaw);
     const view=forgeView(next.hero,next.inventory,progressRaw);
     const payload={...view,heroClass:equipmentHeroClass(teamSnap,uid),
      result:next.result,replayed:false};
