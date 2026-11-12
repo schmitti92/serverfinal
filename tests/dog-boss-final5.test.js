@@ -121,3 +121,97 @@ test('Fifth stage is only answerable in its own server-clock window',()=>{
  assert.throws(()=>dogSubmitMiniAnswer(games,team,'a',4,answers,
   now+final.endMs+2000,now,0),/TOO_LATE/);
 });
+
+
+const scoreGame=(version='individual',actorCounts={})=>{
+ const game=dogCreateMiniGames(10,()=>0,{exchange:version});
+ const answers=Object.fromEntries(Object.entries(actorCounts).map(([uid,counts])=>
+  [uid,Object.fromEntries(game.rounds.map((round,index)=>{
+   const allowed=round.maxSteps;
+   const count=Math.max(0,Math.min(allowed,counts[index]??0));
+   return [index,{attempts:Array.from({length:allowed},(_,step)=>({
+    step,correct:step<count,at:now+round.endMs-80
+   }))}];
+  }))]));
+ return {...game,answers};
+};
+test('M-06: five uneven-length games are equally weighted AFTER individual 0–100 normalization',()=>{
+ // Math: 4/8; dodge: 3/3; colors: 5/10; reaction: 2/3; chains: 7/10.
+ const game=scoreGame('individual',{a:[4,3,5,2,7],b:[8,3,10,3,10],c:[0,0,0,0,0]});
+ const result=dogMiniExchangeView(game,team,game.rounds.at(-1).endMs).evaluation;
+ assert.ok(result);
+ assert.equal(result.weighting,'equal');
+ assert.equal(result.weightPercentPerGame,20);
+ assert.equal(result.completedRounds,5);
+ assert.deepEqual(result.rounds.map(x=>x.max),[24,9,30,9,30]);
+ assert.deepEqual(result.rounds.map(x=>x.players[0].percent),
+  [50,100,50,66.7,70]);
+ assert.equal(result.players.find(p=>p.uid==='a').percent,67.3);
+ assert.equal(result.players.find(p=>p.uid==='b').percent,100);
+ assert.equal(result.players.find(p=>p.uid==='c').percent,0);
+ assert.equal(result.teamPercent,55.8);
+ assert.equal(result.perfect,false);
+});
+test('M-06: 100 percent requires every single answer of every game by every player',()=>{
+ const all={a:[8,3,10,3,10],b:[8,3,10,3,10],c:[8,3,10,3,10]};
+ const perfect=scoreGame('individual',all);
+ const last=perfect.rounds.at(-1);
+ const complete=dogMiniExchangeView(perfect,team,last.endMs).evaluation;
+ assert.equal(complete.teamPercent,100);
+ assert.equal(complete.perfect,true);
+ assert.ok(complete.players.every(p=>p.percent===100&&p.perfect));
+ assert.ok(complete.rounds.every(r=>r.percent===100));
+ // One missing chain cut is not concealed by rounded totals or 3 other perfect heroes.
+ const imperfect=scoreGame('individual',{...all,a:[8,3,10,3,9]});
+ const reduced=dogMiniExchangeView(imperfect,team,last.endMs).evaluation;
+ assert.equal(reduced.players[0].percent,98);
+ assert.equal(reduced.players[0].perfect,false);
+ assert.equal(reduced.players[1].percent,100);
+ assert.equal(reduced.teamPercent,99.3);
+ assert.equal(reduced.perfect,false);
+});
+test('M-06: only closed stages reveal normalized scores; no provisional final grade',()=>{
+ const game=scoreGame('individual',{a:[8,3,10,3,10]});
+ const first=dogMiniExchangeView(game,team,game.rounds[0].endMs-1).evaluation;
+ assert.equal(first.completedRounds,0);
+ assert.equal(first.teamPercent,null);
+ assert.equal(first.players,null);
+ assert.ok(first.rounds.every(r=>r.percent===null&&r.players===null));
+ const second=dogMiniExchangeView(game,team,game.rounds[0].endMs).evaluation;
+ assert.equal(second.completedRounds,1);
+ assert.equal(second.rounds[0].players[0].percent,100);
+ assert.equal(second.rounds[1].percent,null);
+ assert.equal(second.teamPercent,null);
+ assert.equal(second.perfect,null);
+ const empty=dogMiniExchangeView(scoreGame('individual'),team,game.rounds.at(-1).endMs).evaluation;
+ assert.equal(empty.teamPercent,0);
+ assert.equal(empty.perfect,false);
+});
+test('M-06: existing combat rewards, armor and damage remain unchanged',()=>{
+ const game=scoreGame('individual',{a:[8,3,10,3,10],b:[8,3,10,3,10],c:[8,3,10,3,10]});
+ const round=game.rounds.at(-1);
+ const exchange=dogMiniExchangeView(game,team,round.endMs,single,()=>145);
+ assert.equal(exchange.evaluation.teamPercent,100);
+ assert.equal(exchange.shield,100);
+ assert.equal(exchange.stages[0].bonusPercent,6);
+ assert.equal(exchange.stages[2].bonusPercent,3);
+ assert.equal(exchange.stages[4].bonusPercent,5);
+ assert.equal(dogMiniBonus(game,'a'),.14);
+ assert.equal(exchange.cumulativeExtraDamage,
+  exchange.stages.filter(s=>!s.defensive).reduce((sum,s)=>sum+(s.bonusDamage||0),0));
+ const old=scoreGame('individual-runes',{a:[8,3,10,3,10]});
+ assert.ok(dogMiniExchangeView(old,team,old.rounds.at(-1).endMs).evaluation,
+  'stored five-game rune battles still get equal-weight accuracy');
+ const v11={...game,version:11,rounds:game.rounds.slice(0,4),answers:{}};
+ assert.equal(dogMiniExchangeView(v11,team,101000).evaluation,undefined,
+  'historical four-round battles keep their old presentation');
+});
+test('M-06: a fallen v15 hero cannot earn a fictitious perfect fifth-game grade',()=>{
+ const game=scoreGame('individual-lethal',{
+  a:[8,0,10,0,10],b:[8,3,10,3,10],c:[8,3,10,3,10]});
+ const evaluation=dogMiniExchangeView(game,team,game.rounds.at(-1).endMs).evaluation;
+ assert.equal(evaluation.rounds[4].players[0].fallen,true);
+ assert.equal(evaluation.rounds[4].players[0].percent,0);
+ assert.ok(evaluation.players[0].percent<100);
+ assert.equal(evaluation.perfect,false);
+});
