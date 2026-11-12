@@ -166,6 +166,60 @@ test('Three moving weakpoints use server time and do not leak correct placement'
  assert.equal(submit(plan,'b',round,wrong,at).correct,false);
 });
 
+
+test('M-04: three fast reaction taps are judged in one server transaction with their capture times',()=>{
+ const games=dogCreateMiniGames(80,()=>0,{exchange:'individual'});
+ const round=games.rounds.find(r=>r.kind==='reaction');
+ assert.equal(round.maxSteps,3);
+ const greens=[];
+ for(let t=round.startMs+100;t<round.endMs-150;t+=10){
+  if(Math.abs(dogMiniReactionPosition(round,t)-.5)>round.zoneRadius*.45)continue;
+  if(!greens.length||t-greens.at(-1)>=600)greens.push(t);
+  if(greens.length===3)break;
+ }
+ assert.equal(greens.length,3);
+ const stamps=greens.map(ms=>start+ms);
+ const received=stamps[2]+180;
+ const result=dogSubmitMiniAnswer(games,roster,'a',round.round,
+  [1,1,1],received+500,start,0,stamps,received);
+ assert.equal(result.correct,true);
+ assert.equal(result.correctCount,3);
+ assert.equal(result.games.answers.a[round.round].attempts.length,3);
+ assert.equal(result.games.answers.a[round.round].attempts[1].tappedAt,stamps[1]);
+ assert.ok(result.games.answers.a[round.round].attempts.every(a=>a.correct));
+ assert.equal(dogPublicMiniGames(result.games,'a').myAnswers[round.round].correctCount,3);
+ assert.throws(()=>dogSubmitMiniAnswer(result.games,roster,'a',round.round,
+  [1,1,1],received+600,start,0,stamps,received),/STEP_ORDER/);
+});
+test('M-04: reaction batches reject fabricated timing, excessive delay and duplicate taps',()=>{
+ const games=dogCreateMiniGames(100,()=>0,{exchange:'individual'});
+ const round=games.rounds.find(r=>r.kind==='reaction');
+ const s=start+round.startMs+200;
+ const play=(values,stamps,received=s+1000)=>
+  dogSubmitMiniAnswer(games,roster,'a',round.round,values,received+200,
+   start,0,stamps,received);
+ assert.throws(()=>play([1,1],[s,s+100]),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1],[s-1],s+10),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1],[s+300],s+10),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1],[s],s+2200),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1,1,1],[s,s+500]),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1,1,1,1],[s,s+500,s+1000,s+1500],s+1600),/BAD_ANSWER/);
+ assert.throws(()=>play([2],[s]),/BAD_ANSWER/);
+ assert.throws(()=>play([1],[start+round.endMs],start+round.endMs+100),/BAD_TIMESTAMP/);
+ assert.throws(()=>play([1],[s],start+round.endMs+2000),/TOO_LATE/);
+});
+test('M-04: partial reaction batches report only confirmed scores and legacy single taps remain valid',()=>{
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const round=games.rounds.find(r=>r.kind==='reaction'),t=start+round.startMs+1200;
+ const partial=dogSubmitMiniAnswer(games,roster,'a',round.round,[1],
+  t+120,start,0,[t],t+100);
+ assert.equal(partial.games.answers.a[round.round].attempts.length,1);
+ assert.equal(typeof partial.games.answers.a[round.round].attempts[0].correct,'boolean');
+ const legacy=dogSubmitMiniAnswer(games,roster,'b',round.round,1,
+  t+200,start,0,t+130,t+190);
+ assert.equal(legacy.games.answers.b[round.round].attempts.length,1);
+});
+
 test('In-progress legacy v1 fights retain single-answer timing and 10% score rules',()=>{
  const old={version:1,gate:10,rounds:[
   {kind:'math',round:0,startMs:3000,endMs:10000,

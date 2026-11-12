@@ -711,20 +711,43 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
   const targetSprint=games.version>=10&&round.kind==='target';
   const chainSprint=games.version>=13&&round.kind==='chain';
   const mathSprint=games.version>=2&&round.kind==='math';
-  if((!targetSprint&&!chainSprint&&!mathSprint)||step!==0||
-   value.length<1||value.length>((targetSprint||chainSprint)?10:8)||
+  const reactionSprint=games.version>=9&&round.kind==='reaction';
+  const limit=reactionSprint?3:(targetSprint||chainSprint)?10:8;
+  if((!targetSprint&&!chainSprint&&!mathSprint&&!reactionSprint)||step!==0||
+   value.length<1||value.length>limit||
    value.some((choice,i)=>!Number.isSafeInteger(choice)||choice<0||
-    choice>=(targetSprint?round.puzzles[i].options.length:
+    choice>=(reactionSprint?2:targetSprint?round.puzzles[i].options.length:
      chainSprint?round.lanes:3)))
    throw Error('DOG_MINIGAME_BAD_ANSWER');
-  // A short transit grace lets the final visible tap be scored even if the
-  // network arrives just after the window. Never accept a future round early.
-  if(elapsed<round.startMs||elapsed>=round.endMs+2000)
+  // Use the server's request-arrival time, not time spent in Firestore,
+  // to judge the final network transit. No extra write per tap.
+  const receivedElapsed=receivedAt-startedAt;
+  if((reactionSprint?receivedElapsed:elapsed)<round.startMs||
+     (reactionSprint?receivedElapsed:elapsed)>=round.endMs+2000)
    throw Error('DOG_MINIGAME_TOO_LATE');
   if(mine[roundIndex]?.attempts?.length)
    throw Error('DOG_MINIGAME_STEP_ORDER');
+  if(reactionSprint){
+   // Each tap is timestamped on the already synchronized battle clock.
+   // Require monotonic distinct taps, a minimum human interaction spacing,
+   // and a recent last tap. The server alone calculates the score.
+   if(!Number.isSafeInteger(receivedAt)||!Array.isArray(tapAt)||
+      tapAt.length!==value.length||tapAt.some(t=>!Number.isSafeInteger(t))||
+      tapAt[0]<startedAt+round.startMs||
+      tapAt[tapAt.length-1]>=startedAt+round.endMs||
+      tapAt[tapAt.length-1]>receivedAt+150||
+      receivedAt-tapAt[tapAt.length-1]>2000||
+      tapAt.some((stamp,i)=>i>0&&stamp-tapAt[i-1]<420))
+    throw Error('DOG_MINIGAME_BAD_TIMESTAMP');
+  }
   const attempts=value.map((choice,index)=>({
-   step:index,correct:choice===round.puzzles[index].correctIndex,at:now
+   step:index,
+   correct:reactionSprint?
+    choice===1&&Math.abs(dogMiniReactionPosition(round,tapAt[index]-startedAt)-.5)<=
+     round.zoneRadius+.004:
+    choice===round.puzzles[index].correctIndex,
+   at:now,
+   ...(reactionSprint?{tappedAt:tapAt[index]}:{})
   }));
   const correctCount=attempts.filter(a=>a.correct).length;
   const entry={attempts,correct:correctCount>0,correctCount,at:now};
