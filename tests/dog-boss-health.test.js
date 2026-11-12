@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dogHeroHp,dogGroupBossHp} from '../dog-balance.js';
-import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp} from '../dog-boss-minigames.js';
+import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
 import {boss10View,boss10DamagePotential} from '../dog-boss10.js';
 import {groupBossView,groupBossDamagePotential} from '../dog-group-boss.js';
 
@@ -73,4 +73,43 @@ test('10 and 20 boss views expose synchronized HP without extra state writes',()
  assert.ok(c.teamHealth.maxHp>total);
  assert.ok(c.bossLiveHp<c.bossHp);
  assert.ok(groupBossDamagePotential(20,roster20,[],null)>0);
+});
+
+test('v11: every player earns their own defense and HP from server-checked answers',()=>{
+ const startedAt=now;
+ let games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ assert.equal(games.version,11);
+ const dodge=games.rounds[1];
+ for(const strike of dodge.attacks){
+  const correct=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
+   i!==strike.dangerIndex&&i!==strike.secondDangerIndex);
+  const at=startedAt+strike.startMs+500;
+  const reply=dogSubmitMiniAnswer(games,roster,'a',dodge.round,
+   correct,at,startedAt,strike.step);
+  assert.equal(reply.correct,true);
+  games=reply.games;
+ }
+ const bStrike=dodge.attacks[0];
+ const bSafe=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
+  i!==bStrike.dangerIndex&&i!==bStrike.secondDangerIndex);
+ games=dogSubmitMiniAnswer(games,roster,'b',dodge.round,bSafe,
+  startedAt+bStrike.startMs+500,startedAt,0).games;
+ const result=dogMiniGroupHealth(games,roster,dodge.endMs+1,hp);
+ const [a,b,c]=result.heroes;
+ assert.equal(a.hp,a.maxHp,'perfect dodge: this hero keeps all their LP');
+ assert.ok(b.hp<a.hp&&b.hp>c.hp,'partial dodge only reduces their own protection');
+ assert.equal(c.hp,Math.round(c.maxHp*.75),'missed dodge costs this hero 25%');
+ assert.equal(result.hp,a.hp+b.hp+c.hp,'team HP sums individual LP');
+ const afterReaction=dogMiniGroupHealth(games,roster,101000,hp);
+ assert.ok(afterReaction.heroes[0].hp>afterReaction.heroes[2].hp,
+  'second missed defense does not remove the earlier personal advantage');
+});
+test('old v10 battles keep their shared-shield rules after the personal-defense update',()=>{
+ const historical=dogCreateMiniGames(10,()=>0,{exchange:'endgame'});
+ assert.equal(historical.version,10);
+ const report=dogMiniGroupHealth(historical,roster,101000,()=>100);
+ assert.deepEqual(report.heroes.map(h=>h.hp),[50,50,50]);
+ const upgraded=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ assert.equal(upgraded.rounds[1].startMs,historical.rounds[1].startMs);
+ assert.equal(upgraded.rounds[3].endMs,historical.rounds[3].endMs);
 });
