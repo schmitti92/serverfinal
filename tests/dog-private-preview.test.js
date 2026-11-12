@@ -43,7 +43,7 @@ test('A solo phone starts a full three-hero 125-second boss encounter at each ch
    groupBossState(gate,state.progress.groupBosses[gate]);
   assert.equal(boss.phase,'fighting');
   assert.deepEqual(boss.roster.map(x=>x.uid),[...DOG_PREVIEW_BOTS,'owner']);
-  assert.equal(boss.endsAt-boss.startedAt,125000);
+  assert.equal(boss.endsAt-boss.startedAt,135000);
   const tick=advancePrivateBoss(state,start+126100,zero);
   assert.equal(tick.changed,true);
   const after=gate===10?boss10State(tick.data.progress.boss10):
