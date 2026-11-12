@@ -91,15 +91,20 @@ export function buildDogCombatStream({
     .filter(hit=>hit.uid===p.uid&&hit.round===4&&hit.kind==='hero-strike')
     .reduce((n,hit)=>n+nonNegative(hit.amount),0)));
    const sum=weighted.reduce((n,w)=>n+w,0);
-   let spentRaw=0,seenWeight=0;
+   let spentRaw=0,spentApplied=0,seenWeight=0,cumulativeRaw=0;
    for(let slot=0;slot<active.length;slot++){
     const hero=active[slot];
     seenWeight+=weighted[slot];
     const share=slot===active.length-1?extraRaw-spentRaw:
      Math.floor(extraRaw*seenWeight/sum)-spentRaw;
     spentRaw+=share;
+    cumulativeRaw+=share;
+    // Keep a living hero's later hit meaningful even on overkill.
+    // Allocate real boss HP separately from the excess rolled damage.
+    const damage=slot===active.length-1?extraApplied-spentApplied:
+     extraRaw?Math.floor(extraApplied*cumulativeRaw/extraRaw)-spentApplied:0;
+    spentApplied+=damage;
     const before=bossRemaining;
-    const damage=Math.min(before,share);
     bossRemaining-=damage;
     const seq=events.length+1;
     const atMs=nonNegative(endsAt-startedAt)+1+slot*1500;

@@ -178,6 +178,10 @@ test('K-05 fallen players never make a final blow, surviving teammates continue'
  assert.equal(out.finale.outcome,'victory');
  assert.equal(out.finale.strikes.reduce((n,e)=>n+e.rawDamage,0),135);
  assert.equal(out.finale.strikes.reduce((n,e)=>n+e.damage,0),75);
+ assert.ok(out.finale.strikes.every(e=>e.damage>0),
+  'living heroes each receive an applied LP share, not just leftover overkill');
+ assert.equal(out.finale.strikes.at(-1).hpAfter,0,
+  'the verdict follows the last personal blow');
  assert.equal(out.finale.strikes.reduce((n,e)=>n+e.overkillDamage,0),60);
  assert.equal(out.reconciliation.overkillDamage,60);
 });
