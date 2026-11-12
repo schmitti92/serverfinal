@@ -1,4 +1,4 @@
-/** F-01 quality prototype: pure offline rules, NOT connected to live inventory or rewards. */
+/** 100-Tore shared material-quality rules: pure functions consumed by live inventory, chest, and forge endpoints. */
 import {DOG_BALANCE_MATERIALS} from './dog-balance.js';
 const DOG_RESOURCES=Object.values(DOG_BALANCE_MATERIALS).flat();
 export const QUALITY_LEVELS=Object.freeze([1,2,3]);
