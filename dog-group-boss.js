@@ -178,7 +178,7 @@ const startFight=(gate,progress,team,ready,heroes,now,rand=randomInt)=>{
  const roster=prepareRoster(gate,ready,team,heroes);
  const hp=dogGroupBossHp(gate);
  const forecast=groupBossDamagePotential(gate,roster,[]);
- const miniGames=dogCreateMiniGames(gate,rand,{exchange:'individual'});
+ const miniGames=dogCreateMiniGames(gate,rand,{exchange:'individual-lethal'});
  const chancePercent=roster.length===1?0:roster.length===2?
   (roster.every(m=>maxed(gate,m))?2:0):
   Math.max(0,Math.min(95,Math.round(50+90*(forecast/hp-1))));

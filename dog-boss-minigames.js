@@ -233,13 +233,14 @@ function createRound(kind,round,gate,rand,windows=DOG_MINIGAME_WINDOWS,{colorTar
 export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
  if(exchange){
   // New battles v12; old stored encounters keep their original timing.
-  const breaker20=exchange==='individual';
+  const breaker20=exchange==='individual'||exchange==='individual-lethal';
   const breaker10=exchange==='individual-chain10';
   const breaker=breaker20||breaker10;
   const individual=breaker||exchange==='individual-runes';
   const endgame=exchange==='endgame'||individual,cinematic=exchange==='cinematic';
   const order=breaker?DOG_CHAIN_BREAKER_ORDER:individual?DOG_FINAL5_ORDER:DOG_EXCHANGE_ORDER;
-  return {version:breaker20?15:breaker10?13:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
+  return {version:exchange==='individual-lethal'?15:breaker20?14:breaker10?13:
+   individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
    const item=createRound(kind,i,gate,rand,breaker20?DOG_CHAIN20_WINDOWS:
     individual?DOG_FINAL5_WINDOWS:
     endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:

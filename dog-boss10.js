@@ -118,7 +118,7 @@ const startEncounter=(progress,team,ready,heroByUid,now,rand=randomInt)=>{
  const roster=qualifiedRoster(ready,team,heroByUid);
  if(roster.length!==ready.length)throw Error('DOG_BOSS10_NOT_READY');
  const forecast=boss10DamagePotential(roster,[]);
- const miniGames=dogCreateMiniGames(10,rand,{exchange:'individual'});
+ const miniGames=dogCreateMiniGames(10,rand,{exchange:'individual-lethal'});
  const hp=dogGroupBossHp(10);
  const chancePercent=roster.length===1?0:roster.length===2?
   (roster.every(fullyPrepared)?2:0):

@@ -78,7 +78,7 @@ test('10 and 20 boss views expose synchronized HP without extra state writes',()
 test('v12: every player earns their own defense and HP from server-checked answers',()=>{
  const startedAt=now;
  let games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
- assert.equal(games.version,15);
+ assert.equal(games.version,14);
  const dodge=games.rounds[1];
  for(const strike of dodge.attacks){
   const correct=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
@@ -235,7 +235,7 @@ test('cinematic visible HP stays full until each impact and drops by that exact 
 
 // K-04: v15 introduces lethal personal LP; persisted v14 remains protected.
 test('K-04 v15 knockouts reach 0 LP while other heroes remain active',()=>{
- const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual-lethal'});
  assert.equal(games.version,15);
  const dodge=games.rounds[1],reaction=games.rounds[3],chain=games.rounds[4];
  assert.equal(dogMiniGroupHealth(games,roster,dodge.endMs-1,hp).heroes[0].hp,hp(roster[0]));
