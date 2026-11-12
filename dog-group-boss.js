@@ -12,7 +12,7 @@ import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js'
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
-import {dogForgeCombatTier} from './dog-forge-progression.js';
+import {dogForgeCombatTier,dogForgeProgress} from './dog-forge-progression.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
  dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniHeroAliveAt,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
@@ -103,7 +103,7 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
       ...cinematicVitals}}:{})},
   phase:won?'victory':skipCooldown?'waiting':boss.phase,won,
   developerBossCooldownDisabled:dogDeveloperCooldownBypass(progress,team,uid),
-  forgeLevel:Math.min(10,gate/10+1),
+  forgeLevel:dogForgeProgress(progress).forgeLevel,
   finalBoss:gate===100,dogUnlocked:progress.sharedBosses.includes(100),
   serverNow:now,remainingMs:boss.phase==='fighting'?Math.max(0,boss.endsAt-now):0,
   cooldownRemainingMs:boss.phase==='cooldown'&&!skipCooldown?Math.max(0,boss.cooldownUntil-now):0};
