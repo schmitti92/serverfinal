@@ -298,6 +298,8 @@ test('A-01 synthetic owner + Nova/Titan: measure GET-driven bot writes every fiv
  const botWrites=f.history.filter(x=>x.method==='GET'&&x.writes>0);
  const botReads=botWrites.reduce((sum,x)=>sum+x.reads,0);
  assert.ok(botWrites.length>1,'bots must generate changes during real-clock battle');
+ assert.ok(botWrites.length<=7,
+  'S-06: five completed phases plus final settlement should need at most 6–7 bot update GET writes');
  assert.ok(botWrites.every(x=>x.reads>=3&&x.writes===1));
  assert.equal(f.history.filter(x=>x.route.endsWith('/minigame')).length,9);
  console.log('[A-01 synthetic bot fight]',JSON.stringify({

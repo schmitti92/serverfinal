@@ -131,6 +131,12 @@ export function advanceLiveBotFight(gate,progressRaw,teamRaw,uid,now=Date.now(),
  if(state.phase!=='fighting')return {progress,changed};
  for(const [index,id] of DOG_LIVE_BOT_IDS.entries()){
   for(const round of state.miniGames?.rounds||[]){
+   // S-06: Hold bot input until the *server-defined* phase has closed.
+   // The public player-result rows are revealed only when a round closes.
+   // Batch all due steps of both bots into one transaction at that point
+   // instead of writing the shared progress document on each 5s GET.
+   // Keep every original synthetic answer timestamp, score and result.
+   if(now<state.startedAt+round.endMs)continue;
    // One server receipt per 10-target sprint, same rule as real players.
    if(['target','chain'].includes(round.kind)&&Array.isArray(round.puzzles)){
     if(state.miniGames?.answers?.[id]?.[round.round]?.attempts?.length)continue;

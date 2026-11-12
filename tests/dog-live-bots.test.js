@@ -89,6 +89,45 @@ test('Boss 20–100 uses the exact ordinary group-boss engine with real hero equ
   assert.equal(result.result.participants,3);
  }
 });
+test('S-06 bots commit only after completed phase, with unchanged official scoring',()=>{
+ for(const gate of [10,20]){
+  const {team,progress}=progressAtBoss(gate);
+  const owner='real-owner';
+  const hero=liveBotHero(gate,0);
+  const ready=readyWithLiveBots(gate,progress,team,owner,hero,now+1000,rand);
+  const started=gate===10?boss10State(ready.boss10):
+   groupBossState(gate,ready.groupBosses[gate]);
+  const first=started.miniGames.rounds[0];
+  const early=advanceLiveBotFight(gate,ready,team,owner,
+   started.startedAt+first.endMs-1,rand);
+  assert.equal(early.changed,false,'no bot progression writes before visible round closes');
+  const after=advanceLiveBotFight(gate,ready,team,owner,
+   started.startedAt+first.endMs,rand);
+  assert.equal(after.changed,true,'one batched change when phase closes');
+  const afterState=gate===10?boss10State(after.progress.boss10):
+   groupBossState(gate,after.progress.groupBosses[gate]);
+  for(const uid of DOG_LIVE_BOT_IDS)
+   assert.ok(afterState.miniGames.answers[uid]?.[first.round],
+    'both bots are scored at the same phase boundary');
+  let stepped=ready;
+  for(const round of started.miniGames.rounds){
+   const update=advanceLiveBotFight(gate,stepped,team,owner,
+    started.startedAt+round.endMs,rand);
+   stepped=update.progress;
+  }
+  const completeTime=started.endsAt+1;
+  const final=advanceLiveBotFight(gate,stepped,team,owner,completeTime,rand);
+  const single=advanceLiveBotFight(gate,ready,team,owner,completeTime,rand);
+  const fina=gate===10?boss10State(final.progress.boss10):
+   groupBossState(gate,final.progress.groupBosses[gate]);
+  const oneShot=gate===10?boss10State(single.progress.boss10):
+   groupBossState(gate,single.progress.groupBosses[gate]);
+  assert.deepEqual(fina.miniGames.answers,oneShot.miniGames.answers,
+   'deferred scoring preserves the exact same answers and bonuses');
+  assert.deepEqual(fina.result,oneShot.result,
+   'incremental phase-batched and late reconnect settle identically');
+ }
+});
 test('Live access is owner-gated before any expedition API is registered',()=>{
  const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  const lock=source.indexOf('installDogLivePilotApi(app');
