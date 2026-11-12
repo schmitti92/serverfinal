@@ -90,10 +90,13 @@ export function bossTeam(raw){
  const d=object(raw),members=Array.isArray(d.members)?
   d.members.slice(0,DOG_BOSS_MAX_MEMBERS).filter(x=>validUid(x?.uid))
    .map(x=>({uid:x.uid,name:cleanName(x.name)})):[];
- const heroClasses={};
- for(const [index,member] of members.entries()){
+ const heroClasses={},heroLocks={};
+ for(const member of members){
   const value=d.heroClasses?.[member.uid];
   if(DOG_HERO_CLASSES.includes(value))heroClasses[member.uid]=value;
+  // Older test choices were not final; require an explicit final confirmation.
+  if(d.heroLocks?.[member.uid]===true&&DOG_HERO_CLASSES.includes(value))
+   heroLocks[member.uid]=true;
  }
  const heroes={};
  for(const member of members){
@@ -111,7 +114,7 @@ export function bossTeam(raw){
    num(d.bossTurn,0,1_000_000,0),num(d.attempt,1,1_000_000,1)),
   combatStats:bossStats(d.combatStats),
   cooldownUntil:phase==='cooldown'?num(d.cooldownUntil,0,MAX_TIME,0):0,
-  members,...(Object.keys(heroClasses).length?{heroClasses}:{}),heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
+  members,heroClasses,heroLocks,heroes,log:Array.isArray(d.log)?d.log.slice(0,10).filter(x=>typeof x==='string')
    .map(x=>x.slice(0,140)):[],updatedAt:num(d.updatedAt,0,MAX_TIME,0)};
 }
 export function bossView(raw,uid,now=Date.now()){
@@ -150,13 +153,20 @@ export function bossJoin(raw,uid,name,heroRaw,now=Date.now()){
   log:[cleanName(name)+' ist der Heldengruppe beigetreten.',...state.log].slice(0,10),
   updatedAt:now};
 }
-/** A character choice changes only how the hero looks, never gear or damage. */
+/** Final cosmetic choice: each participant confirms once, independently.
+ * The class never modifies weapons, skills, defense or boss hit points.
+ * Repeated identical confirmations are idempotent, even across reconnects. */
 export function bossSelectHero(raw,uid,heroClass,now=Date.now()){
  const team=bossTeam(raw);
  if(!team.members.some(m=>m.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
  if(!DOG_HERO_CLASSES.includes(heroClass))throw Error('DOG_HERO_CLASS_INVALID');
- if(team.heroClasses?.[uid]===heroClass)return team;
- return {...team,heroClasses:{...team.heroClasses,[uid]:heroClass},updatedAt:now};
+ if(team.heroLocks[uid]===true){
+  if(team.heroClasses[uid]===heroClass)return team;
+  throw Error('DOG_HERO_ALREADY_LOCKED');
+ }
+ return {...team,
+  heroClasses:{...team.heroClasses,[uid]:heroClass},
+  heroLocks:{...team.heroLocks,[uid]:true},updatedAt:now};
 }
 export function bossRestart(raw,heroByUid,uid,now=Date.now()){
  const state=bossTeam(raw);
