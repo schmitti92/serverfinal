@@ -8,7 +8,7 @@ import {bossJoin,bossTeam,DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog
 import {dogGateProgress,dogGateMapView,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {boss10Ready,boss10State,boss10MiniAnswer,boss10Finish} from './dog-boss10.js';
 import {groupBossReady,groupBossState,groupBossMiniAnswer,groupBossFinish} from './dog-group-boss.js';
-import {dogMiniTargetIndex,dogMiniReactionPosition} from './dog-boss-minigames.js';
+import {dogMiniTargetIndex,dogMiniReactionPosition,dogMiniHeroAliveAt} from './dog-boss-minigames.js';
 
 export const DOG_LIVE_BOT_IDS=Object.freeze(['dog-live-bot-nova','dog-live-bot-titan']);
 export const DOG_LIVE_PILOT_COLLECTION='dog_live_pilot_owner_v1';
@@ -137,6 +137,9 @@ export function advanceLiveBotFight(gate,progressRaw,teamRaw,uid,now=Date.now(),
    // instead of writing the shared progress document on each 5s GET.
    // Keep every original synthetic answer timestamp, score and result.
    if(now<state.startedAt+round.endMs)continue;
+   // K-04: a fallen Nova/Titan is out of later minigames. Other
+   // participants (including the surviving bot) continue normally.
+   if(!dogMiniHeroAliveAt(state.miniGames,id,round.startMs))continue;
    // One server receipt per 10-target sprint, same rule as real players.
    if(['target','chain'].includes(round.kind)&&Array.isArray(round.puzzles)){
     if(state.miniGames?.answers?.[id]?.[round.round]?.attempts?.length)continue;

@@ -14,7 +14,7 @@ import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDev
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniHeroAliveAt,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 export const DOG_GROUP_BOSS_GATES=Object.freeze([20,30,40,50,60,70,80,90,100]);
 export const DOG_GROUP_BOSS_NAMES=Object.freeze({
@@ -128,8 +128,11 @@ export function groupBossDamagePotential(gate,roster=[],reactions=[],miniGames=n
   const armor=Math.min(1,dogArmorBase(m.armorLevel)/armorReference);
   const survival=(.74+.26*defense)*(.80+.20*armor);
   const multiplier=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):seen.has(m.uid)?1.10:1;
+  const games=dogNormalizeMiniGames(miniGames);
+  const share=games?.version>=15&&!dogMiniHeroAliveAt(games,m.uid,
+   games.rounds.at(-1).startMs)?.83:1;
   return sum+DOG_GROUP_BOSS_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
-   (.91+.30*attack)*survival*multiplier;
+   (.91+.30*attack)*survival*multiplier*share;
  },0)*(dogNormalizeMiniGames(miniGames)?.version>=3?
   (.94+.06*dogMiniTeamShield(miniGames,roster)/100):1);
 }
@@ -161,8 +164,13 @@ export function groupBossResolveCombat(gate,roster,reactions=[],rand=randomInt,m
   // total is strictly below the HP threshold. Never a lucky bypass.
   damage=rareCritical?Math.max(hp,damage*1.35):Math.min(damage,hp-1);
  }
+ const games=dogNormalizeMiniGames(miniGames);
+ const alive=games?.version>=15?
+  roster.some(m=>dogMiniHeroAliveAt(games,m.uid,games.rounds.at(-1).startMs)):
+  true;
+ if(!alive)damage=Math.min(damage,hp-1);
  const dealt=Math.max(0,Math.round(damage));
- const win=roster.length>=2&&dealt>=hp;
+ const win=alive&&roster.length>=2&&dealt>=hp;
  return {win,bossHp:hp,damage:dealt,hpRemaining:Math.max(0,hp-dealt),
   participants:roster.length,rareCritical,roll,reactionCount:reacted.length};
 }

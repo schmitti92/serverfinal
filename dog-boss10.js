@@ -10,7 +10,7 @@ import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
- dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
+ dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniHeroAliveAt,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
 // Legacy duration is retained for existing v10/v11 fights and compatibility.
 export const DOG_BOSS10_DURATION_MS=101_000;
@@ -176,8 +176,12 @@ export function boss10DamagePotential(roster=[],reacted=[],miniGames=null){
   const armorReadiness=Math.min(1,armorBase);
   const survival=(.8+.2*defense)*(.75+.25*armorReadiness);
   const reaction=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):reacting.has(m.uid)?1.1:1;
+  // Dead heroes dealt their earlier blows but cannot perform round 5.
+  const games=dogNormalizeMiniGames(miniGames);
+  const share=games?.version>=15&&!dogMiniHeroAliveAt(games,m.uid,
+   games.rounds.at(-1).startMs)?.83:1;
   return sum+DOG_BOSS10_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
-   (.67+.21*attack)*survival*reaction;
+   (.67+.21*attack)*survival*reaction*share;
  },0)*(dogNormalizeMiniGames(miniGames)?.version>=3?
   (.94+.06*dogMiniTeamShield(miniGames,roster)/100):1);
 }
@@ -206,8 +210,14 @@ export function boss10ResolveCombat(roster,reactions=[],rand=randomInt,miniGames
   rareCritical=bonusRoll<DOG_BOSS10_RARE_TWO_HERO_CRITICAL_BP;
   if(rareCritical)damage*=1.5;
  }
+ // A team with no surviving hero cannot defeat the boss.
+ const games=dogNormalizeMiniGames(miniGames);
+ const alive=games?.version>=15?
+  roster.some(m=>dogMiniHeroAliveAt(games,m.uid,games.rounds.at(-1).startMs)):
+  true;
+ if(!alive)damage=Math.min(damage,bossHp-1);
  const dealt=Math.max(0,Math.round(damage));
- const win=roster.length>=2&&dealt>=bossHp;
+ const win=alive&&roster.length>=2&&dealt>=bossHp;
  return {win,bossHp,damage:dealt,hpRemaining:Math.max(0,bossHp-dealt),
   participants:roster.length,rareCritical,roll,
   reactionCount:reactionUids.length};

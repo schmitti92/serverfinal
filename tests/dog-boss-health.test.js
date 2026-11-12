@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dogHeroHp,dogGroupBossHp} from '../dog-balance.js';
-import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniBossLiveHp,dogMiniExchangeView,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
+import {dogCreateMiniGames,dogMiniGroupHealth,dogMiniHeroAliveAt,dogMiniBossLiveHp,dogMiniExchangeView,dogMiniConfirmedStrikes,dogMiniCinematicVitals,dogSubmitMiniAnswer} from '../dog-boss-minigames.js';
 import {boss10View,boss10DamagePotential} from '../dog-boss10.js';
 import {groupBossView,groupBossDamagePotential} from '../dog-group-boss.js';
 
@@ -78,7 +78,7 @@ test('10 and 20 boss views expose synchronized HP without extra state writes',()
 test('v12: every player earns their own defense and HP from server-checked answers',()=>{
  const startedAt=now;
  let games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
- assert.equal(games.version,14);
+ assert.equal(games.version,15);
  const dodge=games.rounds[1];
  for(const strike of dodge.attacks){
   const correct=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
@@ -231,4 +231,37 @@ test('cinematic visible HP stays full until each impact and drops by that exact 
  const last=dogMiniCinematicVitals(after,afterDefense,defenseHits,defenseHits.at(-1).atMs,max);
  assert.equal(last.displayTeamHealth.hp,afterDefense.hp);
  assert.deepEqual(last.displayTeamHealth.heroes.map(x=>x.hp),afterDefense.heroes.map(x=>x.hp));
+});
+
+// K-04: v15 introduces lethal personal LP; persisted v14 remains protected.
+test('K-04 v15 knockouts reach 0 LP while other heroes remain active',()=>{
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
+ assert.equal(games.version,15);
+ const dodge=games.rounds[1],reaction=games.rounds[3],chain=games.rounds[4];
+ assert.equal(dogMiniGroupHealth(games,roster,dodge.endMs-1,hp).heroes[0].hp,hp(roster[0]));
+ const hurt=dogMiniGroupHealth(games,roster,dodge.endMs,hp);
+ assert.equal(hurt.heroes[0].hp,Math.round(hp(roster[0])*.45));
+ // A was fully unprotected in both phases, B successfully dodged one hit.
+ const safe=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
+  i!==dodge.attacks[0].dangerIndex&&i!==dodge.attacks[0].secondDangerIndex);
+ const replied=dogSubmitMiniAnswer(games,roster,'b',1,safe,
+  now+dodge.attacks[0].startMs+300,now,0).games;
+ const final=dogMiniGroupHealth(replied,roster,reaction.endMs,hp);
+ assert.equal(final.heroes[0].hp,0);
+ assert.equal(final.heroes[2].hp,0);
+ assert.ok(final.heroes[1].hp>0,'survivor continues while two heroes fell');
+ assert.equal(final.hp,final.heroes[1].hp);
+ assert.equal(final.lost,final.maxHp-final.hp);
+ assert.throws(()=>dogSubmitMiniAnswer(replied,roster,'a',4,
+  Array(10).fill(0),now+chain.startMs+100,now,0),/DOG_MINIGAME_HERO_FALLEN/);
+ assert.equal(dogMiniHeroAliveAt(replied,'a',chain.startMs),false);
+ assert.equal(dogMiniHeroAliveAt(replied,'b',chain.startMs),true);
+ const hits=dogMiniConfirmedStrikes(replied,roster,chain.endMs,
+  dogGroupBossHp(10),boss10DamagePotential(roster,[],null),
+  hero=>boss10DamagePotential([hero],[],null),hp);
+ assert.deepEqual(hits.filter(e=>e.round===4).map(e=>e.uid),['b'],
+  'fallen heroes never attack in the finishing scene');
+ const older={...replied,version:14};
+ assert.equal(dogMiniGroupHealth(older,roster,reaction.endMs,hp).heroes[0].hp,
+  Math.round(hp(roster[0])*.5),'v14 retains historical 50% floor');
 });

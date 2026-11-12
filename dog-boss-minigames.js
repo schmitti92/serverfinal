@@ -239,7 +239,7 @@ export function dogCreateMiniGames(gate,rand=randomInt,{exchange=false}={}){
   const individual=breaker||exchange==='individual-runes';
   const endgame=exchange==='endgame'||individual,cinematic=exchange==='cinematic';
   const order=breaker?DOG_CHAIN_BREAKER_ORDER:individual?DOG_FINAL5_ORDER:DOG_EXCHANGE_ORDER;
-  return {version:breaker20?14:breaker10?13:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
+  return {version:breaker20?15:breaker10?13:individual?12:endgame?10:cinematic?4:3,gate,rounds:order.map((kind,i)=>{
    const item=createRound(kind,i,gate,rand,breaker20?DOG_CHAIN20_WINDOWS:
     individual?DOG_FINAL5_WINDOWS:
     endgame?DOG_COLOR_TARGET_ENDGAME_WINDOWS:
@@ -369,7 +369,7 @@ function normalizeV2Round(round,i,gate,windows=DOG_MINIGAME_WINDOWS,rawVersion=2
   initialIndex:int(round.initialIndex,0,4,0),stepMs:d.targetStepMs};
 }
 export function dogNormalizeMiniGames(raw){
- if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12,13,14].includes(raw.version)||
+ if(!isObj(raw)||![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].includes(raw.version)||
   !Array.isArray(raw.rounds)||raw.rounds.length!==(raw.version>=12?5:raw.version>=3?4:3)||
   !Number.isSafeInteger(raw.gate))return null;
  if(raw.gate<10||raw.gate>100||raw.gate%10!==0)return null;
@@ -513,6 +513,28 @@ export function dogMiniTeamShield(raw,roster=[],throughRound=3){
  }
  return Math.max(50,Math.min(100,shield));
 }
+/* K-04: v15 lethal personal defense. Previous stored versions stay
+ * untouched (25 points lost per failed defense, 50% personal minimum).
+ * Two completely missed defenses in v15 cause 110 points lost: 0 LP.
+ * Everyone else keeps their own HP and continues the scheduled fight.
+ */
+function personalDefenseLoss(games,uid,elapsed){
+ if(!games||games.version<11)return 0;
+ const perRound=games.version>=15?55:25;
+ let loss=0;
+ for(const round of games.rounds){
+  if(!['dodge','reaction'].includes(round.kind)||elapsed<round.endMs)continue;
+  const count=(games.answers[uid]?.[round.round]?.attempts||[])
+   .filter(a=>a.correct).length;
+  loss+=Math.round(perRound*(1-Math.min(round.maxSteps,count)/round.maxSteps));
+ }
+ return loss;
+}
+export function dogMiniHeroAliveAt(raw,uid,elapsed=0){
+ const games=dogNormalizeMiniGames(raw);
+ if(!games||games.version<15)return true;
+ return personalDefenseLoss(games,uid,elapsed)<100;
+}
 /** Read-only synchronized stage summary derived entirely from persisted
  * server-verified team answers, never from client-submitted hit values. */
 /** Der gemeinsame Lebenspool besteht aus den echten Lebenspunkten aller
@@ -536,14 +558,9 @@ export function dogMiniGroupHealth(raw,roster=[],elapsed=0,heroMaximum=()=>145){
   // original shared-defense health calculation.
   let personalPercent=remainingPercent;
   if(personalDefense){
-   let loss=0;
-   for(const round of games.rounds){
-    if(!['dodge','reaction'].includes(round.kind)||elapsed<round.endMs)continue;
-    const correct=(games.answers[p.uid]?.[round.round]?.attempts||[])
-     .filter(a=>a.correct).length;
-    loss+=Math.round(25*(1-Math.min(round.maxSteps,correct)/round.maxSteps));
-   }
-   personalPercent=Math.max(50,Math.min(100,100-loss));
+   const loss=personalDefenseLoss(games,p.uid,elapsed);
+   personalPercent=Math.max(games.version>=15?0:50,
+    Math.min(100,100-loss));
   }
   const hp=Math.round(maxHp*personalPercent/100);
   return {uid:p.uid,hp,maxHp};
@@ -596,6 +613,10 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,
   const playerResults=[];
   let rawAttackBonus=0;
   if(resolved)for(const hero of participants){
+   if(games.version>=15&&!dogMiniHeroAliveAt(games,hero.uid,round.startMs)){
+    playerResults.push({uid:hero.uid,correct:0,max:0,fallen:true,bonusDamage:0});
+    continue;
+   }
    const personalAttempts=games.answers[hero.uid]?.[index]?.attempts||[];
    const count=Math.min(round.maxSteps,personalAttempts.filter(a=>a.correct).length);
    const result={uid:hero.uid,correct:count,max:round.maxSteps};
@@ -611,11 +632,17 @@ export function dogMiniExchangeView(raw,roster=[],elapsed=0,heroBaseDamage=null,
       if(!['dodge','reaction'].includes(previous.kind)||elapsed<previous.endMs)continue;
       const prevCount=(games.answers[hero.uid]?.[previous.round]?.attempts||[])
        .filter(a=>a.correct).length;
-      previousLoss+=Math.round(25*(1-Math.min(previous.maxSteps,prevCount)/previous.maxSteps));
+      previousLoss+=Math.round((games.version>=15?55:25)*
+       (1-Math.min(previous.maxSteps,prevCount)/previous.maxSteps));
      }
      // Exact personal HP preserved versus missing every action in THIS phase.
-     const kept=Math.max(50,100-previousLoss-(25-savedPoints));
-     const missed=Math.max(50,100-previousLoss-25);
+     const risk=games.version>=15?55:25;
+     // Keep the score-UI's 25-point shield scale, but calculate saved
+     // personal HP using the new, possibly fatal 55-point defense loss.
+     const actualLoss=Math.round(risk*(1-count/round.maxSteps));
+     const floor=games.version>=15?0:50;
+     const kept=Math.max(floor,100-previousLoss-actualLoss);
+     const missed=Math.max(floor,100-previousLoss-risk);
      result.savedHp=Math.max(0,Math.round(hpMax*kept/100)-Math.round(hpMax*missed/100));
     }
    }else{
@@ -666,6 +693,8 @@ export function dogSubmitMiniAnswer(raw,roster,uid,roundIndex,value,now,startedA
  if(!Number.isSafeInteger(now)||!Number.isSafeInteger(startedAt)||startedAt<=0)
   throw Error('DOG_MINIGAME_NOT_RUNNING');
  const round=games.rounds[roundIndex],elapsed=now-startedAt,mine=games.answers[uid]||{};
+ if(games.version>=15&&!dogMiniHeroAliveAt(games,uid,round.startMs))
+  throw Error('DOG_MINIGAME_HERO_FALLEN');
  // Both fast sprints submit once: 8 math choices or up to 10 symbol targets.
  // No network wait between taps; server checks every private correctIndex.
  if(Array.isArray(value)){
@@ -804,6 +833,9 @@ export function dogMiniConfirmedStrikes(raw,roster=[],elapsed=0,
   const actionMs=Math.max(0,end-round.endMs-3000);
   const perHeroMs=actionMs/players.length;
   const defensive=round.kind==='dodge'||round.kind==='reaction';
+  const survivors=games.version>=15?new Set(players.filter(hero=>
+   dogMiniHeroAliveAt(games,hero.uid,round.startMs)).map(hero=>hero.uid)):
+   new Set(players.map(hero=>hero.uid));
   let amounts=[];
   if(defensive){
    const before=dogMiniGroupHealth(games,players,round.endMs-1,heroMaximum);
@@ -822,6 +854,7 @@ export function dogMiniConfirmedStrikes(raw,roster=[],elapsed=0,
    priorBossHp=resultingHp;
    const fraction=round.round===0?.43:round.round===4?.17:.40;
    const weights=players.map(hero=>{
+    if(!survivors.has(hero.uid))return 0;
     const personal=stage.playerResults?.find(p=>p.uid===hero.uid);
     return Math.max(0,Number(heroBaseDamage(hero))||0)*fraction+
      Math.max(0,Number(personal?.bonusDamage)||0);
@@ -836,6 +869,9 @@ export function dogMiniConfirmedStrikes(raw,roster=[],elapsed=0,
    });
   }
   for(const [slot,hero] of players.entries()){
+   // A fallen fighter never strikes or receives another attack slot.
+   // The reserved cinematic slot stays in place for all other players.
+   if(!survivors.has(hero.uid))continue;
    const correct=stage.playerResults?.find(p=>p.uid===hero.uid)?.correct??null;
    hits.push({round:round.round,uid:hero.uid,slot,
     kind:defensive?'boss-strike':'hero-strike',
