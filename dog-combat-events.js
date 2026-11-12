@@ -8,7 +8,8 @@ const nonNegative=value=>Math.max(0,Math.round(Number(value)||0));
 const safeHero=value=>typeof value==='string'&&value.length>0&&value.length<=200;
 
 export function buildDogCombatStream({
- gate,attempt=1,startedAt=0,endsAt=0,roster=[],bossHp=0,strikes=[],result=null,heroMaximum=()=>145
+ gate,attempt=1,startedAt=0,endsAt=0,roster=[],bossHp=0,strikes=[],result=null,
+ miniGameVersion=0,finalAliveUids=null,heroMaximum=()=>145
 }={}){
  const initialBossHp=nonNegative(bossHp);
  const players=Array.isArray(roster)?roster.filter(p=>safeHero(p?.uid)).slice(0,3):[];
@@ -76,7 +77,49 @@ export function buildDogCombatStream({
    Math.max(0,initialBossHp-rawDamage)===finalHp&&
    (extraApplied>=0?extraRaw>=extraApplied:
     extraRaw===extraApplied);
-  if(reconciled&&(extraApplied!==0||extraRaw!==0)){
+  if(reconciled&&Number(miniGameVersion)>=15&&
+     Array.isArray(finalAliveUids)&&finalAliveUids.length>0&&
+     extraApplied>=0&&extraRaw>=extraApplied){
+   // K-05: The irreversible server roll is applied to the living heroes'
+   // individually identified closing blows. This replaces the *anonymous*
+   // post-battle team adjustment only for the new v15 rules, without
+   // touching the strikes already confirmed during the arena animation.
+   // Deterministic proportional attribution uses their verified chain
+   // round strike power, not a new random roll or any client guess.
+   const active=players.filter(p=>finalAliveUids.includes(p.uid));
+   const weighted=active.map(p=>Math.max(1,ordered
+    .filter(hit=>hit.uid===p.uid&&hit.round===4&&hit.kind==='hero-strike')
+    .reduce((n,hit)=>n+nonNegative(hit.amount),0)));
+   const sum=weighted.reduce((n,w)=>n+w,0);
+   let spentRaw=0,seenWeight=0;
+   for(let slot=0;slot<active.length;slot++){
+    const hero=active[slot];
+    seenWeight+=weighted[slot];
+    const share=slot===active.length-1?extraRaw-spentRaw:
+     Math.floor(extraRaw*seenWeight/sum)-spentRaw;
+    spentRaw+=share;
+    const before=bossRemaining;
+    const damage=Math.min(before,share);
+    bossRemaining-=damage;
+    const seq=events.length+1;
+    const atMs=nonNegative(endsAt-startedAt)+1+slot*1500;
+    events.push({
+     eventId:fightId+':'+seq,sequence:seq,fightId,
+     gate:nonNegative(gate),round:4,uid:hero.uid,heroId:hero.uid,slot,
+     actorId:hero.uid,targetId:'boss',
+     kind:'hero-finisher',attackType:'hero-finisher',
+     damage,amount:damage,rawDamage:share,overkillDamage:share-damage,
+     hpBefore:before,hpAfter:bossRemaining,
+     atMs,impactAt:startedAt+atMs,
+     blocked:damage===0,correct:null,
+     rareCritical:result.rareCritical===true
+    });
+   }
+   // The sum of all finale shares MUST reproduce the authoritative result.
+   // If it does not, fail closed to a visible reconciliation mismatch instead
+   // of ever presenting a fictitious win in the client.
+   if(bossRemaining!==finalHp)throw Error('DOG_COMBAT_FINALE_RECONCILIATION');
+  }else if(reconciled&&(extraApplied!==0||extraRaw!==0)){
    const sequence=events.length+1;
    const lastRound=events.reduce((m,e)=>Math.max(m,e.round),0);
    const atMs=Math.max(nonNegative(endsAt-startedAt),
@@ -112,6 +155,11 @@ export function buildDogCombatStream({
    overkillDamage,finalBossHp:finalHp,
    rareCritical:result.rareCritical===true};
  }
+ const finale=Number(miniGameVersion)>=15&&reconciliation?.reconciled===true?
+  {kind:'personal',strikes:events.filter(e=>e.kind==='hero-finisher'),
+   outcome:result?.win?'victory':'defeat',
+   sceneDurationMs:Math.max(0,events.filter(e=>e.kind==='hero-finisher').length)*1500}:
+  null;
  return {version:1,fightId,latestSequence:events.length,
-  initialBossHp,initialHeroHp,events,reconciliation};
+  initialBossHp,initialHeroHp,events,reconciliation,finale};
 }

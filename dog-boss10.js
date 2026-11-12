@@ -83,6 +83,10 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
   gate:10,attempt:boss.attempt,startedAt:boss.startedAt,
   endsAt:boss.endsAt,roster:boss.roster,bossHp:bossMaxHp,
   strikes:confirmedStrikes,
+  miniGameVersion:boss.miniGames?.version||0,
+  finalAliveUids:boss.miniGames?.version>=15?
+   boss.roster.filter(hero=>dogMiniHeroAliveAt(boss.miniGames,hero.uid,
+    boss.miniGames.rounds.at(-1).startMs)).map(hero=>hero.uid):null,
   result:boss.miniGames?.version>=11?boss.result:null,
   heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel)
  });

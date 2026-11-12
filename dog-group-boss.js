@@ -82,6 +82,10 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
   gate:gate,attempt:boss.attempt,startedAt:boss.startedAt,
   endsAt:boss.endsAt,roster:boss.roster,bossHp:bossMaxHp,
   strikes:confirmedStrikes,
+  miniGameVersion:boss.miniGames?.version||0,
+  finalAliveUids:boss.miniGames?.version>=15?
+   boss.roster.filter(hero=>dogMiniHeroAliveAt(boss.miniGames,hero.uid,
+    boss.miniGames.rounds.at(-1).startMs)).map(hero=>hero.uid):null,
   result:boss.miniGames?.version>=11?boss.result:null,
   heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel)
  });

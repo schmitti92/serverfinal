@@ -133,3 +133,59 @@ test('S-02 contradictory final result is flagged, not silently balanced',()=>{
  assert.equal(r.reconciliation.reconciled,false);
  assert.equal(r.events.length,4);
 });
+
+test('K-05 three living heroes get three uniquely attributed, ordered finale hits',()=>{
+ const trio=[{uid:'alpha'},{uid:'beta'},{uid:'gamma'}];
+ const strikes=[
+  {round:4,slot:0,uid:'alpha',kind:'hero-strike',amount:10,atMs:125000},
+  {round:4,slot:1,uid:'beta',kind:'hero-strike',amount:20,atMs:128000},
+  {round:4,slot:2,uid:'gamma',kind:'hero-strike',amount:30,atMs:131000}
+ ];
+ const input={gate:10,attempt:2,startedAt:100000,endsAt:235000,
+  bossHp:200,roster:trio,strikes,miniGameVersion:15,
+  finalAliveUids:trio.map(h=>h.uid),
+  result:{win:false,damage:150,hpRemaining:50,roll:1234},
+  heroMaximum:()=>100};
+ const out=buildDogCombatStream(input);
+ const finish=out.finale.strikes;
+ assert.equal(finish.length,3);
+ assert.deepEqual(finish.map(e=>e.uid),['alpha','beta','gamma']);
+ assert.deepEqual(finish.map(e=>e.sequence),[4,5,6]);
+ assert.deepEqual(finish.map(e=>e.rawDamage),[15,30,45]);
+ assert.deepEqual(finish.map(e=>e.damage),[15,30,45]);
+ assert.deepEqual(finish.map(e=>e.impactAt),[235001,236501,238001]);
+ assert.equal(out.reconciliation.reconciled,true);
+ assert.equal(out.finale.outcome,'defeat');
+ assert.equal(out.finale.sceneDurationMs,4500);
+ assert.equal(out.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.damage,0),150);
+ assert.equal(out.events.filter(e=>e.targetId==='boss')
+  .reduce((n,e)=>n+e.rawDamage,0),150);
+ assert.equal(out.events.some(e=>e.kind==='team-finisher'),false);
+ assert.deepEqual(buildDogCombatStream(input),out,'reconnect yields stable IDs & hit totals');
+});
+
+test('K-05 fallen players never make a final blow, surviving teammates continue',()=>{
+ const trio=[{uid:'alpha'},{uid:'beta'},{uid:'gamma'}];
+ const out=buildDogCombatStream({gate:20,attempt:1,startedAt:200000,
+  endsAt:335000,bossHp:100,roster:trio,miniGameVersion:15,
+  finalAliveUids:['alpha','gamma'],heroMaximum:()=>100,
+  strikes:[{round:4,slot:0,uid:'alpha',kind:'hero-strike',amount:25,atMs:330000}],
+  result:{win:true,damage:160,hpRemaining:0,rareCritical:true,roll:0}});
+ assert.equal(out.finale.strikes.length,2);
+ assert.deepEqual(out.finale.strikes.map(x=>x.uid),['alpha','gamma']);
+ assert.equal(out.finale.strikes.some(x=>x.uid==='beta'),false);
+ assert.equal(out.finale.outcome,'victory');
+ assert.equal(out.finale.strikes.reduce((n,e)=>n+e.rawDamage,0),135);
+ assert.equal(out.finale.strikes.reduce((n,e)=>n+e.damage,0),75);
+ assert.equal(out.finale.strikes.reduce((n,e)=>n+e.overkillDamage,0),60);
+ assert.equal(out.reconciliation.overkillDamage,60);
+});
+
+test('K-05 old v14 combat keeps historical S-02 team-finisher',()=>{
+ const input={...args,miniGameVersion:14,finalAliveUids:['alpha','beta'],
+  endsAt:135000,result:{win:false,damage:85,hpRemaining:15,roll:5}};
+ const out=buildDogCombatStream(input);
+ assert.equal(out.events.at(-1).kind,'team-finisher');
+ assert.equal(out.finale,null);
+});
