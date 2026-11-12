@@ -114,8 +114,10 @@ test('All three hero positions show on a shared map; fourth cannot enroll',async
 
 test('Wins and losses update only own current position; retries replay exactly once',async()=>{
  const f=fixture();
- for(const token of ['a','b','c'])
+ for(const token of ['a','b','c']){
   assert.equal((await f.call('POST','/api/dog/gates/join',{},token)).body.ok,true);
+  assert.equal((await f.call('POST','/api/dog/gates/hero',{heroClass:'krieger'},token)).statusCode,200);
+ }
  const initial=await f.call('POST','/api/dog/gates/fight',{
   gate:2,requestId:'go-before-clear-00001'},'a');
  assert.equal(initial.statusCode,409);
@@ -287,11 +289,15 @@ test('Three expedition hero appearances are saved per player without changing co
  assert.equal(fromB.statusCode,200);
  assert.deepEqual(fromB.body.members.map(x=>x.heroClass),['waechter','krieger','waechter']);
  const outsider=await f.call('POST','/api/dog/gates/hero',{heroClass:'magierin'},'d');
- assert.equal(outsider.statusCode,403);
+ assert.equal(outsider.statusCode,409,'all three expedition seats are occupied');
+ const changed=await f.call('POST','/api/dog/gates/hero',{heroClass:'magierin'},'a');
+ assert.equal(changed.statusCode,409);
+ assert.equal(changed.body.error,'DOG_HERO_ALREADY_LOCKED');
  const invalid=await f.call('POST','/api/dog/gates/hero',{heroClass:'dragon'},'a');
  assert.equal(invalid.statusCode,400);
  const team=f.docs.get(DOG_BOSS_TEAM_COLLECTION+'/'+DOG_BOSS_TEAM_ID);
  assert.deepEqual(team.heroClasses,{'hero-a':'waechter','hero-b':'krieger'});
+ assert.deepEqual(team.heroLocks,{'hero-a':true,'hero-b':true});
  const at=f.now();
  assert.deepEqual(boss10View(team,null,'hero-a',at).members.map(x=>x.heroClass),
   ['waechter','krieger','waechter']);
