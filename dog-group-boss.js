@@ -7,6 +7,7 @@
  * 3 heroes: intended route, direct damage versus the boss's real HP.
  */
 import {randomInt} from 'node:crypto';
+import {buildDogCombatStream} from './dog-combat-events.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
@@ -76,6 +77,12 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
    groupBossDamagePotential(gate,boss.roster,[],null),Number(exchange?.cumulativeExtraDamage)||0);
  const cinematicVitals=dogMiniCinematicVitals(bossLiveHp,groupHealth,
   confirmedStrikes,elapsed,bossMaxHp);
+ // S-01: derived once from already confirmed strikes. Read-only, no DB calls.
+ const combat=buildDogCombatStream({
+  gate:gate,attempt:boss.attempt,startedAt:boss.startedAt,
+  roster:boss.roster,bossHp:bossMaxHp,strikes:confirmedStrikes,
+  heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel)
+ });
  return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   isMember:members.some(m=>m.uid===uid),teamReady:members.length===3,
   eligible:eligible(gate,progress,uid),members,
@@ -83,6 +90,7 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
    boss.roster.length:boss.ready.length,
   canStart:boss.phase==='waiting'&&boss.ready.includes(uid)&&!won,
   ...boss,...(skipCooldown?{ready:[],cooldownUntil:0}:{}),
+  combat,
   miniGames:{...dogPublicMiniGames(boss.miniGames,uid),
     ...(exchange?{exchange:{...exchange,strikes:confirmedStrikes,
       ...cinematicVitals}}:{})},
