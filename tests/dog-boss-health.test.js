@@ -78,7 +78,7 @@ test('10 and 20 boss views expose synchronized HP without extra state writes',()
 test('v12: every player earns their own defense and HP from server-checked answers',()=>{
  const startedAt=now;
  let games=dogCreateMiniGames(10,()=>0,{exchange:'individual'});
- assert.equal(games.version,13);
+ assert.equal(games.version,14);
  const dodge=games.rounds[1];
  for(const strike of dodge.attacks){
   const correct=Array.from({length:dodge.lanes},(_,i)=>i).find(i=>
