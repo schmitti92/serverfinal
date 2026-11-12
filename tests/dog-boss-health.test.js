@@ -265,3 +265,16 @@ test('K-04 v15 knockouts reach 0 LP while other heroes remain active',()=>{
  assert.equal(dogMiniGroupHealth(older,roster,reaction.endMs,hp).heroes[0].hp,
   Math.round(hp(roster[0])*.5),'v14 retains historical 50% floor');
 });
+
+test('K-04 all fallen heroes cannot produce a final boss attack',()=>{
+ const games=dogCreateMiniGames(10,()=>0,{exchange:'individual-lethal'});
+ const target=games.rounds[2],chain=games.rounds[4];
+ const hpMax=dogGroupBossHp(10),base=boss10DamagePotential(roster,[],null);
+ const earlier=dogMiniBossLiveHp(games,roster,target.endMs,hpMax,base,0);
+ const final=dogMiniBossLiveHp(games,roster,chain.endMs,hpMax,base,0);
+ assert.equal(dogMiniGroupHealth(games,roster,chain.startMs,hp).hp,0);
+ assert.equal(final,earlier,'no surviving attacker means no fifth-stage boss damage');
+ const events=dogMiniConfirmedStrikes(games,roster,chain.endMs,
+  hpMax,base,hero=>boss10DamagePotential([hero],[],null),hp);
+ assert.equal(events.some(e=>e.round===4&&e.kind==='hero-strike'),false);
+});

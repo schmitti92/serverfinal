@@ -585,6 +585,15 @@ export function dogMiniBossLiveHp(raw,roster=[],elapsed=0,bossMaxHp=1,baseDamage
  const resolved=games.rounds.filter(r=>
   !['dodge','reaction'].includes(r.kind)&&elapsed>=r.endMs).length;
  if(!resolved)return maxHp;
+ // K-04: after the final defense, no living hero means no last attack.
+ // The boss retains the HP from the preceding offensive stage; no
+ // cinematic strike, final-team bonus, or imaginary damage is generated.
+ if(games.version>=15&&resolved>=3&&
+    !roster.some(hero=>dogMiniHeroAliveAt(games,hero.uid,
+     games.rounds.at(-1).startMs))){
+  return dogMiniBossLiveHp(games,roster,games.rounds[2].endMs,
+   bossMaxHp,baseDamage,earnedExtraDamage);
+ }
  const fraction=resolved===1?.43:resolved===2?.83:1;
  // The final attack releases the remaining conservative slice of team
  // power; the smaller stage-five scale preserves the lowest possible luck.
