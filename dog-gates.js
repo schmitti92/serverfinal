@@ -7,6 +7,7 @@ import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam,bossSelectHe
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {dogNormalGateChance,dogResolveNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
 import {dogDrawMiniReward,dogMiniRewardDocument,DOG_MINI_REWARD_COLLECTIONS} from './dog-mini-rewards.js';
+import {dogForgeCombatTier} from './dog-forge-progression.js';
 
 export const DOG_GATE_PROGRESS_COLLECTION='dog_gate_progress_v1';
 export const DOG_GATE_PROGRESS_ID='first-three-heroes';
@@ -66,7 +67,7 @@ export function dogGateProgress(raw){
    lastResult:p.lastResult==='win'?'win':p.lastResult==='loss'?'loss':null
   };
  }
- return {version:1,people:result,
+ return {version:1,people:result,forgeLevel:clamp(x.forgeLevel,1,10,1),
   // Authenticated developer setting; kept in the single progress document.
   developerBossCooldownDisabledFor:validUid(x.developerBossCooldownDisabledFor)?
    x.developerBossCooldownDisabledFor:null,
@@ -146,7 +147,7 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
  if(player.lastAttemptAt&&now-player.lastAttemptAt<DOG_GATE_COOLDOWN_MS)
   throw Error('DOG_GATE_COOLDOWN');
  const levels=dogHero(heroRaw).levels;
- const gear={weaponLevel:Math.min(10,levels.weapon),armorLevel:Math.min(10,levels.armor),
+ const gear={weaponLevel:dogForgeCombatTier(levels.weapon),armorLevel:dogForgeCombatTier(levels.armor),
   skills:levels};
  const fight=mini(gate)?
   dogSimulateMiniBoss({gate,...gear,rand}):

@@ -5,7 +5,8 @@
  */
 import {randomInt} from 'node:crypto';
 import {DOG_MATERIALS_COLLECTION,DOG_RESOURCE_GROUPS,DOG_RESOURCES,dogInventory} from './dog-materials.js';
-import {dogEquipmentCost,dogEquipmentSuccessChance,dogUnlockedLevels} from './dog-balance.js';
+import {dogEquipmentCost,dogEquipmentSuccessChance} from './dog-balance.js';
+import {DOG_EQUIPMENT_MAX_LEVEL,dogForgeProgress,dogForgeLevelUp} from './dog-forge-progression.js';
 
 export const DOG_HERO_COLLECTION='dog_hero_v1';
 export const DOG_FORGE_RECEIPTS_COLLECTION='dog_forge_receipts_v1';
@@ -15,8 +16,8 @@ const bounded=(v,min,max,fallback)=>Number.isSafeInteger(v)&&v>=min&&v<=max?v:fa
 const item=(id,group,name,icon,summary,maxLevel,baseLevel=0)=>
  Object.freeze({id,group,name,icon,summary,maxLevel,baseLevel});
 export const DOG_FORGE_ITEMS=Object.freeze([
- item('weapon','equipment','Waffe','⚔️','Mehr Grundschaden',20,1),
- item('armor','equipment','Rüstung','🛡️','Mehr Grundschutz',20,1),
+ item('weapon','equipment','Waffe','⚔️','Mehr Grundschaden',DOG_EQUIPMENT_MAX_LEVEL,1),
+ item('armor','equipment','Rüstung','🛡️','Mehr Grundschutz',DOG_EQUIPMENT_MAX_LEVEL,1),
  item('destruction','attack','Vernichtungsschlag','💀','Mächtiger Spezialschlag',50),
  item('precision','attack','Präzision','🎯','Treffsicherer angreifen',50),
  item('double_strike','attack','Doppelschlag','⚡','Chance auf Zusatzschlag',50),
@@ -82,7 +83,10 @@ const costFor=(group,next)=>{
   else if(next<=10){add(0,3);add(1,2+Math.floor((next-6)/2));}
   else if(next<=15){add(1,3);add(2,1+Math.floor((next-11)/2));}
   else if(next<=18){add(2,3);add(3,1+Math.floor((next-16)/2));}
-  else {add(3,next===20?4:3);add(4,1);}
+  else if(next<=20){add(3,next===20?4:3);add(4,1);}
+  else if(next<=30){add(2,3+Math.floor((next-21)/5));add(3,2+Math.floor((next-21)/5));}
+  else if(next<=40){add(3,4+Math.floor((next-31)/4));add(4,1+Math.floor((next-31)/5));}
+  else {add(3,6+Math.floor((next-41)/3));add(4,3+Math.floor((next-41)/3));}
  }else{
   if(next<=10)add(0,1+Math.floor((next-1)/4));
   else if(next<=20){add(0,3);add(1,1+Math.floor((next-11)/5));}
@@ -100,17 +104,16 @@ const EXPEDITION_TEAM_ID='first-three-heroes';
 const EXPEDITION_PROGRESS_COLLECTION='dog_gate_progress_v1';
 const EXPEDITION_PROGRESS_ID='first-three-heroes';
 export function forgeGateCap(progressRaw){
- const raw=object(progressRaw);
- const bosses=new Set(Array.isArray(raw.sharedBosses)?raw.sharedBosses:[]);
- let count=0;for(let g=10;g<=90;g+=10)if(bosses.has(g))count++;
- return dogUnlockedLevels(count);
+ const p=dogForgeProgress(progressRaw);
+ return {equipment:p.equipmentCap,skills:p.skillsCap,forgeLevel:p.forgeLevel,
+  bossSeals:p.bossSeals,earnedBossSeals:p.wins};
 }
 export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefined){
  const definition=DOG_FORGE_ITEM_BY_ID[itemId];
  if(!definition)throw Error('INVALID_FORGE_ITEM');
  const gateMode=progressRaw!==undefined;
  const equipment=definition.group==='equipment';
- const maxLevel=gateMode&&equipment?10:definition.maxLevel;
+ const maxLevel=definition.maxLevel;
  const cap=gateMode?forgeGateCap(progressRaw):null;
  const unlockedMaxLevel=cap?(equipment?cap.equipment:cap.skills):maxLevel;
  const level=bounded(currentLevel,definition.baseLevel,definition.maxLevel,definition.baseLevel);
@@ -118,13 +121,14 @@ export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefine
  const maxed=level>=maxLevel;
  const nextLevel=maxed?null:level+1;
  const cost=maxed?{}:
-  gateMode&&equipment?dogEquipmentCost(itemId,nextLevel):costFor(definition.group,nextLevel);
+  gateMode&&equipment&&nextLevel<=10?dogEquipmentCost(itemId,nextLevel):costFor(definition.group,nextLevel);
  const successChance=equipment&&!maxed?
-  gateMode?dogEquipmentSuccessChance(nextLevel):
+  gateMode&&nextLevel<=10?dogEquipmentSuccessChance(nextLevel):
+  nextLevel>10?Math.max(45,88-Math.floor((nextLevel-11)/5)*5):
   DOG_FORGE_TUNING.equipmentSuccess.find(x=>nextLevel<=x.max)?.chance??25:100;
  const locked=!maxed&&nextLevel>unlockedMaxLevel;
  return {itemId,level,nextLevel,maxLevel,maxed,cost,successChance,
-  ...(gateMode?{locked,unlockedMaxLevel,legacy:equipment&&level>10}:{}),
+  ...(gateMode?{locked,unlockedMaxLevel,legacy:false}:{}),
   affordable:!maxed&&!locked&&Object.entries(cost).every(([k,n])=>
    Number(resources[k]||0)>=n)};
 }
@@ -133,12 +137,15 @@ export function forgeView(heroRaw,inventoryRaw,progressRaw=undefined){
  const gateMode=progressRaw!==undefined;
  const cap=gateMode?forgeGateCap(progressRaw):null;
  return {hero,inventory,
-  items:gateMode?DOG_FORGE_ITEMS.map(i=>i.group==='equipment'?{...i,maxLevel:10}:i):DOG_FORGE_ITEMS,
+  items:DOG_FORGE_ITEMS,
   groups:DOG_FORGE_GROUPS,
   quotes:DOG_FORGE_ITEMS.map(i=>forgeQuote(i.id,hero.levels[i.id],
    inventory.resources,progressRaw)),
   tuning:DOG_FORGE_TUNING,resourceGroups:DOG_RESOURCE_GROUPS,
-  ...(gateMode?{forgeLevel:cap.equipment,skillsCap:cap.skills}:{}),
+  ...(gateMode?{forgeLevel:cap.forgeLevel,skillsCap:cap.skills,
+   equipmentCap:cap.equipment,bossSeals:cap.bossSeals,
+   earnedBossSeals:cap.earnedBossSeals,
+   forgeLevelMax:10}:{}),
  };
 }
 function spend(resources,cost){
@@ -199,7 +206,10 @@ const HTTP_STATUS=Object.freeze({
  LOGIN_REQUIRED:401,INVALID_FORGE_REQUEST:400,INVALID_FORGE_ITEM:400,INVALID_EXCHANGE_RESOURCE:400,
  INVALID_EXCHANGE_COUNT:400,
  STALE_FORGE_LEVEL:409,FORGE_MAX_LEVEL:409,DOG_FORGE_BOSS_REQUIRED:409,DOG_MATERIALS_MISSING:409,
- DOG_MATERIALS_LIMIT:409
+ DOG_MATERIALS_LIMIT:409,
+ DOG_FORGE_LEVEL_STALE:409,DOG_FORGE_LEVEL_MAX:409,
+ DOG_FORGE_BOSS_SEAL_REQUIRED:409,DOG_FORGE_LEVEL_RECEIPT_CONFLICT:409,
+ NOT_DOG_TEAM_MEMBER:403
 });
 /* Cosmetic equipment class comes from the already-read, permanently locked
  * three-hero selection, never from untrusted request bodies. No extra Firestore reads. */
@@ -295,6 +305,42 @@ export function installDogForgeApi(app,{verifyProfile,getFirestore,rand=randomIn
    return res.json({ok:true,...response});
   }catch(e){return err(res,e);}
  };
+
+ // Shared forge-level upgrade: the *same* boss progress document contains the
+ // source victories and spent forge level. One transaction, one receipt,
+ // no independent reward inventory write on defeating a boss.
+ app.post('/api/dog/forge/level-up',auth,async(req,res)=>{
+  try{
+   const {requestId,expectedLevel}=object(req.body);
+   if(typeof requestId!=='string'||!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))
+    throw Error('INVALID_FORGE_REQUEST');
+   const database=db(),uid=req.dogForgeUid;
+   const teamRef=database.collection(EXPEDITION_TEAM_COLLECTION).doc(EXPEDITION_TEAM_ID);
+   const progressRef=database.collection(EXPEDITION_PROGRESS_COLLECTION).doc(EXPEDITION_PROGRESS_ID);
+   const receiptRef=database.collection(DOG_FORGE_RECEIPTS_COLLECTION).doc(uid+'_'+requestId);
+   const result=await database.runTransaction(async tx=>{
+    const [receipt,teamSnap,progressSnap]=await Promise.all([
+     tx.get(receiptRef),tx.get(teamRef),tx.get(progressRef)]);
+    if(!teamSnap.exists||!Array.isArray(teamSnap.data()?.members)||
+      !teamSnap.data().members.some(m=>m?.uid===uid))throw Error('NOT_DOG_TEAM_MEMBER');
+    if(receipt.exists){
+     if(receipt.data()?.type!=='forge-level-up'||receipt.data()?.expectedLevel!==expectedLevel)
+      throw Error('DOG_FORGE_LEVEL_RECEIPT_CONFLICT');
+     return {result:receipt.data().result,
+      progress:dogForgeProgress(progressSnap.exists?progressSnap.data():null),replayed:true};
+    }
+    const upgraded=dogForgeLevelUp(progressSnap.exists?progressSnap.data():null,
+     expectedLevel,Date.now());
+    tx.set(progressRef,upgraded.progress);
+    tx.create(receiptRef,{uid,requestId,type:'forge-level-up',
+     expectedLevel,result:upgraded.result,createdAt:Date.now()});
+    return {result:upgraded.result,
+     progress:dogForgeProgress(upgraded.progress),replayed:false};
+   });
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,...result});
+  }catch(e){return err(res,e);}
+ });
  app.post('/api/dog/forge/upgrade',auth,action('upgrade'));
  app.post('/api/dog/forge/exchange',auth,action('exchange'));
 }

@@ -12,6 +12,7 @@ import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js'
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
 import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
+import {dogForgeCombatTier} from './dog-forge-progression.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
  dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniHeroAliveAt,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
@@ -114,8 +115,8 @@ const prepareRoster=(gate,ready,team,heroes)=>{
   throw Error('DOG_GROUP_NOT_READY');
  return ready.map(uid=>{
   const lv=dogHero(heroes[uid]).levels;
-  return {uid,weaponLevel:Math.min(equipmentCap,lv.weapon),
-   armorLevel:Math.min(equipmentCap,lv.armor),
+  return {uid,weaponLevel:Math.min(equipmentCap,dogForgeCombatTier(lv.weapon)),
+   armorLevel:Math.min(equipmentCap,dogForgeCombatTier(lv.armor)),
    skillPower:Math.min(cap,lv.attack_power),
    skillDestruction:Math.min(cap,lv.destruction),
    skillDefense:Math.min(cap,lv.vitality),
