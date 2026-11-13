@@ -132,7 +132,7 @@ test('Five distinct chest types retain their defined material ranges',()=>{
  assert.deepEqual(scenario(91,[99,20]),{version:4,stage:9,tier:'legendary',count:30});
  assert.equal(DOG_CHEST_STAGES[7].chestWeights[4],0,
   'the biggest chest must not appear before Tor 80');
- const last=dogChestContents(scenario(91,[99,10]),()=>0);
+ const last=dogChestContents(scenario(91,[99,20]),()=>0);
  assert.equal(last.count,30);
  assert.equal(last.tier,'legendary');
  assert.equal(Object.values(last.items).reduce((a,b)=>a+b,0),30);
