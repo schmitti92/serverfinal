@@ -283,7 +283,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     tx.set(sRef,{season:2,cards,...cycles.updates,
      tournamentName:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),
      opened:result.opened,updatedAt:now},{merge:true});
-    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(uid),{
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+cycles.progress.tournament.month).doc(uid),{
      uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
      name:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),updatedAt:now
     },{merge:true});
@@ -330,7 +330,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     const cycles=dogS2AdvanceCycles(cards,cards,old,now);
     if(!cycles.finished.length)return {ok:true,progress:cycles.progress,lifetimeProgress:dogS2Progress(cards),completedBoards:[],replayed:true};
     tx.set(albumRef,{...cycles.updates,updatedAt:now},{merge:true});
-    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(uid),{
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+cycles.progress.tournament.month).doc(uid),{
      uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
      name:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),updatedAt:now
     },{merge:true});
@@ -341,12 +341,12 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
   }catch(e){return fail(res,e)}
  });
  // Read leaderboard only when the user opens the tournament tab.
- // Keeping month as the parent document avoids a composite Firestore index.
+ // Each month has its own compact score collection; only a score update writes.
  app.get(base+'/tournament',auth,async(req,res)=>{
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
-   const month=dogS2TournamentMonth(),snap=await db.collection(DOG_S2_TOURNAMENT_COLLECTION)
-    .doc(month).collection('players').orderBy('points','desc').limit(20).get();
+   const month=dogS2TournamentMonth(),snap=await db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+month)
+    .orderBy('points','desc').limit(20).get();
    const leaderboard=snap.docs.map((doc,index)=>({
     rank:index+1,name:String(doc.data().name||'Spieler'),points:positive(doc.data().points),
     completed:positive(doc.data().completed),isMe:doc.id===req.dealIdentity.uid
