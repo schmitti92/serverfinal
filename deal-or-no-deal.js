@@ -21,18 +21,27 @@ function pick30BankerSchedule(random=crypto.randomInt){
  if(!Number.isInteger(index)||index<0||index>=BANKER_30_OPENINGS.length)throw Error('INVALID_BANKER_VARIANT_ROLL');
  return {variant:index+1,steps:openingToSteps(BANKER_30_OPENINGS[index])};
 }
-// Only unopened, non-personal cases may trigger calls. For 1, 2 or 4
-// players the final three calls move to the last three openable cases,
-// so a final offer is guaranteed before ANY personal suitcase reveal.
-// Cap regular mid-game calls at two to avoid overly long rounds.
-function build30BankerTargets(variant,playerCount){
+// Every NEW 26–30-case match uses exactly one of TWO Banker cadences.
+// All milestones are cumulative opened non-personal cases. The last three
+// offers are guaranteed before any personal suitcase is revealed.
+// Old matches retain their saved sequence and legacy fallback unchanged.
+function buildBankerTargets(variant,caseCount,playerCount){
  if(!Number.isInteger(variant)||variant<1||variant>BANKER_30_OPENINGS.length||
+  ![26,27,28,29,30].includes(caseCount)||
   !Number.isInteger(playerCount)||playerCount<1||playerCount>4)throw Error('INVALID_BANKER_SCHEDULE');
- const first=playerCount*3,maxOpened=30-playerCount;
+ const maxOpened=caseCount-playerCount;
  const finale=[maxOpened-2,maxOpened-1,maxOpened];
- const earlier=BANKER_30_OPENINGS[variant-1]
-  .filter(target=>target>first&&target<finale[0]).slice(0,2);
- return [...new Set([first,...earlier,...finale])].sort((a,b)=>a-b);
+ const reference=BANKER_30_OPENINGS[variant-1];
+ if(caseCount===30){
+  const first=playerCount*3;
+  const earlier=reference.filter(target=>target>first&&target<finale[0]).slice(0,2);
+  return [...new Set([first,...earlier,...finale])].sort((a,b)=>a-b);
+ }
+ // Proportional spacing retains the recognizable fast/suspenseful style.
+ const earlier=reference.slice(0,3).map(target=>Math.round(target*maxOpened/27));
+ const targets=[...earlier,...finale];
+ if(new Set(targets).size!==6||targets[0]<1||targets[2]>=finale[0])throw Error('INVALID_BANKER_SCHEDULE');
+ return targets;
 }
 // Every new game has its own banker personality; old games default to balanced.
 const BANKER_STYLES=Object.freeze({stingy:{offset:-.12,spread:.06},balanced:{offset:0,spread:.06},generous:{offset:.15,spread:.08},volatile:{offset:0,spread:.17}});
@@ -53,12 +62,11 @@ function create(players,random=crypto.randomInt,caseCount=27){
  const values=shuffle(VALUES.slice(0,caseCount),random),order=shuffle(ids,random);
  // Draw ONCE when creating the game, then persist the chosen cadence.
  // Existing games keep their saved schedule and are never rerolled.
- const thirty=caseCount===30?pick30BankerSchedule(random):null;
+ const chosen=pick30BankerSchedule(random); // Only two equally likely schedules, for ALL 26–30-case starts.
  const bankerStyle=pickBankerStyle(random);
  // Three queued picks per player, only for newly started 30-case matches.
- const firstBatchCount=caseCount===30?players.length*3:0;
- const new30Schedule=thirty?openingToSteps(build30BankerTargets(thirty.variant,players.length)):null;
- return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null,doublePayout:false})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerStyle,bankerSchedule:thirty?new30Schedule:caseCount===29?[...STEPS_29]:null,...(thirty?{openingBatch:{picks:[],perPlayer:3,startedAt:null,intervalMs:650,endsAt:null}}:{}),...(thirty?{bankerScheduleVariant:thirty.variant}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
+ const bankerSchedule=openingToSteps(buildBankerTargets(chosen.variant,caseCount,players.length));
+ return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null,doublePayout:false})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerStyle,bankerSchedule,bankerScheduleVariant:chosen.variant,...(caseCount===30?{openingBatch:{picks:[],perPlayer:3,startedAt:null,intervalMs:650,endsAt:null}}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
 }
 function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnIndex+i)%g.order.length];if(g.players.some(p=>p.id===id&&p.deal===null))return id}return null}
 function apply(g,actor,command,random=crypto.randomInt){
@@ -99,9 +107,8 @@ function apply(g,actor,command,random=crypto.randomInt){
   next.opened.push(next.pending.case);next.roundOpened++;
   next.events.push({type:'opened',case:next.pending.case,amount:next.values[next.pending.case],playerId:p.id,eventId:next.pending.eventId});
   next.turnIndex=(next.order.indexOf(p.id)+1)%next.order.length;next.pending=null;
-  // Server-saved schedules are authoritative. Only NEW 30-case variants
-  // have a fixed final offer: after it, remaining cases open without another
-  // phone call. Old running matches retain their original fallback cadence.
+  // All NEW 26-30-case games have one of the two persisted six-call schedules.
+  // Old running games without a variant retain their original legacy cadence.
   const steps=Array.isArray(next.bankerSchedule)?next.bankerSchedule:STEPS;
   if(next.bankerScheduleVariant){
    const scheduled=steps[next.round];
