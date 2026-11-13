@@ -74,6 +74,26 @@ export function dogS2OpenGrantedPacks(packId,quantity,previous={},rand=randomInt
  }
  return {cards,openedPacks};
 }
+// Slot packs are drawn, marked NEW, and credited as part of the same
+// idempotent game-settlement transaction. This is pure so the caller can
+// handle Firestore reads/writes once per player, even for several packs.
+export function dogS2OpenSlotPacks(prizes,previousCards={},rand=randomInt){
+ const cards={...previousCards},packReveals=[];
+ for(const [reelIndex,prize] of prizes.entries()){
+  if(prize.kind!=='pack')continue;
+  const pack=DOG_S2_PACKS.find(p=>p.id===prize.id);
+  if(!pack||!Number.isInteger(prize.quantity)||prize.quantity<1||prize.quantity>3)
+   throw Error('INVALID_SLOT_PACK');
+  for(let packNumber=1;packNumber<=prize.quantity;packNumber++){
+   const revealed=dogS2Discoveries(dogS2Draw(pack,rand),cards);
+   for(const card of revealed)cards[card.id]=(Number(cards[card.id])||0)+1;
+   packReveals.push({
+    reelIndex,packId:pack.id,packNumber,newCount:revealed.filter(card=>card.isNew).length,revealed
+   });
+  }
+ }
+ return {cards,packReveals};
+}
 export function dogS2Duplicates(cards={},tickets=0){
  const available=DOG_S2_CARDS.reduce((sum,c)=>sum+Math.max(0,positive(cards[c.id])-1),0);
  return {available,tickets:positive(tickets),exchangeCost:100,canExchange:available>=100};
