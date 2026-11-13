@@ -215,7 +215,9 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
  });
  app.post('/api/dog/materials/open',auth,async(req,res)=>{
   try{
-   const requestId=req.body?.requestId,tier=req.body?.tier;
+   const requestId=req.body?.requestId,tier=req.body?.tier,quantity=req.body?.quantity??1;
+   if(quantity!=='all'&&(!Number.isSafeInteger(quantity)||quantity<1||quantity>1000))
+    throw Error('INVALID_DOG_CHEST_QUANTITY');
    if(typeof requestId!=='string'||!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
    if(tier!==undefined&&tier!==null&&![...DOG_CHEST_TIERS,'legacy',...DOG_EXPEDITION_CHEST_TIERS].includes(tier))throw Error('INVALID_DOG_CHEST_TIER');
    const db=firestore(),ref=db.collection(DOG_MATERIALS_COLLECTION).doc(req.dogUid);
@@ -237,18 +239,36 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
      ...DOG_CHEST_TIERS.filter(id=>prior.chests[id]>0),
      ...(prior.chests.legacy>0?['legacy']:[])
     ][0];
-    let drop,updated;
-    if(DOG_EXPEDITION_CHEST_TIERS.includes(sourceTier)){
-     ({drop,inventory:updated}=openExpeditionChestInInventory(prior,sourceTier,rand,Date.now(),maxQuality));
-    }else{
-     if(!prior.chests[sourceTier])throw Error('NO_DOG_CHEST_TYPE');
-     const awardedTier=sourceTier==='legacy'?rollDogChestTier(rand):sourceTier;
-     drop=rollDogMaterialChest(awardedTier,rand);
-     const qualityItems=qualityChestDrop(drop,rand,maxQuality);
-     updated=openDogChestInInventory(prior,drop,Date.now(),sourceTier,qualityItems);
-     drop={...drop,qualityItems};
+    const available=DOG_EXPEDITION_CHEST_TIERS.includes(sourceTier)?
+     prior.expeditionChests.filter(x=>x.tier===sourceTier).reduce((n,x)=>n+x.quantity,0):
+     prior.chests[sourceTier]||0;
+    const total=quantity==='all'?available:Math.min(quantity,available);
+    if(!total)throw Error('NO_DOG_CHEST_TYPE');
+    if(total>1000)throw Error('DOG_CHEST_BATCH_TOO_LARGE');
+    let updated=prior;
+    const items=Object.fromEntries(DOG_RESOURCES.map(id=>[id,0]));
+    const qualityItems={};
+    let totalMaterials=0,lastDrop=null;
+    const openedAt=Date.now();
+    for(let i=0;i<total;i++){
+     let drop;
+     if(DOG_EXPEDITION_CHEST_TIERS.includes(sourceTier)){
+      ({drop,inventory:updated}=openExpeditionChestInInventory(updated,sourceTier,rand,openedAt,maxQuality));
+     }else{
+      const awardedTier=sourceTier==='legacy'?rollDogChestTier(rand):sourceTier;
+      drop=rollDogMaterialChest(awardedTier,rand);
+      const quality=qualityChestDrop(drop,rand,maxQuality);
+      updated=openDogChestInInventory(updated,drop,openedAt,sourceTier,quality);
+      drop={...drop,qualityItems:quality};
+     }
+     lastDrop=drop;
+     totalMaterials+=drop.count;
+     for(const id of DOG_RESOURCES)items[id]+=drop.items[id]||0;
+     for(const [id,n] of Object.entries(drop.qualityItems||{}))
+      qualityItems[id]=(qualityItems[id]||0)+n;
     }
-    const response={inventory:updated,drop,replayed:false};
+    const drop=total===1?lastDrop:{tier:sourceTier,count:totalMaterials,items,qualityItems,openedChests:total};
+    const response={inventory:updated,drop,openedChests:total,replayed:false};
     tx.set(ref,updated);
     tx.create(receiptRef,{uid:req.dogUid,requestId,createdAt:Date.now(),result:response});
     return response;
