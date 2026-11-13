@@ -7,6 +7,7 @@ import {newIceState} from '../christmas-ice-engine.js';
 const iceColl='christmas_ice_progress_v1';
 const hatsColl='deal_christmas_hats_v1';
 const inventoryColl='deal_peek_inventory_v1';
+const dogInventoryColl='dog_material_inventory_v1';
 const walletColl='deal_or_no_deal_wallets_v1';
 const uid='joker-voucher-test-player';
 
@@ -76,7 +77,8 @@ function setup({completed=2,maxRewarded=completed,hats=null}={}){
  return {docs,reads,writes,strike,getHats,call,
   ice:()=>docs.get(iceColl+'/'+uid),
   hats:()=>docs.get(hatsColl+'/'+uid),
-  inventory:()=>docs.get(inventoryColl+'/'+uid)};
+  inventory:()=>docs.get(inventoryColl+'/'+uid),
+  dogInventory:()=>docs.get(dogInventoryColl+'/'+uid)};
 }
 
 test('Joker-gift on picture 3 awards one real hats ticket in the same transaction',async()=>{
@@ -172,4 +174,56 @@ test('overflow of hats-ticket inventory aborts the whole gift transaction',async
  assert.equal(f.inventory().balance,0);
  assert.equal(f.hats().bonusTickets,1000000);
  assert.deepEqual(f.writes,[],'no partial joker or ticket credit');
+});
+
+
+test('new Christmas picture awards one DOG box alongside existing money prize; retry never duplicates it',async()=>{
+ const f=setup({completed:0});
+ const first=await f.strike('dog-ice-picture-one-00001');
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.equal(first.body.result.found,true);
+ assert.equal(first.body.result.gift.kind,'money');
+ assert.ok(['wood','iron','silver','gold','legendary'].includes(first.body.result.dogChest?.tier));
+ assert.equal(f.dogInventory().unopened,1);
+ assert.equal(f.dogInventory().earned,1);
+ assert.equal(f.dogInventory().expeditionChests[0].quantity,1);
+ assert.equal(f.ice().prizes.at(-1).dogChest.tier,first.body.result.dogChest.tier);
+ assert.equal(f.ice().lastActions.at(-1).result.dogChest.tier,first.body.result.dogChest.tier);
+ const writes=f.writes.length;
+ const repeated=await f.strike('dog-ice-picture-one-00001');
+ assert.equal(repeated.body.result.replayed,true);
+ assert.equal(f.writes.length,writes);
+ assert.equal(f.dogInventory().unopened,1);
+});
+test('missed Christmas star never reads DOG inventory and gives no DOG chest',async()=>{
+ const f=setup({completed:0});
+ f.ice().star=19;
+ const miss=await f.strike('dog-ice-missed-000001');
+ assert.equal(miss.statusCode,200);
+ assert.equal(miss.body.result.found,false);
+ assert.equal(miss.body.result.dogChest,undefined);
+ assert.equal(f.dogInventory(),undefined);
+ assert.equal(f.reads.some(path=>path.startsWith(dogInventoryColl)),false);
+ assert.equal(f.writes.some(path=>path.startsWith(dogInventoryColl)),false);
+});
+test('previously finished Christmas picture cannot mint a second DOG chest after reset',async()=>{
+ const f=setup({completed:0,maxRewarded:1});
+ const old=await f.strike('dog-ice-repeat-000001');
+ assert.equal(old.statusCode,200);
+ assert.equal(old.body.result.found,true);
+ assert.equal(old.body.result.gift,null);
+ assert.equal(old.body.result.dogChest,undefined);
+ assert.equal(f.dogInventory(),undefined);
+});
+test('picture 30 retains three spins and joker hats voucher plus extra DOG chest',async()=>{
+ const f=setup({completed:29,maxRewarded:29});
+ const won=await f.strike('dog-ice-picture30-0001');
+ assert.equal(won.statusCode,200,JSON.stringify(won.body));
+ assert.equal(won.body.result.monsterSpinsGranted,3);
+ assert.equal(won.body.result.hatsVoucherGranted,1);
+ assert.equal(won.body.result.gift.kind,'joker');
+ assert.equal(f.dogInventory().unopened,1);
+ assert.equal(f.hats().bonusTickets,1);
+ assert.equal(f.docs.get('deal_or_no_deal_christmas_v1/'+uid).monsterWheelTickets,3);
+ assert.equal(f.ice().prizes.at(-1).dogChest.tier,won.body.result.dogChest.tier);
 });
