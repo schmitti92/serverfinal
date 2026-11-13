@@ -247,3 +247,57 @@ test('tied top payouts block all Slot claims and permit a new round without slot
  assert.ok(!writes.some(key=>key.startsWith('deal_monster_slots_receipts_v1/')));
  for(const uid of names)assert.ok(!docs.has('deal_monster_slots_receipts_v1/'+previous.id+'_'+uid));
 });
+
+
+test('DOG Super Slot pays exactly five prizes for one completed board, spends one ticket and replays safely',async()=>{
+ const uid='collector',requestId='dog_super_slot_test_112233',docs=new Map(),routes=new Map(),writes=[];
+ const album='deal_dog_album_season2_v1/'+uid;
+ docs.set(album,{season:2,cards:{},superSlotTickets:1,cycleBase:{},cycleCompletions:[1,0,0,0,0,0]});
+ const db={
+  collection:name=>({doc:id=>{
+   const key=name+'/'+id;
+   return {key,get:async()=>({exists:docs.has(key),data:()=>structuredClone(docs.get(key))}),
+    set:async(data,opts={})=>{docs.set(key,structuredClone(opts?.merge?{...(docs.get(key)||{}),...data}:data));writes.push(key)}
+   };
+  }}),
+  runTransaction:async fn=>{
+   const pending=[];let writing=false;
+   const tx={
+    get:ref=>{if(writing)throw Error('FIRESTORE_READ_AFTER_WRITE');return ref.get()},
+    set:(ref,data,opts)=>{writing=true;pending.push(()=>ref.set(data,opts))},
+    create:(ref,data)=>{writing=true;pending.push(async()=>{if(docs.has(ref.key))throw Error('ALREADY_EXISTS');await ref.set(data)})}
+   };
+   const result=await fn(tx);for(const write of pending)await write();return result;
+  }
+ };
+ const app={get:(p,...f)=>routes.set('GET '+p,f),post:(p,...f)=>routes.set('POST '+p,f)};
+ installDealOrNoDeal(app,{verifyProfile:async token=>token?{uid:token}:null,getFirestore:()=>db});
+ const send=async(uid2,requestId2)=>{
+  const handlers=routes.get('POST /api/deal-or-no-deal/christmas/season2/super-slot/play');
+  assert.ok(handlers);
+  const req={body:{requestId:requestId2},params:{},get:()=> 'Bearer '+uid2};
+  const res={statusCode:200,status(n){this.statusCode=n;return this},set(){return this},json(o){this.body=o;return o}};
+  for(const h of handlers)await new Promise((resolve,reject)=>{
+   let next=false;Promise.resolve(h(req,res,()=>{next=true;resolve()})).then(()=>{if(!next)resolve()},reject)
+  });
+  return res;
+ };
+ const stranger=await send('other','other_request_112233');
+ assert.equal(stranger.statusCode,409);
+ assert.equal(stranger.body.error,'SUPER_SLOT_TICKET_REQUIRED');
+ const first=await send(uid,requestId);
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.equal(first.body.prizes.length,5,'five guaranteed reels, not three');
+ assert.equal(first.body.guaranteed,5);
+ assert.equal(docs.get(album).superSlotTickets,0,'ticket must be consumed');
+ assert.ok(!writes.some(key=>key.includes('christmas_ice')&&key.includes('bingo')),'Hammer-Bingo must never be modified');
+ const count=writes.length;
+ const replay=await send(uid,requestId);
+ assert.equal(replay.statusCode,200);
+ assert.equal(replay.body.replayed,true);
+ assert.deepEqual(replay.body.prizes,first.body.prizes);
+ assert.equal(writes.length,count,'same receipt cannot pay again');
+ const second=await send(uid,'another_super_slot_223344');
+ assert.equal(second.statusCode,409);
+ assert.equal(second.body.error,'SUPER_SLOT_TICKET_REQUIRED');
+});
