@@ -22,7 +22,7 @@ test('new players start with empty progress and complete six boards with 60 line
  assert.equal(progress.collected,96);
  assert.equal(progress.bingos,60);
  assert.equal(progress.maxBingos,60);
- assert.equal(progress.rewardsEnabled,false);
+ assert.equal(progress.rewardsEnabled,true);
 });
 test('card packs draw from DOG season 2 and mark new discoveries correctly',()=>{
  for(const pack of DOG_S2_PACKS){
