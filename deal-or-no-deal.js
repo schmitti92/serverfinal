@@ -8,14 +8,14 @@ const MAX_MATCH_CREDIT_CENTS=5_000_000_000;
 const STEPS=[5,4,4,3,2,2,1,1],STEPS_29=[6,5,5,4,3,2,2,1],
  STEPS_30=[6,5,5,4,3,3,2,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
 // Exactly two possible Banker cadences for NEW matches. Variant 1 has
-// one extra offer (7 total); variant 2 has three extra offers (9 total).
+// one extra offer (7 total); variant 2 has two extra offers (8 total).
 // Canonical cumulative checkpoints are for 30 cases / three players.
 // In BOTH variants the last three calls are always at cases 25, 26, 27,
 // the last call being BEFORE any personal suitcase is opened.
 // Existing matches retain their saved Banker schedule unchanged.
 const BANKER_30_OPENINGS=Object.freeze([
- Object.freeze([9,15,20,23,25,26,27]),       // Fast: 7 offers
- Object.freeze([9,12,15,18,21,23,25,26,27]) // Suspense: 9 offers
+ Object.freeze([9,18,20,23,25,26,27]),       // Fast: 7 offers
+ Object.freeze([9,12,15,21,23,25,26,27]) // Suspense: 8 offers
 ]);
 const openingToSteps=targets=>targets.map((count,i)=>count-(i?targets[i-1]:0));
 function pick30BankerSchedule(random=crypto.randomInt){
@@ -42,7 +42,7 @@ function buildBankerTargets(variant,caseCount,playerCount){
   // relative to the first final call (25 in the canonical schedule).
   earlyReference.map(target=>Math.round(target*finalCalls[0]/25));
  const targets=[...early,...finalCalls];
- const expected=variant===1?7:9;
+ const expected=variant===1?7:8;
  if(targets.length!==expected||targets[0]<1||
   targets.some((target,i)=>target>lastOpened||(i>0&&target<=targets[i-1])))
   throw Error('INVALID_BANKER_SCHEDULE');
@@ -112,7 +112,7 @@ function apply(g,actor,command,random=crypto.randomInt){
   next.opened.push(next.pending.case);next.roundOpened++;
   next.events.push({type:'opened',case:next.pending.case,amount:next.values[next.pending.case],playerId:p.id,eventId:next.pending.eventId});
   next.turnIndex=(next.order.indexOf(p.id)+1)%next.order.length;next.pending=null;
-  // All NEW 26–30-case games have one of the two persisted 7/9-call schedules.
+  // All NEW 26–30-case games have one of the two persisted 7/8-call schedules.
   // Old running games without a variant retain their original legacy cadence.
   const steps=Array.isArray(next.bankerSchedule)?next.bankerSchedule:STEPS;
   if(next.bankerScheduleVariant){
@@ -163,7 +163,7 @@ function offer(g,random){
  const concentration=avg>0?Math.max(0,Math.min(1,(avg-median)/avg)):0;
  // Progressively more tempting offers, based on the actual remaining expected value.
  const ranges=[[.35,.48],[.43,.57],[.52,.67],[.61,.76],[.70,.84],[.78,.92],[.85,.98],[.90,1.05]];
- const modern=!!g.bankerScheduleVariant&&[7,9].includes(g.bankerSchedule?.length);
+ const modern=!!g.bankerScheduleVariant&&[7,8,9].includes(g.bankerSchedule?.length);
  const progress=modern?Math.min(1,g.round/(g.bankerSchedule.length-1)):
   Math.min(1,g.round/7);
  const scaled=modern?progress*(ranges.length-1):Math.min(g.round,ranges.length-1);
