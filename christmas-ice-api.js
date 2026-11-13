@@ -1,9 +1,11 @@
 'use strict';
 import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState,normalizeIceState} from './christmas-ice-engine.js';
+import {icePictureJackpot} from './christmas-ice-prizes.js';
 import {drawHammerFromTwelve} from './deal-or-no-deal.js';
 import {checkMonsterBalance} from './monster-wheel.js';
 import {DOG_MATERIALS_COLLECTION,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,DOG_CHEST_TYPES} from './dog-balance.js';
+import {DOG_S2_COLLECTION} from './dog-album-season2.js';
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
@@ -180,72 +182,94 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
     const strike=strikeIce({...state,balance:walletBalance},{index,hammer,requestId});
     if(!strike.changed)return {state:{...publicIceState(state),balance:walletBalance},result:strike.result,changed:false};
     let next=strike.state;
-    // Only a server-confirmed complete picture 30 earns three Monster-Wheel spins.
-    // Read the album only on this single winning strike, not on every ice click.
-    const picture30Completed=strike.result.found&&next.completed===30;
-    const albumRef=db.collection(albumCollection).doc(req.iceUid);
-    // Every newly earned, fully uncovered picture grants one DOG material chest.
-    // Keep the reward in the SAME strike transaction. Do not back-credit older
-    // pictures or grant again after a local/event reset (maxRewarded is permanent).
+    // All permanent prizes settle atomically with the picture-winning strike.
+    // Ordinary ice hits cost only their existing state and wallet reads.
     const firstPictureClear=strike.result.found&&next.completed>Math.max(0,Number(state.maxRewarded)||0);
+    const picture30Completed=strike.result.found&&next.completed===30;
+    const jackpot=firstPictureClear?icePictureJackpot(next.completed):null;
+    const jokerGift=strike.result.gift?.kind==='joker';
+    const extraJokers=jackpot?.jokers||0,extraVouchers=jackpot?.hatsVouchers||0;
+    const jokerCount=(jokerGift?1:0)+extraJokers,voucherCount=(jokerGift?1:0)+extraVouchers;
+    const albumRef=db.collection(albumCollection).doc(req.iceUid);
     const dogBagRef=db.collection(DOG_MATERIALS_COLLECTION).doc(req.iceUid);
-    const [albumSnap,dogBagSnap]=await Promise.all([
+    const dogAlbumRef=db.collection(DOG_S2_COLLECTION).doc(req.iceUid);
+    const hatsRef=db.collection(hatsCollection).doc(req.iceUid);
+    // Firestore requires all document reads before any write in a transaction.
+    const [albumSnap,dogBagSnap,dogAlbumSnap,invSnap,hatsSnap]=await Promise.all([
      picture30Completed?tx.get(albumRef):null,
-     firstPictureClear?tx.get(dogBagRef):null
+     firstPictureClear?tx.get(dogBagRef):null,
+     jackpot?.superSlots?tx.get(dogAlbumRef):null,
+     jokerCount?tx.get(inventory):null,
+     voucherCount?tx.get(hatsRef):null
     ]);
     const album=albumSnap?.exists?albumSnap.data():{};
     const grantPicture30=picture30Completed&&!album.icePicture30MonsterSpinsGranted&&!state.picture30MonsterSpinsClaimed;
-    let newMonsterTickets=0;
-    if(grantPicture30)
-     newMonsterTickets=checkMonsterBalance(Number(album.monsterWheelTickets||0),picture30Spins);
+    const patchReceipt=patch=>{
+     next={...next,lastActions:(next.lastActions||[]).map(a=>a.id===requestId?
+      {...a,result:{...a.result,...patch}}:a)};
+    };
     if(picture30Completed){
-     const resultWithBonus={...strike.result,monsterSpinsGranted:grantPicture30?picture30Spins:0};
-     next={...next,picture30MonsterSpinsClaimed:true,
-      lastActions:(next.lastActions||[]).map(a=>a.id===requestId?{...a,result:resultWithBonus}:a)};
+     next={...next,picture30MonsterSpinsClaimed:true};
+     patchReceipt({monsterSpinsGranted:grantPicture30?picture30Spins:0});
     }
-    if(strike.result.gift?.kind==='joker'){
-     // Every freshly earned joker picture also grants one genuine hats run.
-     // Both inventory updates are inside the SAME Firestore transaction as
-     // the paid hammer, picture progress and eventual monster-wheel bonus.
-     // In particular, no voucher is issued for replayed/reset old pictures.
-     const hatsRef=db.collection(hatsCollection).doc(req.iceUid);
-     const [invSnap,hatsSnap]=await Promise.all([tx.get(inventory),tx.get(hatsRef)]);
-     const old=Number(invSnap.data()?.balance)||0;
-     if(!Number.isSafeInteger(old)||old<0||old>=1000000)throw Error('INVALID_JOKER_BALANCE');
-     const hats=hatsSnap.exists?hatsSnap.data():{};
-     const bonusTickets=checkMonsterBalance(Number(hats.bonusTickets||0),1,1000000);
+    if(jokerCount){
+     const old=Number(invSnap?.data()?.balance)||0;
+     if(!Number.isSafeInteger(old)||old<0||old+jokerCount>1000000)throw Error('INVALID_JOKER_BALANCE');
+     tx.set(inventory,{balance:old+jokerCount,updatedAt:Date.now()},{merge:true});
+     next={...next,peekJokers:next.peekJokers+extraJokers};
+    }
+    if(voucherCount){
+     const hats=hatsSnap?.exists?hatsSnap.data():{};
+     const bonusTickets=checkMonsterBalance(Number(hats.bonusTickets||0),voucherCount,1000000);
+     tx.set(hatsRef,{...(hatsSnap?.exists?{}:{voucherOnly:true}),bonusTickets,updatedAt:Date.now()},{merge:true});
+    }
+    if(jokerGift){
      const voucherGift={...strike.result.gift,hatsVoucher:1};
-     next={...next,
-      prizes:(next.prizes||[]).map(g=>g.number===voucherGift.number?voucherGift:g),
-      lastActions:(next.lastActions||[]).map(a=>a.id===requestId
-       ?{...a,result:{...a.result,gift:voucherGift,hatsVoucherGranted:1}}:a)};
-     const now=Date.now();
-     tx.set(inventory,{balance:old+1,updatedAt:now},{merge:true});
-     tx.set(hatsRef,{...(hatsSnap.exists?{}:{voucherOnly:true}),
-      bonusTickets,updatedAt:now},{merge:true});
+     next={...next,prizes:(next.prizes||[]).map(g=>g.number===voucherGift.number?voucherGift:g)};
+     patchReceipt({gift:voucherGift,hatsVoucherGranted:1});
     }
     if(firstPictureClear){
-     // Stage-0 DOG weighting chooses between wood, iron, silver, gold and
-     // legendary boxes; the stored offer fixes contents until it is opened.
-     const chest=dogChestOffer(0);
-     const dogChest={tier:chest.tier,label:DOG_CHEST_TYPES[chest.tier].label,count:chest.count};
-     const newInventory=addExpeditionChestToInventory(dogBagSnap?.exists?dogBagSnap.data():null,chest,Date.now());
-     next={...next,
-      prizes:(next.prizes||[]).map(g=>g.number===next.completed?{...g,dogChest}:g),
-      lastActions:(next.lastActions||[]).map(a=>a.id===requestId?{
-       ...a,result:{...a.result,dogChest,
-        ...(a.result?.gift?{gift:{...a.result.gift,dogChest}}:{})}
-      }:a)
-     };
-     tx.set(dogBagRef,newInventory);
+     // One regular stage-0 chest, plus guaranteed late-game jackpot chests.
+     const chest=dogChestOffer(0),dogChest={tier:chest.tier,label:DOG_CHEST_TYPES[chest.tier].label,count:chest.count};
+     let newBag=addExpeditionChestToInventory(dogBagSnap?.exists?dogBagSnap.data():null,chest,Date.now());
+     const extraChests=[];
+     for(let i=0;i<(jackpot?.legendaryChests||0);i++){
+      const bonusChest={version:4,stage:9,tier:'legendary',count:20+i*5};
+      newBag=addExpeditionChestToInventory(newBag,bonusChest,Date.now());
+      extraChests.push({tier:'legendary',label:DOG_CHEST_TYPES.legendary.label,count:bonusChest.count});
+     }
+     const savedJackpot=jackpot?{...jackpot,extraChests}:null;
+     next={...next,prizes:(next.prizes||[]).map(g=>g.number===next.completed?
+      {...g,dogChest,...(savedJackpot?{jackpot:savedJackpot}:{})}:g)};
+     patchReceipt({dogChest,...(savedJackpot?{jackpot:savedJackpot}:{}),
+      ...(strike.result.gift?{gift:{...strike.result.gift,dogChest,
+       ...(jokerGift?{hatsVoucher:1}:{}),...(savedJackpot?{jackpot:savedJackpot}:{})}}:{})});
+     tx.set(dogBagRef,newBag);
     }
-    // A free hammer usually changes only ice progress. Avoid a redundant
-    // wallet write unless a paid hit or a money prize changed the balance.
-    // The entire strike (and any money prize) stays atomic in this transaction.
-    if(grantPicture30)
-     tx.set(albumRef,{monsterWheelTickets:newMonsterTickets,icePicture30MonsterSpinsGranted:true,updatedAt:Date.now()},{merge:true});
+    if(jackpot){
+     if(jackpot.cash){
+      const cash=next.balance+jackpot.cash;
+      if(!Number.isSafeInteger(cash)||cash<0)throw Error('INVALID_JACKPOT_BALANCE');
+      next={...next,balance:cash};
+     }
+     if(jackpot.goldHammers){
+      const amount=jackpot.goldHammers;
+      next={...next,freeHammers:{...next.freeHammers,lucky:(next.freeHammers?.lucky||0)+amount},
+       wheelHammers:{...next.wheelHammers,lucky:(next.wheelHammers?.lucky||0)+amount}};
+     }
+     if(jackpot.superSlots){
+      const previous=Number(dogAlbumSnap?.data()?.superSlotTickets||0);
+      if(!Number.isSafeInteger(previous)||previous<0||previous+jackpot.superSlots>1000000)throw Error('INVALID_SUPER_SLOT_TICKETS');
+      tx.set(dogAlbumRef,{superSlotTickets:previous+jackpot.superSlots,updatedAt:Date.now()},{merge:true});
+     }
+    }
+    if(grantPicture30){
+     const tickets=checkMonsterBalance(Number(album.monsterWheelTickets||0),picture30Spins);
+     tx.set(albumRef,{monsterWheelTickets:tickets,icePicture30MonsterSpinsGranted:true,updatedAt:Date.now()},{merge:true});
+    }
     if(next.balance!==walletBalance)
      tx.set(walletRef,{balance:next.balance,updatedAt:Date.now()},{merge:true});
+    patchReceipt({balance:next.balance});
     tx.set(ref,next);
     const finalReceipt=next.lastActions?.find(a=>a.id===requestId)?.result||strike.result;
     return {state:{...publicIceState(next),balance:next.balance},result:finalReceipt,changed:true};

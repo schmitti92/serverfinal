@@ -5,15 +5,16 @@ import {drawGift,HAMMER_PRICES,ICE_PICTURES,ICE_TILES,iceTileCount,nextIceTileCo
 // The star position never goes to a public response until it has been found.
 export function newIceState(random=randomInt){
  return {version:2,completed:0,balance:0,tileCount:ICE_TILES,star:random(ICE_TILES),
-  opened:[],freeHammers:{single:0,double:0,lucky:0},wheelHammers:{single:0,double:0,lucky:0},peekJokers:0,
+  opened:[],cracked:[],freeHammers:{single:0,double:0,lucky:0},wheelHammers:{single:0,double:0,lucky:0},peekJokers:0,
   finished:false,prizes:[],maxRewarded:0,lastActions:[]};
 }
 export function publicIceState(s){
  const {star,lastActions,...visible}=s;
  const tilesRequired=iceTileCount(s);
- return {...visible,star:s.finished?s.star:null,
+ const picture=s.finished?s.completed:s.completed+1;
+ return {...visible,cracked:Array.isArray(s.cracked)?s.cracked:[],star:s.finished?s.star:null,
   tilesRequired,tilesRemaining:Math.max(0,tilesRequired-(s.opened?.length||0)),
-  requiresFullClear:false};
+  hitsPerTile:picture>=50?2:1,requiresFullClear:false};
 }
 export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  if(!/^[A-Za-z0-9_-]{12,90}$/.test(String(requestId||'')))throw Error('INVALID_REQUEST_ID');
@@ -35,8 +36,16 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
  // This avoids a separate Firestore write just to migrate the game board.
  const validStar=Number.isInteger(s.star)&&s.star>=0&&s.star<tilesRequired&&!s.opened.includes(s.star);
  const star=validStar?s.star:closed[random(closed.length)];
- const found=targets.includes(star)||s.opened.length+targets.length>=tilesRequired;
- const next={...s,tileCount:tilesRequired,star,balance:s.balance-price,opened:[...s.opened,...targets],
+ const needsTwoHits=s.completed+1>=50;
+ const previouslyCracked=new Set((s.cracked||[]).filter(i=>!s.opened.includes(i)));
+ const crackedTargets=[],brokenTargets=[];
+ for(const tile of targets){
+  if(needsTwoHits&&!previouslyCracked.has(tile)){previouslyCracked.add(tile);crackedTargets.push(tile);}
+  else {previouslyCracked.delete(tile);brokenTargets.push(tile);}
+ }
+ const opened=[...s.opened,...brokenTargets];
+ const found=brokenTargets.includes(star)||opened.length>=tilesRequired;
+ const next={...s,tileCount:tilesRequired,star,balance:s.balance-price,opened,cracked:[...previouslyCracked],
   freeHammers:{...s.freeHammers},wheelHammers:{...s.wheelHammers},prizes:[...s.prizes],lastActions:[...(s.lastActions||[])]};
  if(free){next.freeHammers[hammer]--;if((next.wheelHammers?.[hammer]||0)>0)next.wheelHammers={...next.wheelHammers,[hammer]:next.wheelHammers[hammer]-1};}
  let gift=null;
@@ -51,7 +60,7 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
   if(gift?.kind==='hammer')next.freeHammers[gift.hammer]++;
   if(gift?.kind==='joker')next.peekJokers++;
  }
- const result={targets,found,gift,completed:next.completed,balance:next.balance};
+ const result={targets,crackedTargets,brokenTargets,found,gift,completed:next.completed,balance:next.balance};
  next.lastActions.push({id:requestId,result});
  next.lastActions=next.lastActions.slice(-32);
  return {state:next,result,changed:true};
@@ -59,7 +68,7 @@ export function strikeIce(s,{index,hammer,requestId},random=randomInt){
 export function nextIcePicture(s,random=randomInt){
  if(!s.finished||s.completed>=ICE_PICTURES)throw Error('PICTURE_NOT_READY');
  const tileCount=nextIceTileCount(s);
- return {...s,tileCount,star:random(tileCount),opened:[],finished:false,freeHammers:{...s.freeHammers}};
+ return {...s,tileCount,star:random(tileCount),opened:[],cracked:[],finished:false,freeHammers:{...s.freeHammers}};
 }
 
 export function resetIceState(s,random=randomInt){
@@ -84,8 +93,10 @@ export function normalizeIceState(s){
   if(!Array.isArray(value))throw Error('INVALID_ICE_'+name);
   return value;
  };
- const clean={...s,tileCount:tilesRequired,
-  opened:optionalArray(s.opened,'OPENED'),
+ const opened=optionalArray(s.opened,'OPENED');
+ const cracked=optionalArray(s.cracked,'CRACKED')
+  .filter((tile,i,arr)=>Number.isInteger(tile)&&tile>=0&&tile<tilesRequired&&!opened.includes(tile)&&arr.indexOf(tile)===i);
+ const clean={...s,tileCount:tilesRequired,opened,cracked,
   prizes:optionalArray(s.prizes,'PRIZES'),
   lastActions:optionalArray(s.lastActions,'RECEIPTS')};
  if((clean.version||1)>=2)return clean;
