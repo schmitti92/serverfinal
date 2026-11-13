@@ -333,7 +333,7 @@ test('29-case new 10-million jackpot is shuffled, private and pays correctly in 
 });
 
 function bankerOpenings(caseCount,playerCount,{legacy=false,legacy30=false,variant=0}={}){
- let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>n===5?variant:0,caseCount);
+ let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>n===2?variant:0,caseCount);
  if(legacy)delete game.bankerSchedule;
  if(legacy30){game.bankerSchedule=[...STEPS_30];delete game.bankerScheduleVariant;delete game.openingBatch;}
  const offers=[];
@@ -499,48 +499,78 @@ test('30-case batch respects player counts and already-running legacy matches',(
  assert.equal(legacy.phase,'reveal');
 });
 
-test('30-case banker patterns exactly match all five requested milestone sequences',()=>{
+test('30-case Banker offers have exactly two variants and mandatory 25, 26, 27 calls',()=>{
  const expected=[
-  [7,15,21,24,27],
-  [7,13,16,19,25,26],
-  [10,15,20,25,27],
-  [7,16,19,25,27],
-  [8,14,19,22,24,26]
+  [9,17,23,25,26,27],
+  [9,14,20,25,26,27]
  ];
  assert.deepEqual(BANKER_30_OPENINGS,expected);
- for(let variant=0;variant<expected.length;variant++){
-  const picked=pick30BankerSchedule(n=>{assert.equal(n,5);return variant});
+ assert.equal(BANKER_30_OPENINGS.length,2,'two fixed variants only');
+ for(let variant=0;variant<2;variant++){
+  const picked=pick30BankerSchedule(n=>{assert.equal(n,2);return variant});
   assert.equal(picked.variant,variant+1);
   assert.deepEqual(picked.steps,expected[variant].map((n,i)=>n-(expected[variant][i-1]||0)));
   const {game,offers}=bankerOpenings(30,3,{variant});
   assert.equal(game.bankerScheduleVariant,variant+1);
-  const targets=[9,...expected[variant].filter(x=>x>9)];
-  assert.deepEqual(offers,targets, 'variant '+(variant+1)+' with 3 players');
-  assert.equal(game.history.length,targets.length);
+  assert.deepEqual(offers,expected[variant],'three-player variant '+(variant+1));
+  assert.deepEqual(offers.slice(-3),[25,26,27]);
   assert.equal(game.opened.length,27);
+  assert.equal(game.history.length,6);
   assert.deepEqual(publicView(game).bankerSchedule,game.bankerSchedule);
   assert.equal(publicView(game).bankerScheduleVariant,variant+1);
+  const lastOffer=game.history.at(-1);
+  assert.equal(lastOffer.round,6);
  }
 });
 
-test('every 30-case variant adapts to 1, 2 and 4 players without inventing extra offers',()=>{
- for(let variant=0;variant<BANKER_30_OPENINGS.length;variant++){
-  for(const playerCount of [1,2,4]){
+test('with 1–4 players the final three openable cases ALWAYS trigger a Banker offer',()=>{
+ for(let variant=0;variant<2;variant++){
+  for(const playerCount of [1,2,3,4]){
    const {game,offers}=bankerOpenings(30,playerCount,{variant});
-   const expected=[3*playerCount,...BANKER_30_OPENINGS[variant].filter(opened=>opened>3*playerCount&&opened<=30-playerCount)];
-   assert.deepEqual(offers,expected,'variant '+(variant+1)+' with '+playerCount+' players');
-   assert.equal(game.history.length,expected.length);
-   assert.equal(game.opened.length,30-playerCount);
-   assert.equal(new Set(game.opened).size,30-playerCount);
+   const finalCount=30-playerCount;
+   assert.deepEqual(offers.slice(-3),[finalCount-2,finalCount-1,finalCount],
+    'variant '+(variant+1)+' / '+playerCount+' players');
+   assert.equal(offers.length,6,'no extra calls: six Banker calls in total');
+   assert.equal(new Set(offers).size,offers.length);
+   assert.equal(game.opened.length,finalCount);
+   assert.equal(game.history.length,offers.length);
    assert.ok(game.players.every(p=>!game.opened.includes(p.case)));
+   assert.equal(game.history.at(-1).decisions.length,playerCount);
   }
  }
 });
 
-test('once selected, a 30-case pattern stays stable through gameplay and vote',()=>{
- let game=create([{id:'a'},{id:'b'},{id:'c'}],n=>n===5?4:0,30);
+test('Banker must offer at suitcase 27 before personal suitcases can be revealed',()=>{
+ let game=create([{id:'a'},{id:'b'},{id:'c'}],n=>n===2?1:0,30);
+ for(let i=0;i<3;i++)game=send(game,game.order[i],'select',{case:i});
+ let guard=0;
+ while(game.opened.length<27&&guard++<90){
+  if(game.phase==='batch-pick')
+   game=send(game,game.order[Math.floor(game.openingBatch.picks.length/3)],'open',{case:free(game)[0]});
+  else if(game.phase==='batch-reveal'){
+   game.openingBatch.endsAt=Date.now()-1;
+   game=send(game,game.order[0],'ack-batch');
+  }
+  else if(game.phase==='open')game=send(game,nextTurn(game),'open',{case:free(game)[0]});
+  else if(game.phase==='reveal')game=send(game,game.pending.actor,'ack-reveal');
+  else if(game.phase==='decision'){
+   const ballot=game.history.at(-1);
+   for(const actor of ballot.participants)game=send(game,actor,'decide',{deal:false});
+  }else throw Error('Unexpected phase '+game.phase);
+ }
+ assert.equal(game.opened.length,27);
+ assert.equal(game.phase,'decision','final Banker offer must appear BEFORE final');
+ assert.equal(publicView(game).finalValues,null,'personal suitcases still secret');
+ assert.deepEqual(game.history.map((_,i)=>i+1).length,6);
+ for(const actor of game.history.at(-1).participants)game=send(game,actor,'decide',{deal:false});
+ assert.equal(game.phase,'final');
+ assert.equal(publicView(game).finalValues.length,3);
+});
+
+test('once drawn, one of two Banker variants remains fixed across batch and votes',()=>{
+ let game=create([{id:'a'},{id:'b'},{id:'c'}],n=>n===2?1:0,30);
  const schedule=[...game.bankerSchedule];
- assert.equal(game.bankerScheduleVariant,5);
+ assert.equal(game.bankerScheduleVariant,2);
  for(let i=0;i<3;i++)game=send(game,game.order[i],'select',{case:i});
  for(let i=0;i<9;i++)game=send(game,game.order[Math.floor(i/3)],'open',{case:free(game)[0]});
  assert.equal(game.phase,'batch-reveal');
@@ -549,7 +579,7 @@ test('once selected, a 30-case pattern stays stable through gameplay and vote',(
  assert.equal(game.phase,'decision');
  for(const id of game.history.at(-1).participants)game=send(game,id,'decide',{deal:false});
  assert.deepEqual(game.bankerSchedule,schedule);
- assert.equal(game.bankerScheduleVariant,5);
+ assert.equal(game.bankerScheduleVariant,2);
 });
 
 test('already started 30-case games keep the preexisting eight-offer rhythm',()=>{
