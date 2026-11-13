@@ -120,6 +120,7 @@ function iceActionFixture({star=19,free=0,balance=100000000}={}){
  let progress={...newIceState(()=>star),star,
   freeHammers:{single:free,double:0,lucky:0}};
  let walletBalance=balance;
+ let dogBag=null;
  const writes=[],reads=[],routes=new Map();
  const app={
   get:(path,...handlers)=>routes.set('GET '+path,handlers),
@@ -135,6 +136,7 @@ function iceActionFixture({star=19,free=0,balance=100000000}={}){
      if(ref.name==='christmas_ice_progress_v1')return {exists:!!progress,data:()=>progress};
      if(ref.name==='deal_or_no_deal_wallets_v1')return {exists:true,data:()=>({balance:walletBalance})};
      if(ref.name==='deal_peek_inventory_v1')return {exists:false,data:()=>({balance:0})};
+     if(ref.name==='dog_material_inventory_v1')return {exists:!!dogBag,data:()=>dogBag};
      throw Error('Unknown collection '+ref.name);
     },
     set:(ref,data,opts)=>pending.push({ref,data,opts}),
@@ -146,6 +148,7 @@ function iceActionFixture({star=19,free=0,balance=100000000}={}){
     writes.push(operation.ref.name);
     if(operation.ref.name==='christmas_ice_progress_v1')progress=operation.data;
     else if(operation.ref.name==='deal_or_no_deal_wallets_v1')walletBalance=operation.data.balance;
+    else if(operation.ref.name==='dog_material_inventory_v1')dogBag=operation.data;
    }
    return result;
   }
@@ -162,7 +165,7 @@ function iceActionFixture({star=19,free=0,balance=100000000}={}){
   });
   return res;
  };
- return {invoke,writes,reads,getProgress:()=>progress,getWallet:()=>walletBalance};
+ return {invoke,writes,reads,getProgress:()=>progress,getWallet:()=>walletBalance,getDogBag:()=>dogBag};
 }
 
 test('free hammer without a money prize writes ice progress only, never an unchanged wallet',async()=>{
@@ -182,7 +185,8 @@ test('free hammer that wins money still saves the wallet and ice progress atomic
  assert.equal(result.statusCode,200);
  assert.equal(result.payload.result.found,true);
  assert.equal(result.payload.result.gift?.kind,'money');
- assert.deepEqual(f.writes,['deal_or_no_deal_wallets_v1','christmas_ice_progress_v1']);
+ assert.deepEqual(f.writes,['dog_material_inventory_v1','deal_or_no_deal_wallets_v1','christmas_ice_progress_v1']);
+ assert.equal(f.getDogBag().unopened,1);
  assert.equal(f.getWallet(),100000000+result.payload.result.gift.amount);
  assert.equal(f.getProgress().completed,1);
 });
