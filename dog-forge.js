@@ -86,7 +86,12 @@ const costFor=(group,next,itemId=null)=>{
  if(group==='equipment'){
   if(next<=5)add(0,1+next);
   else if(next<=10){add(0,3);add(1,2+Math.floor((next-6)/2));}
-  else if(next<=15){add(1,3);add(2,1+Math.floor((next-11)/2));}
+  else if(next<=15){
+   // Iron-chest chapter: mostly forge coal, a single steel core at level 15.
+   add(1,next<=12?3:4);
+   if(next===15)add(2,1);
+   else add(0,2+Math.floor((next-11)/2));
+  }
   else if(next<=18){add(2,3);add(3,1+Math.floor((next-16)/2));}
   else if(next<=20){add(3,next===20?4:3);add(4,1);}
   else if(next<=30){add(2,3+Math.floor((next-21)/5));add(3,2+Math.floor((next-21)/5));}
@@ -126,7 +131,10 @@ export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefine
  const maxed=level>=maxLevel;
  const nextLevel=maxed?null:level+1;
  const cost=maxed?{}:
-  gateMode&&equipment&&nextLevel<=10?dogEquipmentCost(itemId,nextLevel):costFor(definition.group,nextLevel,itemId);
+  gateMode&&equipment&&nextLevel<=10?dogEquipmentCost(itemId,nextLevel):
+  gateMode&&!equipment&&nextLevel<=5?
+   {[DOG_RESOURCE_GROUPS[definition.group][0]]:[0,2,3,3,4,5][nextLevel]}:
+   costFor(definition.group,nextLevel,itemId);
  const successChance=equipment&&!maxed?
   gateMode&&nextLevel<=10?dogEquipmentSuccessChance(nextLevel):
   nextLevel>10?Math.max(45,88-Math.floor((nextLevel-11)/5)*5):
