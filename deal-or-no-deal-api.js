@@ -483,6 +483,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     if(game.pendingCardReveals?.length)throw Error('CARD_REVEAL_PENDING');
     const state=game.monsterSlotShow;
     if(!state)throw Error('SLOT_SHOW_NOT_AVAILABLE');
+    // Reject delayed taps from an older stage, even if the same player
+    // is allowed to recover an abandoned turn later. Optional for legacy clients.
+    if((req.body?.expectedTurn&&req.body.expectedTurn!==state.turn)||
+       (req.body?.expectedUid&&req.body.expectedUid!==state.uid)||
+       (req.body?.expectedStartedAt!==undefined&&
+        Number(req.body.expectedStartedAt)!==Number(state.startedAt||0)))
+      throw Error('SLOT_SHOW_STALE_STAGE');
     if(state.phase==='ceremony')return game;
     const now=Date.now();
     const roomRecovery=game.players.some(p=>p.id===actor)&&now-Number(state.activatedAt||0)>=30000;
@@ -499,12 +506,14 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      updated={...state,phase:'rolling',startedAt:Date.now()+3200,prizes:settled.prizes};
     }else{
      if(state.phase!=='rolling')throw Error('SLOT_SHOW_NOT_STARTED');
-     const duration=state.reels===1?3000:6000;
-     if(now-Number(state.startedAt||0)<duration)throw Error('SLOT_SHOW_STILL_ROLLING');
+     // Reveal is not finished until all prize cards and the confirmation
+     // screen are visible, not merely when the last reel stops.
+     if(now-Number(state.startedAt||0)<(state.reels===1?4200:7800))
+      throw Error('SLOT_SHOW_STILL_ROLLING');
      updated=state.turn==='runner'
       ?{phase:'ready',turn:'champion',uid:state.championUid,reels:3,
          runnerUid:state.runnerUid,championUid:state.championUid,
-         activatedAt:now,showAt:now+2200,startedAt:null,prizes:[]}
+         activatedAt:now,showAt:now+2200,runnerConfirmedAt:now,startedAt:null,prizes:[]}
       :{phase:'ceremony',turn:'complete',uid:null,reels:0,
          runnerUid:state.runnerUid,championUid:state.championUid,
          activatedAt:now,startedAt:null,prizes:[],finishedAt:now};
