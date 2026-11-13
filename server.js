@@ -24,6 +24,7 @@ import { installPeekJoker } from "./deal-peek-joker.js";
 import { installChristmasIceApi } from "./christmas-ice-api.js";
 import { installChristmasHatsApi } from "./christmas-hats-api.js";
 import { installChristophSurpriseApi } from "./christoph-surprise-api.js";
+import { installDogWelcomeGiftApi } from "./dog-welcome-gift.js";
 import { installEngine2Api } from "./engine2/api.js";
 import { installHubBusiness } from "./business-hub.js";
 import { installEisstockOnline } from "./eisstock-online.js";
@@ -4307,7 +4308,7 @@ const app = express();
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/christoph-surprise') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || req.path.startsWith('/api/dog/gates') || req.path.startsWith('/api/dog/developer') || req.path.startsWith('/api/dog/preview') || req.path.startsWith('/api/dog/live-bots') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
+  if (req.path.startsWith('/api/profile') || req.path.startsWith('/api/hub') || req.path.startsWith('/api/engine2') || req.path.startsWith('/api/deal-or-no-deal') || req.path.startsWith('/api/christmas-ice') || req.path.startsWith('/api/christmas-hats') || req.path.startsWith('/api/christoph-surprise') || req.path.startsWith('/api/dog/welcome') || req.path.startsWith('/api/dog/materials') || req.path.startsWith('/api/dog/forge') || req.path.startsWith('/api/dog/gates') || req.path.startsWith('/api/dog/developer') || req.path.startsWith('/api/dog/preview') || req.path.startsWith('/api/dog/live-bots') || /^\/skyjo\/S[A-HJ-NP-Z2-9]{9}(?:\/|$)/.test(req.path)) {
     const origin = String(req.get('origin') || '');
     const allowed = (process.env.PROFILE_ALLOWED_ORIGINS || 'https://schmitti92.github.io')
       .split(',').map(v => v.trim()).filter(Boolean);
@@ -4414,6 +4415,8 @@ installChristmasIceApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:(
 installChristmasHatsApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 // One-time Christmas gift from Christoph, shared across all signed-in players.
 installChristophSurpriseApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
+// Once-per-profile reward when a player first enters the 100-Tore event.
+installDogWelcomeGiftApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
