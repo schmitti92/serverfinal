@@ -81,7 +81,7 @@ export function dogS2DrawMilestone(milestone,previousKind='',rand=randomInt){
  }
  const spec=DOG_CHEST_TYPES[milestone.tier];
  const offers=Array.from({length:milestone.chests},()=>{
-  const count=spec.countWeights?pick(Object.fromEntries(spec.countWeights.map((weight,i)=>[spec.min+i,weight])),rand):
+  const count=spec.countWeights?Number(pick(Object.fromEntries(spec.countWeights.map((weight,i)=>[spec.min+i,weight])),rand)):
    randomRange(spec.min,spec.max,rand);
   return {version:4,stage:milestone.stage,tier:milestone.tier,count};
  });
