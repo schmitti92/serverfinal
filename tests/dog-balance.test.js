@@ -59,11 +59,12 @@ test('Chest amount and rarity are frozen at award time, before opening',()=>{
  const first=dogChestOffer(7,()=>0);
  const second=dogChestOffer(87,()=>0);
  assert.deepEqual(first,{version:4,stage:0,tier:'wood',count:1});
- assert.deepEqual(dogChestOffer(7,()=>49),{version:4,stage:0,tier:'wood',count:1});
- assert.deepEqual(dogChestOffer(7,()=>50),{version:4,stage:0,tier:'wood',count:2});
- assert.deepEqual(dogChestOffer(7,()=>84),{version:4,stage:0,tier:'wood',count:2});
- assert.deepEqual(dogChestOffer(7,()=>85),{version:4,stage:0,tier:'wood',count:3});
- assert.deepEqual(dogChestOffer(7,()=>99),{version:4,stage:0,tier:'wood',count:3});
+ const woodRoll=roll=>{let call=0;return dogChestOffer(7,()=>call++===0?0:roll)};
+ assert.deepEqual(woodRoll(49),{version:4,stage:0,tier:'wood',count:1});
+ assert.deepEqual(woodRoll(50),{version:4,stage:0,tier:'wood',count:2});
+ assert.deepEqual(woodRoll(84),{version:4,stage:0,tier:'wood',count:2});
+ assert.deepEqual(woodRoll(85),{version:4,stage:0,tier:'wood',count:3});
+ assert.deepEqual(woodRoll(99),{version:4,stage:0,tier:'wood',count:3});
  assert.deepEqual(second,{version:4,stage:8,tier:'wood',count:1});
  assert.equal(DOG_CHEST_STAGES[0].min,1);
  assert.equal(DOG_CHEST_STAGES[0].max,30);
