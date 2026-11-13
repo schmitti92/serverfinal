@@ -104,6 +104,33 @@ export function dogPublicEnroll(teamRaw,progressRaw,uid,name,now=Date.now()){
  delete people[bot.uid]; // keep the normalizer's three saved slots human-first
  return {team,progress:{...progress,people,updatedAt:now},joined:true,retiredBot:bot.uid};
 }
+/** One-time public-release cleanup. Only removes the two known pilot bot UIDs.
+ * All human inventories, their saved positions, the forge level and completed
+ * boss victories are preserved. Active boss attempts are never interrupted. */
+export function dogPublicRetireTestBots(teamRaw,progressRaw,now=Date.now()){
+ const team=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
+ const bots=team.members.filter(m=>DOG_PUBLIC_RELEASE_BOT_IDS.includes(m.uid));
+ if(!bots.length)return {team,progress,changed:false,blocked:false};
+ if(dogPublicBossRunning(team,progress))
+  return {team,progress,changed:false,blocked:true};
+ const dropped=new Set(bots.map(m=>m.uid));
+ const keep=obj=>Object.fromEntries(Object.entries(obj||{}).filter(([uid])=>!dropped.has(uid)));
+ const clearReady=raw=>{
+  if(!raw||!Array.isArray(raw.ready))return raw;
+  return {...raw,ready:raw.ready.filter(uid=>!dropped.has(uid))};
+ };
+ return {
+  changed:true,blocked:false,
+  team:{...team,members:team.members.filter(m=>!dropped.has(m.uid)),
+   heroes:keep(team.heroes),heroClasses:keep(team.heroClasses),
+   heroLocks:keep(team.heroLocks),updatedAt:now},
+  progress:{...progress,people:keep(progress.people),
+   ...(progress.boss10?{boss10:clearReady(progress.boss10)}:{}),
+   groupBosses:Object.fromEntries(Object.entries(progress.groupBosses||{})
+    .map(([gate,boss])=>[gate,clearReady(boss)])),
+   updatedAt:now}
+ };
+}
 /** Bypass the 10-minute boss lock only for the privately authorized
  * three-seat pilot, never for a normal party of human players. */
 export function dogDeveloperCooldownBypass(progressRaw,teamRaw,uid){
@@ -238,8 +265,21 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
   try{
    const {db,teamRef,progressRef}=refs();
    const [teamSnap,progressSnap]=await Promise.all([teamRef.get(),progressRef.get()]);
-   const team=teamSnap.exists?teamSnap.data():null,uid=req.dogGateProfile.uid;
+   let team=teamSnap.exists?teamSnap.data():null,uid=req.dogGateProfile.uid;
    let progress=progressSnap.exists?progressSnap.data():null;
+   // Public release: retire obsolete trial bots once, on an ordinary map
+   // visit. This costs only one transaction the first time, not every poll.
+   // If combat is running, delay until it has finished.
+   if(dogPublicTeamHasBot(bossTeam(team))&&!dogPublicBossRunning(bossTeam(team),dogGateProgress(progress))){
+    const released=await db.runTransaction(async tx=>{
+     const [liveTeam,liveProgress]=await Promise.all([tx.get(teamRef),tx.get(progressRef)]);
+     const change=dogPublicRetireTestBots(liveTeam.exists?liveTeam.data():null,
+      liveProgress.exists?liveProgress.data():null,clock());
+     if(change.changed){tx.set(teamRef,change.team);tx.set(progressRef,change.progress);}
+     return change;
+    });
+    team=released.team;progress=released.progress;
+   }
    // The test teammates solve their challenges on the real shared fight,
    // including missed rounds after a reconnect or an inactive browser.
    const simulation=botLogic?.advanceAllLiveBotFights(progress,team,uid,clock(),rand);
