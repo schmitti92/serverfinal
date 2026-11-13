@@ -6,7 +6,7 @@ import {dealEconomyRef,normalizeDealEconomy,validateDealEconomy,goldPackPrice} f
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
-import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS} from './monster-slots.js';
+import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,slotCashChance} from './monster-slots.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
@@ -258,8 +258,16 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // Only the champion (three reels) and unique runner-up in 3–4-player
  // matches (one reel) earn slots; other players get no slot entitlement.
  // The result and all inventory credits commit together and replay unchanged.
- app.get('/api/deal-or-no-deal/monster-slots/catalog',auth,(_req,res)=>
-  res.json({ok:true,reels:3,runnerUpReels:1,categoryWeights:MONSTER_SLOTS_WEIGHTS}));
+ app.get('/api/deal-or-no-deal/monster-slots/catalog',auth,async(_req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const economy=normalizeDealEconomy((await dealEconomyRef(db).get()).data());
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,reels:3,runnerUpReels:1,superSlotReels:5,
+    categoryWeights:economy.slotWeights,cashChance:slotCashChance(economy.slotWeights),
+    cashMinCents:1,cashMaxCents:500000000});
+  }catch(e){return fail(res,e)}
+ });
  // Server-owned, exactly-once settlement shared by personal claims and the
  // next-round handoff. The entire batch reads first, then credits inventories.
  // This protects offline/slow participants without asking each client to spin.
@@ -305,12 +313,17 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    missing=eligible;
    if(!missing.length)return results;
   }
-  const progressSnap=await tx.get(db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID));
+  // Read global weighting once per new settlement batch, never per reel/replay.
+  const [progressSnap,economySnap]=await Promise.all([
+   tx.get(db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID)),
+   tx.get(dealEconomyRef(db))
+  ]);
+  const slotWeights=normalizeDealEconomy(economySnap.data()).slotWeights;
   const progress=dogGateProgress(progressSnap.exists?progressSnap.data():null);
   const prepared=missing.map(p=>{
    const gate=progress.people[p.uid]?.highestGate??1;
-   const prizes=mode==='super'?Array.from({length:5},()=>drawMonsterSlot(gate)):
-    p.reels===1?[drawMonsterSlot(gate)]:drawMonsterSlots(gate);
+   const prizes=mode==='super'?Array.from({length:5},()=>drawMonsterSlot(gate,randomInt,slotWeights)):
+    p.reels===1?[drawMonsterSlot(gate,randomInt,slotWeights)]:drawMonsterSlots(gate,randomInt,slotWeights);
    const needed=new Set(prizes.map(prize=>prize.kind));
    return {...p,gate,prizes,needed};
   });
@@ -959,7 +972,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     if(!room.players?.some(p=>p.uid===uid&&!p.testBot&&!p.bot))throw Error('NOT_IN_ROOM');
     if(room.hostUid!==uid)throw Error('HOST_ONLY');
     const old=normalizeDealEconomy(configSnap.data());
-    const next={...values,revision:old.revision+1,updatedAt:Date.now(),updatedBy:uid};
+    const next={...values,slotWeights:values.slotWeights??old.slotWeights,
+     revision:old.revision+1,updatedAt:Date.now(),updatedBy:uid};
     tx.set(ref,next);
     return normalizeDealEconomy(next);
    });

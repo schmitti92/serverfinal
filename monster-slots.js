@@ -1,9 +1,10 @@
 import {randomInt} from 'node:crypto';
 
-// Three independent guaranteed prizes. Category odds sum to exactly 100000.
+// Three independent guaranteed prizes. Category weights are relative points.
+ // 190 cash points against 95 combined item points = exactly 2:1 money/items.
 // The Christmas Monster Wheel remains a separate ticket-redeemable attraction.
 export const MONSTER_SLOTS_WEIGHTS=Object.freeze({
- chest:35000,pack:30000,hammer:20000,joker:4000,minigame:3000,monster:3000,cash:5000
+ chest:35,pack:30,hammer:20,joker:4,minigame:3,monster:3,cash:190
 });
 export const MONSTER_SLOTS_COUNT=3;
 // Deal or No Deal: one unique champion earns 3 reels, one unique runner-up
@@ -45,12 +46,21 @@ export function monsterSlotChestOdds(gate=1){
  if(gate>=20)return [60,24,10,4,2];
  return [70,18,8,3,1];
 }
-const moneyBands=[
- [1,10000,5700],             // 1 Cent–100 Euro
- [10001,1000000,2600],        // over 100–10k Euro
- [1000001,100000000,1300],    // over 10k–1m Euro
- [100000001,10000000000,400] // over 1m–100m Euro
-];
+// Exact cash denominations from 0.01 € to 5,000,000 € (integer cents).
+// More common midrange prizes, very rare multimillion jackpots.
+export const MONSTER_SLOT_CASH_PRIZES=Object.freeze([
+ [1,8],[2,12],[5,18],[10,25],[20,35],[50,60],
+ [100,95],[200,135],[500,180],[1000,230],[2000,270],[5000,320],
+ [10000,400],[20000,460],[50000,520],[100000,590],
+ [250000,630],[500000,670],[1000000,650],[2500000,620],
+ [5000000,590],[10000000,500],[25000000,450],[50000000,340],
+ [75000000,270],[100000000,220],[150000000,150],[200000000,110],
+ [250000000,75],[300000000,45],[400000000,25],[500000000,10]
+].map(entry=>Object.freeze(entry)));
+export const slotCashChance=weights=>{
+ const total=Object.values(weights||MONSTER_SLOTS_WEIGHTS).reduce((sum,n)=>sum+n,0);
+ return total>0?(weights||MONSTER_SLOTS_WEIGHTS).cash/total:0;
+};
 const packs=Object.freeze({
  small:[280,120,50],large:[180,100,50],premium:[90,50,30],platinum:[30,15,5]
 });
@@ -66,8 +76,8 @@ const labelFor=(kind,id,count)=>{
  if(kind==='monster')return count+'× Monster-Drehgutschein';
  return 'Zufallsgeld';
 };
-export function drawMonsterSlot(gate=1,rand=randomInt){
- const kind=weighted(Object.entries(MONSTER_SLOTS_WEIGHTS),rand);
+export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS){
+ const kind=weighted(Object.entries(categoryWeights),rand);
  let id=null,count=1,amountCents=null;
  if(kind==='chest')id=weighted(tiers.map((tier,i)=>[tier,monsterSlotChestOdds(gate)[i]]),rand);
  if(kind==='pack'){
@@ -82,13 +92,11 @@ export function drawMonsterSlot(gate=1,rand=randomInt){
  if(kind==='minigame')count=quantity([60,30,10],rand);
  if(kind==='monster')count=quantity([70,25,5],rand);
  if(kind==='cash'){
-  const i=weighted(moneyBands.map((b,i)=>[i,b[2]]),rand);
-  const [min,max]=moneyBands[i];
-  amountCents=min+rand(max-min+1);
+  amountCents=weighted(MONSTER_SLOT_CASH_PRIZES.map(([amount,weight])=>[amount,weight]),rand);
  }
  return Object.freeze({kind,id,quantity:count,...(amountCents!==null?{amountCents}:{}),
   label:kind==='cash'?(amountCents/100).toLocaleString('de-DE',{style:'currency',currency:'EUR'}):labelFor(kind,id,count)});
 }
-export function drawMonsterSlots(gate=1,rand=randomInt){
- return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand));
+export function drawMonsterSlots(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS){
+ return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand,categoryWeights));
 }

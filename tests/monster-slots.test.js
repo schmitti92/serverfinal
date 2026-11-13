@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {drawMonsterSlot,drawMonsterSlots,monsterSlotChestOdds,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS} from '../monster-slots.js';
+import {drawMonsterSlot,drawMonsterSlots,monsterSlotChestOdds,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,MONSTER_SLOT_CASH_PRIZES,slotCashChance} from '../monster-slots.js';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 import {DOG_S2_CARDS,dogS2OpenGrantedPacks} from '../dog-album-season2.js';
 import {create,payoutFor} from '../deal-or-no-deal.js';
 
-test('all seven slot categories total 100% and every reel always awards a prize',()=>{
- assert.equal(Object.values(MONSTER_SLOTS_WEIGHTS).reduce((a,b)=>a+b,0),100000);
+test('seven slot weights default to exactly two money shares per one combined item share',()=>{
+ const {cash,...items}=MONSTER_SLOTS_WEIGHTS;
+ assert.equal(cash,Object.values(items).reduce((a,b)=>a+b,0)*2);
+ assert.equal(slotCashChance(MONSTER_SLOTS_WEIGHTS),2/3);
  for(const gate of [1,20,30,50,80,100]){
   const odds=monsterSlotChestOdds(gate);
   assert.equal(odds.reduce((a,b)=>a+b,0),100);
@@ -17,7 +19,7 @@ test('all seven slot categories total 100% and every reel always awards a prize'
  assert.ok(prizes.every(p=>p.kind==='chest'&&p.id==='wood'&&p.quantity===1));
  const jackpot=drawMonsterSlot(1,max=>max-1);
  assert.equal(jackpot.kind,'cash');
- assert.equal(jackpot.amountCents,10_000_000_000);
+ assert.equal(jackpot.amountCents,500_000_000);
 });
 
 
@@ -344,4 +346,26 @@ test('a runner-up reel draws exactly one award, while DOG five-reel Super Slots 
  const one=[drawMonsterSlot(1,()=>0)];
  assert.equal(one.length,1);
  assert.equal(drawMonsterSlots(1,()=>0).length,3);
+});
+
+test('slot prize table has varied exact amounts including one cent and five million euros',()=>{
+ assert.ok(MONSTER_SLOT_CASH_PRIZES.length>=30);
+ assert.equal(MONSTER_SLOT_CASH_PRIZES[0][0],1);
+ assert.equal(MONSTER_SLOT_CASH_PRIZES.at(-1)[0],500_000_000);
+ assert.ok(MONSTER_SLOT_CASH_PRIZES.every(([amount,weight],index)=>Number.isSafeInteger(amount)&&
+  amount>=1&&amount<=500_000_000&&Number.isSafeInteger(weight)&&weight>0&&
+  (!index||amount>MONSTER_SLOT_CASH_PRIZES[index-1][0])));
+ const onlyMoney=Object.fromEntries(Object.keys(MONSTER_SLOTS_WEIGHTS).map(k=>[k,k==='cash'?1:0]));
+ assert.equal(drawMonsterSlot(1,()=>0,onlyMoney).amountCents,1,'minimum cash amount');
+ assert.equal(drawMonsterSlot(1,max=>max-1,onlyMoney).amountCents,500_000_000,'maximum cash amount');
+ assert.equal(drawMonsterSlots(1,max=>max-1,onlyMoney).every(p=>p.kind==='cash'),true);
+});
+test('host can change category weights including disabling item or money prizes',()=>{
+ const moneyOnly={...MONSTER_SLOTS_WEIGHTS,chest:0,pack:0,hammer:0,joker:0,minigame:0,monster:0,cash:250};
+ const itemOnly={...MONSTER_SLOTS_WEIGHTS,cash:0};
+ assert.equal(slotCashChance(moneyOnly),1);
+ assert.equal(slotCashChance(itemOnly),0);
+ assert.equal(drawMonsterSlot(40,()=>0,moneyOnly).kind,'cash');
+ assert.notEqual(drawMonsterSlot(40,max=>max-1,itemOnly).kind,'cash');
+ assert.equal(drawMonsterSlots(80,()=>0,moneyOnly).length,3);
 });
