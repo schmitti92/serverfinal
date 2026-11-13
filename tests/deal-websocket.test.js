@@ -612,10 +612,16 @@ test('Shared Banker card prize freezes the room, broadcasts both owners and rele
   assert.equal(response.statusCode,200,JSON.stringify(response.body));
   game=response.body.game;
  };
- for(let i=0;i<2;i++)await act(game.order[i],'select',{case:i});
- for(let i=2;i<2+game.bankerSchedule[0];i++){
+ // Avoid a random 1-cent reveal: that would correctly pause this separate
+ // Banker-only scenario before voting and is covered by a different test.
+ const values=docs.get('deal_or_no_deal_matches_v1/123').game.values;
+ const chosen=values.map((value,index)=>({value,index})).filter(x=>x.value!==1);
+ const personal=chosen.slice(0,2).map(x=>x.index);
+ for(let i=0;i<2;i++)await act(game.order[i],'select',{case:personal[i]});
+ const opening=chosen.slice(2,2+game.bankerSchedule[0]).map(x=>x.index);
+ for(const selected of opening){
   const actor=game.order[game.turnIndex];
-  await act(actor,'open',{case:i});
+  await act(actor,'open',{case:selected});
   await act(actor,'ack-reveal');
  }
  assert.equal(game.phase,'decision');
