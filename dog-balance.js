@@ -34,16 +34,16 @@ export const DOG_CHEST_TYPE_IDS=Object.freeze(Object.keys(DOG_CHEST_TYPES));
 // Material rarity: common, uncommon, rare, epic, legendary.
 // More prestigious boxes first appear rarely; late-game size is NOT guaranteed.
 const CHEST_STAGE_RULES=[
- {chestWeights:[100,0,0,0,0], weights:[95,5,0,0,0]},
- {chestWeights:[100,0,0,0,0], weights:[82,17,1,0,0]},
- {chestWeights:[80,20,0,0,0],weights:[73,24,3,0,0]},
- {chestWeights:[65,30,5,0,0],weights:[62,32,6,0,0]},
- {chestWeights:[45,40,15,0,0],weights:[55,32,12,1,0]},
- {chestWeights:[35,45,18,2,0],weights:[47,32,18,3,0]},
- {chestWeights:[25,40,28,7,0],weights:[40,30,23,6,1]},
- {chestWeights:[15,33,37,15,0],weights:[32,28,25,13,2]},
- {chestWeights:[10,28,38,21,3],weights:[26,26,27,17,4]},
- {chestWeights:[5,20,37,31,7],weights:[22,23,28,21,6]}
+ {chestWeights:[85,9,4,1,1], weights:[95,5,0,0,0]},
+ {chestWeights:[79,12,5,3,1], weights:[82,17,1,0,0]},
+ {chestWeights:[65,23,7,4,1], weights:[73,24,3,0,0]},
+ {chestWeights:[56,29,9,5,1], weights:[62,32,6,0,0]},
+ {chestWeights:[47,31,14,6,2], weights:[55,32,12,1,0]},
+ {chestWeights:[35,36,18,9,2], weights:[47,32,18,3,0]},
+ {chestWeights:[28,36,22,11,3], weights:[40,30,23,6,1]},
+ {chestWeights:[21,32,29,14,4], weights:[32,28,25,13,2]},
+ {chestWeights:[16,28,32,19,5], weights:[26,26,27,17,4]},
+ {chestWeights:[10,22,34,26,8], weights:[22,23,28,21,6]}
 ];
 export const DOG_CHEST_STAGES=Object.freeze(CHEST_STAGE_RULES.map(rule=>{
  const eligible=DOG_CHEST_TYPE_IDS.filter((id,i)=>rule.chestWeights[i]>0);
