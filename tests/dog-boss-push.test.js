@@ -71,6 +71,29 @@ test('S-04 independent groups have isolated event sequence and no private payloa
  }
 });
 
+test('Public team READY invitations are delivered only to authenticated non-actor teammates without Firestore writes',async()=>{
+ const f=fixture();
+ const alice=f.make(),bob=f.make(),intruder=f.make(),oldGate=f.make();
+ alice.emit('message',JSON.stringify({type:'subscribe',idToken:'alpha',gate:0,scope:'team'}));
+ bob.emit('message',JSON.stringify({type:'subscribe',idToken:'beta',gate:0,scope:'team'}));
+ intruder.emit('message',JSON.stringify({type:'subscribe',idToken:'outsider',gate:0,scope:'team'}));
+ oldGate.emit('message',JSON.stringify({type:'subscribe',idToken:'alpha',gate:10}));
+ for(let i=0;i<30;i++)await Promise.resolve();
+ assert.deepEqual(alice.sent[0],{type:'subscribed',gate:0});
+ assert.deepEqual(bob.sent[0],{type:'subscribed',gate:0});
+ assert.equal(intruder.closed.code,1008);
+ assert.equal(f.hub.notify(10,'hero-a','ready'),2);
+ assert.deepEqual(bob.sent[1],{type:'invite',gate:10});
+ assert.equal(alice.sent.length,1,'actor is not invited to own arena');
+ assert.equal(oldGate.sent.length,1,'actor boss subscriber receives its POST state instead');
+ const count=f.hub.notify(10,'hero-a','minigame');
+ assert.equal(count,0,'no invitation on other combat actions');
+ const invalid=f.make();
+ invalid.emit('message',JSON.stringify({type:'subscribe',idToken:'alpha',gate:0}));
+ for(let i=0;i<20;i++)await Promise.resolve();
+ assert.equal(invalid.closed.code,1008,'gate zero requires team scope');
+ assert.equal(f.metrics().writes,0);
+});
 test('S-04 unauthenticated WS upgrade expires without Firestore reads or leaked subscription',async()=>{
  const timers=new Map();let id=0,reads=0,auths=0;
  const hub=createDogBossPushHub({
