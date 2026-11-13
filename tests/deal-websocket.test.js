@@ -659,3 +659,55 @@ test('Shared Banker card prize freezes the room, broadcasts both owners and rele
  assert.deepEqual(docs.get('deal_or_no_deal_matches_v1/123').game.pendingCardReveals,[]);
  spectators.forEach(ws=>ws.close());
 });
+
+
+test('One-cent shared pack locks all actions until the actual opener confirms',async()=>{
+ const {api,Socket,invoke,docs}=harness(['a','b','c']);
+ const root='/api/deal-or-no-deal/:code';
+ const sockets=['a','b','c'].map(uid=>{
+  const ws=new Socket();api.attachSocket(ws);ws.message({type:'subscribe',code:'123',token:uid});return ws;
+ });
+ await flush();
+ let response=await invoke('POST',root+'/start','a',{caseCount:30});
+ assert.equal(response.statusCode,200);
+ let game=response.body.game;
+ const stored=docs.get('deal_or_no_deal_matches_v1/123').game;
+ const centIndex=stored.values.indexOf(1);
+ assert.ok(centIndex>=0);
+ const protectedCases=stored.values.map((v,i)=>i).filter(i=>i!==centIndex).slice(0,3);
+ const act=async(uid,type,extra={})=>{
+  const r=await invoke('POST',root+'/action',uid,{id:crypto.randomUUID(),revision:game.revision,type,...extra});
+  assert.equal(r.statusCode,200,JSON.stringify(r.body));game=r.body.game;
+ };
+ for(let i=0;i<3;i++)await act(game.order[i],'select',{case:protectedCases[i]});
+ const opener=game.order[0];
+ const cases=[centIndex,...stored.values.map((v,i)=>i).filter(i=>i!==centIndex&&!protectedCases.includes(i)).slice(0,8)];
+ for(let i=0;i<9;i++)await act(game.order[Math.floor(i/3)],'open',{case:cases[i]});
+ assert.equal(game.phase,'batch-reveal');
+ docs.get('deal_or_no_deal_matches_v1/123').game.openingBatch.endsAt=Date.now()-1;
+ await act(game.order[2],'ack-batch');
+ const gate=game.pendingCardReveals?.[0];
+ assert.equal(gate?.kind,'cent');
+ assert.equal(gate?.uid,opener);
+ assert.equal(game.pendingCardReveals.length,1);
+ for(const socket of sockets){
+  assert.deepEqual(socket.sent.filter(m=>m.type==='deal-state').at(-1)?.game?.pendingCardReveals,game.pendingCardReveals);
+ }
+ const shared=await invoke('GET',root+'/christmas-cent-reward','b');
+ assert.equal(shared.statusCode,200,JSON.stringify(shared.body));
+ assert.equal(shared.body.reward.uid,opener);
+ assert.ok(shared.body.reward.revealed.length>0);
+ const unauthorized=await invoke('POST',root+'/christmas-wheel-continue','b',{kind:'cent',rewardId:gate.rewardId});
+ assert.equal(unauthorized.body.error,'WINNER_ONLY');
+ const voted=await invoke('POST',root+'/action','a',{id:crypto.randomUUID(),revision:game.revision,type:'decide',deal:false});
+ assert.equal(voted.body.error,'CARD_REVEAL_PENDING');
+ const confirmed=await invoke('POST',root+'/christmas-wheel-continue',opener,{kind:'cent',rewardId:gate.rewardId});
+ assert.equal(confirmed.statusCode,200,JSON.stringify(confirmed.body));
+ const unlocked=docs.get('deal_or_no_deal_matches_v1/123').game;
+ assert.deepEqual(unlocked.pendingCardReveals,[]);
+ const next=await invoke('POST',root+'/action',unlocked.history.at(-1).participants[0],{
+  id:crypto.randomUUID(),revision:unlocked.revision,type:'decide',deal:false
+ });
+ assert.equal(next.statusCode,200,JSON.stringify(next.body));
+ sockets.forEach(s=>s.close());
+});
