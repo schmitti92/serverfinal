@@ -55,7 +55,8 @@ test('monthly points are server-computed from DOG cards, Bingo lines and complet
 });
 
 test('re-collected DOG cards are marked new within the current cycle while existing inventory stays untouched',()=>{
- const base=fullBoard(),lifetime={...base,[first()[0].id]:3};
+ const base=fullBoard();base[first()[0].id]=3;
+ const lifetime={...base};
  const opened=dogS2OpenGrantedPacks('small',1,lifetime,()=>0,base);
  assert.equal(opened.openedPacks[0].revealed[0].isNew,true);
  assert.equal(opened.cards[first()[0].id],6);
