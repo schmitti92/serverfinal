@@ -9,28 +9,33 @@ export const DOG_S2_COLLECTION='deal_dog_album_season2_v1';
 export const DOG_S2_BOARDS=Object.freeze(['DOG & Königreich','Weltraum','Dinosaurier','Freizeitpark','Märchen','Western']);
 const FILES=Object.freeze([["DOG_01_11.png","DOG_02.png","DOG_03.png","DOG_04_plus_minus.png","DOG_05.png","DOG_06.png","DOG_07.png","DOG_08.png","DOG_09.png","DOG_10.png","DOG_12.png","DOG_13.png","DOG_Joker.png","DOG_Tauschen.png","DOG_31_Vier_Koenige.png","DOG_32_Koenigliche_Allianz.png"],["DOG_43_Astronauten.png","DOG_44_Raumstation.png","DOG_45_Rakete.png","DOG_46_Mondlandung.png","DOG_47_Alien_Kartenspiel.png","DOG_48_Galaktischer_Pokal.png","DOG_49_Kosmischer_Wuerfel.png","DOG_50_Weltraum_Sieger.png","DOG_51_Sternenpokal.png","DOG_52_Mondforscher.png","DOG_53_Raumstation.png","DOG_54_Schwerelos.png","DOG_55_Raketenstart.png","DOG_56_Alien_Kartenspiel.png","DOG_57_Sternenportal.png","DOG_58_Weltraumschatz.png"],["DOG_59_Dino_Pokal.png","DOG_60_Dino_Entdecker.png","DOG_61_Dino_Schatz.png","DOG_62_Dino_Spielrunde.png","DOG_63_Dino_Ritter.png","DOG_64_Dino_Zauberer.png","DOG_123_T_Rex_Team.png","DOG_124_Triceratops_Spielbrett.png","DOG_125_Brachiosaurus_Karten.png","DOG_126_Stegosaurus_Wuerfel.png","DOG_127_Raptor_Schatzkarte.png","DOG_128_Flugsaurier_Team.png","DOG_129_Spinosaurus_Spielmuenze.png","DOG_130_Ankylosaurus_Schatzkiste.png","DOG_131_Dino_Baby.png","DOG_132_Dino_Siegerpokal.png"],["DOG_65_Freizeitpark_Panorama.png","DOG_66_Spielpark_Eingang.png","DOG_67_Achterbahn.png","DOG_68_Geisterbahn.png","DOG_134_Achterbahn.png","DOG_135_Riesenrad.png","DOG_136_Karussell.png","DOG_137_Wildwasserbahn.png","DOG_138_Geisterbahn.png","DOG_139_Suessigkeiten.png","DOG_140_Dosenwerfen.png","DOG_141_Kettenkarussell.png","DOG_142_Heissluftballon.png","DOG_143_Feuerwerk.png","DOG_144_Freizeitpark_Pokal.png","DOG_33_Koenigspokal.png"],["DOG_69_Rapunzel.png","DOG_77_Maerchenschloss.png","DOG_78_Kuerbiskutsche.png","DOG_79_Dornroeschen.png","DOG_80_Rotkaeppchen.png","DOG_81_Drei_Schweinchen.png","DOG_82_Schwert_im_Stein.png","DOG_83_Schneewittchen.png","DOG_84_Magisches_Maerchenbuch.png","DOG_145_Rotkaeppchen.png","DOG_146_Haensel_und_Gretel.png","DOG_148_Schneewittchen.png","DOG_149_Gestiefelter_Kater.png","DOG_150_Dornroeschen.png","DOG_151_Rumpelstilzchen.png","DOG_34_Vier_Koenigreiche.png"],["DOG_85_Sheriff.png","DOG_86_Dampflokomotive.png","DOG_87_Western_Freundschaft.png","DOG_88_Saloon.png","DOG_89_Bandit.png","DOG_90_Wuestenlandschaft.png","DOG_91_Cowgirl.png","DOG_92_Rodeo.png","DOG_152_Westernstadt.png","DOG_154_Sheriff.png","DOG_155_Dampflok.png","DOG_156_Cowboy_Pferd.png","DOG_158_Lagerfeuer.png","DOG_159_Sonnenuntergang.png","a_highly_detailed_colorful_glossy_3d_style_board.png","a_highly_detailed_glossy_colorful_close_up_illus.png"]]);
 const RARITIES=['common','rare','epic','legendary'];
-// Strictly harder DOG 4x4 collections (not Christmas Hammer-Bingo).
-// In EACH of the six worlds: 4 normal cards, four 3x rarer, four 8x
-// rarer, two 15x rarer and two 30x rarer. The two hardest cards differ
-// between worlds and remain attainable with every legitimate pack type.
-// Integer tickets preserve EXACT relative odds inside each rarity tier.
-// Four rarities (common/rare/epic/legendary) each keep one normal card.
+// Six DOG worlds of 16 cards each. Slots 1–4 / 5–8 / 9–12 / 13–16
+// are common / rare / epic / legendary. The bottom-right legendary (16)
+// is a 1-in-500 hit CONDITIONAL on a draw belonging to its 16-card board,
+// including the guaranteed-rarity draws of Premium and Platin packages.
+// Every pack keeps its existing rarity odds; the world is chosen uniformly.
+// A special legendary roll adjusts for the pack's legendary probability.
+// The 15 other cards keep four normal, three 3x, four 8x, two 15x and
+// two 30x rarer cards within their own rarity category.
+export const DOG_S2_JACKPOT_SLOT=16;
+export const DOG_S2_JACKPOT_ODDS=500;
 export const DOG_S2_SPECIAL_CARD_SLOTS=Object.freeze([
- Object.freeze({normal:Object.freeze([1,5,9,13]),triple:Object.freeze([2,6,10,14]),octuple:Object.freeze([3,7,11,15]),fifteen:Object.freeze([4,12]),thirty:Object.freeze([8,16])}),
- Object.freeze({normal:Object.freeze([3,6,11,15]),triple:Object.freeze([4,7,12,16]),octuple:Object.freeze([1,8,9,13]),fifteen:Object.freeze([2,10]),thirty:Object.freeze([5,14])}),
- Object.freeze({normal:Object.freeze([2,8,10,14]),triple:Object.freeze([3,5,11,15]),octuple:Object.freeze([4,6,12,16]),fifteen:Object.freeze([1,9]),thirty:Object.freeze([7,13])}),
- Object.freeze({normal:Object.freeze([4,7,12,13]),triple:Object.freeze([1,8,9,14]),octuple:Object.freeze([2,5,10,15]),fifteen:Object.freeze([3,11]),thirty:Object.freeze([6,16])}),
- Object.freeze({normal:Object.freeze([1,6,10,16]),triple:Object.freeze([2,7,11,13]),octuple:Object.freeze([3,8,12,14]),fifteen:Object.freeze([4,9]),thirty:Object.freeze([5,15])}),
- Object.freeze({normal:Object.freeze([3,5,9,14]),triple:Object.freeze([4,6,10,15]),octuple:Object.freeze([1,7,11,16]),fifteen:Object.freeze([2,12]),thirty:Object.freeze([8,13])})
+ Object.freeze({normal:Object.freeze([1,5,9,13]),triple:Object.freeze([2,6,10]),octuple:Object.freeze([3,7,11,15]),fifteen:Object.freeze([4,12]),thirty:Object.freeze([8,14]),jackpot:Object.freeze([16])}),
+ Object.freeze({normal:Object.freeze([3,6,11,15]),triple:Object.freeze([4,7,12]),octuple:Object.freeze([1,8,9,13]),fifteen:Object.freeze([2,10]),thirty:Object.freeze([5,14]),jackpot:Object.freeze([16])}),
+ Object.freeze({normal:Object.freeze([2,8,10,14]),triple:Object.freeze([3,5,11]),octuple:Object.freeze([4,6,12,15]),fifteen:Object.freeze([1,9]),thirty:Object.freeze([7,13]),jackpot:Object.freeze([16])}),
+ Object.freeze({normal:Object.freeze([4,7,12,13]),triple:Object.freeze([1,8,9]),octuple:Object.freeze([2,5,10,15]),fifteen:Object.freeze([3,11]),thirty:Object.freeze([6,14]),jackpot:Object.freeze([16])}),
+ Object.freeze({normal:Object.freeze([1,6,10,13]),triple:Object.freeze([2,7,11]),octuple:Object.freeze([3,8,12,14]),fifteen:Object.freeze([4,9]),thirty:Object.freeze([5,15]),jackpot:Object.freeze([16])}),
+ Object.freeze({normal:Object.freeze([3,5,9,14]),triple:Object.freeze([4,6,10]),octuple:Object.freeze([1,7,11,15]),fifteen:Object.freeze([2,12]),thirty:Object.freeze([8,13]),jackpot:Object.freeze([16])})
 ]);
 export const DOG_S2_CARD_WEIGHT_BASE=120;
 export function dogS2CardDrawWeight(card){
  const config=DOG_S2_SPECIAL_CARD_SLOTS[(card?.board||0)-1];
  if(!config||!Number.isInteger(card?.slot)||card.slot<1||card.slot>16)throw Error('INVALID_DOG_CARD');
- if(config.thirty.includes(card.slot))return 4;    // 30x rarer
- if(config.fifteen.includes(card.slot))return 8;  // 15x rarer
- if(config.octuple.includes(card.slot))return 15; // 8x rarer
- if(config.triple.includes(card.slot))return 40;  // 3x rarer
+ if(config.jackpot.includes(card.slot))return 0; // Only awarded by the exact 1:500 lottery.
+ if(config.thirty.includes(card.slot))return 4;
+ if(config.fifteen.includes(card.slot))return 8;
+ if(config.octuple.includes(card.slot))return 15;
+ if(config.triple.includes(card.slot))return 40;
  if(config.normal.includes(card.slot))return DOG_S2_CARD_WEIGHT_BASE;
  throw Error('INVALID_DOG_CARD');
 }
@@ -74,10 +79,26 @@ export function dogS2Draw(pack,rand=randomInt){
   if(!total)throw Error('INVALID_PACK_WEIGHTS');
   let roll=rand(total),rarity=candidates.at(-1).rarity;
   for(const c of candidates){roll-=c.weight;if(roll<0){rarity=c.rarity;break}}
-  const pool=DOG_S2_CARDS.filter(c=>c.rarity===rarity);
-  // Weighted *within* the selected rarity tier. Existing pack rarity odds,
-  // guaranteed rare/epic draws and server-side payout semantics are unchanged.
+  // Choose the 16-card world independently, with equal 1/6 probability.
+  const board=rand(DOG_S2_BOARDS.length)+1;
+  if(!Number.isInteger(board)||board<1||board>DOG_S2_BOARDS.length)throw Error('INVALID_PACK_RANDOM');
+  if(rarity==='legendary'){
+   const legendaryTickets=candidates.find(c=>c.rarity==='legendary')?.weight||0;
+   // P(jackpot | chosen board) = P(legendary) *
+   // [total / (500 * legendaryTickets)] = 1/500.
+   // The normal/Gold/Premium/Platin pack tiers all satisfy this bound.
+   const denominator=DOG_S2_JACKPOT_ODDS*legendaryTickets;
+   if(!Number.isSafeInteger(denominator)||denominator<total)throw Error('INVALID_PACK_WEIGHTS');
+   if(rand(denominator)<total){
+    result.push(DOG_S2_CARDS[(board-1)*16+DOG_S2_JACKPOT_SLOT-1]);
+    continue;
+   }
+  }
+  // The other 15 cards keep their relative 3x/8x/15x/30x weights
+  // inside the rarity selected above; jackpots cannot leak into these rolls.
+  const pool=DOG_S2_CARDS.filter(c=>c.board===board&&c.rarity===rarity&&c.slot!==DOG_S2_JACKPOT_SLOT);
   const poolTotal=pool.reduce((sum,card)=>sum+dogS2CardDrawWeight(card),0);
+  if(poolTotal<1)throw Error('INVALID_PACK_WEIGHTS');
   let cardRoll=rand(poolTotal),selected=pool.at(-1);
   for(const card of pool){
    cardRoll-=dogS2CardDrawWeight(card);
