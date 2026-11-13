@@ -6,6 +6,9 @@ import {checkMonsterBalance} from './monster-wheel.js';
 export const DOG_WELCOME_ID='dog-100-welcome-2026-11';
 export const DOG_WELCOME_REWARDS=Object.freeze({woodChests:5,premiumPacks:2,monsterSpins:3,peekJokers:2});
 const RECEIPTS='dog_100_welcome_gift_v1';
+export const DOG_WOOD30_BONUS_ID='dog-100-wood30-2026-11-14';
+export const DOG_WOOD30_BONUS_COUNT=30;
+const WOOD30_RECEIPTS='dog_100_wood30_bonus_v1';
 const CHRISTMAS='deal_or_no_deal_christmas_v1';
 const PEEK='deal_peek_inventory_v1';
 const MAX_BONUS=1000000;
@@ -62,6 +65,32 @@ export function installDogWelcomeGiftApi(app,{verifyProfile,getFirestore}){
     tx.set(peekRef,{balance:jokerBalance,updatedAt:now},{merge:true});
     tx.create(receiptRef,{id:DOG_WELCOME_ID,uid,claimedAt:now,acknowledgedAt:null,rewards:DOG_WELCOME_REWARDS});
     return {...response({claimedAt:now}),alreadyClaimed:false};
+   });
+   res.set('Cache-Control','no-store');return res.json(result);
+  }catch(e){return fail(res,e)}
+ });
+ // Separate promotion: the 30 chests are EXTRA, never a replacement for
+ // the earlier 5-chest starter gift. Even previously welcomed users qualify.
+ app.post('/api/dog/welcome/wood30',auth,async(req,res)=>{
+  try{
+   const db=dbRequired(),uid=req.dogWelcomeUid;
+   const receiptRef=db.collection(WOOD30_RECEIPTS).doc(uid);
+   const inventoryRef=db.collection(DOG_MATERIALS_COLLECTION).doc(uid);
+   const result=await db.runTransaction(async tx=>{
+    const existing=await tx.get(receiptRef);
+    // A receipt means that the stock has already been credited atomically.
+    if(existing.exists)return {ok:true,id:DOG_WOOD30_BONUS_ID,woodChests:DOG_WOOD30_BONUS_COUNT,claimed:true,alreadyClaimed:true};
+    const snap=await tx.get(inventoryRef);
+    const now=Date.now();
+    let inventory=snap.exists?snap.data():null;
+    const offer={version:4,stage:0,tier:'wood',count:2};
+    for(let n=0;n<DOG_WOOD30_BONUS_COUNT;n++)
+     inventory=addExpeditionChestToInventory(inventory,offer,now);
+    // Just one inventory write and one unique receipt write, with
+    // Firestore transaction retries protecting parallel devices and tabs.
+    tx.set(inventoryRef,inventory,{merge:true});
+    tx.create(receiptRef,{uid,id:DOG_WOOD30_BONUS_ID,woodChests:DOG_WOOD30_BONUS_COUNT,claimedAt:now});
+    return {ok:true,id:DOG_WOOD30_BONUS_ID,woodChests:DOG_WOOD30_BONUS_COUNT,claimed:true,alreadyClaimed:false};
    });
    res.set('Cache-Control','no-store');return res.json(result);
   }catch(e){return fail(res,e)}
