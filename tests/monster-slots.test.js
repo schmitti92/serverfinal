@@ -145,8 +145,16 @@ test('next round settles all three participants, including a silent client, with
   const chests=docs.get('dog_material_inventory_v1/'+uid)?.expeditionChests||[];
   if(total('chest'))assert.equal(chests.length,total('chest'));
   const album=docs.get('deal_or_no_deal_christmas_v1/'+uid)||{};
-  for(const pack of ['small','large','premium','platinum'])
-   assert.equal(Number(album.freeChristmasPacks?.[pack]||0),total('pack',pack),'pack vouchers must be stored');
+  const dogAlbum=docs.get('deal_dog_album_season2_v1/'+uid)||{};
+  const opened=prizes.filter(p=>p.kind==='pack').flatMap(p=>p.openedPacks||[]);
+  assert.equal(opened.length,total('pack'),'each won pack should open automatically');
+  assert.equal(Number(dogAlbum.opened||0),total('pack'),'opened pack count must be persisted');
+  assert.equal(Object.values(dogAlbum.cards||{}).reduce((sum,n)=>sum+Number(n||0),0),
+   opened.reduce((sum,p)=>sum+p.revealed.length,0),'all cards must be credited without duplicates disappearing');
+  for(const pack of opened){
+   assert.equal(pack.hasNew,pack.revealed.some(c=>c.isNew===true));
+   assert.ok(pack.revealed.every(c=>typeof c.id==='string'&&typeof c.image==='string'),'each revealed card should have art');
+  }
   assert.equal(Number(album.monsterWheelTickets||0),total('monster'),'monster wheel tickets must be stored');
   const ice=docs.get('christmas_ice_progress_v1/'+uid)||{};
   for(const hammer of ['single','double','lucky'])
