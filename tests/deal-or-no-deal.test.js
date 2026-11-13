@@ -226,7 +226,7 @@ test('same case values yield cheaper or more generous offers depending on the ba
  baseline.players[0].case=0;
  baseline.phase='reveal';
  baseline.pending={case:1,actor:'a',eventId:'one'};
- baseline.roundOpened=4;
+ baseline.roundOpened=baseline.bankerSchedule[0]-1;
  const stableRandom=max=>max===10001?5000:Math.floor(max/2);
  const actual={};
  for(const style of ['stingy','balanced','generous','volatile']){
@@ -266,7 +266,7 @@ test('Banker offers publish the special voucher or Monster prize for all players
   let g=create([{id:'a',name:'Spieler A'},{id:'b',name:'Spieler B'}],rng);
   for(const actor of g.order)g=apply(g,actor,{id:'choose-'+g.revision,revision:g.revision,type:'select',case:g.players.findIndex(p=>p.id===actor)},rng);
   let guard=0;
-  while(g.phase!=='decision'&&guard++<15){
+  while(g.phase!=='decision'&&guard++<40){
    const type=g.phase==='open'?'open':'ack-reveal';
    const actor=type==='open'?nextTurn(g):g.pending.actor;
    g=apply(g,actor,{id:'move-'+g.revision,revision:g.revision,type,...(type==='open'?{case:free(g)[0]}:{})},rng);
