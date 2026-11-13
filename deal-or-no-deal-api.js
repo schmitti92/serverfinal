@@ -1135,9 +1135,10 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
   if(openedOneCent&&((req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId)||(req.body?.type==='ack-batch'&&before.phase==='batch-reveal'))){
    const uid=openedOneCent.playerId;
-   const rewardRef=db.collection('deal_christmas_cent_rewards_v1').doc(after.id+'_'+openedOneCent.eventId);
+   const rewardId=after.id+'_'+openedOneCent.eventId;
+   const rewardRef=db.collection('deal_christmas_cent_rewards_v1').doc(rewardId);
    // Lock moves in the very same transaction that makes this award public.
-   after.pendingCardReveals=[...(after.pendingCardReveals||[]),{kind:'cent',rewardId:rewardRef.id,uid}];
+   after.pendingCardReveals=[...(after.pendingCardReveals||[]),{kind:'cent',rewardId,uid}];
    const christmasRef=db.collection(DOG_S2_COLLECTION).doc(uid);
    const [rewardSnap,christmasSnap]=await Promise.all([tx.get(rewardRef),tx.get(christmasRef)]);
    if(!rewardSnap.exists){
