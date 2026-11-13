@@ -78,6 +78,34 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
   }catch(e){return fail(res,e)}
  });
 
+ // Exactly-once backfill for players who cleared pictures 50/60
+ // before the question-mark Joker-Sammelkarte was introduced.
+ app.post('/api/christmas-ice/claim-wildcards',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const progressRef=db.collection(collection).doc(req.iceUid);
+   const dogRef=db.collection(DOG_S2_COLLECTION).doc(req.iceUid);
+   const result=await db.runTransaction(async tx=>{
+    const [progressSnap,dogSnap]=await Promise.all([tx.get(progressRef),tx.get(dogRef)]);
+    if(!progressSnap.exists)throw Error('START_REQUIRED');
+    const progress=normalizeIceState(progressSnap.data()),dog=dogSnap.exists?dogSnap.data():{};
+    const best=Math.max(Number(progress.completed)||0,Number(progress.maxRewarded)||0);
+    const milestones=[50,60].filter(n=>best>=n);
+    const credited=milestones.filter(n=>!dog['iceWildcard'+n+'Granted']&&!progress['iceWildcard'+n+'Claimed']);
+    const count=credited.length,prior=Number(dog.wildcardTickets||0);
+    const tickets=checkMonsterBalance(prior,count,1000000);
+    const dogFlags=Object.fromEntries(milestones.map(n=>['iceWildcard'+n+'Granted',true]));
+    const stateFlags=Object.fromEntries(milestones.map(n=>['iceWildcard'+n+'Claimed',true]));
+    if(count||milestones.some(n=>!dog['iceWildcard'+n+'Granted']))
+     tx.set(dogRef,{...dogFlags,wildcardTickets:tickets,updatedAt:Date.now()},{merge:true});
+    if(milestones.some(n=>!progress['iceWildcard'+n+'Claimed']))
+     tx.set(progressRef,stateFlags,{merge:true});
+    return {granted:count,wildcardTickets:tickets,...stateFlags};
+   });
+   res.set('Cache-Control','no-store');return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+
  // A single winner click starts the pack wheel and later the hammer wheel.
  // The hammer award is stored exactly once and broadcast to the room.
  app.post('/api/christmas-ice/final-hammer',auth,async(req,res)=>{
@@ -264,7 +292,9 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
       if(!Number.isSafeInteger(previous)||previous<0||previous+spins>1000000)throw Error('INVALID_SUPER_SLOT_TICKETS');
       if(!Number.isSafeInteger(oldWildcards)||oldWildcards<0||oldWildcards+cards>1000000)throw Error('INVALID_WILDCARD_TICKETS');
       tx.set(dogAlbumRef,{superSlotTickets:previous+spins,wildcardTickets:oldWildcards+cards,
+       ...(cards?{['iceWildcard'+next.completed+'Granted']:true}:{}),
        updatedAt:Date.now()},{merge:true});
+      if(cards)next={...next,...{['iceWildcard'+next.completed+'Claimed']:true}};
      }
     }
     if(grantPicture30){
