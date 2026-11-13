@@ -4386,13 +4386,13 @@ installDogGatesApi(app,{
   botLogic:liveBotLogic
 });
 installDogBoss10Api(app,{
-  notifyChange:(gate,actorUid)=>dogBossPush?.notify(gate,actorUid),
+  notifyChange:(gate,actorUid,eventType)=>dogBossPush?.notify(gate,actorUid,eventType),
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
   botLogic:liveBotLogic
 });
 installDogGroupBossApi(app,{
-  notifyChange:(gate,actorUid)=>dogBossPush?.notify(gate,actorUid),
+  notifyChange:(gate,actorUid,eventType)=>dogBossPush?.notify(gate,actorUid,eventType),
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
   botLogic:liveBotLogic
