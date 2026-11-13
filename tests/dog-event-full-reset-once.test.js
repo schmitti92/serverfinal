@@ -43,7 +43,7 @@ test('complete DOG reset archives all resources, forge, map, boss, S2 cards and 
  const fake=fakeFirestore({
   'dog_material_inventory_v1/alice':{resources:{holz:100},unopened:5},
   'dog_material_inventory_v1/bob':{resources:{eisen:40}},
-  'dog_heroes_v1/alice':{levels:{weapon:23,armor:19}},
+  'dog_hero_v1/alice':{levels:{weapon:23,armor:19}},
   'dog_private_100_gates_v1/owner':{progress:{people:{alice:{currentGate:92}}}},
   'deal_dog_album_season2_v1/alice':{cards:{'dog2-001':3},completedBoards:[2,5],tournamentPoints:250},
   'deal_dog_album_season2_v1/bob':{cards:{'dog2-016':1},wildcardTickets:12},
@@ -66,7 +66,7 @@ test('complete DOG reset archives all resources, forge, map, boss, S2 cards and 
  assert.equal(out.playerDocsCleared,10);
  assert.equal(out.leaderboardsCleared,3);
  assert.deepEqual(DOG_FULL_RESET_PLAYER_COLLECTIONS,[
-  'dog_material_inventory_v1','dog_hero_inventory_v1',
+  'dog_material_inventory_v1','dog_hero_v1',
   'dog_private_100_gates_v1','deal_dog_album_season2_v1'
  ]);
  const key=path=>DOG_FULL_RESET_ID+'_'+Buffer.from(path).toString('base64url');
