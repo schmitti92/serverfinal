@@ -17,7 +17,7 @@ const response=receipt=>({ok:true,id:DOG_WELCOME_ID,
 export function installDogWelcomeGiftApi(app,{verifyProfile,getFirestore}){
  const auth=async(req,res,next)=>{
   try{
-   const token=/^Bearer\\s+(.+)$/i.exec(String(req.get('authorization')||''))?.[1];
+   const token=/^Bearer\s+(.+)$/i.exec(String(req.get('authorization')||''))?.[1];
    if(!token)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
    const p=await verifyProfile(token);
    if(!p?.uid)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
