@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {newIceState} from '../christmas-ice-engine.js';
+import {newIceState,resetIceState} from '../christmas-ice-engine.js';
 import {installChristmasIceApi} from '../christmas-ice-api.js';
 function fixture(best=60,progressFlags={},dogFlags={}){
  const uid='wildcard-backfill-player',routes=new Map(),docs=new Map(),writes=[];
@@ -65,4 +65,13 @@ test('unreached milestones never mint a wildcard',async()=>{
  assert.equal(result.statusCode,200);
  assert.equal(result.body.granted,0);
  assert.equal(x.writes.length,0);
+});
+
+test('ice event reset preserves verified wildcard milestone markers',()=>{
+ const old={...newIceState(()=>0),completed:60,maxRewarded:60,iceWildcard50Claimed:true,iceWildcard60Claimed:true};
+ const reset=resetIceState(old,()=>0);
+ assert.equal(reset.completed,0);
+ assert.equal(reset.maxRewarded,60);
+ assert.equal(reset.iceWildcard50Claimed,true);
+ assert.equal(reset.iceWildcard60Claimed,true);
 });
