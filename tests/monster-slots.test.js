@@ -136,7 +136,25 @@ test('next round settles all three participants, including a silent client, with
  for(const uid of names){
   const ref='deal_monster_slots_receipts_v1/'+oldGame.id+'_'+uid;
   assert.ok(docs.has(ref),'missing slot award for '+uid);
-  assert.equal(docs.get(ref).result.prizes.length,3);
+  const prizes=docs.get(ref).result.prizes;
+  assert.equal(prizes.length,3);
+  const total=(kind,key)=>prizes.filter(p=>p.kind===kind&&(!key||p.id===key))
+   .reduce((sum,p)=>sum+(kind==='cash'?p.amountCents:p.quantity),0);
+  const wallet=docs.get('deal_or_no_deal_wallets_v1/'+uid);
+  assert.equal(wallet.balance,50000000+total('cash'),'cash must be credited exactly once');
+  const chests=docs.get('dog_material_inventory_v1/'+uid)?.expeditionChests||[];
+  if(total('chest'))assert.equal(chests.length,total('chest'));
+  const album=docs.get('deal_or_no_deal_christmas_v1/'+uid)||{};
+  for(const pack of ['small','large','premium','platinum'])
+   assert.equal(Number(album.freeChristmasPacks?.[pack]||0),total('pack',pack),'pack vouchers must be stored');
+  assert.equal(Number(album.monsterWheelTickets||0),total('monster'),'monster wheel tickets must be stored');
+  const ice=docs.get('christmas_ice_progress_v1/'+uid)||{};
+  for(const hammer of ['single','double','lucky'])
+   assert.equal(Number(ice.freeHammers?.[hammer]||0),total('hammer',hammer),'hammer vouchers must be stored');
+  const jokers=docs.get('deal_peek_inventory_v1/'+uid)||{};
+  assert.equal(Number(jokers.balance||0),total('joker'),'joker inventory must be credited');
+  const mini=docs.get('deal_christmas_hats_v1/'+uid)||{};
+  assert.equal(Number(mini.bonusTickets||0),total('minigame'),'minigame tickets must be credited');
  }
  const countBefore=writes.length;
  for(const uid of names){
