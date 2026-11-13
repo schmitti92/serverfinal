@@ -5,7 +5,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam,bossSelectHero,dogHeroClass} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
-import {dogSimulateNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
+import {dogNormalGateDifficulty,dogSimulateNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
 import {dogDrawMiniReward,dogMiniRewardDocument,DOG_MINI_REWARD_COLLECTIONS} from './dog-mini-rewards.js';
 import {dogForgeCombatTier} from './dog-forge-progression.js';
 
@@ -13,6 +13,17 @@ export const DOG_GATE_PROGRESS_COLLECTION='dog_gate_progress_v1';
 export const DOG_GATE_PROGRESS_ID='first-three-heroes';
 export const DOG_GATE_RECEIPTS_COLLECTION='dog_gate_fight_receipts_v1';
 export const DOG_GATE_COOLDOWN_MS=3000;
+// Immutable fixed enemy requirements: computed once from the exact same
+// server combat model. No per-gate Firestore documents or new DB reads.
+export const DOG_NORMAL_GATE_REQUIREMENTS=Object.freeze(
+ Array.from({length:99},(_,index)=>index+1).filter(gate=>gate%5!==0).map(gate=>{
+  const enemy=dogNormalGateDifficulty(gate);
+  return Object.freeze({gate,enemyMaxHp:enemy.enemyMaxHp,
+   enemyAttack:enemy.enemyAttack,
+   recommendedWeaponLevel:enemy.recommendedWeaponLevel,
+   recommendedArmorLevel:enemy.recommendedArmorLevel});
+ })
+);
 
 const obj=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
 const cleanName=value=>String(value||'Held').replace(/[<>\r\n\t]/g,'').trim().slice(0,32)||'Held';
@@ -173,6 +184,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
   progress:isMember?(progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null,miniRewards:[]}):{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null,miniRewards:[]},
+  normalGateRequirements:DOG_NORMAL_GATE_REQUIREMENTS,
   availableBossGate:100, // real group-boss arenas now span every ten-gate milestone
   bossArenaIsTest:false,
   cacheSeconds:30};
