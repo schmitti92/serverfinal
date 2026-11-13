@@ -238,7 +238,8 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    const cards=data.cards||{};
    res.set('Cache-Control','no-store');
    res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS,
-    balance:positive(w.data()?.balance),opened:positive(data.opened),progress:dogS2Progress(cards),
+    balance:positive(w.data()?.balance),opened:positive(data.opened),
+    progress:dogS2CycleProgress(cards,data),lifetimeProgress:dogS2Progress(cards),
     rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,data.bingoRewardsClaimed,data.bingoRewardsHistory),
     freePacks:Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(legacyData.freeChristmasPacks?.[p.id])])),
     duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)});
@@ -270,14 +271,20 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     const revealed=dogS2Discoveries(dogS2Draw(pack),cards);
     for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
     const remaining=free?balance:balance-pack.price;
+    const cycles=dogS2AdvanceCycles(prev.cards||{},cards,prev,now);
     const freePacks=Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(vouchers[p.id])]));
     const result={season:2,packId:pack.id,opened:positive(prev.opened)+1,balance:remaining,cards,revealed,
-     usedFreePack:free,freePacks,progress:dogS2Progress(cards),
+     usedFreePack:free,freePacks,progress:cycles.progress,lifetimeProgress:dogS2Progress(cards),
+     completedBoards:cycles.finished,pointsAdded:cycles.pointsAdded,
      rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,prev.bingoRewardsClaimed,prev.bingoRewardsHistory),
      duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)};
     if(!free)tx.set(wRef,{balance:remaining,updatedAt:now},{merge:true});
     else tx.set(oldRef,{freeChristmasPacks:vouchers,updatedAt:now},{merge:true});
-    tx.set(sRef,{season:2,cards,opened:result.opened,updatedAt:now},{merge:true});
+    tx.set(sRef,{season:2,cards,...cycles.updates,opened:result.opened,updatedAt:now},{merge:true});
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(uid),{
+     uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
+     name:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),updatedAt:now
+    },{merge:true});
     tx.create(receipt,{uid,packId:pack.id,result,createdAt:now});
     return result;
    });
@@ -297,7 +304,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     const before=s.exists?s.data():{},legacyData=old.exists?old.data():{};
     const cards=dogS2Redeem(before.cards||{});
     const tickets=positive(legacyData.monsterWheelTickets)+1;
-    const result={cards,progress:dogS2Progress(cards),duplicates:dogS2Duplicates(cards,tickets),monsterWheelTickets:tickets,replayed:false};
+    const result={cards,progress:dogS2CycleProgress(cards,before),lifetimeProgress:dogS2Progress(cards),duplicates:dogS2Duplicates(cards,tickets),monsterWheelTickets:tickets,replayed:false};
     const now=Date.now();
     tx.set(sRef,{cards,updatedAt:now},{merge:true});
     tx.set(oldRef,{monsterWheelTickets:tickets,monsterWheelTradeCount:positive(legacyData.monsterWheelTradeCount)+1,updatedAt:now},{merge:true});
@@ -305,6 +312,44 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     return result;
    });
    res.set('Cache-Control','no-store');res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+
+ // Existing full DOG boards can be reset and awarded when the player opens
+ // the album. Already reset boards have 0/16 so this can never double-pay.
+ app.post(base+'/cycles/claim',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid,now=Date.now();
+   const albumRef=db.collection(DOG_S2_COLLECTION).doc(uid);
+   const result=await db.runTransaction(async tx=>{
+    const snap=await tx.get(albumRef),old=snap.exists?snap.data():{};
+    const cards=old.cards||{};
+    const cycles=dogS2AdvanceCycles(cards,cards,old,now);
+    if(!cycles.finished.length)return {ok:true,progress:cycles.progress,lifetimeProgress:dogS2Progress(cards),completedBoards:[],replayed:true};
+    tx.set(albumRef,{...cycles.updates,updatedAt:now},{merge:true});
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(uid),{
+     uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
+     name:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),updatedAt:now
+    },{merge:true});
+    return {ok:true,progress:cycles.progress,lifetimeProgress:dogS2Progress(cards),
+     completedBoards:cycles.finished,pointsAdded:cycles.pointsAdded,replayed:false};
+   });
+   res.set('Cache-Control','no-store');return res.json(result);
+  }catch(e){return fail(res,e)}
+ });
+ // Read leaderboard only when the user opens the tournament tab.
+ // Keeping month as the parent document avoids a composite Firestore index.
+ app.get(base+'/tournament',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const month=dogS2TournamentMonth(),snap=await db.collection(DOG_S2_TOURNAMENT_COLLECTION)
+    .doc(month).collection('players').orderBy('points','desc').limit(20).get();
+   const leaderboard=snap.docs.map((doc,index)=>({
+    rank:index+1,name:String(doc.data().name||'Spieler'),points:positive(doc.data().points),
+    completed:positive(doc.data().completed),isMe:doc.id===req.dealIdentity.uid
+   }));
+   res.set('Cache-Control','no-store');return res.json({ok:true,month,leaderboard});
   }catch(e){return fail(res,e)}
  });
  // Alle erreichten Zweier-Bingos werden in EINER Transaktion gebucht.
@@ -327,7 +372,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     const progress=dogS2Progress(old.cards||{});
     const priorClaims=old.bingoRewardsClaimed||{},history=Array.isArray(old.bingoRewardsHistory)?old.bingoRewardsHistory:[];
     const {awards,lastKind}=dogS2PlanBingoClaims(progress,priorClaims,old.bingoRewardsLastBonus||'');
-    if(!awards.length)return {awarded:[],progress,
+    if(!awards.length)return {awarded:[],progress:dogS2CycleProgress(old.cards||{},old),lifetimeProgress:progress,
      rewards:dogS2RewardStatus(progress.bingos,priorClaims,history),replayed:true};
     const bonuses=awards.flatMap(a=>a.bonuses);
     const needed=new Set(bonuses.map(b=>b.kind));
@@ -390,7 +435,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
      bingoRewardsClaimed:claimed,bingoRewardsHistory:newHistory.slice(-30),
      bingoRewardsLastBonus:lastKind,bingoRewardsUpdatedAt:now
     },{merge:true});
-    return {awarded:awards,progress,
+    return {awarded:awards,progress:dogS2CycleProgress(old.cards||{},old),lifetimeProgress:progress,
      rewards:dogS2RewardStatus(progress.bingos,claimed,newHistory),
      ...(balance!==undefined?{balance}:{}),replayed:false};
    });
