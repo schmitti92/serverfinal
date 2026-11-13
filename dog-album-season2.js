@@ -80,11 +80,11 @@ export const dogS2TournamentMonth=(now=Date.now())=>new Date(now).toISOString().
 const cycleCounts=(cards,baseline)=>Object.fromEntries(DOG_S2_CARDS.map(card=>[
  card.id,Math.max(0,positive(cards?.[card.id])-positive(baseline?.[card.id]))
 ]));
-export function dogS2CycleProgress(cards={},state={}){
+export function dogS2CycleProgress(cards={},state={},now=Date.now()){
  const base=state.cycleBase||{};
  const p=dogS2Progress(cycleCounts(cards,base));
  const completions=Array.from({length:6},(_,i)=>positive(state.cycleCompletions?.[i]));
- const month=dogS2TournamentMonth();
+ const month=dogS2TournamentMonth(now);
  return {...p,boards:p.boards.map((board,i)=>({...board,completions:completions[i],
   round:completions[i]+1,readyToComplete:board.collected===16})),
   completedTotal:completions.reduce((a,b)=>a+b,0),
@@ -94,7 +94,7 @@ export function dogS2CycleProgress(cards={},state={}){
    monthCompleted:state.tournamentMonth===month?positive(state.tournamentMonthCompleted):0}};
 }
 export function dogS2AdvanceCycles(previousCards={},cards={},state={},now=Date.now()){
- const initial=dogS2CycleProgress(previousCards,state),after=dogS2CycleProgress(cards,state);
+ const initial=dogS2CycleProgress(previousCards,state,now),after=dogS2CycleProgress(cards,state,now);
  const baseline={...(state.cycleBase||{})},completions=[...Array.from({length:6},(_,i)=>positive(state.cycleCompletions?.[i]))];
  let delta=0,finished=[];
  for(let board=0;board<6;board++){
@@ -127,7 +127,7 @@ export function dogS2AdvanceCycles(previousCards={},cards={},state={},now=Date.n
   tournamentLifetimePoints:lifetimePoints,
   tournamentMonthCompleted:(sameMonth?positive(state.tournamentMonthCompleted):0)+finished.length
  };
- return {updates,finished,pointsAdded:delta,progress:dogS2CycleProgress(cards,{...state,...updates})};
+ return {updates,finished,pointsAdded:delta,progress:dogS2CycleProgress(cards,{...state,...updates},now)};
 }
 
 export function dogS2Draw(pack,rand=randomInt){
