@@ -36,6 +36,18 @@ test('Each shared forge level grants exactly five equipment and skill levels',()
  }
  assert.deepEqual([1,5,6,10,11,50].map(dogForgeCombatTier),[1,1,2,2,3,10]);
 });
+test('Expedition pacing: first skills cost more without altering legacy forge',()=>{
+ const expedition={forgeLevel:1,sharedBosses:[]};
+ for(let level=0;level<5;level++){
+  const q=forgeQuote('attack_power',level,{},expedition);
+  assert.deepEqual(q.cost,{focus_dust:[2,3,3,4,5][level]});
+ }
+ assert.deepEqual(forgeQuote('attack_power',0).cost,{focus_dust:1});
+ const afterBoss20={forgeLevel:3,sharedBosses:[10,20]};
+ assert.deepEqual(forgeQuote('weapon',10,{},afterBoss20).cost,{iron:2,forge_coal:3});
+ assert.deepEqual(forgeQuote('weapon',14,{},afterBoss20).cost,{forge_coal:4,steel_core:1});
+});
+
 test('Forge level-up receipt is idempotent, team-scoped and atomic',async()=>{
  const docs=new Map([
   ['dog_boss_team_v1/first-three-heroes',{members:[{uid:'a',name:'A'},{uid:'b',name:'B'}]}],
