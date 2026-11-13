@@ -2,6 +2,8 @@
 import {newIceState,publicIceState,strikeIce,nextIcePicture,resetIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {drawHammerFromTwelve} from './deal-or-no-deal.js';
 import {checkMonsterBalance} from './monster-wheel.js';
+import {DOG_MATERIALS_COLLECTION,addExpeditionChestToInventory} from './dog-materials.js';
+import {dogChestOffer,DOG_CHEST_TYPES} from './dog-balance.js';
 // Server-authoritative progress; one Firestore state document per authenticated player.
 // A hammer strike reads/writes only the state document; joker awards also update inventory.
 // Do not migrate unverified localStorage data.
@@ -182,7 +184,15 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
     // Read the album only on this single winning strike, not on every ice click.
     const picture30Completed=strike.result.found&&next.completed===30;
     const albumRef=db.collection(albumCollection).doc(req.iceUid);
-    const albumSnap=picture30Completed?await tx.get(albumRef):null;
+    // Every newly earned, fully uncovered picture grants one DOG material chest.
+    // Keep the reward in the SAME strike transaction. Do not back-credit older
+    // pictures or grant again after a local/event reset (maxRewarded is permanent).
+    const firstPictureClear=strike.result.found&&next.completed>Math.max(0,Number(state.maxRewarded)||0);
+    const dogBagRef=db.collection(DOG_MATERIALS_COLLECTION).doc(req.iceUid);
+    const [albumSnap,dogBagSnap]=await Promise.all([
+     picture30Completed?tx.get(albumRef):null,
+     firstPictureClear?tx.get(dogBagRef):null
+    ]);
     const album=albumSnap?.exists?albumSnap.data():{};
     const grantPicture30=picture30Completed&&!album.icePicture30MonsterSpinsGranted&&!state.picture30MonsterSpinsClaimed;
     let newMonsterTickets=0;
@@ -213,6 +223,21 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
      tx.set(inventory,{balance:old+1,updatedAt:now},{merge:true});
      tx.set(hatsRef,{...(hatsSnap.exists?{}:{voucherOnly:true}),
       bonusTickets,updatedAt:now},{merge:true});
+    }
+    if(firstPictureClear){
+     // Stage-0 DOG weighting chooses between wood, iron, silver, gold and
+     // legendary boxes; the stored offer fixes contents until it is opened.
+     const chest=dogChestOffer(0);
+     const dogChest={tier:chest.tier,label:DOG_CHEST_TYPES[chest.tier].label,count:chest.count};
+     const newInventory=addExpeditionChestToInventory(dogBagSnap?.exists?dogBagSnap.data():null,chest,Date.now());
+     next={...next,
+      prizes:(next.prizes||[]).map(g=>g.number===next.completed?{...g,dogChest}:g),
+      lastActions:(next.lastActions||[]).map(a=>a.id===requestId?{
+       ...a,result:{...a.result,dogChest,
+        ...(a.result?.gift?{gift:{...a.result.gift,dogChest}}:{})}
+      }:a)
+     };
+     tx.set(dogBagRef,newInventory);
     }
     // A free hammer usually changes only ice progress. Avoid a redundant
     // wallet write unless a paid hit or a money prize changed the balance.
