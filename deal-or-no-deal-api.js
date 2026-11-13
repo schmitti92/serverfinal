@@ -898,6 +898,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const [gameSnap,rewardSnap]=await Promise.all([tx.get(ref),tx.get(rewardRef)]);
    if(!gameSnap.exists||!rewardSnap.exists)throw Error('REWARD_NOT_FOUND');
    const current=gameSnap.data().game,reward=rewardSnap.data();
+   if(current.pendingCardReveals?.length)throw Error('CARD_REVEAL_PENDING');
    if(reward.gameId!==current.id||reward.uid!==req.dealIdentity.uid)throw Error('WINNER_ONLY');
    if(kind==='final'&&current.phase!=='final')throw Error('MATCH_NOT_FINAL');
    if(kind==='final'){const payouts=current.players.map(p=>payoutFor(current,p));if(payouts.filter(v=>v===Math.max(...payouts)).length!==1)throw Error('TIED_GAME_NO_WINNER_WHEEL')}
