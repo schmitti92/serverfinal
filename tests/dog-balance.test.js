@@ -87,7 +87,7 @@ test('Chest weights add to 100, grow gradually and never grant unconfigured rari
  for(const [stage,rule] of DOG_CHEST_STAGES.entries()){
   assert.equal(rule.weights.reduce((a,b)=>a+b,0),100);
   assert.equal(rule.chestWeights.reduce((a,b)=>a+b,0),100);
-  assert.ok(rule.min>=1&&rule.max<=20&&rule.min<=rule.max);
+  assert.ok(rule.min>=1&&rule.max<=30&&rule.min<=rule.max);
   for(let i=0;i<300;i++){
    const offered=dogChestOffer(stage*10+1,seeded(i*10000+stage));
    assert.ok(offered.count>=DOG_CHEST_TYPES[offered.tier].min&&
@@ -110,7 +110,7 @@ test('Five distinct chest types retain their defined material ranges',()=>{
  assert.deepEqual(DOG_CHEST_TYPE_IDS,['wood','iron','silver','gold','legendary']);
  assert.deepEqual(DOG_CHEST_TYPE_IDS.map(id=>{
   const {min,max}=DOG_CHEST_TYPES[id];return [min,max];
- }),[[1,3],[2,5],[4,8],[6,12],[10,20]]);
+ }),[[1,3],[2,5],[4,8],[6,12],[10,30]]);
  assert.equal(DOG_CHEST_TYPES.wood.countWeights.reduce((a,b)=>a+b,0),100);
  const scenario=(gate,rolls)=>{
   let i=0;
@@ -122,20 +122,20 @@ test('Five distinct chest types retain their defined material ranges',()=>{
  };
  // Small chest stays 1–3 at the start, independent of later unlocks.
  assert.deepEqual(scenario(1,[0,85]),{version:4,stage:0,tier:'wood',count:3});
- // Iron begins at tor 21 (20%); Silver at 31 (5%).
- assert.equal(scenario(21,[80,0]).tier,'iron');
- assert.equal(scenario(31,[95,0]).tier,'silver');
- // Gold at tor 51 (2%); Legendary at tor 81 (3%).
- assert.equal(scenario(51,[98,0]).tier,'gold');
- assert.equal(scenario(81,[97,0]).tier,'legendary');
+ // Iron begins at Tor 20 (20%); Silver at Tor 30 (5%).
+ assert.equal(scenario(20,[80,0]).tier,'iron');
+ assert.equal(scenario(30,[95,0]).tier,'silver');
+ // Gold at Tor 50 (2%); Legendary at Tor 80 (3%).
+ assert.equal(scenario(50,[98,0]).tier,'gold');
+ assert.equal(scenario(80,[97,0]).tier,'legendary');
  assert.deepEqual(scenario(91,[93,0]),{version:4,stage:9,tier:'legendary',count:10});
- assert.deepEqual(scenario(91,[99,10]),{version:4,stage:9,tier:'legendary',count:20});
+ assert.deepEqual(scenario(91,[99,20]),{version:4,stage:9,tier:'legendary',count:30});
  assert.equal(DOG_CHEST_STAGES[7].chestWeights[4],0,
-  'the biggest chest must not appear before tor 81');
+  'the biggest chest must not appear before Tor 80');
  const last=dogChestContents(scenario(91,[99,10]),()=>0);
- assert.equal(last.count,20);
+ assert.equal(last.count,30);
  assert.equal(last.tier,'legendary');
- assert.equal(Object.values(last.items).reduce((a,b)=>a+b,0),20);
+ assert.equal(Object.values(last.items).reduce((a,b)=>a+b,0),30);
 });
 
 test('A chest is frozen on award and cannot be promoted by a forged client tier',()=>{
