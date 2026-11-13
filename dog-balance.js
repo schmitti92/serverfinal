@@ -126,8 +126,10 @@ export function dogChestContents(offer,rand=randomInt){
 // amounts in the ten-gate chapter immediately preceding the shared boss.
 const UPGRADE_RECIPE=Object.freeze({
  2:[3,0,0,0,0],3:[2,1,0,0,0],4:[0,2,0,0,0],
- 5:[0,2,1,0,0],6:[0,0,3,0,0],7:[0,0,2,1,0],
- 8:[0,0,0,2,0],9:[0,0,0,3,0],10:[0,0,0,2,1]
+ // First two boss chapters must be playable with wooden and iron chests.
+ // Higher rarities are introduced later, not required as an early hard wall.
+ 5:[0,3,0,0,0],6:[3,1,0,0,0],7:[4,1,0,0,0],
+ 8:[4,2,0,0,0],9:[5,2,0,0,0],10:[5,3,0,0,0]
 });
 export function dogEquipmentSuccessChance(nextLevel){
  if(!Number.isSafeInteger(nextLevel)||nextLevel<2||nextLevel>10)throw Error('DOG_BALANCE_INVALID_LEVEL');
