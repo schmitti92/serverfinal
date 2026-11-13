@@ -39,7 +39,7 @@ test('already completed DOG board claims one Super Slot ticket, resets only its 
  const app={get:(path,...handlers)=>routes.set('GET '+path,handlers),post:(path,...handlers)=>routes.set('POST '+path,handlers)};
  installDogAlbumSeason2(app,{auth,getFirestore:()=>db,fail});
  const call=async(method,path)=>{
-  const handlers=routes.get(method+'/api/deal-or-no-deal/christmas/season2'+path);assert.ok(handlers,path);
+  const handlers=routes.get(method+' /api/deal-or-no-deal/christmas/season2'+path);assert.ok(handlers,path);
   const req={body:{},params:{},get:()=> 'Bearer token'};
   const res={statusCode:200,status(n){this.statusCode=n;return this},set(){return this},json(data){this.body=data;return data}};
   for(const fn of handlers)await new Promise((resolve,reject)=>{
