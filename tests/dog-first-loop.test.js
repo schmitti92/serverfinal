@@ -30,7 +30,7 @@ const progress=()=>({people:Object.fromEntries(team.members.map(m=>
  [m.uid,{currentGate:10,normals,minis:[],lastAttemptAt:0}])),
  sharedBosses:[],updatedAt:0});
 const heroes=()=>Object.fromEntries(team.members.map(m=>[m.uid,{levels:{
- weapon:1,armor:1,attack_power:5,destruction:5,vitality:5,blocking:5}}]));
+ weapon:5,armor:5,attack_power:5,destruction:5,vitality:5,blocking:5}}]));
 const bag=()=>({resources:{
  iron:40,forge_coal:10,steel_core:5,mithril:2,dragonsteel:1,
  life_dust:40,guard_crystal:10,life_essence:5,guardian_rune:2,phoenix_feather:1
