@@ -595,3 +595,61 @@ test('Monster-wheel Giftzwerg unlock survives character selection and reaches ev
   'all spectator clients must receive the Giftzwerg ID for portrait and comments');
  viewer.close();
 });
+
+
+test('Shared Banker card prize freezes the room, broadcasts both owners and releases after each confirmation',async()=>{
+ const {api,Socket,invoke,docs}=harness(['a','b']);
+ const root='/api/deal-or-no-deal/:code';
+ const spectators=['a','b'].map(uid=>{
+  const ws=new Socket();api.attachSocket(ws);ws.message({type:'subscribe',code:'123',token:uid});return ws;
+ });
+ await flush();
+ let result=await invoke('POST',root+'/start','a');
+ assert.equal(result.statusCode,200,JSON.stringify(result.body));
+ let game=result.body.game;
+ const act=async(actor,type,extra={})=>{
+  const response=await invoke('POST',root+'/action',actor,{id:crypto.randomUUID(),revision:game.revision,type,...extra});
+  assert.equal(response.statusCode,200,JSON.stringify(response.body));
+  game=response.body.game;
+ };
+ for(let i=0;i<2;i++)await act(game.order[i],'select',{case:i});
+ for(let i=2;i<2+game.bankerSchedule[0];i++){
+  const actor=game.order[game.turnIndex];
+  await act(actor,'open',{case:i});
+  await act(actor,'ack-reveal');
+ }
+ assert.equal(game.phase,'decision');
+ docs.get('deal_or_no_deal_matches_v1/123').game.history.at(-1).bonusPack='small';
+ for(const actor of game.history.at(-1).participants)await act(actor,'decide',{deal:true});
+ assert.equal(game.phase,'final');
+ assert.deepEqual(game.pendingCardReveals.map(x=>x.uid),game.history.at(-1).decisions.map(x=>x.id));
+ const [first,second]=game.pendingCardReveals;
+ assert.equal(first.kind,'banker');
+ assert.equal(second.kind,'banker');
+ for(const ws of spectators){
+  const state=ws.sent.filter(m=>m.type==='deal-state').at(-1)?.game;
+  assert.deepEqual(state.pendingCardReveals,game.pendingCardReveals);
+  assert.equal(state.values,undefined);
+ }
+ const visible=await invoke('GET',root+'/christmas-banker-rewards','b');
+ assert.equal(visible.statusCode,200,JSON.stringify(visible.body));
+ assert.equal(visible.body.rewards.length,2);
+ assert.ok(visible.body.rewards.every(x=>x.revealed.length>0));
+ const move=await invoke('POST',root+'/action','b',{type:'open',case:12,revision:game.revision,id:crypto.randomUUID()});
+ assert.equal(move.body.error,'CARD_REVEAL_PENDING');
+ const replay=await invoke('POST',root+'/start','a',{skipFinalWheel:true});
+ assert.equal(replay.body.error,'CARD_REVEAL_PENDING');
+ const slots=await invoke('POST',root+'/monster-slots/show','a',{gameId:game.id,operation:'spin'});
+ assert.equal(slots.body.error,'CARD_REVEAL_PENDING');
+ const viewer=await invoke('POST',root+'/christmas-wheel-continue',second.uid,{kind:second.kind,rewardId:first.rewardId});
+ assert.equal(viewer.body.error,'WINNER_ONLY');
+ const early=await invoke('POST',root+'/christmas-wheel-continue',second.uid,{kind:second.kind,rewardId:second.rewardId});
+ assert.equal(early.body.error,'CARD_REVEAL_OUT_OF_ORDER');
+ const confirmed=await invoke('POST',root+'/christmas-wheel-continue',first.uid,{kind:first.kind,rewardId:first.rewardId});
+ assert.equal(confirmed.statusCode,200,JSON.stringify(confirmed.body));
+ assert.deepEqual(docs.get('deal_or_no_deal_matches_v1/123').game.pendingCardReveals,[second]);
+ const next=await invoke('POST',root+'/christmas-wheel-continue',second.uid,{kind:second.kind,rewardId:second.rewardId});
+ assert.equal(next.statusCode,200,JSON.stringify(next.body));
+ assert.deepEqual(docs.get('deal_or_no_deal_matches_v1/123').game.pendingCardReveals,[]);
+ spectators.forEach(ws=>ws.close());
+});
