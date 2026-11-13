@@ -6,7 +6,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_MATERIALS_COLLECTION,DOG_RESOURCE_GROUPS,DOG_RESOURCES,dogInventory} from './dog-materials.js';
 import {dogEquipmentCost,dogEquipmentSuccessChance} from './dog-balance.js';
-import {DOG_EQUIPMENT_MAX_LEVEL,dogForgeProgress,dogForgeLevelUp} from './dog-forge-progression.js';
+import {DOG_EQUIPMENT_MAX_LEVEL,dogForgeProgress,dogForgeLevelUp,dogMaterialRarityCap,DOG_MATERIAL_RARITY_UNLOCKS} from './dog-forge-progression.js';
 import {qualityKey,refineQuality,qualityUnlockedFromBosses,reconcileQualityInventory} from './dog-f01-quality-prototype.mjs';
 
 export const DOG_HERO_COLLECTION='dog_hero_v1';
@@ -93,7 +93,8 @@ const costFor=(group,next,itemId=null)=>{
    else add(0,2+Math.floor((next-11)/2));
   }
   else if(next<=18){add(2,3);add(3,1+Math.floor((next-16)/2));}
-  else if(next<=20){add(3,next===20?4:3);add(4,1);}
+  // Do not demand legendary dragonsteel until the later Forge-6 chapter.
+  else if(next<=20){add(2,3);add(3,next===20?4:3);}
   else if(next<=30){add(2,3+Math.floor((next-21)/5));add(3,2+Math.floor((next-21)/5));}
   else if(next<=40){add(3,4+Math.floor((next-31)/4));add(4,1+Math.floor((next-31)/5));}
   else {add(3,6+Math.floor((next-41)/3));add(4,3+Math.floor((next-41)/3));}
@@ -142,7 +143,10 @@ export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefine
  const locked=!maxed&&nextLevel>unlockedMaxLevel;
  // Quality 2 is unlocked after Boss 30 (forge level 16+);
  // Quality 3 after Boss 60 (forge level 31+). No higher-tier bypass.
- const qualityLevel=gateMode&&nextLevel>30?3:gateMode&&nextLevel>15?2:1;
+ // Quality-two materials first drop after Boss 30, quality three after
+ // Boss 60. Give the team two chapters to collect/refine them before
+ // equipment consumes them, avoiding a near-impossible first epic upgrade.
+ const qualityLevel=gateMode&&nextLevel>40?3:gateMode&&nextLevel>25?2:1;
  const quality=qualityResources||reconcileQualityInventory(resources);
  return {itemId,level,nextLevel,maxLevel,maxed,cost,successChance,qualityLevel,
   ...(gateMode?{locked,unlockedMaxLevel,legacy:false}:{}),
@@ -163,6 +167,8 @@ export function forgeView(heroRaw,inventoryRaw,progressRaw=undefined){
    equipmentCap:cap.equipment,bossSeals:cap.bossSeals,
    earnedBossSeals:cap.earnedBossSeals,
    qualityUnlocked:qualityUnlockedFromBosses(progressRaw),
+   materialRarityCap:dogMaterialRarityCap(progressRaw),
+   materialRarityUnlocks:DOG_MATERIAL_RARITY_UNLOCKS,
    qualityRefinementChances:DOG_QUALITY_REFINEMENT_CHANCE,
    forgeLevelMax:10}:{}),
  };
@@ -211,6 +217,9 @@ export function forgeExchange(heroRaw,inventoryRaw,resourceId,now=Date.now(),cou
   throw Error('INVALID_EXCHANGE_COUNT');
  const inventory=dogInventory(inventoryRaw),hero=dogHero(heroRaw);
  const nextResource=group[group.indexOf(resourceId)+1];
+ // A 10:1 trade cannot mint a material class ahead of its boss/forge unlock.
+ if(progressRaw!==undefined&&group.indexOf(nextResource)>dogMaterialRarityCap(progressRaw))
+  throw Error('DOG_MATERIAL_LOCKED');
  if(![1,2,3].includes(quality))throw Error('INVALID_QUALITY_LEVEL');
  if(quality>qualityUnlockedFromBosses(progressRaw))throw Error('DOG_QUALITY_LOCKED');
  const spent=count*DOG_FORGE_TUNING.exchangeRate;
@@ -238,6 +247,9 @@ export function forgeRefine(heroRaw,inventoryRaw,resourceId,fromQuality,count=1,
  now=Date.now(),progressRaw=undefined,roll=0){
  if(!DOG_RESOURCES.includes(resourceId)||![1,2].includes(fromQuality))
   throw Error('INVALID_REFINEMENT');
+ if(progressRaw!==undefined&&Object.values(DOG_RESOURCE_GROUPS)
+  .some(group=>group.indexOf(resourceId)>dogMaterialRarityCap(progressRaw)))
+  throw Error('DOG_MATERIAL_LOCKED');
  if(!Number.isSafeInteger(count)||count<1||count>DOG_FORGE_TUNING.exchangeMaxBatch)
   throw Error('INVALID_EXCHANGE_COUNT');
  if(qualityUnlockedFromBosses(progressRaw)<fromQuality+1)throw Error('DOG_QUALITY_LOCKED');
@@ -267,7 +279,7 @@ const HTTP_STATUS=Object.freeze({
  LOGIN_REQUIRED:401,INVALID_FORGE_REQUEST:400,INVALID_FORGE_ITEM:400,INVALID_EXCHANGE_RESOURCE:400,
  INVALID_EXCHANGE_COUNT:400,INVALID_REFINEMENT:400,INVALID_QUALITY_LEVEL:400,
  STALE_FORGE_LEVEL:409,FORGE_MAX_LEVEL:409,DOG_FORGE_BOSS_REQUIRED:409,DOG_MATERIALS_MISSING:409,
- DOG_MATERIALS_LIMIT:409,DOG_QUALITY_LOCKED:409,INSUFFICIENT_QUALITY_RESOURCES:409,
+ DOG_MATERIALS_LIMIT:409,DOG_MATERIAL_LOCKED:409,DOG_QUALITY_LOCKED:409,INSUFFICIENT_QUALITY_RESOURCES:409,
  DOG_FORGE_LEVEL_STALE:409,DOG_FORGE_LEVEL_MAX:409,
  DOG_FORGE_BOSS_SEAL_REQUIRED:409,DOG_FORGE_LEVEL_RECEIPT_CONFLICT:409,
  NOT_DOG_TEAM_MEMBER:403

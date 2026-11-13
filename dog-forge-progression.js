@@ -3,6 +3,23 @@
  * is required when a fight finishes, so historical victories also count. */
 export const DOG_FORGE_MAX_LEVEL=10;
 export const DOG_EQUIPMENT_MAX_LEVEL=50;
+// Personal material types are unlocked for the expedition by SHARED forge
+// progression, not by lucky chest tier or inventory history. The common
+// material starts available; bosses 10,20,30,50 make tiers 2..5 accessible
+// after the corresponding shared forge-level promotion.
+export const DOG_MATERIAL_RARITY_UNLOCKS=Object.freeze([
+ Object.freeze({rarity:'common',forgeLevel:1,boss:0}),
+ Object.freeze({rarity:'uncommon',forgeLevel:2,boss:10}),
+ Object.freeze({rarity:'rare',forgeLevel:3,boss:20}),
+ Object.freeze({rarity:'epic',forgeLevel:4,boss:30}),
+ Object.freeze({rarity:'legendary',forgeLevel:6,boss:50})
+]);
+export const dogMaterialRarityCap=progressRaw=>{
+ const {forgeLevel}=levels(progressRaw);
+ return DOG_MATERIAL_RARITY_UNLOCKS.reduce((cap,entry,i)=>
+  forgeLevel>=entry.forgeLevel?i:cap,0);
+};
+
 const object=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
 const levels=progressRaw=>{
  const raw=object(progressRaw);

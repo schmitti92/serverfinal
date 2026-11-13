@@ -316,3 +316,49 @@ test('Malformed stored expedition snapshots cannot silently erase earned chests'
   {version:4,stage:0,tier:'wood',count:2,quantity:0}
  ]}),/DOG_CHEST_STORAGE_INVALID/);
 });
+
+test('100-Tore expedition chest API locks raw materials by shared forge level without a single extra write',async()=>{
+ const f=fixture(limit=>limit-1);
+ const team='dog_boss_team_v1/first-three-heroes';
+ const progress='dog_gate_progress_v1/first-three-heroes';
+ f.docs.set(team,{members:[{uid,name:'A'}]});
+ f.docs.set(progress,{forgeLevel:1,sharedBosses:[]});
+ let bag=dogInventory({resources:{dragonsteel:7}});
+ const offer={version:4,tier:'legendary',stage:9,count:30};
+ for(let i=0;i<3;i++)bag=addExpeditionChestToInventory(bag,offer);
+ bag=addVerifiedChestToInventory(bag,Date.now(),'large');
+ f.docs.set(DOG_MATERIALS_COLLECTION+'/'+uid,bag);
+ const initial=await f.request('GET','/api/dog/materials/me');
+ assert.equal(initial.body.unlockedRarity,0);
+ assert.equal(initial.body.forgeLevel,1);
+ assert.equal(initial.body.rules.rarityUnlocks.length,5);
+ const old=await f.request('POST','/api/dog/materials/open',
+  {requestId:'locked-large-chest-0001',tier:'large'});
+ assert.equal(old.statusCode,200);
+ assert.equal(old.body.drop.items.iron,40);
+ assert.equal(old.body.drop.items.dragonsteel,0);
+ const first=await f.request('POST','/api/dog/materials/open',
+  {requestId:'locked-legendary-0001',tier:'legendary'});
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.drop.items.iron,30);
+ assert.equal(first.body.drop.items.dragonsteel,0);
+ assert.equal(f.inventory().resources.dragonsteel,7,'existing rare inventory is never deleted');
+ const count=f.writes.length;
+ f.docs.set(progress,{forgeLevel:4,sharedBosses:[10,20,30]});
+ const replay=await f.request('POST','/api/dog/materials/open',
+  {requestId:'locked-legendary-0001',tier:'legendary'});
+ assert.equal(replay.body.replayed,true);
+ assert.deepEqual(replay.body.drop,first.body.drop);
+ assert.equal(f.writes.length,count);
+ const epic=await f.request('POST','/api/dog/materials/open',
+  {requestId:'epic-legendary-0002',tier:'legendary'});
+ assert.equal(epic.body.unlockedRarity,3);
+ assert.equal(epic.body.drop.items.mithril,30);
+ assert.equal(epic.body.drop.items.dragonsteel,0);
+ f.docs.set(progress,{forgeLevel:6,sharedBosses:[10,20,30,40,50]});
+ const legendary=await f.request('POST','/api/dog/materials/open',
+  {requestId:'late-legendary-0003',tier:'legendary'});
+ assert.equal(legendary.body.unlockedRarity,4);
+ assert.equal(legendary.body.drop.items.dragonsteel,30);
+ assert.equal(f.inventory().unopened,0);
+});

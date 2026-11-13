@@ -45,7 +45,7 @@ test('Every new material is obtainable BEFORE its first relevant tier upgrade',(
    sampleCosts[type+'-'+level]=recipe;
   }
  }
- assert.deepEqual(sampleCosts['weapon-2'],{iron:3});
+ assert.deepEqual(sampleCosts['weapon-2'],{iron:2});
  assert.deepEqual(sampleCosts['weapon-10'],{iron:5,forge_coal:3});
 });
 

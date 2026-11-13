@@ -1,5 +1,29 @@
 # Die 100 Tore – Balancing V1
 
+## Aktuelle Materialfreischaltung und Schmiedebalance (13.11.2026)
+
+**Verbindlicher Stand auf main:** Rohstoffklassen (gewöhnlich / ungewöhnlich / selten / episch / legendär) werden nach verifiziertem gemeinsamen **Schmiedelevel** freigeschaltet. Die Boss-Siegel sind erforderlich, um das Schmiedelevel zu erhöhen. Nur im offiziellen Team gilt dieses Material-Gating; der Alt-Schmiedemodus außerhalb des Events bleibt kompatibel.
+
+| Schmiedelevel (geteilt) | Boss-Siegel | Neue Rohstoffklasse | Höchster erlaubter Rohstoffindex |
+|---|---|---|---|
+| 1 | Start | Gewöhnlich | 0 |
+| 2 | Boss 10 | Ungewöhnlich | 1 |
+| 3 | Boss 20 | Selten | 2 |
+| 4 | Boss 30 | Episch | 3 |
+| 6 | Boss 50 | Legendär | 4 |
+
+**Kisten:** Die 5 Kistenarten (Holz, Eisen, Silber, Gold, Legendär) behalten ihren bei der Vergabe fixierten Typ, Abschnitt und Rohstoffumfang. Der Öffnungsendpunkt erlaubt ausschließlich Rohstoffklassen, die **gleichzeitig** (a) in der eingefrorenen Abschnittstabelle und (b) durch das aktuelle Schmiedelevel verfügbar sind. Gewichte gesperrter Kategorien werden anteilig auf die erlaubten Materialklassen umverteilt. Selbst eine früh gewonnene legendäre Truhe liefert anfangs nur gewöhnliche Rohstoffe, dafür ggf. größere Mengen. Auch alte kleine/mittlere/große Kisten unterliegen bei Mitgliedern des offiziellen Teams der Freischaltung. Alte Inventarbestände werden **nicht** verändert; ein 10:1-Materialtausch kann neue gesperrte Materialien nicht vorzeitig erzeugen. Ein Authentifizierter Öffnungs-Receipt verhindert doppelte Auszahlung.
+
+**Balancingkorrekturen:** Level 2–5 verlangen nur gewöhnliche Materialien, ab Level 6 (Boss 10 / Schmiedelevel 2) ungewöhnliche. Das Seltenheitsupgrade auf Stahlkern erscheint erst ab Level 15 (Boss 20). Episches Mithril wird ab Level 16 gebraucht (Boss 30), weshalb ab dem dritten persönlichen Tor-Kapitel epische Materialien erstmals realistisch droppen müssen. Die Rezepte 19–20 verzichten auf früh verlangten legendären Drachenstahl; Drachenstahl wird erst ab den späteren Kapiteln wirklich benötigt. Qualitätsstufe 2 kann schon nach Boss 30 gesammelt/veredelt werden, wird bei Ausrüstungs-Upgrades erst ab **Level 26** verlangt; Qualitätsstufe 3 kann nach Boss 60 gesammelt/veredelt werden, wird erst ab **Level 41** verlangt. So entstehen Sammel- und Refinement-Fenster, statt unüberwindbarer Schwellkosten.
+
+**Firestore:** Kein eigener Rohstoff-Freischalt-Datensatz. Jeder Öffnungs-POST verwendet die bereits vorhandenen Team- und Fortschritts-Reads und schreibt unverändert nur Inventar und Wiederholungsbeleg. Beim ausdrücklichen GET der Inventarseite werden zusätzlich Team und Schmiedefortschritt einmal eingelesen, damit die Rohstoff-Schlösser korrekt gerendert werden. Kein Polling.
+
+**Grenze der Analyse:** Die regulären 80 Tore bleiben deterministische Wechselkampfsimulationen: In der vereinfachten Prüfung gewinnen Helden mit exakt dem empfohlenen Waffen-/Rüstungslevel bei allen 80 normalen Toren ohne Skills; mit je einem Level weniger gewinnen sie bei 39/80. Das testet keine Bosse und keine tatsächliche Rohstoffbeschaffung. Der alte Projektwert „ca. 300 Deal-Partien / durchschnittlich fünf Truhen je Partie aus allen Quellen“ ist eine Zielgröße, **nicht** durch Live-Statistiken oder eine vollständige Mehrspieler-Simulation bestätigt. Gruppenbosse, Tausch-/Veredelungslangzeitbalance und tatsächliche Partiehäufigkeit müssen später mit realen Spielständen geprüft werden.
+
+---
+
+## Historische Entwicklungsnotizen (teilweise überholt)
+
 > **Aktueller Live-Balancing-Stand (13.11.2026, Beginn der 300-Partien-Abstimmung):** Die alten Abschnitte dieses Dokuments enthalten historische Entwicklungs-/Branch-Angaben und sind keine verlässliche Beschreibung des heutigen Deployments. Das Boss- und Schmiedesystem läuft über die aktuellen `main`-Module. Diese neue Abstimmung verändert nur Kostenparameter; die Langzeit-Simulation ist noch nicht vollständig realitätsgetreu.
 >
 > **Zielprofil:** ungefähr 300 abgeschlossene Deal-or-No-Deal-Partien pro Spieler bis Boss 100; für die Planung durchschnittlich 5 Rohstoffkisten pro Partie aus **allen** Belohnungsquellen zusammen (nicht 5 zusätzliche Kisten zu jeder Einzelbelohnung). Dies ist ein Ziel und kein garantierter Live-Durchschnitt. Keine fixe Partie-Sperre.

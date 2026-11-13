@@ -34,16 +34,16 @@ export const DOG_CHEST_TYPE_IDS=Object.freeze(Object.keys(DOG_CHEST_TYPES));
 // Material rarity: common, uncommon, rare, epic, legendary.
 // More prestigious boxes first appear rarely; late-game size is NOT guaranteed.
 const CHEST_STAGE_RULES=[
- {chestWeights:[85,9,4,1,1], weights:[95,5,0,0,0]},
- {chestWeights:[79,12,5,3,1], weights:[82,17,1,0,0]},
- {chestWeights:[65,23,7,4,1], weights:[73,24,3,0,0]},
- {chestWeights:[56,29,9,5,1], weights:[62,32,6,0,0]},
- {chestWeights:[47,31,14,6,2], weights:[55,32,12,1,0]},
- {chestWeights:[35,36,18,9,2], weights:[47,32,18,3,0]},
- {chestWeights:[28,36,22,11,3], weights:[40,30,23,6,1]},
- {chestWeights:[21,32,29,14,4], weights:[32,28,25,13,2]},
- {chestWeights:[16,28,32,19,5], weights:[26,26,27,17,4]},
- {chestWeights:[10,22,34,26,8], weights:[22,23,28,21,6]}
+ {chestWeights:[85,9,4,1,1], weights:[100,0,0,0,0]},
+ {chestWeights:[79,12,5,3,1], weights:[82,18,0,0,0]},
+ {chestWeights:[65,23,7,4,1], weights:[62,30,8,0,0]},
+ {chestWeights:[56,29,9,5,1], weights:[48,32,12,8,0]},
+ {chestWeights:[47,31,14,6,2], weights:[44,28,16,12,0]},
+ {chestWeights:[35,36,18,9,2], weights:[37,29,20,12,2]},
+ {chestWeights:[28,36,22,11,3], weights:[32,27,23,15,3]},
+ {chestWeights:[21,32,29,14,4], weights:[29,26,24,17,4]},
+ {chestWeights:[16,28,32,19,5], weights:[24,25,26,19,6]},
+ {chestWeights:[10,22,34,26,8], weights:[21,23,27,22,7]}
 ];
 export const DOG_CHEST_STAGES=Object.freeze(CHEST_STAGE_RULES.map(rule=>{
  const eligible=DOG_CHEST_TYPE_IDS.filter((id,i)=>rule.chestWeights[i]>0);
@@ -93,7 +93,9 @@ export function dogChestOffer(personalGate=0,rand=randomInt){
  // Store the stage, type and amount at AWARD time, not at OPEN time.
  return {version:4,stage,tier,count};
 }
-export function dogChestContents(offer,rand=randomInt){
+export function dogChestContents(offer,rand=randomInt,maxRarity=4){
+ if(!Number.isInteger(maxRarity)||maxRarity<0||maxRarity>4)
+  throw Error('DOG_BALANCE_INVALID_RARITY_CAP');
  // Only trusted, server-issued/stored offers may be accepted by the real API.
  const stage=offer?.stage,count=offer?.count;
  if(!Number.isSafeInteger(stage)||stage<0||stage>=DOG_CHEST_STAGES.length||
@@ -116,19 +118,24 @@ export function dogChestContents(offer,rand=randomInt){
  const items=Object.fromEntries(groups.flat().map(id=>[id,0]));
  for(let i=0;i<count;i++){
   const group=groups[randomDraw(rand,groups.length)];
-  const rarity=weightedHundred(rule.weights,rand);
+  // A chest stays the same size/type but only currently unlocked
+  // material tiers can drop; weights are normalized within that range.
+  const allowed=rule.weights.slice(0,maxRarity+1);
+  const sum=allowed.reduce((total,weight)=>total+weight,0);
+  let remaining=randomDraw(rand,sum),rarity=0;
+  for(;rarity<allowed.length;rarity++){
+   remaining-=allowed[rarity];
+   if(remaining<0)break;
+  }
   const id=group[rarity];items[id]++;
  }
  return legacy?{count,items,stage}:{count,items,stage,tier};
 }
 
-// One weapon/armor tier per won boss. Materials are already available in small
-// amounts in the ten-gate chapter immediately preceding the shared boss.
+// Early game requires only common; after Boss 10 uncommon fuels lv. 6–10.
 const UPGRADE_RECIPE=Object.freeze({
- 2:[3,0,0,0,0],3:[2,1,0,0,0],4:[0,2,0,0,0],
- // First two boss chapters must be playable with wooden and iron chests.
- // Higher rarities are introduced later, not required as an early hard wall.
- 5:[0,3,0,0,0],6:[3,1,0,0,0],7:[4,1,0,0,0],
+ 2:[2,0,0,0,0],3:[2,0,0,0,0],4:[3,0,0,0,0],
+ 5:[3,0,0,0,0],6:[3,2,0,0,0],7:[4,2,0,0,0],
  8:[4,2,0,0,0],9:[5,2,0,0,0],10:[5,3,0,0,0]
 });
 export function dogEquipmentSuccessChance(nextLevel){
