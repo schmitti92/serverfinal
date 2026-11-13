@@ -162,7 +162,8 @@ function offer(g,random){
  if(random(100)<12)factor+=(roll()*2-1)*.125;
  // Fair expected value remains the anchor: cap extreme luck and large jackpots.
  factor=Math.max(.18,Math.min(1.25,factor));
- g.offer=Math.max(1,Math.round(avg*factor));
+ // Even an unusually generous offer cannot exceed the match's 50-million cap.
+ g.offer=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(avg*factor)));
  const bonusPack=drawBankerPack(random);
  // Independent 7% hammer chance; the type still comes from the 12-field wheel.
  const bonusHammer=drawBankerHammer(random);
