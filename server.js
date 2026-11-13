@@ -16,6 +16,7 @@ import { installDogGroupBossApi } from "./dog-group-boss.js";
 import { createDogBossPushHub } from "./dog-boss-push.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
 import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
+import { resetFullDogEventOnce } from "./dog-event-full-reset-once.js";
 
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
@@ -8036,4 +8037,14 @@ setInterval(() => {
   }
 }, SNAPSHOT_HEARTBEAT_MS);
 
-server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
+// Explicitly requested full DOG event reset, once and before serving requests.
+// The marker prevents a later restart from erasing newly-earned progress.
+void (async()=>{
+ if(!profileProjectMatches||!firestore)throw Error('DOG_FULL_RESET_FIRESTORE_UNAVAILABLE');
+ const outcome=await resetFullDogEventOnce(firestore,console);
+ console.info('[dog-full-reset-startup]',JSON.stringify(outcome));
+ server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
+})().catch(error=>{
+ console.error('[dog-full-reset-startup] ABORTED before listening',error);
+ process.exit(1);
+});
