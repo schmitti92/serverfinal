@@ -2,7 +2,7 @@ import {create,apply,publicView,payoutFor,cashCreditFor} from './deal-or-no-deal
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
-import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,installDogAlbumSeason2} from './dog-album-season2.js';
+import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
 import {drawMonsterSlots,MONSTER_SLOTS_WEIGHTS} from './monster-slots.js';
@@ -270,6 +270,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    materialsRef:db.collection(DOG_MATERIALS_COLLECTION).doc(uid),
    walletRef:db.collection(walletCollection).doc(uid),
    albumRef:db.collection(CHRISTMAS_COLLECTION).doc(uid),
+   dogAlbumRef:db.collection(DOG_S2_COLLECTION).doc(uid),
    iceRef:db.collection('christmas_ice_progress_v1').doc(uid),
    jokerRef:db.collection('deal_peek_inventory_v1').doc(uid),
    hatsRef:db.collection('deal_christmas_hats_v1').doc(uid)
@@ -299,18 +300,20 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const inventories=await Promise.all(prepared.map(p=>Promise.all([
    p.needed.has('chest')?tx.get(p.materialsRef):null,
    p.needed.has('cash')?tx.get(p.walletRef):null,
-   p.needed.has('pack')||p.needed.has('monster')?tx.get(p.albumRef):null,
+   p.needed.has('monster')?tx.get(p.albumRef):null,
    p.needed.has('hammer')?tx.get(p.iceRef):null,
    p.needed.has('joker')?tx.get(p.jokerRef):null,
-   p.needed.has('minigame')?tx.get(p.hatsRef):null
+   p.needed.has('minigame')?tx.get(p.hatsRef):null,
+   p.needed.has('pack')?tx.get(p.dogAlbumRef):null
   ])));
   const now=Date.now();
   for(let i=0;i<prepared.length;i++){
-   const p=prepared[i], [materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap]=inventories[i];
+   const p=prepared[i], [materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap,dogAlbumSnap]=inventories[i];
    const oldAlbum=albumSnap?.exists?albumSnap.data():{};
    let inventory=materialSnap?.exists?materialSnap.data():null;
    let cash=0,jokers=0,miniTickets=0,monsterTickets=0;
-   const packs={},hammers={};
+   const hammers={},settledPrizes=[];
+   let dogCards={...(dogAlbumSnap?.exists?dogAlbumSnap.data()?.cards:{})},openedDogPacks=0;
    for(const prize of p.prizes){
     if(prize.kind==='chest'){
      const spec=DOG_CHEST_TYPES[prize.id];
@@ -320,20 +323,27 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      inventory=addExpeditionChestToInventory(inventory,{
       version:4,stage:dogChestStage(p.gate),tier:prize.id,count
      });
-    }else if(prize.kind==='pack')packs[prize.id]=(packs[prize.id]||0)+prize.quantity;
+    }else if(prize.kind==='pack'){
+     const opened=dogS2OpenGrantedPacks(prize.id,prize.quantity,dogCards);
+     dogCards=opened.cards;openedDogPacks+=opened.openedPacks.length;
+     settledPrizes.push({...prize,openedPacks:opened.openedPacks});
+     continue;
+    }
     else if(prize.kind==='hammer')hammers[prize.id]=(hammers[prize.id]||0)+prize.quantity;
     else if(prize.kind==='joker')jokers+=prize.quantity;
     else if(prize.kind==='minigame')miniTickets+=prize.quantity;
     else if(prize.kind==='monster')monsterTickets+=prize.quantity;
     else if(prize.kind==='cash')cash=checkMonsterBalance(cash,prize.amountCents);
     else throw Error('INVALID_SLOT_PRIZE');
+    settledPrizes.push(prize);
    }
-   if(Object.keys(packs).length||monsterTickets){
-    const freeChristmasPacks={...(oldAlbum.freeChristmasPacks||{})};
-    for(const [packId,n] of Object.entries(packs))
-     freeChristmasPacks[packId]=checkMonsterBalance(Number(freeChristmasPacks[packId]||0),n,1000000);
+   if(openedDogPacks)tx.set(p.dogAlbumRef,{
+    season:2,cards:dogCards,
+    opened:Number(dogAlbumSnap?.data()?.opened||0)+openedDogPacks,updatedAt:now
+   },{merge:true});
+   if(monsterTickets){
     const ticketCount=checkMonsterBalance(Number(oldAlbum.monsterWheelTickets||0),monsterTickets,1000000);
-    tx.set(p.albumRef,{freeChristmasPacks,monsterWheelTickets:ticketCount,updatedAt:now},{merge:true});
+    tx.set(p.albumRef,{monsterWheelTickets:ticketCount,updatedAt:now},{merge:true});
    }
    if(Object.keys(hammers).length){
     const ice=iceSnap.exists?normalizeIceState(iceSnap.data()):newIceState();
@@ -355,7 +365,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     balance:checkMonsterBalance(Number(walletSnap.data()?.balance||0),cash),updatedAt:now
    },{merge:true});
    if(p.prizes.some(prize=>prize.kind==='chest'))tx.set(p.materialsRef,inventory);
-   const settled={ok:true,gameId,prizes:p.prizes,guaranteed:3,replayed:false,createdAt:now};
+   const settled={ok:true,gameId,prizes:settledPrizes,guaranteed:3,replayed:false,createdAt:now};
    tx.create(p.receiptRef,{uid:p.uid,gameId,result:settled,createdAt:now});
    results.set(p.uid,settled);
   }
