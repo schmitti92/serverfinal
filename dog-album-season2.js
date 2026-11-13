@@ -1,6 +1,10 @@
 // DOG Sammelalbum Saison 2 – eigener persistenter Kartenbestand, Saison 1 bleibt archiviert.
-// Jede Tafel besteht aus 16 echten GitHub-Bildern. Alle Rewards werden später definiert.
+// Jede Tafel besteht aus 16 echten GitHub-Bildern. Bingo-Preise zahlt ausschließlich der Server aus.
 import {randomInt} from 'node:crypto';
+import {addExpeditionChestToInventory,DOG_MATERIALS_COLLECTION} from './dog-materials.js';
+import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
+import {checkMonsterBalance} from './monster-wheel.js';
+import {dogS2RewardStatus,dogS2PlanBingoClaims} from './dog-album-bingo-rewards.js';
 export const DOG_S2_COLLECTION='deal_dog_album_season2_v1';
 export const DOG_S2_BOARDS=Object.freeze(['DOG & Königreich','Weltraum','Dinosaurier','Freizeitpark','Märchen','Western']);
 const FILES=Object.freeze([["DOG_01_11.png","DOG_02.png","DOG_03.png","DOG_04_plus_minus.png","DOG_05.png","DOG_06.png","DOG_07.png","DOG_08.png","DOG_09.png","DOG_10.png","DOG_12.png","DOG_13.png","DOG_Joker.png","DOG_Tauschen.png","DOG_31_Vier_Koenige.png","DOG_32_Koenigliche_Allianz.png"],["DOG_43_Astronauten.png","DOG_44_Raumstation.png","DOG_45_Rakete.png","DOG_46_Mondlandung.png","DOG_47_Alien_Kartenspiel.png","DOG_48_Galaktischer_Pokal.png","DOG_49_Kosmischer_Wuerfel.png","DOG_50_Weltraum_Sieger.png","DOG_51_Sternenpokal.png","DOG_52_Mondforscher.png","DOG_53_Raumstation.png","DOG_54_Schwerelos.png","DOG_55_Raketenstart.png","DOG_56_Alien_Kartenspiel.png","DOG_57_Sternenportal.png","DOG_58_Weltraumschatz.png"],["DOG_59_Dino_Pokal.png","DOG_60_Dino_Entdecker.png","DOG_61_Dino_Schatz.png","DOG_62_Dino_Spielrunde.png","DOG_63_Dino_Ritter.png","DOG_64_Dino_Zauberer.png","DOG_123_T_Rex_Team.png","DOG_124_Triceratops_Spielbrett.png","DOG_125_Brachiosaurus_Karten.png","DOG_126_Stegosaurus_Wuerfel.png","DOG_127_Raptor_Schatzkarte.png","DOG_128_Flugsaurier_Team.png","DOG_129_Spinosaurus_Spielmuenze.png","DOG_130_Ankylosaurus_Schatzkiste.png","DOG_131_Dino_Baby.png","DOG_132_Dino_Siegerpokal.png"],["DOG_65_Freizeitpark_Panorama.png","DOG_66_Spielpark_Eingang.png","DOG_67_Achterbahn.png","DOG_68_Geisterbahn.png","DOG_134_Achterbahn.png","DOG_135_Riesenrad.png","DOG_136_Karussell.png","DOG_137_Wildwasserbahn.png","DOG_138_Geisterbahn.png","DOG_139_Suessigkeiten.png","DOG_140_Dosenwerfen.png","DOG_141_Kettenkarussell.png","DOG_142_Heissluftballon.png","DOG_143_Feuerwerk.png","DOG_144_Freizeitpark_Pokal.png","DOG_33_Koenigspokal.png"],["DOG_69_Rapunzel.png","DOG_77_Maerchenschloss.png","DOG_78_Kuerbiskutsche.png","DOG_79_Dornroeschen.png","DOG_80_Rotkaeppchen.png","DOG_81_Drei_Schweinchen.png","DOG_82_Schwert_im_Stein.png","DOG_83_Schneewittchen.png","DOG_84_Magisches_Maerchenbuch.png","DOG_145_Rotkaeppchen.png","DOG_146_Haensel_und_Gretel.png","DOG_148_Schneewittchen.png","DOG_149_Gestiefelter_Kater.png","DOG_150_Dornroeschen.png","DOG_151_Rumpelstilzchen.png","DOG_34_Vier_Koenigreiche.png"],["DOG_85_Sheriff.png","DOG_86_Dampflokomotive.png","DOG_87_Western_Freundschaft.png","DOG_88_Saloon.png","DOG_89_Bandit.png","DOG_90_Wuestenlandschaft.png","DOG_91_Cowgirl.png","DOG_92_Rodeo.png","DOG_152_Westernstadt.png","DOG_154_Sheriff.png","DOG_155_Dampflok.png","DOG_156_Cowboy_Pferd.png","DOG_158_Lagerfeuer.png","DOG_159_Sonnenuntergang.png","a_highly_detailed_colorful_glossy_3d_style_board.png","a_highly_detailed_glossy_colorful_close_up_illus.png"]]);
@@ -32,7 +36,7 @@ export function dogS2Progress(cards={}){
  });
  return {season:2,collected:boards.reduce((s,b)=>s+b.collected,0),total:96,
   bingos:boards.reduce((s,b)=>s+b.bingos,0),maxBingos:60,boards,
-  rewardsEnabled:false,rewardNote:'Belohnungen werden später ergänzt.'};
+  rewardsEnabled:true,rewardNote:'Alle 2 Bingos eine Materialkiste und zufällige Zusatzgewinne.'};
 }
 export function dogS2Draw(pack,rand=randomInt){
  if(!pack||!Number.isInteger(pack.count)||pack.count<1)throw Error('INVALID_PACK');
@@ -85,6 +89,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    res.set('Cache-Control','no-store');
    res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS,
     balance:positive(w.data()?.balance),opened:positive(data.opened),progress:dogS2Progress(cards),
+    rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,data.bingoRewardsClaimed,data.bingoRewardsHistory),
     freePacks:Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(legacyData.freeChristmasPacks?.[p.id])])),
     duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)});
   }catch(e){return fail(res,e)}
@@ -118,6 +123,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     const freePacks=Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(vouchers[p.id])]));
     const result={season:2,packId:pack.id,opened:positive(prev.opened)+1,balance:remaining,cards,revealed,
      usedFreePack:free,freePacks,progress:dogS2Progress(cards),
+     rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,prev.bingoRewardsClaimed,prev.bingoRewardsHistory),
      duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)};
     if(!free)tx.set(wRef,{balance:remaining,updatedAt:now},{merge:true});
     else tx.set(oldRef,{freeChristmasPacks:vouchers,updatedAt:now},{merge:true});
@@ -151,4 +157,95 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    res.set('Cache-Control','no-store');res.json({ok:true,...result});
   }catch(e){return fail(res,e)}
  });
+ // Alle erreichten Zweier-Bingos werden in EINER Transaktion gebucht.
+ // Kein automatisches Firestore-Polling. Ein Aufruf ohne fällige Gewinne liest
+ // nur das Album; die Inventare werden nur bei echten Auszahlungen gelesen.
+ app.post(base+'/rewards/claim',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid;
+   const albumRef=db.collection(DOG_S2_COLLECTION).doc(uid);
+   const materialRef=db.collection(DOG_MATERIALS_COLLECTION).doc(uid);
+   const walletRef=db.collection(wallet).doc(uid);
+   const legacyRef=db.collection(legacy).doc(uid);
+   const iceRef=db.collection('christmas_ice_progress_v1').doc(uid);
+   const jokerRef=db.collection('deal_peek_inventory_v1').doc(uid);
+   const hatsRef=db.collection('deal_christmas_hats_v1').doc(uid);
+   const result=await db.runTransaction(async tx=>{
+    const albumSnap=await tx.get(albumRef);
+    const old=albumSnap.exists?albumSnap.data():{};
+    const progress=dogS2Progress(old.cards||{});
+    const priorClaims=old.bingoRewardsClaimed||{},history=Array.isArray(old.bingoRewardsHistory)?old.bingoRewardsHistory:[];
+    const {awards,lastKind}=dogS2PlanBingoClaims(progress,priorClaims,old.bingoRewardsLastBonus||'');
+    if(!awards.length)return {awarded:[],progress,
+     rewards:dogS2RewardStatus(progress.bingos,priorClaims,history),replayed:true};
+    const bonuses=awards.flatMap(a=>a.bonuses);
+    const needed=new Set(bonuses.map(b=>b.kind));
+    const [materialSnap,walletSnap,legacySnap,iceSnap,jokerSnap,hatsSnap]=await Promise.all([
+     tx.get(materialRef),
+     needed.has('cash')?tx.get(walletRef):null,
+     needed.has('monster')?tx.get(legacyRef):null,
+     needed.has('hammer')?tx.get(iceRef):null,
+     needed.has('joker')?tx.get(jokerRef):null,
+     needed.has('minigame')?tx.get(hatsRef):null
+    ]);
+    const now=Date.now();
+    let material=materialSnap.exists?materialSnap.data():null;
+    let cash=0,monsterTickets=0,jokers=0,minigameTickets=0;
+    const hammers={single:0,double:0,lucky:0};
+    const claimed={...priorClaims},newHistory=[...history];
+    for(const award of awards){
+     for(const chest of award.chests)material=addExpeditionChestToInventory(material,chest,now);
+     for(const bonus of award.bonuses){
+      if(bonus.kind==='cash')cash=checkMonsterBalance(cash,bonus.amountCents);
+      else if(bonus.kind==='monster')monsterTickets=checkMonsterBalance(monsterTickets,bonus.quantity,1000000);
+      else if(bonus.kind==='minigame')minigameTickets=checkMonsterBalance(minigameTickets,bonus.quantity,1000000);
+      else if(bonus.kind==='joker')jokers=checkMonsterBalance(jokers,bonus.quantity,1000000);
+      else if(bonus.kind==='hammer')hammers[bonus.hammer]=checkMonsterBalance(hammers[bonus.hammer],bonus.quantity,1000000);
+      else throw Error('INVALID_BINGO_REWARD');
+     }
+     claimed[String(award.at)]=now;
+     newHistory.push({at:award.at,chestTier:award.chestTier,chests:award.chests,
+      bonuses:award.bonuses,claimedAt:now});
+    }
+    tx.set(materialRef,material);
+    let balance;
+    if(cash){
+     const prior=Number(walletSnap?.data()?.balance||0);
+     balance=checkMonsterBalance(prior,cash);
+     tx.set(walletRef,{balance,updatedAt:now},{merge:true});
+    }
+    if(monsterTickets){
+     const tickets=checkMonsterBalance(Number(legacySnap?.data()?.monsterWheelTickets||0),monsterTickets,1000000);
+     tx.set(legacyRef,{monsterWheelTickets:tickets,updatedAt:now},{merge:true});
+    }
+    if(jokers){
+     const jokerBalance=checkMonsterBalance(Number(jokerSnap?.data()?.balance||0),jokers,1000000);
+     tx.set(jokerRef,{balance:jokerBalance,updatedAt:now},{merge:true});
+    }
+    if(minigameTickets){
+     const bonusTickets=checkMonsterBalance(Number(hatsSnap?.data()?.bonusTickets||0),minigameTickets,1000000);
+     tx.set(hatsRef,{bonusTickets,...(!hatsSnap?.exists?{voucherOnly:true}:{}),updatedAt:now},{merge:true});
+    }
+    if(Object.values(hammers).some(n=>n>0)){
+     const ice=iceSnap?.exists?normalizeIceState(iceSnap.data()):newIceState();
+     const freeHammers={...ice.freeHammers},wheelHammers={...ice.wheelHammers};
+     for(const kind of ['single','double','lucky']){
+      freeHammers[kind]=checkMonsterBalance(Number(freeHammers[kind]||0),hammers[kind],1000000);
+      wheelHammers[kind]=checkMonsterBalance(Number(wheelHammers[kind]||0),hammers[kind],1000000);
+     }
+     tx.set(iceRef,{...ice,freeHammers,wheelHammers,updatedAt:now});
+    }
+    tx.set(albumRef,{
+     bingoRewardsClaimed:claimed,bingoRewardsHistory:newHistory.slice(-30),
+     bingoRewardsLastBonus:lastKind,bingoRewardsUpdatedAt:now
+    },{merge:true});
+    return {awarded:awards,progress,
+     rewards:dogS2RewardStatus(progress.bingos,claimed,newHistory),
+     ...(balance!==undefined?{balance}:{}),replayed:false};
+   });
+   res.set('Cache-Control','no-store');return res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+
 }
