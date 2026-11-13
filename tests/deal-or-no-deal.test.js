@@ -50,8 +50,8 @@ for(const count of [26,27,28,29,30]){
 test('invalid case counts are rejected',()=>{for(const n of [25,31,0,26.5])assert.throws(()=>create([{id:'a'}],rand,n),/INVALID_CASE_COUNT/)});
 
 for(let count=1;count<=4;count++){
- test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,13-count);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
- test(count+' players accepting first deal end immediately',()=>{let g=simulate(count,true);assert.equal(g.opened.length,5);assert.equal(g.history.length,1);assert.equal(g.players.every(p=>p.deal!==null),true)});
+ test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,6);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
+ test(count+' players accepting first deal end immediately',()=>{let g=simulate(count,true);assert.equal(g.opened.length,Math.round(9*(27-count)/27));assert.equal(g.history.length,1);assert.equal(g.players.every(p=>p.deal!==null),true)});
 }
 test('private assignments never leaked before finale',()=>{let g=create([{id:'a'},{id:'b'}],rand);g=send(g,g.order[0],'select',{case:0});g=send(g,g.order[1],'select',{case:1});const v=publicView(g);assert.equal('values' in v,false);assert.equal('commands' in v,false);assert.equal(v.finalValues,null);assert.equal(JSON.stringify(v).includes('100000000'),false)});
 test('repeated command is idempotent',()=>{let g=create([{id:'a'}],rand);const cmd={id:'same',revision:0,type:'select',case:0};const a=apply(g,'a',cmd,rand);assert.deepEqual(apply(a,'a',cmd,rand),a)});
@@ -332,9 +332,10 @@ test('29-case new 10-million jackpot is shuffled, private and pays correctly in 
  assert.equal(publicView(game).finalValues[0].payout,1000000000);
 });
 
-function bankerOpenings(caseCount,playerCount,{legacy=false,legacy30=false,variant=0}={}){
+function bankerOpenings(caseCount,playerCount,{legacy=false,legacy29=false,legacy30=false,variant=0}={}){
  let game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i,name:'Player '+i})),n=>n===2?variant:0,caseCount);
- if(legacy)delete game.bankerSchedule;
+ if(legacy){delete game.bankerSchedule;delete game.bankerScheduleVariant;}
+ if(legacy29){game.bankerSchedule=[...STEPS_29];delete game.bankerScheduleVariant;}
  if(legacy30){game.bankerSchedule=[...STEPS_30];delete game.bankerScheduleVariant;delete game.openingBatch;}
  const offers=[];
  for(let i=0;i<playerCount;i++)game=send(game,game.order[i],'select',{case:i});
@@ -356,60 +357,64 @@ function bankerOpenings(caseCount,playerCount,{legacy=false,legacy30=false,varia
  return {game,offers};
 }
 
-test('29-briefcase banker schedule spreads eight offers across 28 opened cases',()=>{
- assert.deepEqual(STEPS_29,[6,5,5,4,3,2,2,1]);
- assert.equal(STEPS_29.reduce((a,b)=>a+b,0),28);
- const {game,offers}=bankerOpenings(29,1);
+test('26–29 cases use the SAME two Banker variants, each with six offers and the final three guaranteed',()=>{
+ assert.deepEqual(STEPS_29,[6,5,5,4,3,2,2,1],'legacy 29 schedule remains available');
+ assert.deepEqual(STEPS,[5,4,4,3,2,2,1,1],'legacy 26–28 schedule remains available');
+ assert.equal(BANKER_30_OPENINGS.length,2);
+ for(const caseCount of [26,27,28,29]){
+  for(const playerCount of [1,2,3,4]){
+   for(let variant=0;variant<2;variant++){
+    const max=caseCount-playerCount;
+    const template=BANKER_30_OPENINGS[variant].slice(0,3);
+    const expected=[...template.map(n=>Math.round(n*max/27)),max-2,max-1,max];
+    const {game,offers}=bankerOpenings(caseCount,playerCount,{variant});
+    assert.deepEqual(offers,expected,caseCount+' cases '+playerCount+' players variant '+(variant+1));
+    assert.equal(game.bankerScheduleVariant,variant+1);
+    assert.deepEqual(game.bankerSchedule,expected.map((n,i)=>n-(expected[i-1]||0)));
+    assert.equal(game.history.length,6);
+    assert.equal(game.opened.length,max);
+    assert.equal(game.players.every(p=>!game.opened.includes(p.case)),true);
+    assert.equal(game.history.at(-1).participants.length,playerCount);
+    assert.equal(game.history.at(-1).decisions.length,playerCount);
+   }
+  }
+ }
+});
+test('in-progress 29-case game retains previous eight-offer schedule',()=>{
+ const {game,offers}=bankerOpenings(29,1,{legacy29:true});
  assert.deepEqual(offers,[6,11,16,20,23,25,27,28]);
  assert.equal(game.history.length,8);
  assert.equal(game.opened.length,28);
- assert.deepEqual(publicView(game).bankerSchedule,STEPS_29);
+ assert.deepEqual(game.bankerSchedule,STEPS_29);
+ assert.equal(game.bankerScheduleVariant,undefined);
 });
-
-test('29-briefcase multiplayer banker calls are spaced and stop at protected personal cases',()=>{
- for(const [players,expected] of [
-  [2,[6,11,16,20,23,25,27]],
-  [3,[6,11,16,20,23,25,26]],
-  [4,[6,11,16,20,23,25]],
- ]){
-  const {game,offers}=bankerOpenings(29,players);
-  assert.deepEqual(offers,expected,players+' players');
-  assert.equal(game.opened.length,29-players);
-  assert.equal(new Set(game.opened).size,game.opened.length);
-  assert.equal(game.players.every(p=>!game.opened.includes(p.case)),true);
-  assert.equal(game.history.length,expected.length);
- }
-});
-
-test('26, 27 and 28 briefcase matches retain their existing banker thresholds',()=>{
- assert.deepEqual(STEPS,[5,4,4,3,2,2,1,1]);
+test('in-progress 26–28 games with no saved schedule retain previous cadence',()=>{
  const base=[5,9,13,16,18,20,21,22];
- for(const count of [26,27,28]){
-  const {game,offers}=bankerOpenings(count,1);
-  const expected=[...base,...Array.from({length:count-23},(_,i)=>23+i)];
-  assert.deepEqual(offers,expected,count+' cases');
-  assert.equal(game.bankerSchedule,null);
+ for(const caseCount of [26,27,28]){
+  const {game,offers}=bankerOpenings(caseCount,1,{legacy:true});
+  const expected=[...base,...Array.from({length:caseCount-23},(_,i)=>23+i)];
+  assert.deepEqual(offers,expected);
+  assert.equal(game.bankerSchedule,undefined);
+  assert.equal(game.bankerScheduleVariant,undefined);
  }
 });
-
-test('in-progress legacy 29-case games keep their old offer cadence without a reset',()=>{
+test('in-progress legacy 29-case matches with no stored schedule remain recoverable',()=>{
  const {game,offers}=bankerOpenings(29,1,{legacy:true});
- const expected=[5,9,13,16,18,20,21,22,23,24,25,26,27,28];
- assert.deepEqual(offers,expected);
+ assert.deepEqual(offers,[5,9,13,16,18,20,21,22,23,24,25,26,27,28]);
  assert.equal(game.bankerSchedule,undefined);
  assert.equal(game.opened.length,28);
 });
-
-test('29-case matches accepting the first banker deal show the banker only after six opens',()=>{
+test('new 29-case matches offer first deal at scheduled time and still end early if all accept',()=>{
  const game=create([{id:'a'},{id:'b'}],n=>0,29);
- assert.deepEqual(game.bankerSchedule,[6,5,5,4,3,2,2,1]);
+ assert.equal(game.bankerScheduleVariant,1);
+ assert.equal(game.bankerSchedule[0],9);
  let next=send(game,game.order[0],'select',{case:0});
  next=send(next,game.order[1],'select',{case:1});
- for(let i=0;i<5;i++){
+ for(let i=0;i<8;i++){
   next=send(next,nextTurn(next),'open',{case:free(next)[0]});
   next=send(next,next.pending.actor,'ack-reveal');
   assert.equal(next.phase,'open');
-  assert.equal(next.history.length,0,'not yet banker at '+(i+1));
+  assert.equal(next.history.length,0);
  }
  next=send(next,nextTurn(next),'open',{case:free(next)[0]});
  next=send(next,next.pending.actor,'ack-reveal');
@@ -417,7 +422,7 @@ test('29-case matches accepting the first banker deal show the banker only after
  assert.equal(next.history.length,1);
  for(const actor of next.history[0].participants)next=send(next,actor,'decide',{deal:true});
  assert.equal(next.phase,'final');
- assert.equal(next.opened.length,6);
+ assert.equal(next.opened.length,9);
  assert.equal(next.history.length,1);
 });
 
