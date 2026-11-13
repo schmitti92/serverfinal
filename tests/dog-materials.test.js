@@ -227,7 +227,7 @@ test('Five-type expedition awards are frozen and aggregate without losing old ch
   chests:{small:2,medium:1,large:0,legacy:0},resources:{iron:8},earned:3,opened:0
  },Date.now(),'small');
  const earned=dogChestOffer(91,limit=>limit===100?99:limit-1);
- assert.deepEqual(earned,{version:4,stage:9,tier:'legendary',count:20});
+ assert.deepEqual(earned,{version:4,stage:9,tier:'legendary',count:30});
  const first=addExpeditionChestToInventory(original,earned);
  const twice=addExpeditionChestToInventory(first,earned);
  assert.equal(twice.expeditionChests.length,1,'same award snapshot aggregates safely');
@@ -237,7 +237,7 @@ test('Five-type expedition awards are frozen and aggregate without losing old ch
  assert.equal(twice.chests.medium,1);
  assert.equal(twice.resources.iron,8);
  const opened=openExpeditionChestInInventory(twice,'legendary',()=>0);
- assert.equal(opened.drop.count,20);
+ assert.equal(opened.drop.count,30);
  assert.equal(opened.drop.tier,'legendary');
  assert.equal(opened.inventory.unopened,5);
  assert.equal(opened.inventory.expeditionChests[0].quantity,1);
