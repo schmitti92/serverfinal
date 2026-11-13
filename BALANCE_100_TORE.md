@@ -1,5 +1,15 @@
 # Die 100 Tore – Balancing V1
 
+> **Aktueller Live-Balancing-Stand (13.11.2026, Beginn der 300-Partien-Abstimmung):** Die alten Abschnitte dieses Dokuments enthalten historische Entwicklungs-/Branch-Angaben und sind keine verlässliche Beschreibung des heutigen Deployments. Das Boss- und Schmiedesystem läuft über die aktuellen `main`-Module. Diese neue Abstimmung verändert nur Kostenparameter; die Langzeit-Simulation ist noch nicht vollständig realitätsgetreu.
+>
+> **Zielprofil:** ungefähr 300 abgeschlossene Deal-or-No-Deal-Partien pro Spieler bis Boss 100; für die Planung durchschnittlich 5 Rohstoffkisten pro Partie aus **allen** Belohnungsquellen zusammen (nicht 5 zusätzliche Kisten zu jeder Einzelbelohnung). Dies ist ein Ziel und kein garantierter Live-Durchschnitt. Keine fixe Partie-Sperre.
+>
+> **Kisten-Meilensteine:** Nur Holzkiste bis Tor 19; Eisenkiste ab Tor 20, Silber ab Tor 30, Gold ab Tor 50, Legendär ab Tor 80. Legendär maximal 30 Materialeinheiten. Bereits verdiente Kisten behalten ihren gespeicherten Typ, Stage und Inhaltumfang. Materialqualität 2 nach Boss 30, Qualität 3 nach Boss 60; alte Kisten werden nicht rückwirkend höherwertig.
+>
+> **Phase 1 auf `main` (Tor 1–30):** Die Ausrüstungsrezepte 2–10 verwenden keine direkt unzugänglichen Seltenheitsstufen mehr. Die Rezepte 11–15 benötigen überwiegend gewöhnliche/ungewöhnliche Rohstoffe, erst das 15er-Rezept einen seltenen Kern. Persönliche Expeditionsfähigkeiten kosten für die nächsten Stufen 1–5 jeweils 2/3/3/4/5 Einheiten des gewöhnlichen Gruppenrohstoffs. Für den alten Schmiedemodus ohne Expeditionsfortschritt bleibt dessen Kostenformel unverändert. Boss-LP, Schadenslogik, Quittungen, Firestore-Schreibwege, vorhandene Stufen und Inventare wurden in Phase 1 nicht verändert.
+>
+> **Offen:** Bestehende und neue automatisierte Tests gegen alle Live-Endpunkte ausführen; realistische Drei-Inventar-Monte-Carlo-Simulation mit 5 Kisten/Partie, allen Materialraritäten und -qualitäten, 10:1 Seltenheitstausch, 5:1 Veredelung, Fehlversuchen, Boss- und Kartenfortschritt. Erst danach Kapiteln 4–10 und Bosswerte numerisch feinabstimmen. Keine unbelegten 300-Partien-Prognosen als Messergebnis ausgeben.
+
 **Status:** Isoliertes, getestetes Server-Regelmodul. Noch nicht an die Live-APIs angeschlossen.
 
 ## Regeln
