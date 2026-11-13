@@ -16,7 +16,7 @@ import { installDogGroupBossApi } from "./dog-group-boss.js";
 import { createDogBossPushHub } from "./dog-boss-push.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
 import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
-import { installDogLivePilotApi,isLiveBotTeam,mirrorLiveBotVictory,
+import { isLiveBotTeam,mirrorLiveBotVictory,
  readyWithLiveBots,advanceLiveBotFight,advanceAllLiveBotFights } from "./dog-live-bots.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
@@ -4367,12 +4367,9 @@ installDogBossApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
-/* Only the privately activated REAL profile can access the live expedition;
- * all other players get 404 until the event is released to everyone. */
-installDogLivePilotApi(app,{
- verifyProfile:profileStatsV8.identity,
- getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
-});
+// Public 100-Tore release: the old Nova/Titan pilot registration endpoint
+// is intentionally no longer installed. Known bot seats are retired through
+// the authenticated map migration; real player progress remains untouched.
 let dogBossPush=null;
 const liveBotLogic={isLiveBotTeam,mirrorLiveBotVictory,readyWithLiveBots,
  advanceLiveBotFight,advanceAllLiveBotFights};
