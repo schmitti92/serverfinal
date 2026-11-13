@@ -4,7 +4,7 @@ import {
  DOG_MAX_EQUIPMENT_LEVEL,DOG_MAX_SKILL_LEVEL,DOG_SKILLS_PER_BOSS,DOG_SOLO_ATTACKS,DOG_CHEST_STAGES,DOG_CHEST_TYPES,DOG_CHEST_TYPE_IDS,DOG_BALANCE_MATERIALS,
  dogUnlockedLevels,dogChestStage,dogChestOffer,dogChestContents,dogEquipmentCost,dogEquipmentSuccessChance,
  dogWeaponBase,dogArmorBase,dogAttackChances,dogStrike,dogExpectedSoloDamage,dogMaxSoloDamage,
- dogMiniBossHp,dogMiniBossAttack,dogAdaptiveMiniBoss,dogNormalGateChance,dogResolveNormalGate,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss,dogMiniBossFeedback
+ dogMiniBossHp,dogMiniBossAttack,dogAdaptiveMiniBoss,dogNormalGateDifficulty,dogSimulateNormalGate,DOG_NORMAL_ATTACK_STYLES,dogGroupBossHp,dogIncomingDamage,dogHeroHp,dogDefenseChances,dogSimulateMiniBoss,dogMiniBossFeedback
 } from '../dog-balance.js';
 
 const seeded=(initial=987321)=>{let seed=initial>>>0;return max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor((seed/2**32)*max)};};
@@ -263,53 +263,82 @@ test('Mini-boss produces a bounded animation timeline and useful defeat feedback
  assert.throws(()=>dogMiniBossFeedback(null),/DOG_BALANCE_INVALID_FIGHT_REPORT/);
 });
 
-test('Normal gate chance is a smooth 30% to 80% readiness calculation',()=>{
- const g=13;
- const weak=dogNormalGateChance({gate:g,weaponLevel:1,armorLevel:1});
- assert.equal(weak.chancePercent,30);
- const good=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2});
- assert.equal(good.chancePercent,60);
- const skills={attack_power:10,critical:10,vitality:10,resilience:10};
- const best=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2,skills});
- assert.equal(best.chancePercent,80);
- const medium=dogNormalGateChance({gate:g,weaponLevel:2,armorLevel:2,
-   skills:{attack_power:5,critical:5,vitality:5,resilience:5}});
- assert.equal(medium.chancePercent,70);
- assert.equal(dogNormalGateChance({gate:13,weaponLevel:1,armorLevel:1,
-  skills:{attack_power:5,critical:5,vitality:5,resilience:5}}).chancePercent,40);
- assert.ok(dogNormalGateChance({gate:4}).chancePercent>=30);
- assert.throws(()=>dogNormalGateChance({gate:5}),/INVALID_NORMAL_GATE/);
- assert.throws(()=>dogNormalGateChance({gate:10}),/INVALID_NORMAL_GATE/);
- assert.throws(()=>dogNormalGateChance({gate:100}),/INVALID_NORMAL_GATE/);
+test('every ordinary Tor has fixed HP, attack strength and recommended real 1–50 forge levels',()=>{
+ assert.deepEqual(DOG_NORMAL_ATTACK_STYLES.map(s=>s.id),['quick','power','precise']);
+ for(let gate=1;gate<=99;gate++){
+  if(gate%5===0)continue;
+  const pos=(gate-1)%10+1;
+  const chapter=Math.floor((gate-1)/10)+1;
+  const recommended=(chapter-1)*5+1+Math.floor((pos-1)/2);
+  const info=dogNormalGateDifficulty(gate);
+  assert.equal(info.recommendedWeaponLevel,recommended,'Tor '+gate+' weapon');
+  assert.equal(info.recommendedArmorLevel,recommended,'Tor '+gate+' armor');
+  assert.equal(info.chapter,chapter);
+  assert.equal(info.step,pos);
+  assert.ok(info.enemyMaxHp>0&&info.enemyAttack>0);
+  assert.ok(Object.isFrozen(info),'fixed server difficulty cannot be mutated');
+  assert.deepEqual(dogNormalGateDifficulty(gate),info);
+ }
+ for(const gate of [0,5,10,15,20,25,50,100,101,-1])
+  assert.throws(()=>dogNormalGateDifficulty(gate),/INVALID_NORMAL_GATE/);
+ assert.equal(dogNormalGateDifficulty(1).recommendedWeaponLevel,1);
+ assert.equal(dogNormalGateDifficulty(9).recommendedWeaponLevel,5);
+ assert.equal(dogNormalGateDifficulty(11).recommendedWeaponLevel,6);
+ assert.equal(dogNormalGateDifficulty(99).recommendedWeaponLevel,50);
 });
-
-test('Equipment is more influential than full mastery on every normal chapter',()=>{
- for(const gate of [13,33,63,93]){
-  const recommended=Math.floor((gate-1)/10)+1;
-  const masterySkills={attack_power:recommended*5,critical:recommended*5,
-   vitality:recommended*5,resilience:recommended*5};
-  const base={gate,weaponLevel:recommended-1,armorLevel:recommended-1};
-  const weak=dogNormalGateChance(base);
-  const skillOnly=dogNormalGateChance({...base,skills:masterySkills});
-  const gearOnly=dogNormalGateChance({...base,weaponLevel:recommended,
-   armorLevel:recommended});
-  assert.equal(weak.chancePercent,30);
-  assert.equal(skillOnly.chancePercent,50);
-  assert.equal(gearOnly.chancePercent,60);
-  assert.equal(dogNormalGateChance({...base,weaponLevel:recommended,
-   armorLevel:recommended,skills:masterySkills}).chancePercent,80);
+test('a fixed recommended weapon and armor win; clearly weaker gear loses without random dice',()=>{
+ for(let gate=1;gate<=99;gate++){
+  if(gate%5===0)continue;
+  const recommended=dogNormalGateDifficulty(gate).recommendedWeaponLevel;
+  const prepared=dogSimulateNormalGate({gate,weaponLevel:recommended,armorLevel:recommended});
+  assert.equal(prepared.win,true,'recommended 1–50 gear should win Tor '+gate);
+  assert.equal(prepared.enemyRemainingHp,0);
+  assert.ok(prepared.heroRemainingHp>0);
+  if(recommended>=3){
+   const unprepared=dogSimulateNormalGate({gate,weaponLevel:recommended-2,armorLevel:recommended-2});
+   assert.equal(unprepared.win,false,'weak gear should not beat Tor '+gate);
+   assert.equal(unprepared.heroRemainingHp,0);
+   assert.ok(unprepared.enemyRemainingHp>0);
+  }
  }
 });
-
-test('Normal fight uses one server random draw and is retry-safe at the API level',()=>{
- const options={gate:13,weaponLevel:2,armorLevel:2};
- assert.equal(dogResolveNormalGate(options,()=>5999).win,true);
- assert.equal(dogResolveNormalGate(options,()=>6000).win,false);
- assert.equal(dogResolveNormalGate({...options,skills:{attack_power:10,critical:10,
-  vitality:10,resilience:10}},()=>7999).win,true);
- assert.throws(()=>dogResolveNormalGate(options,()=>10000),/INVALID_RANDOM/);
- // The pure helper must be stored once in a server receipt; it is NOT a
- // replacement for an authenticated, idempotent API endpoint.
+test('three hero attack styles alternate with guaranteed enemy retaliation until a fighter reaches 0 LP',()=>{
+ for(const options of [
+  {gate:9,weaponLevel:5,armorLevel:5},
+  {gate:9,weaponLevel:1,armorLevel:1},
+  {gate:99,weaponLevel:50,armorLevel:50}
+ ]){
+  const f=dogSimulateNormalGate(options);
+  assert.equal(f.model,'alternating-three-attacks-v1');
+  assert.equal(f.timeline.filter(e=>e.actor==='hero').length,f.rounds);
+  assert.equal(f.timeline.at(-1).actor,f.win?'hero':'enemy');
+  assert.deepEqual(f.attacks.map(x=>x.id),['quick','power','precise']);
+  assert.deepEqual(f.timeline.filter(e=>e.actor==='hero').slice(0,3).map(e=>e.style),['quick','power','precise']);
+  assert.deepEqual(f.timeline.map(e=>e.actor).slice(0,6),['hero','enemy','hero','enemy','hero','enemy']);
+  assert.ok(f.rounds<40,'duel must terminate briskly');
+  assert.equal(f.attacks.reduce((sum,a)=>sum+a.damage,0),f.enemyDamageTaken);
+  assert.equal(f.attacks.reduce((sum,a)=>sum+a.enemyDamage,0),f.heroDamageTaken);
+  assert.equal(f.heroRemainingHp===0||f.enemyRemainingHp===0,true);
+  assert.deepEqual(dogSimulateNormalGate(options),f,'identical equipment always produces identical result');
+ }
+});
+test('attack, armor, and combat skills affect REAL combat values independently',()=>{
+ const base=dogSimulateNormalGate({gate:9,weaponLevel:2,armorLevel:2});
+ const weapon=dogSimulateNormalGate({gate:9,weaponLevel:5,armorLevel:2});
+ const armor=dogSimulateNormalGate({gate:9,weaponLevel:2,armorLevel:5});
+ const upgraded=dogSimulateNormalGate({gate:9,weaponLevel:5,armorLevel:5});
+ assert.equal(base.win,false);
+ assert.equal(upgraded.win,true);
+ assert.ok(weapon.enemyDamageTaken>base.enemyDamageTaken,'weapon must increase real damage');
+ assert.ok(armor.heroMaxHp>base.heroMaxHp,'armor must increase actual HP');
+ assert.ok(upgraded.heroRemainingHp>0);
+ const skillLevels={attack_power:5,double_strike:5,destruction:5,precision:5,critical:5,
+  vitality:5,resilience:5,regeneration:5,blocking:5,evasion:5,last_stand:5};
+ const trained=dogSimulateNormalGate({gate:9,weaponLevel:5,armorLevel:5,skills:skillLevels});
+ assert.ok(trained.heroMaxHp>upgraded.heroMaxHp);
+ assert.ok(trained.attacks[0].damage>=upgraded.attacks[0].damage);
+ assert.ok(trained.heroRemainingHp>upgraded.heroRemainingHp);
+ assert.ok(trained.healing>=0);
 });
 
 test('Mini-boss adjustment is bounded and never punishes weak builds',()=>{
