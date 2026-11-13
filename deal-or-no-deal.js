@@ -7,13 +7,15 @@ const MAX_MATCH_CREDIT_CENTS=5_000_000_000;
 // Legacy schedules are frozen to preserve already running games.
 const STEPS=[5,4,4,3,2,2,1,1],STEPS_29=[6,5,5,4,3,2,2,1],
  STEPS_30=[6,5,5,4,3,3,2,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
-// Two equally likely, brisk Banker cadences for 30-case matches.
-// With three players, every new game ALWAYS calls after opened cases 25, 26
-// and 27. A call on 27 precedes the reveal of the three personal cases.
-// Old games keep their already-persisted schedule unchanged.
+// Exactly two possible Banker cadences for NEW matches. Variant 1 has
+// one extra offer (7 total); variant 2 has three extra offers (9 total).
+// Canonical cumulative checkpoints are for 30 cases / three players.
+// In BOTH variants the last three calls are always at cases 25, 26, 27,
+// the last call being BEFORE any personal suitcase is opened.
+// Existing matches retain their saved Banker schedule unchanged.
 const BANKER_30_OPENINGS=Object.freeze([
- Object.freeze([9,17,23,25,26,27]), // Variant 1: brisk early, tense ending
- Object.freeze([9,14,20,25,26,27])  // Variant 2: more suspense mid-game
+ Object.freeze([9,15,20,23,25,26,27]),       // Fast: 7 offers
+ Object.freeze([9,12,15,18,21,23,25,26,27]) // Suspense: 9 offers
 ]);
 const openingToSteps=targets=>targets.map((count,i)=>count-(i?targets[i-1]:0));
 function pick30BankerSchedule(random=crypto.randomInt){
@@ -21,26 +23,29 @@ function pick30BankerSchedule(random=crypto.randomInt){
  if(!Number.isInteger(index)||index<0||index>=BANKER_30_OPENINGS.length)throw Error('INVALID_BANKER_VARIANT_ROLL');
  return {variant:index+1,steps:openingToSteps(BANKER_30_OPENINGS[index])};
 }
-// Every NEW 26–30-case match uses exactly one of TWO Banker cadences.
-// All milestones are cumulative opened non-personal cases. The last three
-// offers are guaranteed before any personal suitcase is revealed.
-// Old matches retain their saved sequence and legacy fallback unchanged.
+// Two variants for every NEW 26–30-case game. Scale early calls to the
+// actual number of openable cases and preserve the opening batch in 30-case
+// games. The final three offers always cover the final three openable cases.
 function buildBankerTargets(variant,caseCount,playerCount){
  if(!Number.isInteger(variant)||variant<1||variant>BANKER_30_OPENINGS.length||
   ![26,27,28,29,30].includes(caseCount)||
   !Number.isInteger(playerCount)||playerCount<1||playerCount>4)throw Error('INVALID_BANKER_SCHEDULE');
- const maxOpened=caseCount-playerCount;
- const finale=[maxOpened-2,maxOpened-1,maxOpened];
- const reference=BANKER_30_OPENINGS[variant-1];
- if(caseCount===30){
-  const first=playerCount*3;
-  const earlier=reference.filter(target=>target>first&&target<finale[0]).slice(0,2);
-  return [...new Set([first,...earlier,...finale])].sort((a,b)=>a-b);
- }
- // Proportional spacing retains the recognizable fast/suspenseful style.
- const earlier=reference.slice(0,3).map(target=>Math.round(target*maxOpened/27));
- const targets=[...earlier,...finale];
- if(new Set(targets).size!==6||targets[0]<1||targets[2]>=finale[0])throw Error('INVALID_BANKER_SCHEDULE');
+ const lastOpened=caseCount-playerCount;
+ const finalCalls=[lastOpened-2,lastOpened-1,lastOpened];
+ const earlyReference=BANKER_30_OPENINGS[variant-1].slice(0,-3);
+ const early=caseCount===30?
+  // First offer follows the three-picks-per-player batch, then mid-game
+  // targets are proportionally spaced from that batch to the finale.
+  [playerCount*3,...earlyReference.slice(1).map(target=>
+   Math.round(playerCount*3+(target-9)*(finalCalls[0]-playerCount*3)/16))]:
+  // With smaller boards there is no batch, so scale all early calls
+  // relative to the first final call (25 in the canonical schedule).
+  earlyReference.map(target=>Math.round(target*finalCalls[0]/25));
+ const targets=[...early,...finalCalls];
+ const expected=variant===1?7:9;
+ if(targets.length!==expected||targets[0]<1||
+  targets.some((target,i)=>target>lastOpened||(i>0&&target<=targets[i-1])))
+  throw Error('INVALID_BANKER_SCHEDULE');
  return targets;
 }
 // Every new game has its own banker personality; old games default to balanced.
@@ -107,7 +112,7 @@ function apply(g,actor,command,random=crypto.randomInt){
   next.opened.push(next.pending.case);next.roundOpened++;
   next.events.push({type:'opened',case:next.pending.case,amount:next.values[next.pending.case],playerId:p.id,eventId:next.pending.eventId});
   next.turnIndex=(next.order.indexOf(p.id)+1)%next.order.length;next.pending=null;
-  // All NEW 26-30-case games have one of the two persisted six-call schedules.
+  // All NEW 26–30-case games have one of the two persisted 7/9-call schedules.
   // Old running games without a variant retain their original legacy cadence.
   const steps=Array.isArray(next.bankerSchedule)?next.bankerSchedule:STEPS;
   if(next.bankerScheduleVariant){
@@ -158,9 +163,14 @@ function offer(g,random){
  const concentration=avg>0?Math.max(0,Math.min(1,(avg-median)/avg)):0;
  // Progressively more tempting offers, based on the actual remaining expected value.
  const ranges=[[.35,.48],[.43,.57],[.52,.67],[.61,.76],[.70,.84],[.78,.92],[.85,.98],[.90,1.05]];
- const index=Math.min(g.round,ranges.length-1);
- const [low,high]=ranges[index];
- const progress=Math.min(1,g.round/7);
+ const modern=!!g.bankerScheduleVariant&&[7,9].includes(g.bankerSchedule?.length);
+ const progress=modern?Math.min(1,g.round/(g.bankerSchedule.length-1)):
+  Math.min(1,g.round/7);
+ const scaled=modern?progress*(ranges.length-1):Math.min(g.round,ranges.length-1);
+ const index=Math.floor(scaled),blend=scaled-index;
+ const other=Math.min(index+1,ranges.length-1);
+ const low=ranges[index][0]*(1-blend)+ranges[other][0]*blend;
+ const high=ranges[index][1]*(1-blend)+ranges[other][1]*blend;
  const roll=()=>random(10001)/10000;
  let factor=low+(high-low)*roll();
  // When the board is dominated by one jackpot, the banker prices its volatility.
