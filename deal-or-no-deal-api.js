@@ -350,6 +350,32 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    res.set('Cache-Control','no-store');return res.json(result);
   }catch(e){return fail(res,e)}
  });
+ // Only one read on a new device and one idempotent acknowledgement per profile.
+ // The notice is deliberately independent of rooms and match restarts.
+ const updateNoticeCollection='deal_update_announcements_v1';
+ const updateNoticeField='slotDogSeason2AcknowledgedAt';
+ app.get('/api/deal-or-no-deal/update-notice/slot-dog-season2',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const snap=await db.collection(updateNoticeCollection).doc(req.dealIdentity.uid).get();
+   const acknowledgedAt=Number(snap.data()?.[updateNoticeField]||0);
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,noticeId:'slot-dog-season2',acknowledged:Number.isSafeInteger(acknowledgedAt)&&acknowledgedAt>0});
+  }catch(e){return fail(res,e)}
+ });
+ app.post('/api/deal-or-no-deal/update-notice/slot-dog-season2/ack',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const ref=db.collection(updateNoticeCollection).doc(req.dealIdentity.uid);
+   const result=await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref),previous=Number(snap.data()?.[updateNoticeField]||0);
+    if(Number.isSafeInteger(previous)&&previous>0)return {acknowledged:true,firstTime:false};
+    tx.set(ref,{[updateNoticeField]:Date.now()}, {merge:true});
+    return {acknowledged:true,firstTime:true};
+   });
+   res.set('Cache-Control','no-store');return res.json({ok:true,noticeId:'slot-dog-season2',...result});
+  }catch(e){return fail(res,e)}
+ });
  app.get('/api/deal-or-no-deal/shop/catalog',auth,(req,res)=>res.json({ok:true,items:SHOP_ITEMS,minPrice:100000000}));
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
