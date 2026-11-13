@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DOG_S2_CARDS,dogS2Progress,dogS2CycleProgress,dogS2AdvanceCycles,
- dogS2OpenGrantedPacks,dogS2Duplicates} from '../dog-album-season2.js';
+ dogS2OpenGrantedPacks,dogS2Duplicates,dogS2BaselineAfterTrade} from '../dog-album-season2.js';
 
 const first=()=>DOG_S2_CARDS.slice(0,16);
 const fullBoard=()=>Object.fromEntries(first().map(card=>[card.id,1]));
@@ -60,4 +60,16 @@ test('re-collected DOG cards are marked new within the current cycle while exist
  const opened=dogS2OpenGrantedPacks('small',1,lifetime,()=>0,base);
  assert.equal(opened.openedPacks[0].revealed[0].isNew,true);
  assert.equal(opened.cards[first()[0].id],6);
+});
+
+test('exchanging DOG duplicates never delays the next board by stale baseline counts',()=>{
+ const card=DOG_S2_CARDS[0];
+ const oldCards={[card.id]:50},afterTrade={[card.id]:1},base={[card.id]:50};
+ const adjusted=dogS2BaselineAfterTrade(oldCards,afterTrade,base);
+ assert.equal(adjusted[card.id],1,'baseline follows redeemed duplicate copies down');
+ assert.equal(dogS2CycleProgress(afterTrade,{cycleBase:adjusted}).boards[0].collected,0);
+ const nextCards={[card.id]:2};
+ assert.equal(dogS2CycleProgress(nextCards,{cycleBase:adjusted}).boards[0].collected,1,
+  'the next copy is recognized as new in the current DOG round');
+ assert.equal(dogS2Duplicates(nextCards).available,1,'underlying card copy balance is unchanged');
 });
