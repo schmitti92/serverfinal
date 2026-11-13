@@ -5,7 +5,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam,bossSelectHero,dogHeroClass} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
-import {dogNormalGateChance,dogResolveNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
+import {dogSimulateNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
 import {dogDrawMiniReward,dogMiniRewardDocument,DOG_MINI_REWARD_COLLECTIONS} from './dog-mini-rewards.js';
 import {dogForgeCombatTier} from './dog-forge-progression.js';
 
@@ -196,11 +196,14 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
  if(player.lastAttemptAt&&now-player.lastAttemptAt<DOG_GATE_COOLDOWN_MS)
   throw Error('DOG_GATE_COOLDOWN');
  const levels=dogHero(heroRaw).levels;
- const gear={weaponLevel:dogForgeCombatTier(levels.weapon),armorLevel:dogForgeCombatTier(levels.armor),
-  skills:levels};
+ // Mini-bosses keep their proven ten-tier balancing. Ordinary gates use
+ // the genuine 1–50 levels of the weapon and armor for deterministic combat.
+ const bossGear={weaponLevel:dogForgeCombatTier(levels.weapon),
+  armorLevel:dogForgeCombatTier(levels.armor),skills:levels};
  const fight=mini(gate)?
-  dogSimulateMiniBoss({gate,...gear,rand}):
-  dogResolveNormalGate({gate,...gear},rand);
+  dogSimulateMiniBoss({gate,...bossGear,rand}):
+  dogSimulateNormalGate({gate,weaponLevel:levels.weapon,
+   armorLevel:levels.armor,skills:levels});
  const success=mini(gate)?fight.victory:fight.win;
  const nextGate=success?Math.min(100,gate+1):gate;
  const nextPlayer={currentGate:nextGate,
@@ -211,27 +214,7 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
   lastAttemptAt:now,lastResult:success?'win':'loss'};
  const next={...state,people:{...state.people,[uid]:nextPlayer},updatedAt:now};
  const result={gate,type:mini(gate)?'mini':'normal',win:success,
-  ...(mini(gate)?{combat:fight,miniRewardPending:success}:{
-   chancePercent:fight.chancePercent,roll:fight.roll,
-   combatStats:(()=>{
-    // Normal gates use a single server roll; HP/damage are an explanatory
-    // deterministic combat summary, not a second win condition or RNG draw.
-    const enemyMaxHp=100+gate*15;
-    const heroMaxHp=100+Math.round((gear.armorLevel||1)*20);
-    const heroDamage=success?enemyMaxHp:
-     Math.min(enemyMaxHp-1,Math.max(1,Math.round(enemyMaxHp*
-      (.20+.65*(fight.chancePercent/100)))));
-    const enemyDamage=success?
-     Math.round(heroMaxHp*(.12+.40*(fight.roll/10000))):
-     heroMaxHp;
-    return {enemyMaxHp,enemyRemainingHp:enemyMaxHp-heroDamage,
-     enemyDamageTaken:heroDamage,heroMaxHp,
-     heroRemainingHp:Math.max(0,heroMaxHp-enemyDamage),
-     heroDamageTaken:enemyDamage,
-     chancePercent:fight.chancePercent,
-     weaponLevel:gear.weaponLevel,armorLevel:gear.armorLevel,
-     model:'single-roll-summary-v1'};
-   })()}),
+  ...(mini(gate)?{combat:fight,miniRewardPending:success}:{combatStats:fight}),
   currentGate:nextPlayer.currentGate};
  return {progress:next,result};
 }
