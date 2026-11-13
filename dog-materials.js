@@ -180,7 +180,7 @@ export function openDogChestInInventory(input,drop,now=Date.now(),sourceTier=dro
    openedAt:now},...old.recent].slice(0,6),
   updatedAt:now};
 }
-const ERROR_STATUS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,INVALID_DOG_CHEST_TIER:400,
+const ERROR_STATUS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,INVALID_DOG_CHEST_TIER:400,INVALID_DOG_CHEST_QUANTITY:400,DOG_CHEST_BATCH_TOO_LARGE:409,
  NO_DOG_CHESTS:409,NO_DOG_CHEST_TYPE:409,DOG_MATERIALS_LIMIT:409,
  DOG_CHEST_STORAGE_INVALID:409,DOG_CHEST_STORAGE_LIMIT:409});
 export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=randomInt}){
