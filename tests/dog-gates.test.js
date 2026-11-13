@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dogGateProgress,dogGateMapView,dogGateFight,installDogGatesApi,
+import {dogGateProgress,dogGateMapView,dogGateFight,dogPublicEnroll,installDogGatesApi,
  DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,DOG_GATE_RECEIPTS_COLLECTION} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
@@ -308,4 +308,56 @@ test('Three expedition hero appearances are saved per player without changing co
   ['waechter','krieger','waechter']);
  assert.deepEqual(groupBossView(20,team,null,'hero-a',at).members.map(x=>x.heroClass),
   ['waechter','krieger','waechter']);
+});
+
+test('public launch replaces live preview bots with real players and preserves the first human progress',async()=>{
+ const f=fixture();
+ const bots=['dog-live-bot-nova','dog-live-bot-titan'];
+ const teamKey=DOG_BOSS_TEAM_COLLECTION+'/'+DOG_BOSS_TEAM_ID;
+ const progressKey=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ f.docs.set(teamKey,{members:[
+  {uid:'hero-a',name:'Chris'}, {uid:bots[0],name:'Nova'}, {uid:bots[1],name:'Titan'}
+ ],heroClasses:{'hero-a':'krieger',[bots[0]]:'magierin',[bots[1]]:'waechter'},
+ heroLocks:{'hero-a':true,[bots[0]]:true,[bots[1]]:true}});
+ f.docs.set(progressKey,{people:{
+  'hero-a':{currentGate:19,highestGate:20,normals:[1,2,3],minis:[5]},
+  [bots[0]]:{currentGate:19,highestGate:19,normals:[1,2],minis:[5]},
+  [bots[1]]:{currentGate:19,highestGate:19,normals:[1,2],minis:[5]}
+ },sharedBosses:[10],forgeLevel:2});
+ const before=await f.call('GET','/api/dog/gates/map',{},'b');
+ assert.equal(before.body.canJoin,true,'bot seats count as open public seats');
+ assert.deepEqual(before.body.members,[],'outsiders do not see pilot names');
+ const guest=await f.call('POST','/api/dog/gates/hero',{heroClass:'magierin'},'b');
+ assert.equal(guest.statusCode,200,JSON.stringify(guest.body));
+ assert.equal(guest.body.isMember,true);
+ assert.equal(guest.body.members.length,3);
+ assert.equal(guest.body.members.some(p=>p.uid==='hero-b'&&p.heroLocked),true);
+ assert.equal(guest.body.members.some(p=>p.uid===bots[0]),false);
+ const second=await f.call('POST','/api/dog/gates/hero',{heroClass:'waechter'},'c');
+ assert.equal(second.statusCode,200,JSON.stringify(second.body));
+ assert.deepEqual(second.body.members.map(p=>p.uid),['hero-a','hero-b','hero-c']);
+ assert.equal(second.body.members.find(p=>p.uid==='hero-c').heroLocked,true);
+ const stored=f.docs.get(progressKey);
+ assert.equal(stored.people['hero-a'].highestGate,20);
+ assert.equal(stored.forgeLevel,2);
+ assert.deepEqual(stored.sharedBosses,[10]);
+ assert.ok(!bots.some(id=>id in stored.people),'old test-bot progress removed from active three positions');
+ assert.equal(f.docs.get(teamKey).members.length,3);
+ const unavailable=await f.call('POST','/api/dog/gates/hero',{heroClass:'krieger'},'d');
+ assert.equal(unavailable.statusCode,409);
+ assert.equal(unavailable.body.error,'DOG_GATE_TEAM_FULL');
+ const again=await f.call('POST','/api/dog/gates/hero',{heroClass:'magierin'},'b');
+ assert.equal(again.statusCode,200,'existing hero retains their final choice');
+});
+
+test('pilot bot slot replacement is blocked during active group combat and succeeds afterward',()=>{
+ const bots=['dog-live-bot-nova','dog-live-bot-titan'];
+ const team={members:[{uid:'owner',name:'Chris'},{uid:bots[0],name:'Nova'},{uid:bots[1],name:'Titan'}]};
+ const raw={people:{owner:{currentGate:10},[bots[0]]:{currentGate:10},[bots[1]]:{currentGate:10}},boss10:{phase:'fighting'}};
+ assert.equal(dogGateMapView(team,raw,'new-user').canJoin,false);
+ assert.throws(()=>dogPublicEnroll(team,raw,'new-user','David'),/DOG_GATE_BOSS_ACTIVE/);
+ const done=dogPublicEnroll(team,{...raw,boss10:{phase:'victory'}},'new-user','David');
+ assert.equal(done.retiredBot,bots[0]);
+ assert.deepEqual(done.team.members.map(m=>m.uid),['owner',bots[1],'new-user']);
+ assert.equal(done.progress.people.owner.currentGate,10);
 });
