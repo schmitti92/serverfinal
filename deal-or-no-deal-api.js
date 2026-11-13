@@ -4,7 +4,7 @@ import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveri
 import {FieldValue} from 'firebase-admin/firestore';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
-import {dogChestOffer} from './dog-balance.js';
+import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
 import {drawMonsterSlots,MONSTER_SLOTS_WEIGHTS} from './monster-slots.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
@@ -290,8 +290,11 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const packs={},hammers={};
     for(const prize of prizes){
      if(prize.kind==='chest'){
-      const sample=dogChestOffer(gate);
-      inventory=addExpeditionChestToInventory(inventory,{...sample,tier:prize.id});
+      const spec=DOG_CHEST_TYPES[prize.id];
+      if(!spec)throw Error('INVALID_SLOT_CHEST');
+      const count=spec.countWeights?(randomInt(100)<50?1:randomInt(100)<70?2:3):
+       spec.min+randomInt(spec.max-spec.min+1);
+      inventory=addExpeditionChestToInventory(inventory,{version:4,stage:dogChestStage(gate),tier:prize.id,count});
      }else if(prize.kind==='pack')packs[prize.id]=(packs[prize.id]||0)+prize.quantity;
      else if(prize.kind==='hammer')hammers[prize.id]=(hammers[prize.id]||0)+prize.quantity;
      else if(prize.kind==='joker')jokers+=prize.quantity;
