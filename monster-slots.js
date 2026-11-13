@@ -6,6 +6,28 @@ export const MONSTER_SLOTS_WEIGHTS=Object.freeze({
  chest:35000,pack:30000,hammer:20000,joker:4000,minigame:3000,monster:3000,cash:5000
 });
 export const MONSTER_SLOTS_COUNT=3;
+// Deal or No Deal: one unique champion earns 3 reels, one unique runner-up
+// earns 1 reel in games with >=3 participants, everyone else earns none.
+// Tied champions earn no slots; ×2 wallet bonuses never affect ranking.
+export function monsterSlotPlacements(payouts=[]){
+ if(!Array.isArray(payouts)||payouts.length<1||payouts.length>4||
+  payouts.some(p=>typeof p?.uid!=='string'||!p.uid||
+   !Number.isSafeInteger(p.amount)||p.amount<0)||
+  new Set(payouts.map(p=>p.uid)).size!==payouts.length)
+  throw Error('INVALID_SLOT_RANKINGS');
+ const amounts=[...new Set(payouts.map(p=>p.amount))].sort((a,b)=>b-a);
+ const top=payouts.filter(p=>p.amount===amounts[0]);
+ const uniqueChampion=top.length===1;
+ const secondAmount=amounts[1];
+ const second=uniqueChampion&&payouts.length>=3&&secondAmount!==undefined?
+  payouts.filter(p=>p.amount===secondAmount):[];
+ return new Map(payouts.map(p=>[p.uid,{
+  rank:amounts.indexOf(p.amount)+1,
+  reels:uniqueChampion&&p.amount===amounts[0]?3:
+   second.length===1&&p.uid===second[0].uid?1:0,
+  tiedTop:!uniqueChampion
+ }]));
+}
 const tiers=['wood','iron','silver','gold','legendary'];
 const types=['small','large','premium','platinum'];
 const hammers=['single','double','lucky'];
