@@ -199,37 +199,110 @@ export function dogGroupBossHp(gate){
  return Math.ceil(3*6*(dogExpectedSoloDamage(gear,skills)/DOG_SOLO_ATTACKS)*
   .85*chapterPressure);
 }
-/** A mini-boss scales its attacks with the armor level newly unlocked by the
- * prior shared boss. 80% telegraphed retaliation probability, not certainty. */
-/** Server-owned outcomes for ordinary, non-boss gates. The chances are a
- * smooth 30–80% scale. Skills contribute ONLY through percentage-based
- * mastery, not arbitrary absolute damage thresholds. */
-export function dogNormalGateChance({gate,weaponLevel=1,armorLevel=1,skills={}}={}){
+/** Fixed, deterministic enemy difficulty for every non-boss Tor (1–99).
+ * No per-fight random roll, no adapting an enemy to the player's stats.
+ * Five actual weapon/armor upgrades matter inside each ten-gate chapter.
+ * Gate 1 recommends level 1; gate 9 recommends level 5; gate 11 level 6;
+ * and gate 99 level 50 (forge gates still lock later chapters normally).
+ */
+export const DOG_NORMAL_ATTACK_STYLES=Object.freeze([
+ Object.freeze({id:'quick',hero:'Schneller Hieb',enemy:'Schneller Konter',icon:'⚡'}),
+ Object.freeze({id:'power',hero:'Kraftschlag',enemy:'Schwerer Schlag',icon:'💥'}),
+ Object.freeze({id:'precise',hero:'Präzisionsstoß',enemy:'Gezielter Angriff',icon:'🎯'})
+]);
+const dogNormalEquipmentLevel=value=>Number.isSafeInteger(value)?
+ Math.max(1,Math.min(50,value)):1;
+const dogNormalEquipmentPower=value=>{
+ const level=dogNormalEquipmentLevel(value);
+ return DOG_BASE_WEAPON_DAMAGE*2**Math.floor((level-1)/5)*
+  (1+.16*((level-1)%5));
+};
+export function dogNormalGateDifficulty(gate){
  if(!Number.isSafeInteger(gate)||gate<1||gate>99||gate%5===0)
   throw Error('DOG_BALANCE_INVALID_NORMAL_GATE');
- const stage=Math.floor((gate-1)/10);
- const recommendedEquipment=stage+1;
- const recommendedSkillCap=Math.min(50,recommendedEquipment*DOG_SKILLS_PER_BOSS);
- const top2=keys=>keys.map(k=>skill(skills,k)).sort((a,b)=>b-a).slice(0,2)
-  .reduce((sum,n)=>sum+n,0)/(recommendedSkillCap*2);
- const attackMastery=Math.min(1,top2([
-  'attack_power','destruction','precision','critical','double_strike']));
- const defenseMastery=Math.min(1,top2([
-  'vitality','resilience','regeneration','blocking','evasion','last_stand']));
- const mastery=(attackMastery+defenseMastery)/2;
- // The first chapter starts at gear 1; only mastery can improve its odds.
- // A full equipment upgrade contributes more than the skill mastery bonus.
- const weaponReady=stage===0?0:Math.max(0,Math.min(1,gearLevel(weaponLevel)-(recommendedEquipment-1)));
- const armorReady=stage===0?0:Math.max(0,Math.min(1,gearLevel(armorLevel)-(recommendedEquipment-1)));
- const equipmentReady=(weaponReady+armorReady)/2;
- const chancePercent=Math.max(30,Math.min(80,Math.round(30+30*equipmentReady+20*mastery)));
- return {gate,chancePercent,equipmentReady,mastery,
-  recommendedEquipment,recommendedSkillCap};
+ const chapter=Math.floor((gate-1)/10)+1,step=(gate-1)%10+1;
+ const recommendedLevel=(chapter-1)*5+1+Math.floor((step-1)/2);
+ const base=dogNormalEquipmentPower(recommendedLevel);
+ return Object.freeze({gate,chapter,step,
+  recommendedWeaponLevel:recommendedLevel,recommendedArmorLevel:recommendedLevel,
+  enemyMaxHp:Math.ceil(base*(3.1+.075*step)),
+  enemyAttack:Math.ceil(base*(.62+.012*step)),
+  enemyGuard:.04+.007*step});
 }
-export function dogResolveNormalGate(options={},rand=randomInt){
- const calculation=dogNormalGateChance(options);
- const roll=randomDraw(rand,10000);
- return {...calculation,win:roll<calculation.chancePercent*100,roll};
+
+/** Server-authoritative automatic fight: player attacks, surviving enemy
+ * counters, and so on until one side actually reaches 0 LP. Three distinct
+ * alternating attack patterns for both fighters. Every skill modifies a
+ * tangible numeric value; there are NO hit, evade, critical or victory dice.
+ * Rounds beyond ten have deterministic escalating enemy pressure to avoid
+ * overlong stalemates (at most around 35 rounds even with lopsided equipment).
+ */
+export function dogSimulateNormalGate({gate,weaponLevel=1,armorLevel=1,skills={}}={}){
+ const enemy=dogNormalGateDifficulty(gate);
+ const weapon=dogNormalEquipmentLevel(weaponLevel);
+ const armorLevelActual=dogNormalEquipmentLevel(armorLevel);
+ const weaponPower=dogNormalEquipmentPower(weapon);
+ const armorPower=dogNormalEquipmentPower(armorLevelActual);
+ const level=id=>skill(skills,id);
+ const heroMaxHp=Math.ceil(1.45*armorPower*
+  (1+.01*level('vitality')+.004*level('last_stand')));
+ let heroHp=heroMaxHp,enemyHp=enemy.enemyMaxHp;
+ let damageDealt=0,damageTaken=0,healing=0,rounds=0;
+ const timeline=[],attacks=DOG_NORMAL_ATTACK_STYLES.map(style=>({
+  id:style.id,name:style.hero,enemyName:style.enemy,icon:style.icon,
+  hits:0,damage:0,enemyHits:0,enemyDamage:0
+ }));
+ const heroFactors=[
+  .92+.006*level('double_strike')+.003*level('precision'),
+  1.32+.010*level('destruction')+.005*level('critical'),
+  1.08+.009*level('precision')+.004*level('critical')
+ ];
+ const enemyFactors=[.93,1.25,1.04];
+ while(heroHp>0&&enemyHp>0){
+  const index=rounds%3,attack=attacks[index];
+  const strike=Math.max(1,Math.floor(weaponPower*
+   (1+.012*level('attack_power'))*heroFactors[index]*(1-enemy.enemyGuard)));
+  const hit=Math.min(enemyHp,strike);
+  enemyHp-=hit;damageDealt+=hit;attack.hits++;attack.damage+=hit;
+  rounds++;
+  timeline.push({round:rounds,actor:'hero',style:attack.id,name:attack.name,
+   damage:hit,enemyHp,heroHp});
+  if(enemyHp===0)break;
+  // Every surviving enemy counterattacks. No missed turns or pure luck.
+  const fatigue=1.2**Math.max(0,rounds-10);
+  const rawStrike=Math.max(1,Math.ceil(enemy.enemyAttack*enemyFactors[index]*fatigue));
+  const effectiveArmor=armorPower*(1+.01*level('resilience'));
+  const mitigation=Math.min(.65,effectiveArmor/(effectiveArmor+1.5*rawStrike));
+  const skillBlock=index===1?.006*level('blocking'):
+   index===0?.004*level('evasion'):.004*level('last_stand');
+  const damage=Math.max(1,Math.ceil(rawStrike*(1-mitigation)*
+   (1-Math.min(.35,skillBlock))));
+  const suffered=Math.min(heroHp,damage);
+  heroHp-=suffered;damageTaken+=suffered;
+  attack.enemyHits++;attack.enemyDamage+=suffered;
+  const healed=heroHp>0?Math.min(heroMaxHp-heroHp,
+   Math.round(heroMaxHp*.0015*level('regeneration'))):0;
+  heroHp+=healed;healing+=healed;
+  timeline.push({round:rounds,actor:'enemy',style:attack.id,name:attack.enemyName,
+   damage:suffered,healed,enemyHp,heroHp});
+ }
+ const victory=enemyHp===0&&heroHp>0;
+ const missingWeapon=weapon<enemy.recommendedWeaponLevel,
+  missingArmor=armorLevelActual<enemy.recommendedArmorLevel;
+ const feedback=victory?'Stärke und Rüstung haben den Gegner besiegt.':
+  missingWeapon&&missingArmor?'Waffe und Rüstung verbessern.':
+  missingWeapon?'Mehr Angriffskraft durch eine stärkere Waffe aufbauen.':
+  missingArmor?'Rüstung und Lebensenergie verbessern.':
+  'Erhöhe deinen Schaden, Lebenspunkte oder deine Verteidigungsfähigkeiten.';
+ return {model:'alternating-three-attacks-v1',gate,win:victory,
+  enemyMaxHp:enemy.enemyMaxHp,enemyRemainingHp:enemyHp,
+  enemyDamageTaken:damageDealt,enemyAttack:enemy.enemyAttack,
+  heroMaxHp,heroRemainingHp:heroHp,heroDamageTaken:damageTaken,
+  healing,weaponLevel:weapon,armorLevel:armorLevelActual,
+  recommendedWeaponLevel:enemy.recommendedWeaponLevel,
+  recommendedArmorLevel:enemy.recommendedArmorLevel,
+  rounds,attacks,timeline,feedback,
+  chapter:enemy.chapter,step:enemy.step};
 }
 
 const topTwoMastery=(skills,ids,cap)=>{
