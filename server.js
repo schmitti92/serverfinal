@@ -7,7 +7,6 @@ import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installDogMaterialsApi } from "./dog-materials.js";
-import { resetDog100ToreOnce } from "./dog-event-reset-once.js";
 import { installDogForgeApi } from "./dog-forge.js";
 import { installDogBossApi } from "./dog-boss.js";
 import { installDogGatesApi } from "./dog-gates.js";
@@ -8040,22 +8039,4 @@ setInterval(() => {
   }
 }, SNAPSHOT_HEARTBEAT_MS);
 
-// One-time start-of-event reset: wait until the archived Firestore wipe is
-// committed BEFORE accepting any new requests or DOG payouts.
-// This block can be removed after the completion marker is confirmed.
-async function beginAfterOneTimeDogReset(){
- if(!profileProjectMatches||!firestore){
-  console.error("[dog-event-reset] Firestore unavailable: refusing an unreset 100-Tore launch.");
-  process.exitCode=1;
-  return;
- }
- try{
-  await resetDog100ToreOnce(firestore);
- }catch(error){
-  console.error("[dog-event-reset] FAILED; existing data is not reported as reset:",error?.message||error);
-  process.exitCode=1;
-  return;
- }
- server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
-}
-void beginAfterOneTimeDogReset();
+server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
