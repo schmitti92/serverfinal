@@ -1,6 +1,9 @@
 'use strict';
 import * as crypto from 'node:crypto';
 const VALUES=[1,100,500,1000,2500,5000,7500,10000,20000,30000,40000,50000,75000,100000,500000,1000000,2500000,5000000,7500000,10000000,20000000,30000000,40000000,50000000,75000000,100000000,300000000,500000000,1000000000,5000000000];
+// EUR 50,000,000 in cents. This is the maximum cash payout per Deal match,
+// including the purchased x2 bonus (which never changes the match ranking).
+const MAX_MATCH_CREDIT_CENTS=5_000_000_000;
 // Legacy schedules are frozen to preserve already running games.
 const STEPS=[5,4,4,3,2,2,1,1],STEPS_29=[6,5,5,4,3,2,2,1],
  STEPS_30=[6,5,5,4,3,3,2,1],MULT=[.3,.4,.5,.6,.7,.8,.9,1];
@@ -179,9 +182,10 @@ function payoutFor(g,p){
 // Only the final wallet settlement applies the purchased bonus. It never
 // participates in game results or determines who wins the match.
 function cashCreditFor(g,p){
- const base=payoutFor(g,p),credit=base*(p.doublePayout===true?2:1);
- if(!Number.isSafeInteger(credit)||credit<0)throw Error('INVALID_PAYOUT');
- return credit;
+ const base=payoutFor(g,p);
+ const multiplied=base*(p.doublePayout===true?2:1);
+ if(!Number.isSafeInteger(multiplied)||multiplied<0)throw Error('INVALID_PAYOUT');
+ return Math.min(multiplied,MAX_MATCH_CREDIT_CENTS);
 }
 function publicView(g){const {values,commands,bankerStyle,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId,...(Number.isFinite(g.pending.startedAt)?{startedAt:g.pending.startedAt}:{})}:null,openingBatch:g.openingBatch?{...g.openingBatch,...(g.phase==='batch-reveal'?{reveals:g.openingBatch.picks.map(p=>({...p,amount:g.values[p.case]}))}:{})}:undefined,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:payoutFor(g,p)})):null};}
-export {drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,cashCreditFor,free,active,publicRemaining,nextTurn};
+export {MAX_MATCH_CREDIT_CENTS,drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,cashCreditFor,free,active,publicRemaining,nextTurn};
