@@ -511,7 +511,13 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  assert.equal(replay.body.game.caseCount,30);
  assert.equal(replay.body.game.phase,'select');
  assert.equal(docs.get('deal_or_no_deal_matches_v1/123').game.values.length,30);
- assert.equal(docs.get('deal_or_no_deal_wallets_v1/a').balance,5000000000);
+ const awarded=docs.get('deal_monster_slots_receipts_v1/'+game.id+'_a');
+ assert.ok(awarded,'restarting the room settles the champion\'s three slots exactly once');
+ assert.equal(awarded.result.prizes.length,3);
+ const extraCash=awarded.result.prizes.filter(p=>p.kind==='cash')
+  .reduce((sum,p)=>sum+p.amountCents,0);
+ assert.equal(docs.get('deal_or_no_deal_wallets_v1/a').balance,5000000000+extraCash,
+  'the original €50m prize remains intact; additional Slot money is credited separately');
  ws.close();
 });
 
