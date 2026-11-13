@@ -265,6 +265,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // still reveals its included cards immediately. Legacy 22-Bingo winners receive
  // a one-time voucher backfill, without removing any previously opened cards.
  app.post('/api/deal-or-no-deal/christmas/north-pole/claim',auth,async(req,res)=>{
+  // Saison 1 ist beendet; Historie und bereits gutgeschriebene Bestände bleiben gespeichert.
+  return res.status(410).json({ok:false,error:'SEASON_1_ENDED'});
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const uid=req.dealIdentity.uid,now=Date.now();
@@ -404,6 +406,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // ticket, NOT a speculative prize; the wheel/reward catalog comes later.
  // An idempotency receipt makes network retries and competing tabs safe.
  app.post('/api/deal-or-no-deal/christmas/duplicates/exchange',auth,async(req,res)=>{
+  // Saison 1 ist beendet; Historie und bereits gutgeschriebene Bestände bleiben gespeichert.
+  return res.status(410).json({ok:false,error:'SEASON_1_ENDED'});
   try{
    const requestId=String(req.body?.requestId||'');
    if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
@@ -515,6 +519,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // Other Christmas pack sources also persist cards into CHRISTMAS_COLLECTION,
  // so one claim route covers paid packs, banker, 1-cent and final-wheel rewards.
  app.post('/api/deal-or-no-deal/christmas/hammer/claim',auth,async(req,res)=>{
+  // Saison 1 ist beendet; Historie und bereits gutgeschriebene Bestände bleiben gespeichert.
+  return res.status(410).json({ok:false,error:'SEASON_1_ENDED'});
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const uid=req.dealIdentity.uid;
