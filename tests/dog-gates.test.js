@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dogGateProgress,dogGateMapView,dogGateFight,dogPublicEnroll,dogPublicRetireTestBots,installDogGatesApi,
- DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,DOG_GATE_RECEIPTS_COLLECTION} from '../dog-gates.js';
+ DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,DOG_GATE_RECEIPTS_COLLECTION,DOG_NORMAL_GATE_REQUIREMENTS} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
 import {boss10View} from '../dog-boss10.js';
 import {groupBossView} from '../dog-group-boss.js';
+import {dogNormalGateDifficulty} from '../dog-balance.js';
 
 function fixture(){
  const docs=new Map(),routes=new Map(),writes=[];
@@ -53,6 +54,31 @@ function fixture(){
  }
  return {docs,routes,db,writes,call,advance:ms=>time+=ms,now:()=>time};
 }
+
+test('each normal Tor exposes exactly its fixed server-owned HP, attack and equipment levels with no extra Firestore calls',async()=>{
+ assert.equal(DOG_NORMAL_GATE_REQUIREMENTS.length,80);
+ assert.ok(Object.isFrozen(DOG_NORMAL_GATE_REQUIREMENTS));
+ const gates=new Set();
+ for(const expected of DOG_NORMAL_GATE_REQUIREMENTS){
+  const model=dogNormalGateDifficulty(expected.gate);
+  assert.deepEqual(expected,{gate:model.gate,enemyMaxHp:model.enemyMaxHp,
+   enemyAttack:model.enemyAttack,
+   recommendedWeaponLevel:model.recommendedWeaponLevel,
+   recommendedArmorLevel:model.recommendedArmorLevel});
+  assert.ok(Object.isFrozen(expected));
+  gates.add(expected.gate);
+ }
+ assert.equal(gates.size,80);
+ for(const gate of [5,10,15,20,25,30,100])assert.equal(gates.has(gate),false);
+ const view=dogGateMapView(null,null,'hero-a');
+ assert.strictEqual(view.normalGateRequirements,DOG_NORMAL_GATE_REQUIREMENTS);
+ const f=fixture();
+ const beforeWrites=f.writes.length;
+ const map=await f.call('GET','/api/dog/gates/map',{},'a');
+ assert.equal(map.statusCode,200);
+ assert.equal(map.body.normalGateRequirements.length,80);
+ assert.equal(f.writes.length,beforeWrites,'difficulty preview cannot write Firestore');
+});
 
 test('Personal map defaults are not fabricated and contain no DOG unlock',()=>{
  const view=dogGateMapView(null,null,'hero-a');
