@@ -16,7 +16,7 @@ function fakeFirestore(seed={}){
   doc:id=>ref(name+'/'+id),
   get:async()=>({docs:[...store.entries()].filter(([path])=>
    path.startsWith(name+'/')&&path.slice(name.length+1).indexOf('/')<0)
-   .map(([path,data])=>({...ref(path),data:()=>data}))})
+   .map(([path,data])=>({...ref(path),ref:ref(path),data:()=>data}))})
  });
  const getCollections=()=>new Set([...store.keys()].map(path=>path.split('/')[0]));
  return {store,collection,doc:ref,listCollections:async()=>
