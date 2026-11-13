@@ -80,6 +80,16 @@ export const dogS2TournamentMonth=(now=Date.now())=>new Date(now).toISOString().
 const cycleCounts=(cards,baseline)=>Object.fromEntries(DOG_S2_CARDS.map(card=>[
  card.id,Math.max(0,positive(cards?.[card.id])-positive(baseline?.[card.id]))
 ]));
+// Duplicate trading spends physical card copies, but must not make a player
+// re-earn copies that were already traded AFTER a board had been reset.
+export function dogS2BaselineAfterTrade(before={},after={},baseline={}){
+ const adjusted={...baseline};
+ for(const card of DOG_S2_CARDS){
+  const lost=Math.max(0,positive(before[card.id])-positive(after[card.id]));
+  if(lost)adjusted[card.id]=Math.max(0,positive(adjusted[card.id])-lost);
+ }
+ return adjusted;
+}
 export function dogS2CycleProgress(cards={},state={},now=Date.now()){
  const base=state.cycleBase||{};
  const p=dogS2Progress(cycleCounts(cards,base));
@@ -305,10 +315,11 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     if(receipt.exists)return {...receipt.data().result,replayed:true};
     const before=s.exists?s.data():{},legacyData=old.exists?old.data():{};
     const cards=dogS2Redeem(before.cards||{});
+    const cycleBase=dogS2BaselineAfterTrade(before.cards||{},cards,before.cycleBase||{});
     const tickets=positive(legacyData.monsterWheelTickets)+1;
-    const result={cards,progress:dogS2CycleProgress(cards,before),lifetimeProgress:dogS2Progress(cards),duplicates:dogS2Duplicates(cards,tickets),monsterWheelTickets:tickets,replayed:false};
+    const result={cards,progress:dogS2CycleProgress(cards,{...before,cycleBase}),lifetimeProgress:dogS2Progress(cards),duplicates:dogS2Duplicates(cards,tickets),monsterWheelTickets:tickets,replayed:false};
     const now=Date.now();
-    tx.set(sRef,{cards,updatedAt:now},{merge:true});
+    tx.set(sRef,{cards,cycleBase,updatedAt:now},{merge:true});
     tx.set(oldRef,{monsterWheelTickets:tickets,monsterWheelTradeCount:positive(legacyData.monsterWheelTradeCount)+1,updatedAt:now},{merge:true});
     tx.create(rRef,{uid,requestId,result,createdAt:now});
     return result;
