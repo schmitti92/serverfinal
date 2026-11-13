@@ -331,7 +331,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
       version:4,stage:dogChestStage(p.gate),tier:prize.id,count
      });
     }else if(prize.kind==='pack'){
-     const opened=dogS2OpenGrantedPacks(prize.id,prize.quantity,dogCards);
+     const opened=dogS2OpenGrantedPacks(prize.id,prize.quantity,dogCards,randomInt,dogOld.cycleBase||{});
      dogCards=opened.cards;openedDogPacks+=opened.openedPacks.length;
      settledPrizes.push({...prize,openedPacks:opened.openedPacks});
      continue;
