@@ -490,9 +490,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     let updated;
     if(operation==='spin'){
      if(state.phase!=='ready')throw Error('SLOT_SHOW_ALREADY_STARTED');
+     // Allow time for all spectators to open the same shared cabinet.
+     if(now<Number(state.showAt||0))throw Error('SLOT_SHOW_PREPARING');
      const settled=(await settleMonsterSlotsBatch(tx,db,gameId,[state.uid])).get(state.uid);
      if(!settled||settled.prizes.length!==state.reels)throw Error('SLOT_SHOW_REWARD_INVALID');
-     updated={...state,phase:'rolling',startedAt:now,prizes:settled.prizes};
+     // Start in the future, after the authoritative rewards are broadcast,
+     // so every device sees the same absolute reel stop timestamps.
+     updated={...state,phase:'rolling',startedAt:Date.now()+3200,prizes:settled.prizes};
     }else{
      if(state.phase!=='rolling')throw Error('SLOT_SHOW_NOT_STARTED');
      const duration=state.reels===1?3000:6000;
@@ -500,7 +504,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      updated=state.turn==='runner'
       ?{phase:'ready',turn:'champion',uid:state.championUid,reels:3,
          runnerUid:state.runnerUid,championUid:state.championUid,
-         activatedAt:now,startedAt:null,prizes:[]}
+         activatedAt:now,showAt:now+2200,startedAt:null,prizes:[]}
       :{phase:'ceremony',turn:'complete',uid:null,reels:0,
          runnerUid:state.runnerUid,championUid:state.championUid,
          activatedAt:now,startedAt:null,prizes:[],finishedAt:now};
@@ -1249,7 +1253,7 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
      phase:'ready',turn:runner?'runner':'champion',
      uid:runner?.id||winner.id,reels:runner?1:3,
      runnerUid:runner?.id||null,championUid:winner.id,
-     activatedAt:Date.now(),startedAt:null,prizes:[]
+     activatedAt:Date.now(),showAt:Date.now()+2200,startedAt:null,prizes:[]
     };
    }
 
