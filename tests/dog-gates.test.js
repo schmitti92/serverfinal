@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dogGateProgress,dogGateMapView,dogGateFight,dogPublicEnroll,installDogGatesApi,
+import {dogGateProgress,dogGateMapView,dogGateFight,dogPublicEnroll,dogPublicRetireTestBots,installDogGatesApi,
  DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,DOG_GATE_RECEIPTS_COLLECTION} from '../dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from '../dog-boss.js';
 import {DOG_HERO_COLLECTION} from '../dog-forge.js';
@@ -360,4 +360,58 @@ test('pilot bot slot replacement is blocked during active group combat and succe
  assert.equal(done.retiredBot,bots[0]);
  assert.deepEqual(done.team.members.map(m=>m.uid),['owner',bots[1],'new-user']);
  assert.equal(done.progress.people.owner.currentGate,10);
+});
+
+
+test('public migration retires exactly the two old trial bots, preserves human progress and clears stale readiness',()=>{
+ const bots=['dog-live-bot-nova','dog-live-bot-titan'];
+ const team={members:[{uid:'hero-a',name:'Chris'},...bots.map(uid=>({uid,name:uid}))],
+  heroClasses:{'hero-a':'krieger',[bots[0]]:'magierin',[bots[1]]:'waechter'},
+  heroLocks:{'hero-a':true,[bots[0]]:true,[bots[1]]:true}};
+ const progress={people:{
+   'hero-a':{highestGate:27,currentGate:26,normals:[1,2,3],minis:[5]},
+   [bots[0]]:{currentGate:10},
+   [bots[1]]:{currentGate:10}
+  },sharedBosses:[10,20],forgeLevel:3,
+  boss10:{phase:'victory',ready:['hero-a',...bots]},
+  groupBosses:{20:{phase:'victory',ready:['hero-a',...bots]}}};
+ const result=dogPublicRetireTestBots(team,progress,1234567890);
+ assert.equal(result.changed,true);
+ assert.equal(result.team.members.length,1);
+ assert.equal(result.team.members[0].uid,'hero-a');
+ assert.equal(result.team.heroLocks['hero-a'],true);
+ assert.equal(result.progress.people['hero-a'].highestGate,27);
+ assert.deepEqual(result.progress.sharedBosses,[10,20]);
+ assert.equal(result.progress.forgeLevel,3);
+ assert.deepEqual(result.progress.boss10.ready,['hero-a']);
+ assert.deepEqual(result.progress.groupBosses[20].ready,['hero-a']);
+ assert.deepEqual(Object.keys(result.progress.people),['hero-a']);
+ const again=dogPublicRetireTestBots(result.team,result.progress,1234567999);
+ assert.equal(again.changed,false);
+ assert.equal(dogGateMapView(result.team,result.progress,'hero-b').canJoin,true);
+ const fighting=dogPublicRetireTestBots(team,{...progress,boss10:{phase:'fighting',ready:['hero-a']}});
+ assert.equal(fighting.blocked,true);
+ assert.equal(fighting.changed,false);
+});
+
+test('first public map visit removes pilot bots once without ongoing Firebase writes',async()=>{
+ const f=fixture(),bots=['dog-live-bot-nova','dog-live-bot-titan'];
+ const teamKey=DOG_BOSS_TEAM_COLLECTION+'/'+DOG_BOSS_TEAM_ID;
+ const progressKey=DOG_GATE_PROGRESS_COLLECTION+'/'+DOG_GATE_PROGRESS_ID;
+ f.docs.set(teamKey,{members:[{uid:'hero-a',name:'Chris'},...bots.map(uid=>({uid,name:uid}))],
+  heroClasses:{'hero-a':'krieger'},heroLocks:{'hero-a':true}});
+ f.docs.set(progressKey,{people:{
+  'hero-a':{currentGate:8,highestGate:8,normals:[1,2,3]},
+  [bots[0]]:{currentGate:8},[bots[1]]:{currentGate:8}
+ },sharedBosses:[],forgeLevel:1});
+ const first=await f.call('GET','/api/dog/gates/map',{},'b');
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.equal(first.body.memberCount,1);
+ assert.equal(first.body.canJoin,true);
+ assert.equal(f.writes.length,2,'only one team and one progress migration write');
+ const second=await f.call('GET','/api/dog/gates/map',{},'a');
+ assert.equal(second.body.isMember,true);
+ assert.equal(second.body.progress.highestGate,8);
+ assert.equal(second.body.members.length,1);
+ assert.equal(f.writes.length,2,'no further Firestore writes after initial cleanup');
 });
