@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {DOG_S2_CARDS,DOG_S2_BOARDS,DOG_S2_PACKS,DOG_S2_SPECIAL_CARD_SLOTS,DOG_S2_CARD_WEIGHT_BASE,dogS2CardDrawWeight,dogS2Progress,dogS2Draw,dogS2Discoveries,dogS2Duplicates,dogS2Redeem,dogS2OpenGrantedPacks} from '../dog-album-season2.js';
 
 test('DOG album package prices use the November 2026 server-authoritative values',()=>{
- const expected={small:1000000,large:2000000,premium:3000000,platinum:10000000};
+ const expected={small:100000000,large:200000000,premium:300000000,platinum:1000000000};
  assert.deepEqual(Object.fromEntries(DOG_S2_PACKS.map(pack=>[pack.id,pack.price])),expected);
  assert.deepEqual(DOG_S2_PACKS.map(pack=>pack.count),[3,7,12,16]);
+ assert.deepEqual(DOG_S2_PACKS.map(pack=>pack.price/100),[1000000,2000000,3000000,10000000],'shop displays prices in euros while server stores cents');
 });
 
 test('DOG season 2 has six distinct 4x4 themes and 96 distinct uploaded image paths',()=>{
