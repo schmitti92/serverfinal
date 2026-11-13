@@ -335,7 +335,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    p.needed.has('hammer')?tx.get(p.iceRef):null,
    p.needed.has('joker')?tx.get(p.jokerRef):null,
    p.needed.has('minigame')?tx.get(p.hatsRef):null,
-   (mode==='super'||p.needed.has('pack'))?tx.get(p.dogAlbumRef):null
+   (mode==='super'||p.needed.has('pack')||p.needed.has('wildcard'))?tx.get(p.dogAlbumRef):null
   ])));
   const now=Date.now();
   for(let i=0;i<prepared.length;i++){
@@ -345,7 +345,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const oldTickets=Number(dogOld.superSlotTickets||0);
    if(mode==='super'&&(!Number.isSafeInteger(oldTickets)||oldTickets<1))throw Error('SUPER_SLOT_TICKET_REQUIRED');
    let inventory=materialSnap?.exists?materialSnap.data():null;
-   let cash=0,jokers=0,miniTickets=0,monsterTickets=0;
+   let cash=0,jokers=0,miniTickets=0,monsterTickets=0,wildcards=0;
    const hammers={},settledPrizes=[];
    let dogCards={...(dogOld.cards||{})},openedDogPacks=0;
    for(const prize of p.prizes){
@@ -367,15 +367,17 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     else if(prize.kind==='joker')jokers+=prize.quantity;
     else if(prize.kind==='minigame')miniTickets+=prize.quantity;
     else if(prize.kind==='monster')monsterTickets+=prize.quantity;
+    else if(prize.kind==='wildcard')wildcards+=prize.quantity;
     else if(prize.kind==='cash')cash=checkMonsterBalance(cash,prize.amountCents);
     else throw Error('INVALID_SLOT_PRIZE');
     settledPrizes.push(prize);
    }
-   if(openedDogPacks||mode==='super'){
+   if(openedDogPacks||mode==='super'||wildcards){
     const beforeCycleState=mode==='super'?{...dogOld,superSlotTickets:oldTickets-1}:dogOld;
     const cycles=dogS2AdvanceCycles(dogOld.cards||{},dogCards,beforeCycleState,now);
     tx.set(p.dogAlbumRef,{
      season:2,cards:dogCards,...cycles.updates,
+     ...(wildcards?{wildcardTickets:checkMonsterBalance(Number(dogOld.wildcardTickets||0),wildcards,1000000)}:{}),
      opened:Number(dogOld.opened||0)+openedDogPacks,updatedAt:now
     },{merge:true});
     if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+cycles.progress.tournament.month).doc(p.uid),{

@@ -257,10 +257,14 @@ export function installChristmasIceApi(app,{verifyProfile,getFirestore,notifyDea
       next={...next,freeHammers:{...next.freeHammers,lucky:(next.freeHammers?.lucky||0)+amount},
        wheelHammers:{...next.wheelHammers,lucky:(next.wheelHammers?.lucky||0)+amount}};
      }
-     if(jackpot.superSlots){
+     if(jackpot.superSlots||jackpot.wildcards){
       const previous=Number(dogAlbumSnap?.data()?.superSlotTickets||0);
-      if(!Number.isSafeInteger(previous)||previous<0||previous+jackpot.superSlots>1000000)throw Error('INVALID_SUPER_SLOT_TICKETS');
-      tx.set(dogAlbumRef,{superSlotTickets:previous+jackpot.superSlots,updatedAt:Date.now()},{merge:true});
+      const oldWildcards=Number(dogAlbumSnap?.data()?.wildcardTickets||0);
+      const spins=jackpot.superSlots||0,cards=jackpot.wildcards||0;
+      if(!Number.isSafeInteger(previous)||previous<0||previous+spins>1000000)throw Error('INVALID_SUPER_SLOT_TICKETS');
+      if(!Number.isSafeInteger(oldWildcards)||oldWildcards<0||oldWildcards+cards>1000000)throw Error('INVALID_WILDCARD_TICKETS');
+      tx.set(dogAlbumRef,{superSlotTickets:previous+spins,wildcardTickets:oldWildcards+cards,
+       updatedAt:Date.now()},{merge:true});
      }
     }
     if(grantPicture30){

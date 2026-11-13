@@ -7,6 +7,23 @@ export const MONSTER_SLOTS_WEIGHTS=Object.freeze({
  chest:35,pack:30,hammer:20,joker:4,minigame:3,monster:3,cash:190
 });
 export const MONSTER_SLOTS_COUNT=3;
+// Exactly one wildcard in 3,000 non-cash prize rolls.
+// With the standard 2:1 cash/item weighting: 1 in 9,000 reels.
+export const MONSTER_SLOT_WILDCARD_NONCASH_ODDS=3000;
+export function monsterSlotRarity(prize){
+ if(prize?.kind==='wildcard'||prize?.kind==='cash'&&prize.amountCents>=500000000)return 'mythic';
+ if(prize?.kind==='chest'&&prize.id==='legendary'||
+    prize?.kind==='pack'&&prize.id==='platinum'||
+    prize?.kind==='cash'&&prize.amountCents>=100000000)return 'legendary';
+ if(prize?.kind==='chest'&&prize.id==='gold'||
+    prize?.kind==='pack'&&prize.id==='premium'||
+    prize?.kind==='hammer'&&prize.id==='lucky'||
+    prize?.kind==='cash'&&prize.amountCents>=25000000)return 'epic';
+ if(prize?.kind==='chest'&&prize.id==='silver'||
+    prize?.kind==='pack'&&prize.id==='large'||
+    prize?.kind==='cash'&&prize.amountCents>=1000000)return 'rare';
+ return 'common';
+}
 // Deal or No Deal: one unique champion earns 3 reels, one unique runner-up
 // earns 1 reel in games with >=3 participants, everyone else earns none.
 // Tied champions earn no slots; ×2 wallet bonuses never affect ranking.
@@ -74,10 +91,14 @@ const labelFor=(kind,id,count)=>{
  if(kind==='joker')return count+'× Kofferblick-Joker';
  if(kind==='minigame')return count+'× Minispiel-Gutschein';
  if(kind==='monster')return count+'× Monster-Drehgutschein';
+ if(kind==='wildcard')return '❓ Joker-Sammelkarte · Wunschkarte wählen';
  return 'Zufallsgeld';
 };
 export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS){
- const kind=weighted(Object.entries(categoryWeights),rand);
+ let kind=weighted(Object.entries(categoryWeights),rand);
+ // Wildcard is an ultra-rare *item* subtype, so changing cash vs items
+ // preserves the requested 2:1 category ratio without a new category weight.
+ if(kind!=='cash'&&rand(MONSTER_SLOT_WILDCARD_NONCASH_ODDS)===1234)kind='wildcard';
  let id=null,count=1,amountCents=null;
  if(kind==='chest')id=weighted(tiers.map((tier,i)=>[tier,monsterSlotChestOdds(gate)[i]]),rand);
  if(kind==='pack'){
@@ -94,8 +115,9 @@ export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SL
  if(kind==='cash'){
   amountCents=weighted(MONSTER_SLOT_CASH_PRIZES.map(([amount,weight])=>[amount,weight]),rand);
  }
- return Object.freeze({kind,id,quantity:count,...(amountCents!==null?{amountCents}:{}),
-  label:kind==='cash'?(amountCents/100).toLocaleString('de-DE',{style:'currency',currency:'EUR'}):labelFor(kind,id,count)});
+ const prize={kind,id,quantity:count,...(amountCents!==null?{amountCents}:{}),
+  label:kind==='cash'?(amountCents/100).toLocaleString('de-DE',{style:'currency',currency:'EUR'}):labelFor(kind,id,count)};
+ return Object.freeze({...prize,rarity:monsterSlotRarity(prize)});
 }
 export function drawMonsterSlots(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS){
  return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand,categoryWeights));

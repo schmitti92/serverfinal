@@ -27,9 +27,9 @@ export function nextIceTileCount(state){
 // Additive, guaranteed jackpots. Cash is in integer cents.
 export const ICE_JACKPOTS=Object.freeze({
  45:Object.freeze({superSlots:1}),
- 50:Object.freeze({cash:1000000000,superSlots:3,goldHammers:3,legendaryChests:1}),
+ 50:Object.freeze({cash:1000000000,superSlots:3,goldHammers:3,legendaryChests:1,wildcards:1}),
  55:Object.freeze({superSlots:2}),
- 60:Object.freeze({cash:2500000000,superSlots:5,goldHammers:5,jokers:3,hatsVouchers:3,legendaryChests:2}),
+ 60:Object.freeze({cash:2500000000,superSlots:5,goldHammers:5,jokers:3,hatsVouchers:3,legendaryChests:2,wildcards:1}),
  65:Object.freeze({superSlots:3}),
  70:Object.freeze({cash:5000000000,superSlots:10,goldHammers:10,jokers:5,hatsVouchers:5,legendaryChests:3})
 });

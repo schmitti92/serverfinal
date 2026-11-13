@@ -59,6 +59,23 @@ const LINES=Object.freeze([
  [0,5,10,15],[3,6,9,12]
 ]);
 const positive=n=>Number.isSafeInteger(n)&&n>0?n:0;
+export const DOG_S2_WILDCARD_MAX=1000000;
+export function dogS2MissingWildcardCards(cards={},state={}){
+ const base=state.cycleBase||{};
+ return DOG_S2_CARDS.filter(card=>positive(cards[card.id])<=positive(base[card.id]));
+}
+// A wildcard reveals one absent card of the CURRENT DOG cycle, never
+// a duplicate or a Hammer-Bingo card.
+export function dogS2RedeemWildcard(cards={},state={},cardId){
+ if(!Number.isSafeInteger(state.wildcardTickets)||state.wildcardTickets<=0)throw Error('DOG_WILDCARD_REQUIRED');
+ const card=DOG_S2_CARDS.find(c=>c.id===cardId);
+ if(!card)throw Error('INVALID_DOG_WILDCARD_CARD');
+ if(!dogS2MissingWildcardCards(cards,state).some(c=>c.id===card.id))
+  throw Error('DOG_CARD_ALREADY_COLLECTED');
+ const previous=positive(cards[card.id]);
+ if(previous>=DOG_S2_WILDCARD_MAX)throw Error('DOG_CARD_LIMIT');
+ return {card,cards:{...cards,[card.id]:previous+1},wildcardTickets:state.wildcardTickets-1};
+}
 export function dogS2Progress(cards={}){
  const boards=DOG_S2_BOARDS.map((name,index)=>{
   const slice=DOG_S2_CARDS.slice(index*16,index*16+16);
@@ -100,6 +117,7 @@ export function dogS2CycleProgress(cards={},state={},now=Date.now()){
   round:completions[i]+1,readyToComplete:board.collected===16})),
   completedTotal:completions.reduce((a,b)=>a+b,0),
   superSlotTickets:positive(state.superSlotTickets),
+  wildcardTickets:positive(state.wildcardTickets),
   tournament:{month,points:state.tournamentMonth===month?positive(state.tournamentPoints):0,
    lifetimePoints:positive(state.tournamentLifetimePoints),
    monthCompleted:state.tournamentMonth===month?positive(state.tournamentMonthCompleted):0}};
@@ -250,6 +268,8 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    res.set('Cache-Control','no-store');
    res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS.map(p=>({...p,price:dogPackPrice(economy,p.id)})),purchasesEnabled:economy.packsEnabled,
     balance:positive(w.data()?.balance),opened:positive(data.opened),
+    wildcardTickets:positive(data.wildcardTickets),
+    missingWildcardCards:dogS2MissingWildcardCards(cards,data).map(c=>c.id),
     progress:dogS2CycleProgress(cards,data),lifetimeProgress:dogS2Progress(cards),
     rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,data.bingoRewardsClaimed,data.bingoRewardsHistory),
     freePacks:Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(legacyData.freeChristmasPacks?.[p.id])])),
@@ -306,6 +326,48 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     return result;
    });
    res.set('Cache-Control','no-store');res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+ // A question-mark joker grants one freely chosen missing DOG card.
+ // Exactly-once receipt protects against retry and simultaneous tabs.
+ app.post(base+'/wildcards/redeem',auth,async(req,res)=>{
+  try{
+   const requestId=String(req.body?.requestId||''),cardId=String(req.body?.cardId||'');
+   if(!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
+   if(!DOG_S2_CARDS.some(c=>c.id===cardId))throw Error('INVALID_DOG_WILDCARD_CARD');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid,now=Date.now();
+   const albumRef=db.collection(DOG_S2_COLLECTION).doc(uid);
+   const receiptRef=db.collection('deal_dog_s2_wildcard_redeems_v1').doc(uid+'_'+requestId);
+   const result=await db.runTransaction(async tx=>{
+    const [snap,receipt]=await Promise.all([tx.get(albumRef),tx.get(receiptRef)]);
+    if(receipt.exists){
+     if(receipt.data()?.cardId!==cardId)throw Error('INVALID_REQUEST_ID');
+     return {...receipt.data().result,replayed:true};
+    }
+    const old=snap.exists?snap.data():{},previousCards=old.cards||{};
+    const redeemed=dogS2RedeemWildcard(previousCards,old,cardId);
+    const cycles=dogS2AdvanceCycles(previousCards,redeemed.cards,old,now);
+    const progress={...cycles.progress,wildcardTickets:redeemed.wildcardTickets};
+    const result={ok:true,card:{...redeemed.card,isNew:true},cards:redeemed.cards,
+     wildcardTickets:redeemed.wildcardTickets,progress,
+     lifetimeProgress:dogS2Progress(redeemed.cards),
+     completedBoards:cycles.finished,pointsAdded:cycles.pointsAdded,
+     rewards:dogS2RewardStatus(dogS2Progress(redeemed.cards).bingos,old.bingoRewardsClaimed,old.bingoRewardsHistory),
+     missingWildcardCards:dogS2MissingWildcardCards(redeemed.cards,{...old,...cycles.updates}).map(c=>c.id),
+     replayed:false};
+    tx.set(albumRef,{cards:redeemed.cards,wildcardTickets:redeemed.wildcardTickets,
+     ...cycles.updates,updatedAt:now},{merge:true});
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+cycles.progress.tournament.month).doc(uid),{
+     uid,points:cycles.progress.tournament.points,
+     completed:cycles.progress.tournament.monthCompleted,
+     name:String(old.tournamentName||req.dealIdentity?.displayName||('Spieler '+uid.slice(0,5))).slice(0,32),
+     updatedAt:now
+    },{merge:true});
+    tx.create(receiptRef,{uid,cardId,result,createdAt:now});
+    return result;
+   });
+   res.set('Cache-Control','no-store');res.json(result);
   }catch(e){return fail(res,e)}
  });
  app.post(base+'/duplicates/exchange',auth,async(req,res)=>{
