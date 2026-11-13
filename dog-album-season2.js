@@ -69,6 +69,67 @@ export function dogS2Progress(cards={}){
   bingos:boards.reduce((s,b)=>s+b.bingos,0),maxBingos:60,boards,
   rewardsEnabled:true,rewardNote:'Alle 2 Bingos eine Materialkiste und zufällige Zusatzgewinne.'};
 }
+
+ // ONLY the six DOG season-2 boards take part in repeatable collection,
+ // super-slot tickets and monthly tournaments. The Christmas Hammer-Bingo
+ // lives in a completely different collection and is never inspected here.
+export const DOG_S2_TOURNAMENT_COLLECTION='dog_s2_monthly_tournaments_v1';
+const DOG_S2_BINGO_POINTS=15, DOG_S2_BOARD_POINTS=200;
+const DOG_S2_CARD_POINTS=Object.freeze({common:2,rare:7,epic:12,legendary:22});
+export const dogS2TournamentMonth=(now=Date.now())=>new Date(now).toISOString().slice(0,7);
+const cycleCounts=(cards,baseline)=>Object.fromEntries(DOG_S2_CARDS.map(card=>[
+ card.id,Math.max(0,positive(cards?.[card.id])-positive(baseline?.[card.id]))
+]));
+export function dogS2CycleProgress(cards={},state={}){
+ const base=state.cycleBase||{};
+ const p=dogS2Progress(cycleCounts(cards,base));
+ const completions=Array.from({length:6},(_,i)=>positive(state.cycleCompletions?.[i]));
+ const month=dogS2TournamentMonth();
+ return {...p,boards:p.boards.map((board,i)=>({...board,completions:completions[i],
+  round:completions[i]+1,readyToComplete:board.collected===16})),
+  completedTotal:completions.reduce((a,b)=>a+b,0),
+  superSlotTickets:positive(state.superSlotTickets),
+  tournament:{month,points:state.tournamentMonth===month?positive(state.tournamentPoints):0,
+   lifetimePoints:positive(state.tournamentLifetimePoints),
+   monthCompleted:state.tournamentMonth===month?positive(state.tournamentMonthCompleted):0}};
+}
+export function dogS2AdvanceCycles(previousCards={},cards={},state={},now=Date.now()){
+ const initial=dogS2CycleProgress(previousCards,state),after=dogS2CycleProgress(cards,state);
+ const baseline={...(state.cycleBase||{})},completions=[...Array.from({length:6},(_,i)=>positive(state.cycleCompletions?.[i]))];
+ let delta=0,finished=[];
+ for(let board=0;board<6;board++){
+  const before=initial.boards[board],next=after.boards[board];
+  for(const card of DOG_S2_CARDS.slice(board*16,board*16+16)){
+   if(positive(previousCards[card.id])<=positive(baseline[card.id])&&positive(cards[card.id])>positive(baseline[card.id]))
+    delta+=DOG_S2_CARD_POINTS[card.rarity];
+  }
+  delta+=Math.max(0,next.bingos-before.bingos)*DOG_S2_BINGO_POINTS;
+  // A full pre-existing board is claimable after migration, but can be
+  // completed only ONCE. The baseline then makes the next round empty.
+  if(next.collected===16){
+   finished.push({board:board+1,name:DOG_S2_BOARDS[board],round:completions[board]+1});
+   completions[board]++;
+   for(const card of DOG_S2_CARDS.slice(board*16,board*16+16))
+    baseline[card.id]=positive(cards[card.id]);
+   delta+=DOG_S2_BOARD_POINTS;
+  }
+ }
+ const month=dogS2TournamentMonth(now),sameMonth=state.tournamentMonth===month;
+ const tickets=positive(state.superSlotTickets)+finished.length;
+ if(!Number.isSafeInteger(tickets)||tickets>1000000)throw Error('INVALID_SUPER_SLOT_TICKETS');
+ const monthPoints=(sameMonth?positive(state.tournamentPoints):0)+delta;
+ const lifetimePoints=positive(state.tournamentLifetimePoints)+delta;
+ if(!Number.isSafeInteger(monthPoints)||!Number.isSafeInteger(lifetimePoints))
+  throw Error('INVALID_TOURNAMENT_POINTS');
+ const updates={
+  cycleBase:baseline,cycleCompletions:completions,superSlotTickets:tickets,
+  tournamentMonth:month,tournamentPoints:monthPoints,
+  tournamentLifetimePoints:lifetimePoints,
+  tournamentMonthCompleted:(sameMonth?positive(state.tournamentMonthCompleted):0)+finished.length
+ };
+ return {updates,finished,pointsAdded:delta,progress:dogS2CycleProgress(cards,{...state,...updates})};
+}
+
 export function dogS2Draw(pack,rand=randomInt){
  if(!pack||!Number.isInteger(pack.count)||pack.count<1)throw Error('INVALID_PACK');
  const result=[];
