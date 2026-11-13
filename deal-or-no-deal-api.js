@@ -351,7 +351,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      season:2,cards:dogCards,...cycles.updates,
      opened:Number(dogOld.opened||0)+openedDogPacks,updatedAt:now
     },{merge:true});
-    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(p.uid),{
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+cycles.progress.tournament.month).doc(p.uid),{
      uid:p.uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
      name:String(dogOld.tournamentName||('Spieler '+p.uid.slice(0,5))).slice(0,32),updatedAt:now
     },{merge:true});
