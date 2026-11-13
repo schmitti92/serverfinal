@@ -16,8 +16,7 @@ import { installDogGroupBossApi } from "./dog-group-boss.js";
 import { createDogBossPushHub } from "./dog-boss-push.js";
 import { installDogAscensionApi } from "./dog-ascension.js";
 import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
-import { isLiveBotTeam,mirrorLiveBotVictory,
- readyWithLiveBots,advanceLiveBotFight,advanceAllLiveBotFights } from "./dog-live-bots.js";
+
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
@@ -4371,8 +4370,9 @@ installDogBossApi(app,{
 // is intentionally no longer installed. Known bot seats are retired through
 // the authenticated map migration; real player progress remains untouched.
 let dogBossPush=null;
-const liveBotLogic={isLiveBotTeam,mirrorLiveBotVictory,readyWithLiveBots,
- advanceLiveBotFight,advanceAllLiveBotFights};
+// No virtual expedition teammates in public mode. Team cleanup on the map
+// removes only the two historical bot UIDs and keeps real player records.
+const liveBotLogic=null;
 installDogDeveloperApi(app,{
  verifyProfile:profileStatsV8.identity,
  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
