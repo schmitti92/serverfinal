@@ -21,6 +21,16 @@ export function createDogBossPushHub({verifyProfile,getFirestore,
   if(ws.readyState!==1||Number(ws.bufferedAmount||0)>131072)return;
   try{ws.send(JSON.stringify(value))}catch{}
  };
+ const recentEntries=new Map();
+ function invite(gate,actorUid,reason='ready'){
+  if(!validGate(gate))return 0;
+  let count=0;
+  for(const [socket,sub] of members){
+   if(sub.gate!==0||sub.uid===actorUid||socket.readyState!==1)continue;
+   json(socket,{type:'invite',gate,reason});count++;
+  }
+  return count;
+ }
  const detach=ws=>{
   const waiting=handshakes.get(ws);
   if(waiting!==undefined){clearTimer(waiting);handshakes.delete(ws)}
@@ -67,6 +77,16 @@ export function createDogBossPushHub({verifyProfile,getFirestore,
     timer?.unref?.();
     members.set(ws,{uid:user.uid,gate:m.gate,timer});
     json(ws,{type:'subscribed',gate:m.gate});
+    if(validGate(m.gate)){
+     const key=user.uid+':'+m.gate,now=Date.now();
+     if(now-(recentEntries.get(key)||0)>60000){
+      recentEntries.set(key,now);
+      // An arena arrival summons other connected real players automatically.
+      invite(m.gate,user.uid,'entered');
+      if(recentEntries.size>40)for(const [k,t] of recentEntries)
+       if(now-t>60000)recentEntries.delete(k);
+     }
+    }
    }catch{denied(ws)}
    finally{inflight=false}
   });
@@ -82,12 +102,9 @@ export function createDogBossPushHub({verifyProfile,getFirestore,
    if(sub.uid===actorUid||ws.readyState!==1)continue;
    if(sub.gate===gate){
     json(ws,{type:'changed',seq:rev});count++;
-   }else if(sub.gate===0&&eventType==='ready'){
-    // Team-authenticated event hint; only the gate is public.
-    json(ws,{type:'invite',gate});count++;
    }
   }
-  return count;
+  return count+(eventType==='ready'?invite(gate,actorUid,'ready'):0);
  }
  return {attach,notify,subscribers:()=>members.size};
 }
