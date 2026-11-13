@@ -11,7 +11,7 @@ import {buildDogCombatStream} from './dog-combat-events.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
-import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
+import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp,dogBossGearReadiness} from './dog-balance.js';
 import {dogForgeCombatTier,dogForgeProgress} from './dog-forge-progression.js';
 import {boss10State,DOG_BOSS10_DURATION_MS,DOG_BOSS10_COOLDOWN_MS} from './dog-boss10.js';
 import {dogCreateMiniGames,dogPublicMiniGames,dogNormalizeMiniGames,
@@ -64,14 +64,14 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
  const elapsed=Math.max(0,now-boss.startedAt);
  const exchange=dogMiniExchangeView(boss.miniGames,boss.roster,elapsed,
   hero=>groupBossDamagePotential(gate,[hero],[],null),
-  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel));
  const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
-  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel));
  const bossMaxHp=dogGroupBossHp(gate);
  const confirmedStrikes=dogMiniConfirmedStrikes(boss.miniGames,boss.roster,
   elapsed,bossMaxHp,groupBossDamagePotential(gate,boss.roster,[],null),
   hero=>groupBossDamagePotential(gate,[hero],[],null),
-  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel));
  const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
@@ -88,7 +88,7 @@ export function groupBossView(gate,teamRaw,raw,uid,now=Date.now()){
    boss.roster.filter(hero=>dogMiniHeroAliveAt(boss.miniGames,hero.uid,
     boss.miniGames.rounds.at(-1).startMs)).map(hero=>hero.uid):null,
   result:boss.miniGames?.version>=11?boss.result:null,
-  heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel)
+  heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel)
  });
  return {gate,name:DOG_GROUP_BOSS_NAMES[gate],bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   isMember:members.some(m=>m.uid===uid),teamReady:members.length===3,
@@ -117,6 +117,8 @@ const prepareRoster=(gate,ready,team,heroes)=>{
   const lv=dogHero(heroes[uid]).levels;
   return {uid,weaponLevel:Math.min(equipmentCap,dogForgeCombatTier(lv.weapon)),
    armorLevel:Math.min(equipmentCap,dogForgeCombatTier(lv.armor)),
+   weaponRealLevel:Math.min(equipmentCap*5,lv.weapon),
+   armorRealLevel:Math.min(equipmentCap*5,lv.armor),
    skillPower:Math.min(cap,lv.attack_power),
    skillDestruction:Math.min(cap,lv.destruction),
    skillDefense:Math.min(cap,lv.vitality),
@@ -130,18 +132,22 @@ export function groupBossDamagePotential(gate,roster=[],reactions=[],miniGames=n
  return roster.reduce((sum,m)=>{
   const attack=(Math.min(cap,m.skillPower)+Math.min(cap,m.skillDestruction))/(cap*2);
   const defense=(Math.min(cap,m.skillDefense)+Math.min(cap,m.skillGuard))/(cap*2);
-  const armor=Math.min(1,dogArmorBase(m.armorLevel)/armorReference);
+  const armor=Math.min(1,dogArmorBase(m.armorLevel)/armorReference*
+   dogBossGearReadiness(m.armorRealLevel,m.armorLevel));
   const survival=(.74+.26*defense)*(.80+.20*armor);
   const multiplier=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):seen.has(m.uid)?1.10:1;
   const games=dogNormalizeMiniGames(miniGames);
   const share=games?.version>=15&&!dogMiniHeroAliveAt(games,m.uid,
    games.rounds.at(-1).startMs)?.83:1;
   return sum+DOG_GROUP_BOSS_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
+   dogBossGearReadiness(m.weaponRealLevel,m.weaponLevel)*
    (.91+.30*attack)*survival*multiplier*share;
  },0)*(dogNormalizeMiniGames(miniGames)?.version>=3?
   (.94+.06*dogMiniTeamShield(miniGames,roster)/100):1);
 }
 const maxed=(gate,m)=>m.weaponLevel>=gearCap(gate)&&m.armorLevel>=gearCap(gate)&&
+ (!Number.isSafeInteger(m.weaponRealLevel)||m.weaponRealLevel>=gearCap(gate)*5)&&
+ (!Number.isSafeInteger(m.armorRealLevel)||m.armorRealLevel>=gearCap(gate)*5)&&
  ['skillPower','skillDestruction','skillDefense','skillGuard']
   .every(k=>m[k]>=skillCap(gate));
 export function groupBossResolveCombat(gate,roster,reactions=[],rand=randomInt,miniGames=null){

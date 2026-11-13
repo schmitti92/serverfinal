@@ -219,11 +219,19 @@ export const DOG_NORMAL_ATTACK_STYLES=Object.freeze([
 ]);
 const dogNormalEquipmentLevel=value=>Number.isSafeInteger(value)?
  Math.max(1,Math.min(50,value)):1;
-const dogNormalEquipmentPower=value=>{
+export const dogNormalEquipmentPower=value=>{
  const level=dogNormalEquipmentLevel(value);
  return DOG_BASE_WEAPON_DAMAGE*2**Math.floor((level-1)/5)*
   (1+.16*((level-1)%5));
 };
+/** New boss fights snapshot the actual 1–50 forge levels. Existing
+ * fights with no real-level field retain their original strength. */
+export function dogBossGearReadiness(realLevel,chapterTier=1){
+ if(!Number.isSafeInteger(realLevel))return 1;
+ const tier=integer(chapterTier,1,10,1);
+ const max=tier*5,actual=integer(realLevel,1,max,1);
+ return dogNormalEquipmentPower(actual)/dogNormalEquipmentPower(max);
+}
 export function dogNormalGateDifficulty(gate){
  if(!Number.isSafeInteger(gate)||gate<1||gate>99||gate%5===0)
   throw Error('DOG_BALANCE_INVALID_NORMAL_GATE');
@@ -346,20 +354,22 @@ export const DOG_MINI_BOSS_RETALIATION_CHANCE=.90;
 export const DOG_MINI_BOSS_HEAVY_CHANCE=.20;
 export const DOG_MINI_BOSS_HEAVY_MULTIPLIER=1.75;
 
-export function dogIncomingDamage({armorLevel=1,enemyAttack=100,skills={},blocked=false,dodged=false}={}){
+export function dogIncomingDamage({armorLevel=1,armorRealLevel=null,enemyAttack=100,skills={},blocked=false,dodged=false}={}){
  if(dodged)return 0;
  const strike=Math.max(0,Number(enemyAttack)||0);
  // Resilience and a successful block ADD protection to the original armor base.
  const armor=dogArmorBase(armorLevel);
- const rating=armor*(1+.003*skill(skills,'resilience')+(blocked?.60:0));
+ const rating=armor*dogBossGearReadiness(armorRealLevel,armorLevel)*
+  (1+.003*skill(skills,'resilience')+(blocked?.60:0));
  const mitigation=Math.min(.65,rating/(rating+1.5*strike));
  return Math.max(0,Math.ceil(strike*(1-mitigation)));
 }
-export function dogHeroHp(skills={},armorLevel=1){
- return Math.round(1.45*dogArmorBase(armorLevel)*(1+.01*skill(skills,'vitality')));
+export function dogHeroHp(skills={},armorLevel=1,armorRealLevel=null){
+ return Math.round(1.45*dogArmorBase(armorLevel)*
+  dogBossGearReadiness(armorRealLevel,armorLevel)*(1+.01*skill(skills,'vitality')));
 }
-export function dogRegenerationPerAction(skills={},armorLevel=1){
- return Math.round(dogHeroHp(skills,armorLevel)*.001*skill(skills,'regeneration'));
+export function dogRegenerationPerAction(skills={},armorLevel=1,armorRealLevel=null){
+ return Math.round(dogHeroHp(skills,armorLevel,armorRealLevel)*.001*skill(skills,'regeneration'));
 }
 export function dogDefenseChances(skills={}){
  return {block:.004*skill(skills,'blocking'),evasion:.002*skill(skills,'evasion'),
@@ -385,11 +395,12 @@ export function dogMiniBossFeedback(fight){
   message:'Verbessere deine Waffe, Angriffskraft oder Vernichtungsschlag.'};
 }
 
-export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
+export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,
+ weaponRealLevel=null,armorRealLevel=null,skills={},
  reaction=false,rand=randomInt}={}){
  const opponent=dogAdaptiveMiniBoss({gate,weaponLevel,armorLevel,skills});
  const bossMaxHp=opponent.bossHp;
- const maxHeroHp=dogHeroHp(skills,armorLevel);
+ const maxHeroHp=dogHeroHp(skills,armorLevel,armorRealLevel);
  const enemyAttack=opponent.bossAttack;
  const offense=dogAttackChances(skills),defense=dogDefenseChances(skills);
  let bossHp=bossMaxHp,heroHp=maxHeroHp,damageDealt=0;
@@ -407,7 +418,8 @@ export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
   const heavy=roll(heavyChance);
   const strikeAttack=heavy?
    Math.round(enemyAttack*DOG_MINI_BOSS_HEAVY_MULTIPLIER):enemyAttack;
-  const suffered=dogIncomingDamage({armorLevel,enemyAttack:strikeAttack,skills,blocked,dodged});
+  const suffered=dogIncomingDamage({armorLevel,armorRealLevel,
+    enemyAttack:strikeAttack,skills,blocked,dodged});
   heroHp=Math.max(0,heroHp-suffered);
   attacksReceived++;
   if(heroHp===0&&!lastStandUsed&&roll(defense.lastStand)){
@@ -422,19 +434,25 @@ export function dogSimulateMiniBoss({gate,weaponLevel=1,armorLevel=1,skills={},
   turns++;
   const cleanHit=roll(offense.cleanHit);
   const critical=roll(offense.critical),doubleStrike=roll(offense.doubleStrike);
-  const damage=dogStrike({weaponLevel,skills,special:i===0,
-   reaction:i===0&&reaction,cleanHit,critical,doubleStrike});
+  const damage=Math.max(1,Math.floor(dogStrike({weaponLevel,skills,special:i===0,
+   reaction:i===0&&reaction,cleanHit,critical,doubleStrike})*
+   dogBossGearReadiness(weaponRealLevel,weaponLevel)));
   const applied=Math.min(bossHp,damage);
   damageDealt+=applied;bossHp-=applied;
   timeline.push({type:'hero-attack',damage:applied,bossHp,cleanHit,
    critical,doubleStrike,special:i===0});
   if(bossHp===0)break;
-  const healed= Math.min(maxHeroHp-heroHp,dogRegenerationPerAction(skills,armorLevel));
+  const healed= Math.min(maxHeroHp-heroHp,
+   dogRegenerationPerAction(skills,armorLevel,armorRealLevel));
   heroHp+=healed;
   if(healed)timeline.push({type:'regeneration',amount:healed,heroHp});
   retaliate();
  }
  const result={gate,victory:bossHp===0&&heroHp>0,bossHp,bossMaxHp,heroHp,maxHeroHp,
-  enemyAttack,turns,damageDealt,attacksReceived,timeline};
+  enemyAttack,turns,damageDealt,attacksReceived,timeline,
+  recommendedWeaponLevel:Math.min(50,Math.ceil(gate/10)*5),
+  recommendedArmorLevel:Math.min(50,Math.ceil(gate/10)*5),
+  ...(Number.isSafeInteger(weaponRealLevel)?{weaponRealLevel}:{}),
+  ...(Number.isSafeInteger(armorRealLevel)?{armorRealLevel}:{})};
  return {...result,feedback:dogMiniBossFeedback(result)};
 }

@@ -1,5 +1,32 @@
 # Die 100 Tore – Balancing V1
 
+## Kampf-Abstimmung: echte Waffenstufen 1–50 für alle 100 Tore (13.11.2026)
+
+**Vorheriger Balancefehler:** Bei normalen Toren wirkten bereits alle fünf Aufwertungen innerhalb eines Abschnitts. Bei Mini-Bossen und Gruppenbossen wurde Waffen- und Rüstungslevel dagegen für die Kampfstärke auf ein grobes 1–10-Tier gerundet. Level 1–5 zählten damit gegen Boss 10 gleich stark; Level 6–10 gegen Boss 20 usw.
+
+**Neue Regel:** Beim Start jedes NEUEN Bosskampfs werden echte Waffen- und Rüstungslevel 1–50 sicher auf dem bestehenden Boss-Roster mitgespeichert. Das Boss-Schadenspotenzial und die wirksame Rüstung/Lebenspunkte steigen nun mit **jeder** Aufwertung. Die zehnstufigen Basiswerte, feste Boss-LP, Gruppenregeln (Solo unmöglich; zwei maximal gerüstete Helden benötigen seltenen Spezialschlag; drei sind die reguläre Gruppe), Minispiele, Reaktionen und Quittungen bleiben unverändert. Bereits laufende Kämpfe mit alten Rostern werden nach der alten Berechnung beendet. Es werden **keine zusätzlichen Firestore-Dokumente, Abfragen oder Schreibvorgänge** benötigt.
+
+**Feste Ausrüstungsempfehlungen pro Torabschnitt** (jeweils erreichbare Werte *vor* dem nächsten Gruppenboss):
+
+| Torabschnitt | Normale Tore: Waffe / Rüstung | Mini-Boss und Tor | Gemeinsamer Boss und Tor | Empfehlenswerte Fähigkeiten für Gruppenboss |
+|---|---|---|---|---|
+| 1–10 | 1–5 | Tor 5: 5 / 5 | Tor 10: 5 / 5 | 5 |
+| 11–20 | 6–10 | Tor 15: 10 / 10 | Tor 20: 10 / 10 | 8 |
+| 21–30 | 11–15 | Tor 25: 15 / 15 | Tor 30: 15 / 15 | 12 |
+| 31–40 | 16–20 | Tor 35: 20 / 20 | Tor 40: 20 / 20 | 15 |
+| 41–50 | 21–25 | Tor 45: 25 / 25 | Tor 50: 25 / 25 | 19 |
+| 51–60 | 26–30 | Tor 55: 30 / 30 | Tor 60: 30 / 30 | 23 |
+| 61–70 | 31–35 | Tor 65: 35 / 35 | Tor 70: 35 / 35 | 27 |
+| 71–80 | 36–40 | Tor 75: 40 / 40 | Tor 80: 40 / 40 | 30 |
+| 81–90 | 41–45 | Tor 85: 45 / 45 | Tor 90: 45 / 45 | 34 |
+| 91–100 | 46–50 | Tor 95: 50 / 50 | Tor 100: 50 / 50 | 38 |
+
+Die **80 normalen Tore** haben weiterhin individuelle, feste Gegner-LP, Angriffswerte und Waffen-/Rüstungsempfehlungen von Level 1 bis Level 50. Auf diesem Niveau gewinnt man sie im reinen Ausrüstungsvergleich ohne zusätzliche Skills. Weniger Stufen können je nach Tor und Fähigkeiten genügen, sind aber nicht garantiert; das Kampfergebnis der normalen Tore ist **deterministisch**, kein Losentscheid. **Mini-Bosse und Gruppenbosse** haben weiterhin zufällige Treffer-/Reaktionskomponenten; die Tabellenausrüstung ist die *Vorbereitungsempfehlung*, keine Sieggarantie. Für einen Gruppenboss sind drei gut vorbereitete Helden vorgesehen. Auch die vier für den Boss wichtigen Angriff- und Abwehrfähigkeiten (Angriffskraft, Vernichtungsschlag, Vitalität und Blocken) spielen eine wichtige Rolle. Gemeinsam über jede Gruppe vorzurücken erfordert weiterhin den vorherigen bestätigten Gruppenboss-Sieg und das Boss-Siegel für die neue gemeinsame Schmiedestufe.
+
+**Hinweis:** Die Empfehlungen werden aus denselben serverseitigen statischen Regeln in der 100-Tore-Karte dargestellt, ohne einen separaten API- oder Firestore-Abruf. Der Zielwert von etwa 300 Deal-Partien bleibt eine grobe Designzielgröße; eine vollständige Dreispieler-Kistenwirtschaftssimulation wurde damit noch nicht ersetzt.
+
+---
+
 ## Aktuelle Materialfreischaltung und Schmiedebalance (13.11.2026)
 
 **Verbindlicher Stand auf main:** Rohstoffklassen (gewöhnlich / ungewöhnlich / selten / episch / legendär) werden nach verifiziertem gemeinsamen **Schmiedelevel** freigeschaltet. Die Boss-Siegel sind erforderlich, um das Schmiedelevel zu erhöhen. Nur im offiziellen Team gilt dieses Material-Gating; der Alt-Schmiedemodus außerhalb des Events bleibt kompatibel.

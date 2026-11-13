@@ -8,7 +8,7 @@ import {buildDogCombatStream} from './dog-combat-events.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossTeam} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
 import {DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID,dogGateProgress,dogDeveloperCooldownBypass} from './dog-gates.js';
-import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp} from './dog-balance.js';
+import {dogGroupBossHp,dogWeaponBase,dogArmorBase,dogHeroHp,dogBossGearReadiness} from './dog-balance.js';
 import {dogCreateMiniGames,dogNormalizeMiniGames,dogPublicMiniGames,
  dogMiniBonus,dogMiniDodgePenalty,dogMiniStrongRoundCount,dogMiniTeamShield,dogMiniExchangeView,dogMiniGroupHealth,dogMiniHeroAliveAt,dogMiniBossLiveHp,dogMiniConfirmedStrikes,dogMiniCinematicVitals,DOG_FINAL5_DURATION_MS,DOG_CHAIN20_DURATION_MS,dogSubmitMiniAnswer} from './dog-boss-minigames.js';
 
@@ -35,6 +35,8 @@ export function boss10State(raw){
   roster:Array.isArray(x.roster)?x.roster.slice(0,3).flatMap(m=>
    safeUid(m?.uid)?[{uid:m.uid,weaponLevel:bounded(m.weaponLevel,1,10,1),
    armorLevel:bounded(m.armorLevel,1,10,1),
+   ...(Number.isSafeInteger(m.weaponRealLevel)?{weaponRealLevel:bounded(m.weaponRealLevel,1,50,1)}:{}),
+   ...(Number.isSafeInteger(m.armorRealLevel)?{armorRealLevel:bounded(m.armorRealLevel,1,50,1)}:{}),
    skillPower:bounded(m.skillPower,0,50,0),
    skillDefense:bounded(m.skillDefense,0,50,0),
    skillDestruction:bounded(m.skillDestruction,0,50,0),
@@ -64,14 +66,14 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
  const elapsed=Math.max(0,now-boss.startedAt);
  const exchange=dogMiniExchangeView(boss.miniGames,boss.roster,elapsed,
   hero=>boss10DamagePotential([hero],[],null),
-  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel));
  const groupHealth=dogMiniGroupHealth(boss.miniGames,boss.roster,elapsed,
-  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel));
  const bossMaxHp=dogGroupBossHp(10);
  const confirmedStrikes=dogMiniConfirmedStrikes(boss.miniGames,boss.roster,
   elapsed,bossMaxHp,boss10DamagePotential(boss.roster,[],null),
   hero=>boss10DamagePotential([hero],[],null),
-  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel));
+  hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel));
  const bossLiveHp=boss.result&&['victory','cooldown'].includes(boss.phase)?
   boss.result.hpRemaining:
   dogMiniBossLiveHp(boss.miniGames,boss.roster,elapsed,bossMaxHp,
@@ -88,7 +90,7 @@ export function boss10View(teamRaw,progressRaw,uid,now=Date.now()){
    boss.roster.filter(hero=>dogMiniHeroAliveAt(boss.miniGames,hero.uid,
     boss.miniGames.rounds.at(-1).startMs)).map(hero=>hero.uid):null,
   result:boss.miniGames?.version>=11?boss.result:null,
-  heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel)
+  heroMaximum:hero=>dogHeroHp({vitality:hero.skillDefense},hero.armorLevel,hero.armorRealLevel)
  });
  return {gate:10,name:'Der Aschewächter',bossHp:bossMaxHp,bossLiveHp,teamHealth:groupHealth,
   teamReady:team.members.length===3,isMember:team.members.some(m=>m.uid===uid),
@@ -112,7 +114,8 @@ const qualifiedRoster=(ready,team,heroByUid)=>{
  return ready.filter(uid=>uids.has(uid)).map(uid=>{
   const levels=dogHero(heroByUid[uid]).levels;
   // Old over-leveled equipment must not bypass the first boss.
-  return {uid,weaponLevel:Math.min(1,levels.weapon),armorLevel:Math.min(1,levels.armor),
+  return {uid,weaponLevel:1,armorLevel:1,
+   weaponRealLevel:Math.min(5,levels.weapon),armorRealLevel:Math.min(5,levels.armor),
    skillPower:Math.min(5,levels.attack_power),skillDestruction:Math.min(5,levels.destruction),
    skillDefense:Math.min(5,levels.vitality),skillGuard:Math.min(5,levels.blocking)};
  });
@@ -176,7 +179,8 @@ export function boss10DamagePotential(roster=[],reacted=[],miniGames=null){
  return roster.reduce((sum,m)=>{
   const attack=Math.min(1,(m.skillPower+m.skillDestruction)/10);
   const defense=Math.min(1,(m.skillDefense+m.skillGuard)/10);
-  const armorBase=dogArmorBase(m.armorLevel)/dogArmorBase(1);
+  const armorBase=dogArmorBase(m.armorLevel)/dogArmorBase(1)*
+   dogBossGearReadiness(m.armorRealLevel,m.armorLevel);
   const armorReadiness=Math.min(1,armorBase);
   const survival=(.8+.2*defense)*(.75+.25*armorReadiness);
   const reaction=miniGames?(1+dogMiniBonus(miniGames,m.uid))*(1-dogMiniDodgePenalty(miniGames,m.uid)):reacting.has(m.uid)?1.1:1;
@@ -185,11 +189,14 @@ export function boss10DamagePotential(roster=[],reacted=[],miniGames=null){
   const share=games?.version>=15&&!dogMiniHeroAliveAt(games,m.uid,
    games.rounds.at(-1).startMs)?.83:1;
   return sum+DOG_BOSS10_ATTACKS_PER_HERO*dogWeaponBase(m.weaponLevel)*
+   dogBossGearReadiness(m.weaponRealLevel,m.weaponLevel)*
    (.67+.21*attack)*survival*reaction*share;
  },0)*(dogNormalizeMiniGames(miniGames)?.version>=3?
   (.94+.06*dogMiniTeamShield(miniGames,roster)/100):1);
 }
 const fullyPrepared=m=>m.weaponLevel>=1&&m.armorLevel>=1&&
+ (!Number.isSafeInteger(m.weaponRealLevel)||m.weaponRealLevel>=5)&&
+ (!Number.isSafeInteger(m.armorRealLevel)||m.armorRealLevel>=5)&&
  m.skillPower>=5&&m.skillDestruction>=5&&m.skillDefense>=5&&m.skillGuard>=5;
 /** 30s damage, not a fixed party-count coin toss.
  * Rare last-chance blow is possible ONLY for two max-prepared heroes, both

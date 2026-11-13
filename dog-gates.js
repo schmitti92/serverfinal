@@ -5,7 +5,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID,bossJoin,bossTeam,bossSelectHero,dogHeroClass} from './dog-boss.js';
 import {DOG_HERO_COLLECTION,dogHero} from './dog-forge.js';
-import {dogNormalGateDifficulty,dogSimulateNormalGate,dogSimulateMiniBoss} from './dog-balance.js';
+import {dogNormalGateDifficulty,dogSimulateNormalGate,dogSimulateMiniBoss,dogMiniBossHp,dogMiniBossAttack,dogGroupBossHp} from './dog-balance.js';
 import {dogDrawMiniReward,dogMiniRewardDocument,DOG_MINI_REWARD_COLLECTIONS} from './dog-mini-rewards.js';
 import {dogForgeCombatTier} from './dog-forge-progression.js';
 
@@ -22,6 +22,21 @@ export const DOG_NORMAL_GATE_REQUIREMENTS=Object.freeze(
    enemyAttack:enemy.enemyAttack,
    recommendedWeaponLevel:enemy.recommendedWeaponLevel,
    recommendedArmorLevel:enemy.recommendedArmorLevel});
+ })
+);
+/** Boss guide in actual 1–50 gear levels, aligned to the five
+ * upgrades available after each shared boss victory. */
+export const DOG_BOSS_GEAR_REQUIREMENTS=Object.freeze(
+ Array.from({length:20},(_,index)=>(index+1)*5).map(gate=>{
+  const group=gate%10===0,cap=Math.min(50,Math.ceil(gate/10)*5);
+  return Object.freeze({gate,type:group?'group':'mini',
+   recommendedWeaponLevel:cap,recommendedArmorLevel:cap,
+   recommendedSkillLevel:group?
+    (gate===10?5:Math.ceil((gate/10)*5*.75)):
+    Math.max(2,Math.ceil(cap*.65)),
+   recommendedPlayers:group?3:1,
+   enemyMaxHp:group?dogGroupBossHp(gate):dogMiniBossHp(gate),
+   enemyAttack:group?null:dogMiniBossAttack(gate)});
  })
 );
 
@@ -185,6 +200,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
    lastAttemptAt:0,lastResult:null,miniRewards:[]}):{currentGate:1,highestGate:1,normals:[],minis:[],
    lastAttemptAt:0,lastResult:null,miniRewards:[]},
   normalGateRequirements:DOG_NORMAL_GATE_REQUIREMENTS,
+  bossGearRequirements:DOG_BOSS_GEAR_REQUIREMENTS,
   availableBossGate:100, // real group-boss arenas now span every ten-gate milestone
   bossArenaIsTest:false,
   cacheSeconds:30};
@@ -211,7 +227,8 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
  // Mini-bosses keep their proven ten-tier balancing. Ordinary gates use
  // the genuine 1–50 levels of the weapon and armor for deterministic combat.
  const bossGear={weaponLevel:dogForgeCombatTier(levels.weapon),
-  armorLevel:dogForgeCombatTier(levels.armor),skills:levels};
+  armorLevel:dogForgeCombatTier(levels.armor),
+  weaponRealLevel:levels.weapon,armorRealLevel:levels.armor,skills:levels};
  const fight=mini(gate)?
   dogSimulateMiniBoss({gate,...bossGear,rand}):
   dogSimulateNormalGate({gate,weaponLevel:levels.weapon,
