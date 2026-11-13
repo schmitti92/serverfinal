@@ -60,6 +60,20 @@ export function dogS2Discoveries(drawn,previous={}){
   seen.add(card.id);return {...card,isNew};
  });
 }
+// Used by Monster Slots: awarded packs are opened and credited in the very
+// same Firestore transaction as the three slot prizes. No paid pack purchase,
+// no voucher consumption and no client-driven second draw.
+export function dogS2OpenGrantedPacks(packId,quantity,previous={},rand=randomInt){
+ const pack=DOG_S2_PACKS.find(p=>p.id===packId);
+ if(!pack||!Number.isSafeInteger(quantity)||quantity<1||quantity>3)throw Error('INVALID_GRANTED_PACK');
+ const cards={...previous},openedPacks=[];
+ for(let n=0;n<quantity;n++){
+  const revealed=dogS2Discoveries(dogS2Draw(pack,rand),cards);
+  for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
+  openedPacks.push({packId,packName:pack.name,hasNew:revealed.some(card=>card.isNew===true),revealed});
+ }
+ return {cards,openedPacks};
+}
 export function dogS2Duplicates(cards={},tickets=0){
  const available=DOG_S2_CARDS.reduce((sum,c)=>sum+Math.max(0,positive(cards[c.id])-1),0);
  return {available,tickets:positive(tickets),exchangeCost:100,canExchange:available>=100};
