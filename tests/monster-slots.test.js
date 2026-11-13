@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {drawMonsterSlot,drawMonsterSlots,monsterSlotChestOdds,MONSTER_SLOTS_WEIGHTS} from '../monster-slots.js';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
+import {DOG_S2_CARDS,dogS2OpenGrantedPacks} from '../dog-album-season2.js';
 import {create,payoutFor} from '../deal-or-no-deal.js';
 
 test('all seven slot categories total 100% and every reel always awards a prize',()=>{
@@ -17,6 +18,26 @@ test('all seven slot categories total 100% and every reel always awards a prize'
  const jackpot=drawMonsterSlot(1,max=>max-1);
  assert.equal(jackpot.kind,'cash');
  assert.equal(jackpot.amountCents,10_000_000_000);
+});
+
+
+test('won packs open immediately; only unowned cards are marked new, across multiple packs',()=>{
+ const draw=dogS2OpenGrantedPacks('small',2,{},()=>0);
+ assert.equal(draw.openedPacks.length,2);
+ assert.ok(draw.openedPacks[0].hasNew,'first pack introduces a new card');
+ assert.equal(draw.openedPacks[1].hasNew,false,'second pack has only repeats');
+ assert.equal(draw.openedPacks[0].revealed.filter(card=>card.isNew).length,1);
+ assert.ok(draw.openedPacks[1].revealed.every(card=>card.isNew===false));
+ assert.equal(Object.values(draw.cards).reduce((sum,n)=>sum+n,0),6,'all six cards credited, including duplicates');
+ const owned=Object.fromEntries(DOG_S2_CARDS.map(card=>[card.id,1]));
+ for(const id of ['small','large','premium','platinum']){
+  const result=dogS2OpenGrantedPacks(id,3,owned,()=>0);
+  assert.ok(result.openedPacks.every(pack=>pack.hasNew===false),'full album must skip pack reveal for '+id);
+  assert.equal(result.openedPacks.length,3);
+  assert.equal(Object.values(result.cards).reduce((sum,n)=>sum+n,0),96+result.openedPacks.flatMap(pack=>pack.revealed).length);
+ }
+ assert.throws(()=>dogS2OpenGrantedPacks('invalid',1,{}),/INVALID_GRANTED_PACK/);
+ assert.throws(()=>dogS2OpenGrantedPacks('small',4,{}),/INVALID_GRANTED_PACK/);
 });
 
 test('slot credits require a verified completed-game payout and cannot be replayed for extra prizes',async()=>{
