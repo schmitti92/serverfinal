@@ -455,9 +455,12 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  let game=response.body.game;
  assert.equal(game.caseCount,30);
  assert.ok(Number.isInteger(game.bankerScheduleVariant)&&game.bankerScheduleVariant>=1&&game.bankerScheduleVariant<=2);
- const targets=[3,...BANKER_30_OPENINGS[game.bankerScheduleVariant-1].filter(n=>n>3&&n<27).slice(0,2),27,28,29];
+ const midCalls=BANKER_30_OPENINGS[game.bankerScheduleVariant-1]
+  .slice(1,-3).map(target=>Math.round(3+(target-9)*(27-3)/16));
+ const targets=[3,...midCalls,27,28,29];
  assert.deepEqual(game.bankerSchedule,targets.map((n,i)=>n-(targets[i-1]||0)),
-  'two fixed Banker variants with a call after every one of the last three openable cases');
+  'two Banker variants make 7 or 9 calls and end on the last three openable cases');
+ assert.equal(targets.length,game.bankerScheduleVariant===1?7:9);
  assert.equal(game.values,undefined,'private case amounts never enter multiplayer updates');
  const stored=docs.get('deal_or_no_deal_matches_v1/123').game;
  assert.equal(stored.values.length,30);
