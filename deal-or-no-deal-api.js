@@ -459,6 +459,61 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   }catch(e){return fail(res,e)}
  });
 
+
+ // One shared slot-turn per room. Websocket broadcasts show the same reels
+ // and prizes to winner, runner-up and all spectators on every device.
+ app.post('/api/deal-or-no-deal/:code/monster-slots/show',auth,async(req,res)=>{
+  try{
+   const code=String(req.params.code||'').toUpperCase();
+   if(!CODE.test(code))throw Error('INVALID_CODE');
+   const operation=String(req.body?.operation||'');
+   if(!['spin','confirm'].includes(operation))throw Error('INVALID_SLOT_SHOW_ACTION');
+   const gameId=String(req.body?.gameId||'');
+   if(!/^[a-f0-9-]{36}$/.test(gameId))throw Error('INVALID_GAME_ID');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const actor=req.dealIdentity.uid;
+   const room=await check(db,code,actor);
+   const ref=db.collection(collection).doc(code);
+   const next=await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref);
+    const game=snap.exists?snap.data().game:null;
+    if(!game||game.id!==gameId||game.phase!=='final'||game.monsterSlotsVersion!==1)
+     throw Error('SLOT_SHOW_GAME_CHANGED');
+    const state=game.monsterSlotShow;
+    if(!state)throw Error('SLOT_SHOW_NOT_AVAILABLE');
+    if(state.phase==='ceremony')return game;
+    const now=Date.now();
+    const roomRecovery=game.players.some(p=>p.id===actor)&&now-Number(state.activatedAt||0)>=30000;
+    if(state.uid!==actor&&!roomRecovery)throw Error('SLOT_SHOW_NOT_YOUR_TURN');
+    let updated;
+    if(operation==='spin'){
+     if(state.phase!=='ready')throw Error('SLOT_SHOW_ALREADY_STARTED');
+     const settled=(await settleMonsterSlotsBatch(tx,db,gameId,[state.uid])).get(state.uid);
+     if(!settled||settled.prizes.length!==state.reels)throw Error('SLOT_SHOW_REWARD_INVALID');
+     updated={...state,phase:'rolling',startedAt:now,prizes:settled.prizes};
+    }else{
+     if(state.phase!=='rolling')throw Error('SLOT_SHOW_NOT_STARTED');
+     const duration=state.reels===1?3000:6000;
+     if(now-Number(state.startedAt||0)<duration)throw Error('SLOT_SHOW_STILL_ROLLING');
+     updated=state.turn==='runner'
+      ?{phase:'ready',turn:'champion',uid:state.championUid,reels:3,
+         runnerUid:state.runnerUid,championUid:state.championUid,
+         activatedAt:now,startedAt:null,prizes:[]}
+      :{phase:'ceremony',turn:'complete',uid:null,reels:0,
+         runnerUid:state.runnerUid,championUid:state.championUid,
+         activatedAt:now,startedAt:null,prizes:[],finishedAt:now};
+    }
+    const result={...game,monsterSlotShow:updated,revision:(game.revision||0)+1};
+    tx.update(ref,{game:result,updatedAt:now});
+    return result;
+   });
+   invalidateGame(code);
+   broadcastGame(code,next);
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,game:publicView(next)});
+  }catch(error){return fail(res,error)}
+ });
+
  // Each completed DOG 16-card board earns ONE five-reel Super Slot.
  // The album ticket is consumed in the same transaction as all five prizes,
  // and the request-id receipt prevents double payment on retries.
@@ -1057,7 +1112,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    return res.json({ok:true,game:publicView(result.game),balance:result.balance,alreadyActive:result.alreadyActive,cost:result.cost});
   }catch(e){return fail(res,e)}
  });
- app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=15?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');if(snap.exists){const previous=snap.data().game;if(previous.phase==='final'){const payouts=(previous.players||[]).map(p=>payoutFor(previous,p));const tiedFinal=payouts.length>1&&payouts.filter(v=>v===Math.max(...payouts)).length>1;const key='final:'+previous.id;const spinAt=Number(previous.christmasWheelSpins?.[key]||0);const packClosed=!!previous.christmasWheelClosed?.[key];const hammer=previous.christmasHammerWheel;const hammerFinished=hammer?.gameId===previous.id&&Number.isFinite(hammer.startedAt)&&Date.now()-hammer.startedAt>=4300;const ceremonyComplete=previous.monsterSlotsVersion===1||!!spinAt&&packClosed&&hammerFinished;if(!tiedFinal&&!ceremonyComplete&&req.body?.skipFinalWheel!==true)throw Error('FINAL_WHEEL_PENDING');if(previous.monsterSlotsVersion===1&&!tiedFinal)await settleMonsterSlotsBatch(tx,db,previous.id,previous.players.map(p=>p.id),'deal',true)}}const requestedCaseCount=req.body?.caseCount===undefined?(snap.exists?snap.data().game?.values?.length||27:27):Number(req.body.caseCount);if(![26,27,28,29,30].includes(requestedCaseCount))throw Error('INVALID_CASE_COUNT');const game=create(players,undefined,requestedCaseCount);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);balanceReadCache.clear();broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=15?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');if(snap.exists){const previous=snap.data().game;if(previous.phase==='final'){if(previous.monsterSlotShow&&previous.monsterSlotShow.phase!=='ceremony')throw Error('SLOT_SHOW_PENDING');const payouts=(previous.players||[]).map(p=>payoutFor(previous,p));const tiedFinal=payouts.length>1&&payouts.filter(v=>v===Math.max(...payouts)).length>1;const key='final:'+previous.id;const spinAt=Number(previous.christmasWheelSpins?.[key]||0);const packClosed=!!previous.christmasWheelClosed?.[key];const hammer=previous.christmasHammerWheel;const hammerFinished=hammer?.gameId===previous.id&&Number.isFinite(hammer.startedAt)&&Date.now()-hammer.startedAt>=4300;const ceremonyComplete=previous.monsterSlotsVersion===1||!!spinAt&&packClosed&&hammerFinished;if(!tiedFinal&&!ceremonyComplete&&req.body?.skipFinalWheel!==true)throw Error('FINAL_WHEEL_PENDING');if(previous.monsterSlotsVersion===1&&!tiedFinal)await settleMonsterSlotsBatch(tx,db,previous.id,previous.players.map(p=>p.id),'deal',true)}}const requestedCaseCount=req.body?.caseCount===undefined?(snap.exists?snap.data().game?.values?.length||27:27):Number(req.body.caseCount);if(![26,27,28,29,30].includes(requestedCaseCount))throw Error('INVALID_CASE_COUNT');const game=create(players,undefined,requestedCaseCount);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);balanceReadCache.clear();broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{const actionStarted=Date.now();try{firestoreUsage.gameActions++;const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
 // Run the fresh room-membership check and the first game-state transaction read
 // concurrently. A valid membership is STILL required before any game mutation,
@@ -1162,6 +1217,17 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    const winner=payouts.find(p=>p.payout===max);
    const uniqueWinner=payouts.filter(p=>p.payout===max).length===1;
    const slotRankings=monsterSlotPlacements(payouts.map(p=>({uid:p.id,amount:p.payout})));
+   // Shared finale: unique runner-up first, then champion; every player watches.
+   if(uniqueWinner){
+    const runner=payouts.find(p=>slotRankings.get(p.id)?.reels===1);
+    after.monsterSlotShow={
+     phase:'ready',turn:runner?'runner':'champion',
+     uid:runner?.id||winner.id,reels:runner?1:3,
+     runnerUid:runner?.id||null,championUid:winner.id,
+     activatedAt:Date.now(),startedAt:null,prizes:[]
+    };
+   }
+
    if(uniqueWinner&&after.monsterSlotsVersion!==1){
    const finalRewardRef=db.collection('deal_christmas_final_rewards_v1').doc(after.id);
    const finalAlbumRef=db.collection(DOG_S2_COLLECTION).doc(winner.id);
