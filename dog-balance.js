@@ -43,7 +43,7 @@ const CHEST_STAGE_RULES=[
  {chestWeights:[28,36,22,11,3], weights:[32,27,23,15,3]},
  {chestWeights:[21,32,29,14,4], weights:[29,26,24,17,4]},
  {chestWeights:[16,28,32,19,5], weights:[24,25,26,19,6]},
- {chestWeights:[10,22,34,26,8], weights:[21,23,27,22,7]}
+ {chestWeights:[10,22,34,26,8], weights:[22,23,27,22,6]}
 ];
 export const DOG_CHEST_STAGES=Object.freeze(CHEST_STAGE_RULES.map(rule=>{
  const eligible=DOG_CHEST_TYPE_IDS.filter((id,i)=>rule.chestWeights[i]>0);

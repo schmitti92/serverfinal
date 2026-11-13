@@ -67,6 +67,10 @@ test('gear recipes remain craftable in every boss chapter; first legendary cost 
  assert.equal(firstEpic.cost.mithril,1);
  const twenty=forgeQuote('weapon',19,{}, {forgeLevel:4,sharedBosses:[10,20,30]});
  assert.equal(twenty.cost.dragonsteel,undefined);
+ // Old, non-expedition forge is intentionally unaffected by DOG economics.
+ const legacy=forgeQuote('weapon',19,{mithril:9,dragonsteel:2});
+ assert.equal(legacy.cost.dragonsteel,1);
+ assert.equal(legacy.cost.mithril,4);
  assert.equal(twenty.qualityLevel,1);
  const q2=forgeQuote('weapon',25,{}, {forgeLevel:6,sharedBosses:[10,20,30,40,50]});
  assert.equal(q2.qualityLevel,2);

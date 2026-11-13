@@ -77,7 +77,7 @@ export function dogHero(raw){
   recent:normalizeJournal(d.recent),
   updatedAt:bounded(d.updatedAt,0,10_000_000_000_000,0)};
 }
-const costFor=(group,next,itemId=null)=>{
+const costFor=(group,next,itemId=null,expedition=false)=>{
  // Armor keeps using defense materials even beyond equipment level ten.
  const r=DOG_RESOURCE_GROUPS[itemId==='armor'?'defense':group];
  if(!r)throw Error('INVALID_FORGE_ITEM');
@@ -94,7 +94,10 @@ const costFor=(group,next,itemId=null)=>{
   }
   else if(next<=18){add(2,3);add(3,1+Math.floor((next-16)/2));}
   // Do not demand legendary dragonsteel until the later Forge-6 chapter.
-  else if(next<=20){add(2,3);add(3,next===20?4:3);}
+  else if(next<=20){
+   if(expedition){add(2,3);add(3,next===20?4:3);}
+   else{add(3,next===20?4:3);add(4,1);}
+  }
   else if(next<=30){add(2,3+Math.floor((next-21)/5));add(3,2+Math.floor((next-21)/5));}
   else if(next<=40){add(3,4+Math.floor((next-31)/4));add(4,1+Math.floor((next-31)/5));}
   else {add(3,6+Math.floor((next-41)/3));add(4,3+Math.floor((next-41)/3));}
@@ -135,7 +138,7 @@ export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefine
   gateMode&&equipment&&nextLevel<=10?dogEquipmentCost(itemId,nextLevel):
   gateMode&&!equipment&&nextLevel<=5?
    {[DOG_RESOURCE_GROUPS[definition.group][0]]:[0,2,3,3,4,5][nextLevel]}:
-   costFor(definition.group,nextLevel,itemId);
+   costFor(definition.group,nextLevel,itemId,gateMode);
  const successChance=equipment&&!maxed?
   gateMode&&nextLevel<=10?dogEquipmentSuccessChance(nextLevel):
   nextLevel>10?Math.max(45,88-Math.floor((nextLevel-11)/5)*5):
