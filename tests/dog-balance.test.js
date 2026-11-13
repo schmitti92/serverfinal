@@ -313,8 +313,10 @@ test('three hero attack styles alternate with guaranteed enemy retaliation until
   assert.equal(f.timeline.filter(e=>e.actor==='hero').length,f.rounds);
   assert.equal(f.timeline.at(-1).actor,f.win?'hero':'enemy');
   assert.deepEqual(f.attacks.map(x=>x.id),['quick','power','precise']);
-  assert.deepEqual(f.timeline.filter(e=>e.actor==='hero').slice(0,3).map(e=>e.style),['quick','power','precise']);
-  assert.deepEqual(f.timeline.map(e=>e.actor).slice(0,6),['hero','enemy','hero','enemy','hero','enemy']);
+  assert.deepEqual(f.timeline.filter(e=>e.actor==='hero').map(e=>e.style),
+   Array.from({length:f.rounds},(_,i)=>['quick','power','precise'][i%3]));
+  assert.deepEqual(f.timeline.map(e=>e.actor),
+   f.timeline.map((_,i)=>i%2===0?'hero':'enemy'));
   assert.ok(f.rounds<40,'duel must terminate briskly');
   assert.equal(f.attacks.reduce((sum,a)=>sum+a.damage,0),f.enemyDamageTaken);
   assert.equal(f.attacks.reduce((sum,a)=>sum+a.enemyDamage,0),f.heroDamageTaken);
@@ -336,7 +338,8 @@ test('attack, armor, and combat skills affect REAL combat values independently',
   vitality:5,resilience:5,regeneration:5,blocking:5,evasion:5,last_stand:5};
  const trained=dogSimulateNormalGate({gate:9,weaponLevel:5,armorLevel:5,skills:skillLevels});
  assert.ok(trained.heroMaxHp>upgraded.heroMaxHp);
- assert.ok(trained.attacks[0].damage>=upgraded.attacks[0].damage);
+ assert.ok(trained.timeline[0].damage>upgraded.timeline[0].damage,
+  'skills must improve the actual first quick strike, even if the fight ends sooner');
  assert.ok(trained.heroRemainingHp>upgraded.heroRemainingHp);
  assert.ok(trained.healing>=0);
 });
