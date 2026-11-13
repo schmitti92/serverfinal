@@ -81,6 +81,29 @@ export function dogGateProgress(raw){
    .map(gate=>[String(gate),obj(x.groupBosses[String(gate)])])),
   updatedAt:clamp(x.updatedAt,0,10_000_000_000_000,0)};
 }
+// Release the two old live-test bot seats to real, authenticated players.
+// Only real participants are preserved; the official expedition remains a
+// three-player team, and no progress or inventories of humans are reset.
+export const DOG_PUBLIC_RELEASE_BOT_IDS=Object.freeze(['dog-live-bot-nova','dog-live-bot-titan']);
+const dogPublicTeamHasBot=team=>team.members.some(m=>DOG_PUBLIC_RELEASE_BOT_IDS.includes(m.uid));
+const dogPublicBossRunning=(team,progress)=>team.phase==='fighting'||
+ progress.boss10?.phase==='fighting'||
+ Object.values(progress.groupBosses||{}).some(b=>b?.phase==='fighting');
+export function dogPublicEnroll(teamRaw,progressRaw,uid,name,now=Date.now()){
+ const previous=bossTeam(teamRaw),progress=dogGateProgress(progressRaw);
+ if(previous.members.some(m=>m.uid===uid))return {team:previous,progress,joined:false,retiredBot:null};
+ if(previous.members.length<3)return {team:bossJoin(previous,uid,name,null,now),progress,joined:true,retiredBot:null};
+ const bot=previous.members.find(m=>DOG_PUBLIC_RELEASE_BOT_IDS.includes(m.uid));
+ if(!bot)throw Error('DOG_GATE_TEAM_FULL');
+ if(dogPublicBossRunning(previous,progress))throw Error('DOG_GATE_BOSS_ACTIVE');
+ const members=previous.members.filter(m=>m.uid!==bot.uid);
+ const heroes={...previous.heroes},heroClasses={...previous.heroClasses},heroLocks={...previous.heroLocks};
+ delete heroes[bot.uid];delete heroClasses[bot.uid];delete heroLocks[bot.uid];
+ const team=bossJoin({...previous,members,heroes,heroClasses,heroLocks},uid,name,null,now);
+ const people={...progress.people};
+ delete people[bot.uid]; // keep the normalizer's three saved slots human-first
+ return {team,progress:{...progress,people,updatedAt:now},joined:true,retiredBot:bot.uid};
+}
 /** Bypass the 10-minute boss lock only for the privately authorized
  * three-seat pilot, never for a normal party of human players. */
 export function dogDeveloperCooldownBypass(progressRaw,teamRaw,uid){
@@ -117,7 +140,7 @@ export function dogGateMapView(teamRaw,progressRaw,viewerUid){
    isMe:m.uid===viewerUid};
  });
  return {members,memberCount:team.members.length,teamReady:team.members.length===3,
-  isMember,canJoin:!isMember&&team.members.length<3,
+  isMember,canJoin:!isMember&&(team.members.length<3||dogPublicTeamHasBot(team)&&!dogPublicBossRunning(team,progress)),
   sharedBosses:isMember?progress.sharedBosses:[],
   dogUnlocked:isMember&&progress.sharedBosses.includes(100), // trusted server wins only
   progress:isMember?(progress.people[viewerUid]||{currentGate:1,highestGate:1,normals:[],minis:[],
@@ -188,7 +211,7 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
 const ERRORS={LOGIN_REQUIRED:401,DOG_GATE_INVALID:400,INVALID_REQUEST_ID:400,
  DOG_GATE_RECEIPT_CONFLICT:409,DOG_GATE_PREVIOUS_REQUIRED:409,
  DOG_GATE_ALREADY_WON:409,DOG_GATE_BOSS_REQUIRED:409,DOG_GATE_COOLDOWN:429,
- DOG_GATE_TEAM_FULL:409,NOT_DOG_TEAM_MEMBER:403,DOG_HERO_CLASS_INVALID:400,
+ DOG_GATE_TEAM_FULL:409,DOG_GATE_BOSS_ACTIVE:409,NOT_DOG_TEAM_MEMBER:403,DOG_HERO_CLASS_INVALID:400,
  DOG_HERO_ALREADY_LOCKED:409,DOG_HERO_SELECTION_REQUIRED:409};
 export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
  const auth=async(req,res,next)=>{
@@ -262,10 +285,10 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
     const team=bossTeam(teamSnap.exists?teamSnap.data():null);
     if(team.members.some(m=>m.uid===uid))
      return dogGateMapView(team,progressSnap.exists?progressSnap.data():null,uid);
-    if(team.members.length>=3)throw Error('DOG_GATE_TEAM_FULL');
-    const next=bossJoin(team,uid,name,null,clock());
-    tx.set(teamRef,next);
-    return dogGateMapView(next,progressSnap.exists?progressSnap.data():null,uid);
+    const enrolled=dogPublicEnroll(team,progressSnap.exists?progressSnap.data():null,uid,name,clock());
+    tx.set(teamRef,enrolled.team);
+    if(enrolled.retiredBot)tx.set(progressRef,enrolled.progress);
+    return dogGateMapView(enrolled.team,enrolled.progress,uid);
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...value});
@@ -279,14 +302,13 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
    const value=await db.runTransaction(async tx=>{
     const [teamSnap,progressSnap]=await Promise.all([tx.get(teamRef),tx.get(progressRef)]);
     const team=bossTeam(teamSnap.exists?teamSnap.data():null);
-    // First selection enrolls an unjoined player, if the three-seat team has space.
-    // Keep existing progress, bots, and inventory intact.
-    const member=team.members.some(m=>m.uid===uid);
-    if(!member&&team.members.length>=3)throw Error('DOG_GATE_TEAM_FULL');
-    const joined=member?team:bossJoin(team,uid,name,null,clock());
-    const updated=bossSelectHero(joined,uid,heroClass,clock());
-    if(!member||team.heroLocks?.[uid]!==true)tx.set(teamRef,updated);
-    return dogGateMapView(updated,progressSnap.exists?progressSnap.data():null,uid);
+    // Public release: an authentic player takes an old bot seat when needed.
+    // Existing human progress, loot and locked hero selection remain unchanged.
+    const enrolled=dogPublicEnroll(team,progressSnap.exists?progressSnap.data():null,uid,name,clock());
+    const updated=bossSelectHero(enrolled.team,uid,heroClass,clock());
+    if(enrolled.joined||team.heroLocks?.[uid]!==true)tx.set(teamRef,updated);
+    if(enrolled.retiredBot)tx.set(progressRef,enrolled.progress);
+    return dogGateMapView(updated,enrolled.progress,uid);
    });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,...value});
