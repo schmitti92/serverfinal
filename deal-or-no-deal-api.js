@@ -2,10 +2,10 @@ import {create,apply,publicView,payoutFor,cashCreditFor} from './deal-or-no-deal
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
-import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,installDogAlbumSeason2} from './dog-album-season2.js';
+import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
-import {drawMonsterSlots,MONSTER_SLOTS_WEIGHTS} from './monster-slots.js';
+import {drawMonsterSlot,drawMonsterSlots,MONSTER_SLOTS_WEIGHTS} from './monster-slots.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
@@ -263,11 +263,11 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // Server-owned, exactly-once settlement shared by personal claims and the
  // next-round handoff. The entire batch reads first, then credits inventories.
  // This protects offline/slow participants without asking each client to spin.
- async function settleMonsterSlotsBatch(tx,db,gameId,uids){
+ async function settleMonsterSlotsBatch(tx,db,gameId,uids,mode='deal'){
   const players=[...new Set(uids)].map(uid=>({
    uid,
-   receiptRef:db.collection('deal_monster_slots_receipts_v1').doc(gameId+'_'+uid),
-   payoutRef:db.collection(payoutCollection).doc(gameId+'_'+uid),
+   receiptRef:db.collection(mode==='super'?'deal_dog_super_slots_receipts_v1':'deal_monster_slots_receipts_v1').doc(gameId+'_'+uid),
+   payoutRef:mode==='super'?null:db.collection(payoutCollection).doc(gameId+'_'+uid),
    materialsRef:db.collection(DOG_MATERIALS_COLLECTION).doc(uid),
    walletRef:db.collection(walletCollection).doc(uid),
    albumRef:db.collection(CHRISTMAS_COLLECTION).doc(uid),
@@ -283,18 +283,20 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    else missing.push(players[i]);
   }
   if(!missing.length)return results;
-  const payouts=await Promise.all(missing.map(p=>tx.get(p.payoutRef)));
-  for(let i=0;i<missing.length;i++){
-   if(!payouts[i].exists)throw Error('GAME_REWARD_NOT_SETTLED');
-   const data=payouts[i].data();
-   if(data?.gameId!==gameId||data?.uid!==missing[i].uid)throw Error('GAME_REWARD_INVALID');
-   if(data.slotEligible===false)throw Error('TIED_GAME_NO_SLOTS');
+  if(mode!=='super'){
+   const payouts=await Promise.all(missing.map(p=>tx.get(p.payoutRef)));
+   for(let i=0;i<missing.length;i++){
+    if(!payouts[i].exists)throw Error('GAME_REWARD_NOT_SETTLED');
+    const data=payouts[i].data();
+    if(data?.gameId!==gameId||data?.uid!==missing[i].uid)throw Error('GAME_REWARD_INVALID');
+    if(data.slotEligible===false)throw Error('TIED_GAME_NO_SLOTS');
+   }
   }
   const progressSnap=await tx.get(db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID));
   const progress=dogGateProgress(progressSnap.exists?progressSnap.data():null);
   const prepared=missing.map(p=>{
    const gate=progress.people[p.uid]?.highestGate??1;
-   const prizes=drawMonsterSlots(gate);
+   const prizes=mode==='super'?Array.from({length:5},()=>drawMonsterSlot(gate)):drawMonsterSlots(gate);
    const needed=new Set(prizes.map(prize=>prize.kind));
    return {...p,gate,prizes,needed};
   });
@@ -306,16 +308,19 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    p.needed.has('hammer')?tx.get(p.iceRef):null,
    p.needed.has('joker')?tx.get(p.jokerRef):null,
    p.needed.has('minigame')?tx.get(p.hatsRef):null,
-   p.needed.has('pack')?tx.get(p.dogAlbumRef):null
+   (mode==='super'||p.needed.has('pack'))?tx.get(p.dogAlbumRef):null
   ])));
   const now=Date.now();
   for(let i=0;i<prepared.length;i++){
    const p=prepared[i], [materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap,dogAlbumSnap]=inventories[i];
    const oldAlbum=albumSnap?.exists?albumSnap.data():{};
+   const dogOld=dogAlbumSnap?.exists?dogAlbumSnap.data():{};
+   const oldTickets=Number(dogOld.superSlotTickets||0);
+   if(mode==='super'&&(!Number.isSafeInteger(oldTickets)||oldTickets<1))throw Error('SUPER_SLOT_TICKET_REQUIRED');
    let inventory=materialSnap?.exists?materialSnap.data():null;
    let cash=0,jokers=0,miniTickets=0,monsterTickets=0;
    const hammers={},settledPrizes=[];
-   let dogCards={...(dogAlbumSnap?.exists?dogAlbumSnap.data()?.cards:{})},openedDogPacks=0;
+   let dogCards={...(dogOld.cards||{})},openedDogPacks=0;
    for(const prize of p.prizes){
     if(prize.kind==='chest'){
      const spec=DOG_CHEST_TYPES[prize.id];
@@ -339,10 +344,18 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     else throw Error('INVALID_SLOT_PRIZE');
     settledPrizes.push(prize);
    }
-   if(openedDogPacks)tx.set(p.dogAlbumRef,{
-    season:2,cards:dogCards,
-    opened:Number(dogAlbumSnap?.data()?.opened||0)+openedDogPacks,updatedAt:now
-   },{merge:true});
+   if(openedDogPacks||mode==='super'){
+    const beforeCycleState=mode==='super'?{...dogOld,superSlotTickets:oldTickets-1}:dogOld;
+    const cycles=dogS2AdvanceCycles(dogOld.cards||{},dogCards,beforeCycleState,now);
+    tx.set(p.dogAlbumRef,{
+     season:2,cards:dogCards,...cycles.updates,
+     opened:Number(dogOld.opened||0)+openedDogPacks,updatedAt:now
+    },{merge:true});
+    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(p.uid),{
+     uid:p.uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
+     name:String(dogOld.tournamentName||('Spieler '+p.uid.slice(0,5))).slice(0,32),updatedAt:now
+    },{merge:true});
+   }
    if(monsterTickets){
     const ticketCount=checkMonsterBalance(Number(oldAlbum.monsterWheelTickets||0),monsterTickets,1000000);
     tx.set(p.albumRef,{monsterWheelTickets:ticketCount,updatedAt:now},{merge:true});
@@ -367,7 +380,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     balance:checkMonsterBalance(Number(walletSnap.data()?.balance||0),cash),updatedAt:now
    },{merge:true});
    if(p.prizes.some(prize=>prize.kind==='chest'))tx.set(p.materialsRef,inventory);
-   const settled={ok:true,gameId,prizes:settledPrizes,guaranteed:3,replayed:false,createdAt:now};
+   const settled={ok:true,gameId,prizes:settledPrizes,guaranteed:mode==='super'?5:3,replayed:false,createdAt:now};
    tx.create(p.receiptRef,{uid:p.uid,gameId,result:settled,createdAt:now});
    results.set(p.uid,settled);
   }
@@ -381,6 +394,23 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    if(!db)throw Error('STORAGE_UNAVAILABLE');
    const result=await db.runTransaction(async tx=>
     (await settleMonsterSlotsBatch(tx,db,gameId,[uid])).get(uid)
+   );
+   res.set('Cache-Control','no-store');return res.json(result);
+  }catch(e){return fail(res,e)}
+ });
+
+ // Each completed DOG 16-card board earns ONE five-reel Super Slot.
+ // The album ticket is consumed in the same transaction as all five prizes,
+ // and the request-id receipt prevents double payment on retries.
+ app.post('/api/deal-or-no-deal/christmas/season2/super-slot/play',auth,async(req,res)=>{
+  try{
+   const requestId=String(req.body?.requestId||'');
+   if(!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
+   const uid=req.dealIdentity.uid,db=getFirestore();
+   if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const gameId='dogsuper_'+requestId;
+   const result=await db.runTransaction(async tx=>
+    (await settleMonsterSlotsBatch(tx,db,gameId,[uid],'super')).get(uid)
    );
    res.set('Cache-Control','no-store');return res.json(result);
   }catch(e){return fail(res,e)}
