@@ -55,7 +55,8 @@ test('Old chest stage cannot retroactively give later quality; eligible new ches
 test('Tier-specific materials are required for high-level upgrades',()=>{
  const progress={sharedBosses:seals,forgeLevel:7};
  const low=dogInventory({resources:{iron:100,forge_coal:100,steel_core:100,mithril:100,dragonsteel:100}});
- const q=forgeQuote('weapon',40,low.resources,progress,low.qualityResources);
+ const q=forgeQuote('weapon',49,low.resources,
+  {sharedBosses:seals,forgeLevel:10},low.qualityResources);
  assert.equal(q.qualityLevel,3);
  assert.equal(q.affordable,false);
  assert.ok(Object.keys(q.cost).length>0);

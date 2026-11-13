@@ -72,10 +72,23 @@ test('gear recipes remain craftable in every boss chapter; first legendary cost 
  assert.equal(legacy.cost.dragonsteel,1);
  assert.equal(legacy.cost.mithril,4);
  assert.equal(twenty.qualityLevel,1);
- const q2=forgeQuote('weapon',25,{}, {forgeLevel:6,sharedBosses:[10,20,30,40,50]});
+ const q2=forgeQuote('weapon',29,{}, {forgeLevel:6,sharedBosses:[10,20,30,40,50]});
  assert.equal(q2.qualityLevel,2);
- const q3=forgeQuote('weapon',40,{}, {forgeLevel:9,sharedBosses:[10,20,30,40,50,60,70,80]});
+ assert.equal(forgeQuote('weapon',30,{}, {forgeLevel:7,sharedBosses:[10,20,30,40,50,60]}).qualityLevel,1);
+ assert.equal(forgeQuote('weapon',39,{}, {forgeLevel:8,sharedBosses:[10,20,30,40,50,60,70]}).qualityLevel,2);
+ assert.equal(forgeQuote('weapon',40,{}, {forgeLevel:9,sharedBosses:[10,20,30,40,50,60,70,80]}).qualityLevel,1);
+ const q3=forgeQuote('weapon',49,{}, {forgeLevel:10,sharedBosses:[10,20,30,40,50,60,70,80,90]});
  assert.equal(q3.qualityLevel,3);
+ assert.deepEqual(q3.cost,{mithril:2,dragonsteel:1});
+ assert.deepEqual(forgeQuote('armor',49,{}, {forgeLevel:10,sharedBosses:[10,20,30,40,50,60,70,80,90]}).cost,
+  {guardian_rune:2,phoenix_feather:1});
+ for(let n=41;n<50;n++){
+  const q=forgeQuote('weapon',n-1,{}, {forgeLevel:10,sharedBosses:[10,20,30,40,50,60,70,80,90]});
+  assert.equal(q.qualityLevel,1);
+  assert.ok((q.cost.dragonsteel||0)<=1,'late game has no mandatory grade-3 material farm before level 50');
+ }
+ assert.equal(forgeQuote('attack_power',49,{}, {forgeLevel:10,sharedBosses:[10,20,30,40,50,60,70,80,90]}).qualityLevel,1,
+  'skills must not require grade 3 to stay playable');
 });
 test('10:1 exchange and refinement cannot mint locked tiers before the official forge seal',()=>{
  const bag=dogInventory({resources:{iron:100,forge_coal:100,steel_core:100,mithril:100,dragonsteel:100}});

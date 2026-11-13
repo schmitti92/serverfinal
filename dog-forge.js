@@ -100,6 +100,14 @@ const costFor=(group,next,itemId=null,expedition=false)=>{
   }
   else if(next<=30){add(2,3+Math.floor((next-21)/5));add(3,2+Math.floor((next-21)/5));}
   else if(next<=40){add(3,4+Math.floor((next-31)/4));add(4,1+Math.floor((next-31)/5));}
+  else if(expedition){
+   // High-grade materials are a final crafting milestone, not a recurring
+   // tax at every one of the last ten levels (which was ~84 quality-3
+   // legendary units for weapon + armor, far beyond the 300-game goal).
+   if(next===50){add(3,2);add(4,1);}
+   else{add(3,5+Math.floor((next-41)/3));
+    if(next===45||next===48)add(4,1);}
+  }
   else {add(3,6+Math.floor((next-41)/3));add(4,3+Math.floor((next-41)/3));}
  }else{
   if(next<=10)add(0,1+Math.floor((next-1)/4));
@@ -144,12 +152,13 @@ export function forgeQuote(itemId,currentLevel,resources={},progressRaw=undefine
   nextLevel>10?Math.max(45,88-Math.floor((nextLevel-11)/5)*5):
   DOG_FORGE_TUNING.equipmentSuccess.find(x=>nextLevel<=x.max)?.chance??25:100;
  const locked=!maxed&&nextLevel>unlockedMaxLevel;
- // Quality 2 is unlocked after Boss 30 (forge level 16+);
- // Quality 3 after Boss 60 (forge level 31+). No higher-tier bypass.
- // Quality-two materials first drop after Boss 30, quality three after
- // Boss 60. Give the team two chapters to collect/refine them before
- // equipment consumes them, avoiding a near-impossible first epic upgrade.
- const qualityLevel=gateMode&&nextLevel>40?3:gateMode&&nextLevel>25?2:1;
+ // Quality 2 unlocks after Boss 30, and Quality 3 after Boss 60.
+ // These are expensive to obtain: requiring Grade 3 for every level 41–50
+ // previously created a near-impossible bottleneck. Only the equipment
+ // milestone levels 30 and 40 require Grade 2; the final level 50 requires
+ // Grade 3. Other upgrades use Grade 1 as normal, including skills.
+ const qualityLevel=gateMode&&equipment&&nextLevel===50?3:
+  gateMode&&equipment&&(nextLevel===30||nextLevel===40)?2:1;
  const quality=qualityResources||reconcileQualityInventory(resources);
  return {itemId,level,nextLevel,maxLevel,maxed,cost,successChance,qualityLevel,
   ...(gateMode?{locked,unlockedMaxLevel,legacy:false}:{}),
