@@ -135,11 +135,10 @@ export function dogGateFight(progressRaw,uid,gate,heroRaw,rand=randomInt,now=Dat
   lastAttemptAt:0,lastResult:null,miniRewards:[]};
  const wins=mini(gate)?player.minis:player.normals;
  if(wins.includes(gate))throw Error('DOG_GATE_ALREADY_WON');
- // Players may keep adventuring five gates beyond a group boss:
- // Boss 10 locks only gate 16 onward, Boss 20 only gate 26 onward, etc.
- // Mini-bosses at gates 5/15/... remain optional; at gate 15 one can
- // still fight while the team is preparing for Boss 10.
- const requiredBoss=gate>=16?Math.floor((gate-6)/10)*10:0;
+ // Each defeated group boss opens exactly the NEXT ten-gate chapter.
+ // No gate 11–19 (including optional mini-boss 15) before Boss 10;
+ // no gate 21–29 before Boss 20, and so on. Previously earned wins remain.
+ const requiredBoss=gate>=11?Math.floor((gate-1)/10)*10:0;
  if(requiredBoss>=10&&!state.sharedBosses.includes(requiredBoss))
   throw Error('DOG_GATE_BOSS_REQUIRED');
  const needed=previousNormal(gate);
