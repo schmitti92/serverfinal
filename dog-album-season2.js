@@ -36,10 +36,10 @@ export const DOG_S2_CARDS=Object.freeze(FILES.flatMap((files,board)=>files.map((
  return Object.freeze({id:'dog2-'+String(number).padStart(3,'0'),name,image,rarity:RARITIES[Math.floor(slot/4)],series:DOG_S2_BOARDS[board],board:board+1,slot:slot+1});
 })));
 export const DOG_S2_PACKS=Object.freeze([
- Object.freeze({id:'small',name:'DOG Normalpaket',price:1000000,count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}}),
- Object.freeze({id:'large',name:'DOG Goldpaket',price:2000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}}),
- Object.freeze({id:'premium',name:'DOG Premiumpaket',price:3000000,count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}),
- Object.freeze({id:'platinum',name:'DOG Platinpaket',price:10000000,count:16,guaranteed:'epic',guaranteedCount:4,weights:{common:30,rare:35,epic:25,legendary:10}})
+ Object.freeze({id:'small',name:'DOG Normalpaket',price:100000000,count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}}),
+ Object.freeze({id:'large',name:'DOG Goldpaket',price:200000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}}),
+ Object.freeze({id:'premium',name:'DOG Premiumpaket',price:300000000,count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}}),
+ Object.freeze({id:'platinum',name:'DOG Platinpaket',price:1000000000,count:16,guaranteed:'epic',guaranteedCount:4,weights:{common:30,rare:35,epic:25,legendary:10}})
 ]);
 const LINES=Object.freeze([
  ...Array.from({length:4},(_,r)=>[0,1,2,3].map(c=>r*4+c)),
