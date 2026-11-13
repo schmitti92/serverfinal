@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
-import {create,payoutFor,cashCreditFor,publicView} from '../deal-or-no-deal.js';
+import {create,payoutFor,cashCreditFor,publicView,MAX_MATCH_CREDIT_CENTS} from '../deal-or-no-deal.js';
 
 const PRICE=300000000; // 3,000,000 EUR in cents
 function harness(){
@@ -175,4 +175,50 @@ test('live last-decision settlement chooses and rewards original winner, not a h
  assert.equal(h.balance('a'),400000000);
  assert.equal(h.balance('b'),PRICE+100000000+250000000);
  assert.equal(h.docs.get('deal_or_no_deal_payouts_v1/'+g.id+'_a').amount,300000000);
+});
+
+
+test('x2 never pays more than 50 million euros, including the 50-million suitcase',()=>{
+ const g=create([{id:'a'},{id:'b'}],()=>0,30);
+ g.players[0].case=0;
+ g.players[0].doublePayout=true;
+ assert.equal(MAX_MATCH_CREDIT_CENTS,5_000_000_000);
+ for(const [base,expected] of [
+  [1_000_000_000,2_000_000_000], // 10m -> 20m
+  [2_000_000_000,4_000_000_000], // 20m -> 40m
+  [3_000_000_000,5_000_000_000], // 30m -> max 50m
+  [5_000_000_000,5_000_000_000]  // jackpot 50m -> 50m
+ ]){
+  g.players[0].deal=base;
+  assert.equal(payoutFor(g,g.players[0]),base,'x2 must not change original winnings');
+  assert.equal(cashCreditFor(g,g.players[0]),expected,'final cash credit must respect the cap');
+  assert.equal(publicView({...g,phase:'final'}).finalValues[0].payout,base,'ranking must stay unchanged');
+ }
+ g.players[0].doublePayout=false;
+ g.players[0].deal=5_000_000_000;
+ assert.equal(cashCreditFor(g,g.players[0]),5_000_000_000,'normal jackpot remains 50m');
+});
+
+test('final settlement credits at most 50m and replays do not pay the blocked x2 difference',async()=>{
+ for(const [base,credit] of [[3_000_000_000,5_000_000_000],[5_000_000_000,5_000_000_000]]){
+  const h=harness();
+  const start=await h.invoke('POST','/api/deal-or-no-deal/:code/start');
+  assert.equal(start.body.ok,true);
+  const boost=await h.invoke('POST','/api/deal-or-no-deal/:code/double-boost','a');
+  assert.equal(boost.body.ok,true);
+  const game=h.match();
+  game.phase='final';game.players[0].case=0;game.players[0].deal=base;
+  game.players[1].case=1;game.players[1].deal=1_000_000_000;
+  const previousBalance=h.balance('a');
+  const settled=await h.invoke('GET','/api/deal-or-no-deal/:code/balances','a');
+  assert.equal(settled.body.ok,true);
+  assert.equal(h.balance('a'),previousBalance+credit,'bank credit must have the 50m limit');
+  const receipt=h.docs.get('deal_or_no_deal_payouts_v1/'+game.id+'_a');
+  assert.equal(receipt.baseAmount,base,'original winning value remains intact');
+  assert.equal(receipt.amount,credit,'receipt contains actual capped credit');
+  assert.equal(receipt.bonusAmount,credit-base,'bonus is only the allowed difference');
+  const replay=await h.invoke('GET','/api/deal-or-no-deal/:code/balances','a');
+  assert.equal(replay.body.ok,true);
+  assert.equal(h.balance('a'),previousBalance+credit,'retry must not repeat settlement');
+ }
 });
