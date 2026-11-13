@@ -295,14 +295,33 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   if(!missing.length)return results;
   if(mode!=='super'){
    const payouts=await Promise.all(missing.map(p=>tx.get(p.payoutRef)));
+   // A previous finalization path wrote slotEligible=true for ALL players
+   // when there was a unique champion, but omitted slotReels/slotRank.
+   // Only these exact legacy receipts may be repaired. Determine standings
+   // from the authoritative payout ledger, never from client-submitted rank.
+   const needsLegacy=payouts.some(snap=>snap.exists&&snap.data()?.slotEligible===true&&
+    snap.data()?.slotVersion!==2&&snap.data()?.slotReels==null);
+   let legacyRanks=null;
+   if(needsLegacy){
+    const all=await tx.get(db.collection(payoutCollection).where('gameId','==',gameId));
+    const rows=(all.docs||[]).map(snap=>({...snap.data(),_docId:snap.id}));
+    if(rows.length<1||rows.length>4||rows.some(row=>row.gameId!==gameId||
+     typeof row.uid!=='string'||!row.uid||row._docId!==gameId+'_'+row.uid||
+     !Number.isSafeInteger(row.baseAmount)||row.baseAmount<0)||
+     new Set(rows.map(row=>row.uid)).size!==rows.length)
+     throw Error('GAME_REWARD_INVALID');
+    legacyRanks=monsterSlotPlacements(rows.map(row=>({uid:row.uid,amount:row.baseAmount})));
+   }
    const eligible=[];
    for(let i=0;i<missing.length;i++){
     if(!payouts[i].exists)throw Error('GAME_REWARD_NOT_SETTLED');
     const data=payouts[i].data();
     if(data?.gameId!==gameId||data?.uid!==missing[i].uid)throw Error('GAME_REWARD_INVALID');
-    // Old payout receipts without server-stored entitlement can no longer
-    // create free reels. Already claimed slot receipts still replay safely.
-    const reels=Number(data.slotReels||0);
+    let reels=Number(data.slotReels||0),rank=data.slotRank,legacyRepair=false;
+    if(reels===0&&data.slotEligible===true&&data.slotVersion!==2&&data.slotReels==null){
+     const verified=legacyRanks?.get(data.uid);
+     if(verified?.reels>0){reels=verified.reels;rank=verified.rank;legacyRepair=true;}
+    }
     if(!Number.isSafeInteger(reels)||![0,1,3].includes(reels))throw Error('GAME_REWARD_INVALID');
     if(reels===0){
      if(skipIneligible)continue;
@@ -310,7 +329,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
       'TIED_GAME_NO_SLOTS':'SLOT_NOT_ELIGIBLE');
     }
     if(data.slotEligible!==true)throw Error('GAME_REWARD_INVALID');
-    eligible.push({...missing[i],reels,rank:data.slotRank});
+    eligible.push({...missing[i],reels,rank,legacyRepair});
    }
    missing=eligible;
    if(!missing.length)return results;
@@ -416,6 +435,11 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    if(p.prizes.some(prize=>prize.kind==='chest'))tx.set(p.materialsRef,inventory);
    const settled={ok:true,gameId,prizes:settledPrizes,guaranteed:mode==='super'?5:p.reels,
     ...(mode==='super'?{}:{rank:p.rank}),replayed:false,createdAt:now};
+   // Repair and reward commit in one transaction. Existing slot receipts
+   // are replayed above, so reloads never credit a second time.
+   if(p.legacyRepair)tx.set(p.payoutRef,{
+    slotEligible:true,slotReels:p.reels,slotRank:p.rank,slotTiedTop:false,slotVersion:2
+   },{merge:true});
    tx.create(p.receiptRef,{uid:p.uid,gameId,result:settled,createdAt:now});
    results.set(p.uid,settled);
   }
@@ -1137,6 +1161,7 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    // The pack and cards are fixed and credited exactly once when the match ends.
    const winner=payouts.find(p=>p.payout===max);
    const uniqueWinner=payouts.filter(p=>p.payout===max).length===1;
+   const slotRankings=monsterSlotPlacements(payouts.map(p=>({uid:p.id,amount:p.payout})));
    if(uniqueWinner&&after.monsterSlotsVersion!==1){
    const finalRewardRef=db.collection('deal_christmas_final_rewards_v1').doc(after.id);
    const finalAlbumRef=db.collection(DOG_S2_COLLECTION).doc(winner.id);
@@ -1161,7 +1186,10 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
     // A payout receipt is also the exactly-once DOG chest receipt for this game/player.
     // Only new, server-settled Deal matches grant materials; a replay never does.
     tx.set(e.materials,chestForSettledDeal(e.id,snap.materials.exists?snap.materials.data():null,chestContext));
-    tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.credit,baseAmount:e.payout,bonusAmount:e.credit-e.payout,slotEligible:uniqueWinner,createdAt:Date.now()});
+    const slot=slotRankings.get(e.id);
+    tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.credit,baseAmount:e.payout,
+     bonusAmount:e.credit-e.payout,slotEligible:slot.reels>0,slotReels:slot.reels,
+     slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:2,createdAt:Date.now()});
    }
   }
   awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);if(game?.phase==='final')balanceReadCache.clear();broadcastGame(code,game);
