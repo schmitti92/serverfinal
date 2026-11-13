@@ -52,28 +52,46 @@ test('duplicate exchange never removes a first copy',()=>{
  assert.throws(()=>dogS2Redeem({}),/INSUFFICIENT_DUPLICATES/);
 });
 
-test('each 16-card DOG board has exactly three cards at 1/3 and two at 1/5 of normal drawing weight',()=>{
+test('every 16-card DOG board has four normal and twelve special cards, including two 30x rarer',()=>{
  assert.equal(DOG_S2_SPECIAL_CARD_SLOTS.length,DOG_S2_BOARDS.length);
- assert.equal(DOG_S2_CARD_WEIGHT_BASE,15);
+ assert.equal(DOG_S2_CARD_WEIGHT_BASE,120);
+ const expected={120:4,40:4,15:4,8:2,4:2};
  for(let index=0;index<DOG_S2_BOARDS.length;index++){
   const board=DOG_S2_CARDS.filter(c=>c.board===index+1);
   const weights=board.map(dogS2CardDrawWeight);
   assert.equal(board.length,16);
-  assert.equal(weights.filter(w=>w===15).length,11,'11 ordinary cards in '+DOG_S2_BOARDS[index]);
-  assert.equal(weights.filter(w=>w===5).length,3,'3 cards with 3x fewer tickets');
-  assert.equal(weights.filter(w=>w===3).length,2,'2 cards with 5x fewer tickets');
+  for(const [weight,count] of Object.entries(expected))
+   assert.equal(weights.filter(w=>w===Number(weight)).length,count,
+    DOG_S2_BOARDS[index]+' needs exactly '+count+' cards with '+weight+' tickets');
   const special=DOG_S2_SPECIAL_CARD_SLOTS[index];
-  assert.equal(new Set([...special.triple,...special.quintuple]).size,5);
-  assert.ok([...special.triple,...special.quintuple].every(slot=>slot>=1&&slot<=16));
-  for(const weight of [5,3]){
-   const marked=board.filter(card=>dogS2CardDrawWeight(card)===weight);
-   for(const card of marked){
-    const ordinary=board.find(other=>other.rarity===card.rarity&&dogS2CardDrawWeight(other)===15);
-    assert.ok(ordinary,'same-rarity normal card required to compare relative chances');
-    assert.equal(dogS2CardDrawWeight(ordinary)/weight,weight===5?3:5);
+  assert.deepEqual(Object.fromEntries(Object.entries(special).map(([k,v])=>[k,v.length])),
+   {normal:4,triple:4,octuple:4,fifteen:2,thirty:2});
+  const slots=Object.values(special).flat();
+  assert.equal(slots.length,16);
+  assert.equal(new Set(slots).size,16,'all 16 positions should appear exactly once');
+  assert.deepEqual([...slots].sort((a,b)=>a-b),Array.from({length:16},(_,i)=>i+1));
+  for(const rarity of ['common','rare','epic','legendary']){
+   const rarityCards=board.filter(card=>card.rarity===rarity);
+   assert.equal(rarityCards.length,4);
+   const ordinary=rarityCards.filter(c=>dogS2CardDrawWeight(c)===120);
+   assert.equal(ordinary.length,1,'each rarity retains one normal card for fair comparison');
+   const base=dogS2CardDrawWeight(ordinary[0]);
+   for(const card of rarityCards){
+    const weight=dogS2CardDrawWeight(card);
+    assert.ok([1,3,8,15,30].includes(base/weight),'special rarity multiplier must be exact');
    }
   }
+  for(const slot of special.thirty){
+   const ultra=board.find(card=>card.slot===slot);
+   const normal=board.find(card=>card.rarity===ultra.rarity&&dogS2CardDrawWeight(card)===120);
+   assert.ok(normal,'30x card must share a rarity tier with a normal card');
+   assert.equal(dogS2CardDrawWeight(normal)/dogS2CardDrawWeight(ultra),30);
+  }
  }
+ assert.equal(DOG_S2_CARDS.filter(card=>dogS2CardDrawWeight(card)===120).length,24);
+ assert.equal(DOG_S2_CARDS.filter(card=>dogS2CardDrawWeight(card)<120).length,72);
+ assert.equal(DOG_S2_CARDS.filter(card=>dogS2CardDrawWeight(card)===4).length,12);
+ assert.throws(()=>dogS2CardDrawWeight({board:1,slot:17}),/INVALID_DOG_CARD/);
 });
 
 test('weighted DOG draw reaches all 96 cards and uses the exact integer ticket intervals',()=>{
