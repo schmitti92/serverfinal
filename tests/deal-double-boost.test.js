@@ -181,6 +181,7 @@ test('live last-decision settlement chooses and rewards original winner, not a h
 test('x2 never pays more than 50 million euros, including the 50-million suitcase',()=>{
  const g=create([{id:'a'},{id:'b'}],()=>0,30);
  g.players[0].case=0;
+ g.players[1].case=1;
  g.players[0].doublePayout=true;
  assert.equal(MAX_MATCH_CREDIT_CENTS,5_000_000_000);
  for(const [base,expected] of [
