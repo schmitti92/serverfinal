@@ -506,6 +506,17 @@ test('30-case 50-million jackpot survives multiplayer protocol, final settlement
  assert.equal(wallets.body.players[0].balance,5000000000,'€50m credited once');
  const secondWallet=await invoke('GET',root+'/balances','a');
  assert.equal(secondWallet.body.players[0].balance,5000000000,'no duplicate settlement');
+ // A new match cannot begin until the shared Slot finale has been confirmed.
+ const blocked=await invoke('POST',root+'/start','a',{skipFinalWheel:true,caseCount:30});
+ assert.equal(blocked.statusCode,409);
+ assert.equal(blocked.body.error,'SLOT_SHOW_PENDING');
+ const slotSpin=await invoke('POST',root+'/monster-slots/show','a',{gameId:game.id,operation:'spin'});
+ assert.equal(slotSpin.statusCode,200,JSON.stringify(slotSpin.body));
+ assert.equal(slotSpin.body.game.monsterSlotShow.phase,'rolling');
+ docs.get('deal_or_no_deal_matches_v1/123').game.monsterSlotShow.startedAt=Date.now()-10000;
+ const slotConfirmed=await invoke('POST',root+'/monster-slots/show','a',{gameId:game.id,operation:'confirm'});
+ assert.equal(slotConfirmed.statusCode,200,JSON.stringify(slotConfirmed.body));
+ assert.equal(slotConfirmed.body.game.monsterSlotShow.phase,'ceremony');
  const replay=await invoke('POST',root+'/start','a',{skipFinalWheel:true,caseCount:30});
  assert.equal(replay.statusCode,200,JSON.stringify(replay.body));
  assert.equal(replay.body.game.caseCount,30);

@@ -7,6 +7,10 @@ function harness(){
  const ids=['chris','david','vanessa'],room='123',routes=new Map(),docs=new Map(),writes=[];
  const game=create(ids.map(id=>({id,name:id})),()=>0);
  game.phase='final';game.monsterSlotsVersion=1;game.revision=15;
+ // publicView recomputes the final values from the actual server game,
+ // so test fixtures need real selected cases/deals, not only finalValues.
+ game.players.forEach((p,i)=>{p.case=i;p.deal=p.id==='david'?900000:p.id==='chris'?400000:200000;});
+
  game.finalValues=[
   {id:'chris',payout:400000,amount:400000,case:0},
   {id:'david',payout:900000,amount:900000,case:1},
