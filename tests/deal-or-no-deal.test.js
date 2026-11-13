@@ -1,7 +1,7 @@
 'use strict';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS,BANKER_REWARD_ODDS,drawBankerPack,drawBankerHammer,pickBankerStyle} from '../deal-or-no-deal.js';
+import {create,apply,publicView,free,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,publicRemaining,nextTurn,drawHammerFromTwelve,drawBankerSpecial,BANKER_SPECIAL_ODDS,BANKER_REWARD_ODDS,drawBankerPack,drawBankerHammer,pickBankerStyle,bankerOfferFor,MAX_MATCH_CREDIT_CENTS} from '../deal-or-no-deal.js';
 const rand=n=>0;
 function send(g,actor,type,extra={}){return apply(g,actor,{id:'cmd-'+g.revision,revision:g.revision,type,...extra},rand)}
 function simulate(count,allDeal=false){
@@ -622,4 +622,81 @@ test('already started 30-case games keep the preexisting eight-offer rhythm',()=
  assert.equal(game.history.length,8);
  assert.deepEqual(publicView(game).bankerSchedule,STEPS_30);
  assert.equal(game.bankerScheduleVariant,undefined);
+});
+
+
+test('personal Banker mode keeps three binding offers and honors each separate decision',()=>{
+ const players=['a','b','c'].map(id=>({id,name:id}));
+ let game=create(players,rand,27,{individualBankerOffers:true});
+ assert.equal(game.individualBankerOffers,true);
+ for(const id of game.order)game=send(game,id,'select',{case:game.order.indexOf(id)});
+ let safety=50;
+ while(game.phase!=='decision'&&safety-->0){
+  if(game.phase==='open')game=send(game,nextTurn(game),'open',{case:free(game)[0]});
+  else if(game.phase==='reveal')game=send(game,game.pending.actor,'ack-reveal');
+  else throw Error('Unexpected phase '+game.phase);
+ }
+ assert.equal(game.phase,'decision');
+ const first=game.history.at(-1),ids=first.participants;
+ assert.equal(ids.length,3);
+ assert.deepEqual(Object.keys(first.offersByPlayer).sort(),[...ids].sort());
+ const prices=ids.map(uid=>first.offersByPlayer[uid]);
+ assert.equal(new Set(prices).size,3,'a live Banker call cannot send identical personal amounts');
+ assert.ok(prices.every(price=>Number.isSafeInteger(price)&&price>=1&&price<=MAX_MATCH_CREDIT_CENTS));
+ assert.equal(first.megaOfferUids.length,3,'deterministic RNG triggers rare mega path');
+ for(const id of ids)assert.equal(bankerOfferFor(game,id),first.offersByPlayer[id]);
+ assert.deepEqual(publicView(game).history.at(-1).offersByPlayer,first.offersByPlayer);
+ const accepted=ids[0],declined=ids[1],alsoAccepted=ids[2];
+ game=send(game,accepted,'decide',{deal:true});
+ assert.equal(game.players.find(p=>p.id===accepted).deal,first.offersByPlayer[accepted]);
+ assert.equal(publicView(game).players.find(p=>p.id===accepted).deal,null,'interim vote is hidden');
+ game=send(game,declined,'decide',{deal:false});
+ assert.equal(game.players.find(p=>p.id===declined).deal,null);
+ game=send(game,alsoAccepted,'decide',{deal:true});
+ assert.equal(game.players.find(p=>p.id===alsoAccepted).deal,first.offersByPlayer[alsoAccepted]);
+ assert.equal(game.players.find(p=>p.id===declined).deal,null);
+ assert.equal(game.phase,'open','declining player continues opening their case');
+});
+
+test('Banker chaos uses independent random tiers including a rare mega call',()=>{
+ let game=create(['a','b','c'].map(id=>({id})),rand,27,{individualBankerOffers:true});
+ for(const id of game.order)game=send(game,id,'select',{case:game.order.indexOf(id)});
+ // The first 1000-sided draw is for the normal pack bonus; the next three
+ // are personal pricing tiers, one of which is the rare mega tier.
+ let rolls=0;
+ const chooser=max=>max===1000?[500,0,200,950][rolls++]:max===10001?5000:0;
+ let safety=50;
+ while(game.phase!=='decision'&&safety-->0){
+  if(game.phase==='open')game=apply(game,nextTurn(game),{id:'roll-'+game.revision,revision:game.revision,type:'open',case:free(game)[0]},chooser);
+  else if(game.phase==='reveal')game=apply(game,game.pending.actor,{id:'roll-'+game.revision,revision:game.revision,type:'ack-reveal'},chooser);
+  else throw Error('Unexpected phase '+game.phase);
+ }
+ assert.equal(game.phase,'decision');
+ const h=game.history.at(-1);
+ assert.equal(rolls,4);
+ assert.deepEqual(h.megaOfferUids,[h.participants[0]]);
+ assert.ok(h.offersByPlayer[h.participants[0]]>=h.offersByPlayer[h.participants[2]],'mega exceeds ordinary tier');
+ assert.equal(new Set(Object.values(h.offersByPlayer)).size,3);
+});
+
+test('ordinary Banker games retain the exact original shared offer contract',()=>{
+ let game=create([{id:'a'},{id:'b'}],rand);
+ assert.equal(game.individualBankerOffers,undefined);
+ for(const id of game.order)game=send(game,id,'select',{case:game.order.indexOf(id)});
+ let safety=50;
+ while(game.phase!=='decision'&&safety-->0){
+  if(game.phase==='open')game=send(game,nextTurn(game),'open',{case:free(game)[0]});
+  else if(game.phase==='reveal')game=send(game,game.pending.actor,'ack-reveal');
+  else throw Error('Unexpected phase '+game.phase);
+ }
+ assert.equal(game.phase,'decision');
+ const h=game.history.at(-1);
+ assert.equal('offersByPlayer' in h,false);
+ assert.equal('megaOfferUids' in h,false);
+ assert.equal(bankerOfferFor(game,'a'),game.offer);
+ assert.equal(bankerOfferFor(game,'b'),game.offer);
+ game=send(game,'a','decide',{deal:true});
+ game=send(game,'b','decide',{deal:true});
+ assert.equal(game.players.find(p=>p.id==='a').deal,h.offer);
+ assert.equal(game.players.find(p=>p.id==='b').deal,h.offer);
 });
