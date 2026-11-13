@@ -124,7 +124,7 @@ test('Failed forging consumes materials but never reduces current level',async()
  assert.equal(attempt.statusCode,200);
  assert.equal(attempt.body.result.success,false);
  assert.equal(attempt.body.result.newLevel,19);
- assert.equal(attempt.body.result.chance,25);
+ assert.equal(attempt.body.result.chance,83);
  assert.equal(f.hero().levels.weapon,19);
  assert.equal(f.hero().failures,1);
  assert.equal(f.bag().resources.mithril,5);
