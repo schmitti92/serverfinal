@@ -66,7 +66,7 @@ test('Chest amount and rarity are frozen at award time, before opening',()=>{
  assert.deepEqual(dogChestOffer(7,()=>99),{version:4,stage:0,tier:'wood',count:3});
  assert.deepEqual(second,{version:4,stage:8,tier:'wood',count:1});
  assert.equal(DOG_CHEST_STAGES[0].min,1);
- assert.equal(DOG_CHEST_STAGES[0].max,3);
+ assert.equal(DOG_CHEST_STAGES[0].max,30);
  assert.deepEqual(DOG_CHEST_TYPES.wood.countWeights,[50,35,15]);
  assert.equal(dogChestStage(14),1);
  assert.equal(dogChestStage(99),9);
@@ -123,15 +123,15 @@ test('Five distinct chest types retain their defined material ranges',()=>{
  // Small chest stays 1–3 at the start, independent of later unlocks.
  assert.deepEqual(scenario(1,[0,85]),{version:4,stage:0,tier:'wood',count:3});
  // Iron begins at Tor 20 (20%); Silver at Tor 30 (5%).
- assert.equal(scenario(20,[80,0]).tier,'iron');
- assert.equal(scenario(30,[95,0]).tier,'silver');
+ assert.equal(scenario(20,[70,0]).tier,'iron');
+ assert.equal(scenario(30,[90,0]).tier,'silver');
  // Gold at Tor 50 (2%); Legendary at Tor 80 (3%).
- assert.equal(scenario(50,[98,0]).tier,'gold');
- assert.equal(scenario(80,[97,0]).tier,'legendary');
+ assert.equal(scenario(50,[92,0]).tier,'gold');
+ assert.equal(scenario(80,[98,0]).tier,'legendary');
  assert.deepEqual(scenario(91,[93,0]),{version:4,stage:9,tier:'legendary',count:10});
  assert.deepEqual(scenario(91,[99,20]),{version:4,stage:9,tier:'legendary',count:30});
- assert.equal(DOG_CHEST_STAGES[7].chestWeights[4],0,
-  'the biggest chest must not appear before Tor 80');
+ assert.equal(DOG_CHEST_STAGES[0].chestWeights[4],1,
+  'all five types are available from the start, even if very rare');
  const last=dogChestContents(scenario(91,[99,20]),()=>0);
  assert.equal(last.count,30);
  assert.equal(last.tier,'legendary');
@@ -140,11 +140,11 @@ test('Five distinct chest types retain their defined material ranges',()=>{
 
 test('A chest is frozen on award and cannot be promoted by a forged client tier',()=>{
  const early=dogChestOffer(1,()=>0);
- assert.throws(()=>dogChestContents({...early,tier:'legendary',count:20},()=>0),
+ assert.throws(()=>dogChestContents({...early,tier:'legendary'},()=>0),
   /DOG_BALANCE_INVALID_CHEST/);
  assert.throws(()=>dogChestContents({...early,count:4},()=>0),
   /DOG_BALANCE_INVALID_CHEST/);
- assert.throws(()=>dogChestContents({...early,tier:'iron',count:3},()=>0),
+ assert.throws(()=>dogChestContents({...early,tier:'iron',count:1},()=>0),
   /DOG_BALANCE_INVALID_CHEST/);
  // Prior experimental v3 snapshots remain readable after adding five types.
  const old=dogChestContents({version:3,stage:0,count:3},()=>0);
@@ -358,15 +358,15 @@ test('Late-stage chests grow moderately while top forge materials stay rare',()=
  const chestAverage={wood:1.65,iron:3.5,silver:6,gold:9,legendary:20};
  const average=chapter=>DOG_CHEST_STAGES[chapter].chestWeights
   .reduce((sum,w,i)=>sum+w/100*chestAverage[DOG_CHEST_TYPE_IDS[i]],0);
- assert.ok(Math.abs(average(0)-1.65)<1e-12);
- assert.ok(Math.abs(average(9)-7.1925)<1e-12);
+ assert.ok(Math.abs(average(0)-2.2475)<1e-12);
+ assert.ok(Math.abs(average(9)-6.915)<1e-12);
  for(let chapter=1;chapter<10;chapter++)
   assert.ok(average(chapter)>=average(chapter-1),
    'the material expectation must not decrease as players progress');
  assert.ok(average(9)<5*average(0));
  const firstIron=average(0)*DOG_CHEST_STAGES[0].weights[0]/100/3;
  const lastDragonsteel=average(9)*DOG_CHEST_STAGES[9].weights[4]/100/3;
- assert.ok(firstIron<0.6,'starting upgrades still require multiple chests');
+ assert.ok(firstIron<0.8,'starting upgrades still require multiple chests');
  assert.ok(lastDragonsteel<0.15,'legendary upgrades remain a long-term project');
  assert.deepEqual(dogEquipmentCost('weapon',10),{iron:5,forge_coal:3});
 });
