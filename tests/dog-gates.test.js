@@ -150,40 +150,45 @@ test('Wins and losses update only own current position; retries replay exactly o
  assert.deepEqual(p.people['hero-a'].normals,[1,2]);
 });
 
-test('Players can reach and fight mini-boss 15 before their team beats Boss 10',()=>{
+test('Group boss 10 must be defeated before entering chapter 11–19',()=>{
  const now=1_800_000_000_000;
  const p={people:{a:{currentGate:5,normals:[1,2,3,4],minis:[],lastAttemptAt:0}}};
  const first=dogGateFight(p,'a',5,null,()=>0,now);
  assert.equal(first.result.type,'mini');
- assert.equal(first.result.gate,5);
  assert.equal(first.progress.sharedBosses.length,0);
  const throughNine={people:{a:{currentGate:11,normals:[
   1,2,3,4,6,7,8,9],minis:[],lastAttemptAt:0}}};
- assert.equal(dogGateFight(throughNine,'a',11,null,()=>0,now).result.gate,11);
+ assert.throws(()=>dogGateFight(throughNine,'a',11,null,()=>0,now),
+  /DOG_GATE_BOSS_REQUIRED/);
+ const after10={...throughNine,sharedBosses:[10]};
+ assert.equal(dogGateFight(after10,'a',11,null,()=>0,now).result.gate,11);
  const throughFourteen={people:{a:{currentGate:15,normals:[
   1,2,3,4,6,7,8,9,11,12,13,14],minis:[],lastAttemptAt:0}}};
- const mini15=dogGateFight(throughFourteen,'a',15,null,()=>0,now);
- assert.equal(mini15.result.gate,15,'Boss 10 is not needed to challenge mini-boss 15');
- assert.equal(mini15.result.type,'mini');
- assert.equal(mini15.progress.sharedBosses.length,0);
+ assert.throws(()=>dogGateFight(throughFourteen,'a',15,null,()=>0,now),
+  /DOG_GATE_BOSS_REQUIRED/,'optional mini-boss 15 also stays in chapter 2');
  assert.throws(()=>dogGateFight(throughFourteen,'a',16,null,()=>0,now),
-  /DOG_GATE_BOSS_REQUIRED/,'Boss 10 locks gate 16, not gate 11');
- const after10={...throughFourteen,sharedBosses:[10]};
- assert.equal(dogGateFight(after10,'a',16,null,()=>0,now).result.gate,16);
+  /DOG_GATE_BOSS_REQUIRED/);
+ const eligible={...throughFourteen,sharedBosses:[10]};
+ assert.equal(dogGateFight(eligible,'a',15,null,()=>0,now).result.gate,15);
+ assert.equal(dogGateFight(eligible,'a',16,null,()=>0,now).result.gate,16);
  assert.throws(()=>dogGateFight({people:{}},'a',100),/DOG_GATE_INVALID/);
 });
 
-test('Later shared bosses follow the same five-gate buffer rule',()=>{
+test('Every later group boss locks the full following chapter',()=>{
  const now=1_800_000_000_000;
  const before20={people:{a:{currentGate:25,normals:[24],minis:[],lastAttemptAt:0}},
   sharedBosses:[10]};
- assert.equal(dogGateFight(before20,'a',25,null,()=>0,now).result.gate,25,
-  'Tor 25 is still reachable before Boss 20');
- assert.throws(()=>dogGateFight(before20,'a',26,null,()=>0,now),
-  /DOG_GATE_BOSS_REQUIRED/);
+ for(const gate of [21,25,26])
+  assert.throws(()=>dogGateFight(before20,'a',gate,null,()=>0,now),
+   /DOG_GATE_BOSS_REQUIRED/);
  const after20={...before20,sharedBosses:[10,20]};
+ assert.equal(dogGateFight(after20,'a',25,null,()=>0,now).result.gate,25);
  assert.equal(dogGateFight(after20,'a',26,null,()=>0,now).result.gate,26);
+ const before90={...before20,sharedBosses:[10,20,30,40,50,60,70,80]};
+ assert.throws(()=>dogGateFight(before90,'a',91,null,()=>0,now),
+  /DOG_GATE_BOSS_REQUIRED/);
 });
+
 test('Revisiting a previously skipped mini-boss never erases the highest gate',()=>{
  const p={people:{a:{currentGate:14,highestGate:14,
   normals:[1,2,3,4,6,7,8,9,11,12,13],
