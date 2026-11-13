@@ -207,7 +207,7 @@ test('Two players finish a banker round and receive exactly one wallet payout',a
   }
  };
  for(let i=0;i<2;i++)await act(game.order[i],'select',{case:i});
- for(let i=2;i<7;i++){
+ for(let i=2;i<2+game.bankerSchedule[0];i++){
   const actor=game.order[game.turnIndex];
   await act(actor,'open',{case:i});
   await act(actor,'ack-reveal');
@@ -247,7 +247,7 @@ test('Three players share case selections and a simultaneous banker vote',async(
   }
  };
  for(let i=0;i<3;i++)await act(game.order[i],'select',{case:i});
- for(let i=3;i<8;i++){
+ for(let i=3;i<3+game.bankerSchedule[0];i++){
   const actor=game.order[game.turnIndex];
   await act(actor,'open',{case:i});
   await act(actor,'ack-reveal');
