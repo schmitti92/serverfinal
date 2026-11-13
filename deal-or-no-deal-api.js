@@ -239,8 +239,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   return {members,progress:dogGateProgress(progressSnap.exists?progressSnap.data():null)};
  };
  const chestForSettledDeal=(uid,raw,ctx)=>{
-  if(!ctx.members.has(uid))return addVerifiedChestToInventory(raw);
-  const progress=ctx.progress.people[uid],gate=progress?.highestGate??1;
+  // Every participant earns a wooden expedition chest, even outside the registered 100-Tore team.
+  const progress=ctx.members.has(uid)?ctx.progress.people[uid]:null,gate=progress?.highestGate??1;
   // The guaranteed participation reward is always a wooden chest.
   const standard=dogChestOffer(gate);
   const roll=randomInt(100);
