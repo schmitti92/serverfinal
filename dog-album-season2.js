@@ -1,0 +1,153 @@
+// DOG Sammelalbum Saison 2 – eigener persistenter Kartenbestand, Saison 1 bleibt archiviert.
+// Jede Tafel besteht aus 16 echten GitHub-Bildern. Alle Rewards werden später definiert.
+import {randomInt} from 'node:crypto';
+export const DOG_S2_COLLECTION='deal_dog_album_season2_v1';
+export const DOG_S2_BOARDS=Object.freeze(['DOG & Königreich','Weltraum','Dinosaurier','Freizeitpark','Märchen','Western']);
+const FILES=Object.freeze([["DOG_01_11.png","DOG_02.png","DOG_03.png","DOG_04_plus_minus.png","DOG_05.png","DOG_06.png","DOG_07.png","DOG_08.png","DOG_09.png","DOG_10.png","DOG_12.png","DOG_13.png","DOG_Joker.png","DOG_Tauschen.png","DOG_31_Vier_Koenige.png","DOG_32_Koenigliche_Allianz.png"],["DOG_43_Astronauten.png","DOG_44_Raumstation.png","DOG_45_Rakete.png","DOG_46_Mondlandung.png","DOG_47_Alien_Kartenspiel.png","DOG_48_Galaktischer_Pokal.png","DOG_49_Kosmischer_Wuerfel.png","DOG_50_Weltraum_Sieger.png","DOG_51_Sternenpokal.png","DOG_52_Mondforscher.png","DOG_53_Raumstation.png","DOG_54_Schwerelos.png","DOG_55_Raketenstart.png","DOG_56_Alien_Kartenspiel.png","DOG_57_Sternenportal.png","DOG_58_Weltraumschatz.png"],["DOG_59_Dino_Pokal.png","DOG_60_Dino_Entdecker.png","DOG_61_Dino_Schatz.png","DOG_62_Dino_Spielrunde.png","DOG_63_Dino_Ritter.png","DOG_64_Dino_Zauberer.png","DOG_123_T_Rex_Team.png","DOG_124_Triceratops_Spielbrett.png","DOG_125_Brachiosaurus_Karten.png","DOG_126_Stegosaurus_Wuerfel.png","DOG_127_Raptor_Schatzkarte.png","DOG_128_Flugsaurier_Team.png","DOG_129_Spinosaurus_Spielmuenze.png","DOG_130_Ankylosaurus_Schatzkiste.png","DOG_131_Dino_Baby.png","DOG_132_Dino_Siegerpokal.png"],["DOG_65_Freizeitpark_Panorama.png","DOG_66_Spielpark_Eingang.png","DOG_67_Achterbahn.png","DOG_68_Geisterbahn.png","DOG_134_Achterbahn.png","DOG_135_Riesenrad.png","DOG_136_Karussell.png","DOG_137_Wildwasserbahn.png","DOG_138_Geisterbahn.png","DOG_139_Suessigkeiten.png","DOG_140_Dosenwerfen.png","DOG_141_Kettenkarussell.png","DOG_142_Heissluftballon.png","DOG_143_Feuerwerk.png","DOG_144_Freizeitpark_Pokal.png","DOG_33_Koenigspokal.png"],["DOG_69_Rapunzel.png","DOG_77_Maerchenschloss.png","DOG_78_Kuerbiskutsche.png","DOG_79_Dornroeschen.png","DOG_80_Rotkaeppchen.png","DOG_81_Drei_Schweinchen.png","DOG_82_Schwert_im_Stein.png","DOG_83_Schneewittchen.png","DOG_84_Magisches_Maerchenbuch.png","DOG_145_Rotkaeppchen.png","DOG_146_Haensel_und_Gretel.png","DOG_148_Schneewittchen.png","DOG_149_Gestiefelter_Kater.png","DOG_150_Dornroeschen.png","DOG_151_Rumpelstilzchen.png","DOG_34_Vier_Koenigreiche.png"],["DOG_85_Sheriff.png","DOG_86_Dampflokomotive.png","DOG_87_Western_Freundschaft.png","DOG_88_Saloon.png","DOG_89_Bandit.png","DOG_90_Wuestenlandschaft.png","DOG_91_Cowgirl.png","DOG_92_Rodeo.png","DOG_152_Westernstadt.png","DOG_154_Sheriff.png","DOG_155_Dampflok.png","DOG_156_Cowboy_Pferd.png","DOG_158_Lagerfeuer.png","DOG_159_Sonnenuntergang.png","a_highly_detailed_colorful_glossy_3d_style_board.png","a_highly_detailed_glossy_colorful_close_up_illus.png"]]);
+const RARITIES=['common','rare','epic','legendary'];
+export const DOG_S2_CARDS=Object.freeze(FILES.flatMap((files,board)=>files.map((image,slot)=>{
+ const number=board*16+slot+1;
+ const raw=image.replace(/\.png$/i,'').replace(/^DOG_\d+_?/,'').replace(/^a_/,'');
+ const name=raw.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+ return Object.freeze({id:'dog2-'+String(number).padStart(3,'0'),name,image,rarity:RARITIES[Math.floor(slot/4)],series:DOG_S2_BOARDS[board],board:board+1,slot:slot+1});
+})));
+export const DOG_S2_PACKS=Object.freeze([
+ Object.freeze({id:'small',name:'DOG Normalpaket',price:20000000,count:3,guaranteed:'common',guaranteedCount:0,weights:{common:65,rare:29,epic:5,legendary:1}}),
+ Object.freeze({id:'large',name:'DOG Goldpaket',price:50000000,count:7,guaranteed:'rare',guaranteedCount:1,weights:{common:55,rare:32,epic:10,legendary:3}}),
+ Object.freeze({id:'premium',name:'DOG Premiumpaket',price:100000000,count:12,guaranteed:'epic',guaranteedCount:2,weights:{common:40,rare:35,epic:17,legendary:8}})
+]);
+const LINES=Object.freeze([
+ ...Array.from({length:4},(_,r)=>[0,1,2,3].map(c=>r*4+c)),
+ ...Array.from({length:4},(_,c)=>[0,1,2,3].map(r=>r*4+c)),
+ [0,5,10,15],[3,6,9,12]
+]);
+const positive=n=>Number.isSafeInteger(n)&&n>0?n:0;
+export function dogS2Progress(cards={}){
+ const boards=DOG_S2_BOARDS.map((name,index)=>{
+  const slice=DOG_S2_CARDS.slice(index*16,index*16+16);
+  const owned=slice.map(c=>positive(cards[c.id])>0);
+  const bingoLines=LINES.map((line,i)=>line.every(j=>owned[j])?i:null).filter(n=>n!==null);
+  return {name,index:index+1,collected:owned.filter(Boolean).length,total:16,bingoLines,bingos:bingoLines.length,maxBingos:10};
+ });
+ return {season:2,collected:boards.reduce((s,b)=>s+b.collected,0),total:96,
+  bingos:boards.reduce((s,b)=>s+b.bingos,0),maxBingos:60,boards,
+  rewardsEnabled:false,rewardNote:'Belohnungen werden später ergänzt.'};
+}
+export function dogS2Draw(pack,rand=randomInt){
+ if(!pack||!Number.isInteger(pack.count)||pack.count<1)throw Error('INVALID_PACK');
+ const result=[];
+ for(let i=0;i<pack.count;i++){
+  const min=i<(pack.guaranteedCount||0)?RARITIES.indexOf(pack.guaranteed):0;
+  const candidates=RARITIES.slice(min).map(rarity=>({rarity,weight:pack.weights[rarity]||0})).filter(x=>x.weight>0);
+  const total=candidates.reduce((sum,x)=>sum+x.weight,0);
+  if(!total)throw Error('INVALID_PACK_WEIGHTS');
+  let roll=rand(total),rarity=candidates.at(-1).rarity;
+  for(const c of candidates){roll-=c.weight;if(roll<0){rarity=c.rarity;break}}
+  const pool=DOG_S2_CARDS.filter(c=>c.rarity===rarity);
+  result.push(pool[rand(pool.length)]);
+ }
+ return result;
+}
+export function dogS2Discoveries(drawn,previous={}){
+ const seen=new Set();
+ return drawn.map(card=>{
+  const isNew=!positive(previous[card.id])&&!seen.has(card.id);
+  seen.add(card.id);return {...card,isNew};
+ });
+}
+export function dogS2Duplicates(cards={},tickets=0){
+ const available=DOG_S2_CARDS.reduce((sum,c)=>sum+Math.max(0,positive(cards[c.id])-1),0);
+ return {available,tickets:positive(tickets),exchangeCost:100,canExchange:available>=100};
+}
+export function dogS2Redeem(cards={}){
+ if(dogS2Duplicates(cards).available<100)throw Error('INSUFFICIENT_DUPLICATES');
+ const next={...cards};let due=100;
+ for(const card of DOG_S2_CARDS){
+  if(!due)break;
+  const spent=Math.min(due,Math.max(0,positive(next[card.id])-1));
+  if(spent){next[card.id]-=spent;due-=spent}
+ }
+ return next;
+}
+export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
+ const base='/api/deal-or-no-deal/christmas/season2';
+ const legacy='deal_or_no_deal_christmas_v1';
+ const wallet='deal_or_no_deal_wallets_v1';
+ const receipts='deal_dog_album_season2_receipts_v1';
+ app.get(base+'/me',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid;
+   const [w,s,old]=await Promise.all([db.collection(wallet).doc(uid).get(),db.collection(DOG_S2_COLLECTION).doc(uid).get(),db.collection(legacy).doc(uid).get()]);
+   const data=s.exists?s.data():{},legacyData=old.exists?old.data():{};
+   const cards=data.cards||{};
+   res.set('Cache-Control','no-store');
+   res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS,
+    balance:positive(w.data()?.balance),opened:positive(data.opened),progress:dogS2Progress(cards),
+    freePacks:Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(legacyData.freeChristmasPacks?.[p.id])])),
+    duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)});
+  }catch(e){return fail(res,e)}
+ });
+ app.post(base+'/open',auth,async(req,res)=>{
+  try{
+   const pack=DOG_S2_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');
+   const requestId=String(req.body?.requestId||'');
+   if(!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid,now=Date.now();
+   const sRef=db.collection(DOG_S2_COLLECTION).doc(uid),wRef=db.collection(wallet).doc(uid),
+    oldRef=db.collection(legacy).doc(uid),receipt=db.collection(receipts).doc(uid+'_'+requestId);
+   const result=await db.runTransaction(async tx=>{
+    const [s,w,old,r]=await Promise.all([tx.get(sRef),tx.get(wRef),tx.get(oldRef),tx.get(receipt)]);
+    if(r.exists){
+     if(r.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');
+     return {...r.data().result,replayed:true};
+    }
+    const prev=s.exists?s.data():{},legacyData=old.exists?old.data():{};
+    const balance=Number(w.data()?.balance)||0;
+    if(!Number.isSafeInteger(balance)||balance<0)throw Error('INVALID_WALLET_BALANCE');
+    const vouchers={...(legacyData.freeChristmasPacks||{})};
+    const free=positive(vouchers[pack.id])>0;
+    if(!free&&balance<pack.price)throw Error('INSUFFICIENT_FUNDS');
+    if(free)vouchers[pack.id]-=1;
+    const cards={...(prev.cards||{})};
+    const revealed=dogS2Discoveries(dogS2Draw(pack),cards);
+    for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
+    const remaining=free?balance:balance-pack.price;
+    const freePacks=Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(vouchers[p.id])]));
+    const result={season:2,packId:pack.id,opened:positive(prev.opened)+1,balance:remaining,cards,revealed,
+     usedFreePack:free,freePacks,progress:dogS2Progress(cards),
+     duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)};
+    if(!free)tx.set(wRef,{balance:remaining,updatedAt:now},{merge:true});
+    else tx.set(oldRef,{freeChristmasPacks:vouchers,updatedAt:now},{merge:true});
+    tx.set(sRef,{season:2,cards,opened:result.opened,updatedAt:now},{merge:true});
+    tx.create(receipt,{uid,packId:pack.id,result,createdAt:now});
+    return result;
+   });
+   res.set('Cache-Control','no-store');res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+ app.post(base+'/duplicates/exchange',auth,async(req,res)=>{
+  try{
+   const requestId=String(req.body?.requestId||'');
+   if(!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;
+   const sRef=db.collection(DOG_S2_COLLECTION).doc(uid),oldRef=db.collection(legacy).doc(uid),
+    rRef=db.collection('deal_dog_album_season2_trades_v1').doc(uid+'_'+requestId);
+   const result=await db.runTransaction(async tx=>{
+    const [s,old,receipt]=await Promise.all([tx.get(sRef),tx.get(oldRef),tx.get(rRef)]);
+    if(receipt.exists)return {...receipt.data().result,replayed:true};
+    const before=s.exists?s.data():{},legacyData=old.exists?old.data():{};
+    const cards=dogS2Redeem(before.cards||{});
+    const tickets=positive(legacyData.monsterWheelTickets)+1;
+    const result={cards,progress:dogS2Progress(cards),duplicates:dogS2Duplicates(cards,tickets),monsterWheelTickets:tickets,replayed:false};
+    const now=Date.now();
+    tx.set(sRef,{cards,updatedAt:now},{merge:true});
+    tx.set(oldRef,{monsterWheelTickets:tickets,monsterWheelTradeCount:positive(legacyData.monsterWheelTradeCount)+1,updatedAt:now},{merge:true});
+    tx.create(rRef,{uid,requestId,result,createdAt:now});
+    return result;
+   });
+   res.set('Cache-Control','no-store');res.json({ok:true,...result});
+  }catch(e){return fail(res,e)}
+ });
+}
