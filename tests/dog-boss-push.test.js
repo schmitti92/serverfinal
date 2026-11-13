@@ -82,8 +82,9 @@ test('Public team READY invitations are delivered only to authenticated non-acto
  assert.deepEqual(alice.sent[0],{type:'subscribed',gate:0});
  assert.deepEqual(bob.sent[0],{type:'subscribed',gate:0});
  assert.equal(intruder.closed.code,1008);
- assert.equal(f.hub.notify(10,'hero-a','ready'),2);
- assert.deepEqual(bob.sent[1],{type:'invite',gate:10});
+ assert.deepEqual(bob.sent[1],{type:'invite',gate:10,reason:'entered'},'entering the arena immediately invites other online members');
+ assert.equal(f.hub.notify(10,'hero-a','ready'),1);
+ assert.deepEqual(bob.sent[2],{type:'invite',gate:10,reason:'ready'});
  assert.equal(alice.sent.length,1,'actor is not invited to own arena');
  assert.equal(oldGate.sent.length,1,'actor boss subscriber receives its POST state instead');
  const count=f.hub.notify(10,'hero-a','minigame');
