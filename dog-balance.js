@@ -24,7 +24,7 @@ export const DOG_CHEST_TYPES=Object.freeze({
  iron:Object.freeze({label:'Eisenkiste',min:2,max:5}),
  silver:Object.freeze({label:'Silberkiste',min:4,max:8}),
  gold:Object.freeze({label:'Goldkiste',min:6,max:12}),
- legendary:Object.freeze({label:'Legendäre Truhe',min:10,max:20})
+ legendary:Object.freeze({label:'Legendäre Truhe',min:10,max:30})
 });
 export const DOG_CHEST_TYPE_IDS=Object.freeze(Object.keys(DOG_CHEST_TYPES));
 
@@ -81,7 +81,7 @@ export function dogUnlockedLevels(sharedBossesWon=0){
 }
 export function dogChestStage(personalGate=0){
  // The personal path can continue beyond an unbeaten shared boss.
- return Math.min(9,Math.floor(Math.max(0,integer(personalGate,0,99,0)-1)/10));
+ return Math.min(9,Math.floor(Math.max(0,integer(personalGate,0,99,0))/10));
 }
 export function dogChestOffer(personalGate=0,rand=randomInt){
  const stage=dogChestStage(personalGate),rule=DOG_CHEST_STAGES[stage];
