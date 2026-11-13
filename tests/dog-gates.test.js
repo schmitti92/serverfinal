@@ -150,6 +150,46 @@ test('Wins and losses update only own current position; retries replay exactly o
  assert.deepEqual(p.people['hero-a'].normals,[1,2]);
 });
 
+test('normal Tor outcome follows true weapon / armor combat without consuming any lottery rolls',()=>{
+ const fakeProgress={people:{a:{currentGate:9,normals:[8],minis:[],lastAttemptAt:0}}};
+ const heroWeak={levels:{weapon:1,armor:1}};
+ const heroReady={levels:{weapon:5,armor:5}};
+ const explode=()=>{throw Error('NO_RANDOM_DICE_ALLOWED');};
+ const lose=dogGateFight(fakeProgress,'a',9,heroWeak,explode,1_800_000_000_000);
+ const win=dogGateFight(fakeProgress,'a',9,heroReady,explode,1_800_000_000_000);
+ assert.equal(lose.result.win,false);
+ assert.equal(lose.progress.people.a.currentGate,9);
+ assert.equal(win.result.win,true);
+ assert.equal(win.progress.people.a.currentGate,10);
+ assert.equal(win.result.combatStats.model,'alternating-three-attacks-v1');
+ assert.equal(win.result.combatStats.recommendedWeaponLevel,5);
+ assert.equal(win.result.combatStats.recommendedArmorLevel,5);
+ assert.equal(win.result.combatStats.enemyRemainingHp,0);
+ assert.ok(win.result.combatStats.heroRemainingHp>0);
+ assert.equal(win.result.combatStats.attacks.length,3);
+ assert.equal(Object.hasOwn(win.result,'chancePercent'),false);
+ assert.equal(Object.hasOwn(win.result,'roll'),false);
+ const repeated=dogGateFight(fakeProgress,'a',9,heroReady,explode,1_800_000_000_000);
+ assert.deepEqual(repeated.result,win.result,'same equipment must have identical result');
+});
+
+test('normal gate receipt replays the entire real combat report without a new payout or extra reads',async()=>{
+ const f=fixture();
+ await f.call('POST','/api/dog/gates/join',{},'a');
+ await f.call('POST','/api/dog/gates/hero',{heroClass:'krieger'},'a');
+ const before=f.writes.length;
+ const action={gate:1,requestId:'normal-real-combat-1-00001'};
+ const first=await f.call('POST','/api/dog/gates/fight',action,'a');
+ assert.equal(first.statusCode,200);
+ assert.equal(first.body.result.win,true);
+ assert.equal(first.body.result.combatStats.model,'alternating-three-attacks-v1');
+ assert.equal(f.writes.length,before+2,'one progress write and one receipt; no extra Firestore writes');
+ const second=await f.call('POST','/api/dog/gates/fight',action,'a');
+ assert.equal(second.body.replayed,true);
+ assert.deepEqual(second.body.result,first.body.result);
+ assert.equal(f.writes.length,before+2,'receipt replay must never write');
+});
+
 test('Group boss 10 must be defeated before entering chapter 11–19',()=>{
  const now=1_800_000_000_000;
  const p={people:{a:{currentGate:5,normals:[1,2,3,4],minis:[],lastAttemptAt:0}}};
