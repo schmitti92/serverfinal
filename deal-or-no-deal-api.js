@@ -2,6 +2,7 @@ import {create,apply,publicView,payoutFor,cashCreditFor} from './deal-or-no-deal
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
+import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer} from './dog-balance.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
@@ -247,6 +248,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
  for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,createdAt:Date.now()});changed=true}return game.id})};
+ installDogAlbumSeason2(app,{auth,getFirestore,fail});
  app.get('/api/deal-or-no-deal/shop/catalog',auth,(req,res)=>res.json({ok:true,items:SHOP_ITEMS,minPrice:100000000}));
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
@@ -354,6 +356,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   }catch(e){return fail(res,e)}
  });
  app.post('/api/deal-or-no-deal/christmas/open',auth,async(req,res)=>{
+  return res.status(410).json({ok:false,error:'SEASON_1_ENDED'});
   try{
    const pack=CHRISTMAS_PACKS.find(p=>p.id===req.body?.packId);
    if(!pack)throw Error('INVALID_PACK');
@@ -445,6 +448,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const uid=req.dealIdentity.uid;
    const albumRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
    const receiptRef=db.collection('deal_christmas_monster_spins_v1').doc(uid+'_'+requestId);
+   const season2Ref=db.collection(DOG_S2_COLLECTION).doc(uid);
    const walletRef=db.collection(walletCollection).doc(uid);
    const iceRef=db.collection('christmas_ice_progress_v1').doc(uid);
    const jokerRef=db.collection('deal_peek_inventory_v1').doc(uid);
@@ -460,6 +464,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      ?await tx.get(walletRef)
      :prize.kind==='hammer'?await tx.get(iceRef)
      :prize.kind==='joker'?await tx.get(jokerRef):null;
+    const season2Snap=prize.kind==='pack'?await tx.get(season2Ref):null;
     const now=Date.now();
     const patch={monsterWheelTickets:tickets-1,monsterWheelSpinCount:checkMonsterBalance(album.monsterWheelSpinCount||0,1),
      updatedAt:now};
@@ -472,11 +477,11 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     }else if(prize.kind==='pack'){
      const pack=CHRISTMAS_PACKS.find(p=>p.id===prize.packId);
      if(!pack)throw Error('INVALID_MONSTER_PACK');
-     const drawn=markChristmasDiscoveries(Array.from({length:prize.quantity},()=>christmasDraw(pack)).flat(),album.cards||{});
-     const cards={...(album.cards||{})};
+     const previousCards=season2Snap?.exists?season2Snap.data()?.cards||{}:{};
+     const drawn=dogS2Discoveries(Array.from({length:prize.quantity},()=>dogS2Draw(DOG_S2_PACKS.find(p=>p.id===prize.packId))).flat(),previousCards);
+     const cards={...previousCards};
      for(const card of drawn)cards[card.id]=checkMonsterBalance(cards[card.id]||0,1);
-     patch.cards=cards;
-     patch.opened=checkMonsterBalance(album.opened||0,prize.quantity);
+     tx.set(season2Ref,{season:2,cards,opened:checkMonsterBalance(Number(season2Snap?.data()?.opened||0),prize.quantity),updatedAt:now},{merge:true});
      spin.revealed=drawn;
      spin.packId=pack.id;
      spin.packCount=prize.quantity;
@@ -855,16 +860,16 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    const uniqueWinner=payouts.filter(p=>p.payout===max).length===1;
    if(uniqueWinner){
    const finalRewardRef=db.collection('deal_christmas_final_rewards_v1').doc(after.id);
-   const finalAlbumRef=db.collection(CHRISTMAS_COLLECTION).doc(winner.id);
+   const finalAlbumRef=db.collection(DOG_S2_COLLECTION).doc(winner.id);
    const [finalRewardSnap,finalAlbumSnap]=await Promise.all([tx.get(finalRewardRef),tx.get(finalAlbumRef)]);
    if(!finalRewardSnap.exists){
     const finalPackId=drawFinalWinnerPack(),pack=CHRISTMAS_PACKS.find(p=>p.id===finalPackId);
-    const previous=finalAlbumSnap.exists?finalAlbumSnap.data():{},drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
+    const previous=finalAlbumSnap.exists?finalAlbumSnap.data():{},drawn=dogS2Discoveries(dogS2Draw(DOG_S2_PACKS.find(p=>p.id===pack.id)),previous.cards||{});
     const increments={};
     const counts={};for(const card of drawn)counts[card.id]=(counts[card.id]||0)+1;
     for(const [id,count] of Object.entries(counts))increments[id]=FieldValue.increment(count);
     const previousAward=awardWrite;
-    awardWrite=()=>{previousAward?.();tx.set(finalAlbumRef,{cards:increments,opened:FieldValue.increment(1),updatedAt:Date.now()},{merge:true});
+    awardWrite=()=>{previousAward?.();tx.set(finalAlbumRef,{season:2,cards:increments,opened:FieldValue.increment(1),updatedAt:Date.now()},{merge:true});
      tx.create(finalRewardRef,{uid:winner.id,gameId:after.id,packId:pack.id,packName:pack.id==='large'?'Gold-Kartenpaket':pack.name,revealed:drawn,createdAt:Date.now()})};
    }
    }
