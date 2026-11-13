@@ -50,7 +50,7 @@ for(const count of [26,27,28,29,30]){
 test('invalid case counts are rejected',()=>{for(const n of [25,31,0,26.5])assert.throws(()=>create([{id:'a'}],rand,n),/INVALID_CASE_COUNT/)});
 
 for(let count=1;count<=4;count++){
- test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,6);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
+ test(count+' players finish full game with correct opening count',()=>{let g=simulate(count);assert.equal(g.opened.length,27-count);assert.equal(g.history.length,7);assert.equal(new Set(g.opened).size,g.opened.length);assert.equal(g.players.every(p=>!g.opened.includes(p.case)),true)});
  test(count+' players accepting first deal end immediately',()=>{let g=simulate(count,true);assert.equal(g.opened.length,Math.round(9*(27-count)/27));assert.equal(g.history.length,1);assert.equal(g.players.every(p=>p.deal!==null),true)});
 }
 test('private assignments never leaked before finale',()=>{let g=create([{id:'a'},{id:'b'}],rand);g=send(g,g.order[0],'select',{case:0});g=send(g,g.order[1],'select',{case:1});const v=publicView(g);assert.equal('values' in v,false);assert.equal('commands' in v,false);assert.equal(v.finalValues,null);assert.equal(JSON.stringify(v).includes('100000000'),false)});
@@ -357,7 +357,7 @@ function bankerOpenings(caseCount,playerCount,{legacy=false,legacy29=false,legac
  return {game,offers};
 }
 
-test('26–29 cases use the SAME two Banker variants, each with six offers and the final three guaranteed',()=>{
+test('26–29 cases scale exactly two Banker variants to 7 and 9 offers with the last three guaranteed',()=>{
  assert.deepEqual(STEPS_29,[6,5,5,4,3,2,2,1],'legacy 29 schedule remains available');
  assert.deepEqual(STEPS,[5,4,4,3,2,2,1,1],'legacy 26–28 schedule remains available');
  assert.equal(BANKER_30_OPENINGS.length,2);
@@ -365,13 +365,15 @@ test('26–29 cases use the SAME two Banker variants, each with six offers and t
   for(const playerCount of [1,2,3,4]){
    for(let variant=0;variant<2;variant++){
     const max=caseCount-playerCount;
-    const template=BANKER_30_OPENINGS[variant].slice(0,3);
-    const expected=[...template.map(n=>Math.round(n*max/27)),max-2,max-1,max];
+    const template=BANKER_30_OPENINGS[variant].slice(0,-3);
+    const finaleStart=max-2;
+    const expected=[...template.map(n=>Math.round(n*finaleStart/25)),max-2,max-1,max];
     const {game,offers}=bankerOpenings(caseCount,playerCount,{variant});
     assert.deepEqual(offers,expected,caseCount+' cases '+playerCount+' players variant '+(variant+1));
     assert.equal(game.bankerScheduleVariant,variant+1);
     assert.deepEqual(game.bankerSchedule,expected.map((n,i)=>n-(expected[i-1]||0)));
-    assert.equal(game.history.length,6);
+    assert.equal(game.history.length,variant===0?7:9);
+    assert.equal(new Set(offers).size,offers.length);
     assert.equal(game.opened.length,max);
     assert.equal(game.players.every(p=>!game.opened.includes(p.case)),true);
     assert.equal(game.history.at(-1).participants.length,playerCount);
@@ -379,6 +381,31 @@ test('26–29 cases use the SAME two Banker variants, each with six offers and t
    }
   }
  }
+});
+test('new Banker milestones increase strictly with exactly 7/9 calls for every case count and party size',()=>{
+ for(const caseCount of [26,27,28,29,30])for(const playerCount of [1,2,3,4]){
+  for(const variant of [0,1]){
+   const game=create(Array.from({length:playerCount},(_,i)=>({id:'p'+i})),n=>n===2?variant:0,caseCount);
+   const targets=game.bankerSchedule.reduce((list,step)=>[...list,(list.at(-1)||0)+step],[]);
+   assert.equal(game.bankerScheduleVariant,variant+1);
+   assert.equal(targets.length,variant===0?7:9);
+   assert.ok(targets.every((number,i)=>Number.isInteger(number)&&number>=1&&
+    number<=caseCount-playerCount&&(i===0||number>targets[i-1])));
+   assert.deepEqual(targets.slice(-3),
+    [caseCount-playerCount-2,caseCount-playerCount-1,caseCount-playerCount],
+    'the final three calls always precede the personal case reveal');
+   if(caseCount===30)assert.equal(targets[0],playerCount*3,
+    'batch reveal always leads straight into the first offer');
+  }
+ }
+});
+test('existing matches with a stored six-call Banker cadence keep their milestones',()=>{
+ let old=create([{id:'a'},{id:'b'},{id:'c'}],n=>0,30);
+ old.bankerSchedule=[9,8,6,2,1,1];
+ old.bankerScheduleVariant=1;
+ const copied=structuredClone(old);
+ assert.deepEqual(publicView(copied).bankerSchedule,[9,8,6,2,1,1],
+  'previously persisted game schedules remain authoritative');
 });
 test('in-progress 29-case game retains previous eight-offer schedule',()=>{
  const {game,offers}=bankerOpenings(29,1,{legacy29:true});
@@ -506,8 +533,8 @@ test('30-case batch respects player counts and already-running legacy matches',(
 
 test('30-case Banker offers have exactly two variants and mandatory 25, 26, 27 calls',()=>{
  const expected=[
-  [9,17,23,25,26,27],
-  [9,14,20,25,26,27]
+  [9,15,20,23,25,26,27],
+  [9,12,15,18,21,23,25,26,27]
  ];
  assert.deepEqual(BANKER_30_OPENINGS,expected);
  assert.equal(BANKER_30_OPENINGS.length,2,'two fixed variants only');
@@ -520,11 +547,11 @@ test('30-case Banker offers have exactly two variants and mandatory 25, 26, 27 c
   assert.deepEqual(offers,expected[variant],'three-player variant '+(variant+1));
   assert.deepEqual(offers.slice(-3),[25,26,27]);
   assert.equal(game.opened.length,27);
-  assert.equal(game.history.length,6);
+  assert.equal(game.history.length,variant===0?7:9);
   assert.deepEqual(publicView(game).bankerSchedule,game.bankerSchedule);
   assert.equal(publicView(game).bankerScheduleVariant,variant+1);
   const lastOffer=game.history.at(-1);
-  assert.equal(lastOffer.round,6);
+  assert.equal(lastOffer.round,variant===0?7:9);
  }
 });
 
@@ -535,7 +562,7 @@ test('with 1–4 players the final three openable cases ALWAYS trigger a Banker 
    const finalCount=30-playerCount;
    assert.deepEqual(offers.slice(-3),[finalCount-2,finalCount-1,finalCount],
     'variant '+(variant+1)+' / '+playerCount+' players');
-   assert.equal(offers.length,6,'no extra calls: six Banker calls in total');
+   assert.equal(offers.length,variant===0?7:9,'variant 1 has seven calls, variant 2 has nine');
    assert.equal(new Set(offers).size,offers.length);
    assert.equal(game.opened.length,finalCount);
    assert.equal(game.history.length,offers.length);
@@ -566,7 +593,7 @@ test('Banker must offer at suitcase 27 before personal suitcases can be revealed
  assert.equal(game.opened.length,27);
  assert.equal(game.phase,'decision','final Banker offer must appear BEFORE final');
  assert.equal(publicView(game).finalValues,null,'personal suitcases still secret');
- assert.deepEqual(game.history.map((_,i)=>i+1).length,6);
+ assert.equal(game.history.length,9);
  for(const actor of game.history.at(-1).participants)game=send(game,actor,'decide',{deal:false});
  assert.equal(game.phase,'final');
  assert.equal(publicView(game).finalValues.length,3);
