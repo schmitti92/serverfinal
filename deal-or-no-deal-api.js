@@ -383,7 +383,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     if(!usedFreePack&&balance<pack.price)throw Error('INSUFFICIENT_FUNDS');
     if(usedFreePack)freePacks[pack.id]=vouchers-1;
     const cards={...(previous.cards||{})};
-    const drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
+    const drawn=dogS2Discoveries(dogS2Draw(DOG_S2_PACKS.find(p=>p.id===pack.id)),previous.cards||{});
     for(const card of drawn)cards[card.id]=checkMonsterBalance(Number(cards[card.id]||0),1);
     const remaining=usedFreePack?balance:balance-pack.price;
     const result={balance:remaining,cards,opened:(previous.opened||0)+1,
@@ -768,16 +768,16 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
   if(openedOneCent&&((req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId)||(req.body?.type==='ack-batch'&&before.phase==='batch-reveal'))){
    const uid=openedOneCent.playerId;
    const rewardRef=db.collection('deal_christmas_cent_rewards_v1').doc(after.id+'_'+openedOneCent.eventId);
-   const christmasRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const christmasRef=db.collection(DOG_S2_COLLECTION).doc(uid);
    const [rewardSnap,christmasSnap]=await Promise.all([tx.get(rewardRef),tx.get(christmasRef)]);
    if(!rewardSnap.exists){
     const roll=randomInt(100);
     const pack=CHRISTMAS_PACKS.find(x=>x.id===(roll<10?'premium':roll<60?'large':'small'));
     const previous=christmasSnap.exists?christmasSnap.data():{};
-    const drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
+    const drawn=dogS2Discoveries(dogS2Draw(DOG_S2_PACKS.find(p=>p.id===pack.id)),previous.cards||{});
     const cards={...(previous.cards||{})};
     for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
-    awardWrite=()=>{tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
+    awardWrite=()=>{tx.set(christmasRef,{season:2,cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:DOG_S2_PACKS.find(p=>p.id===pack.id)?.name||pack.name,revealed:drawn,createdAt:Date.now()})};
    }
   }
 // A Christmas pack is included in a banker offer only when the player accepts the deal.
@@ -787,17 +787,17 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
   if(newlyAccepted){
    const uid=req.dealIdentity.uid;
    const rewardRef=db.collection('deal_christmas_banker_rewards_v1').doc(after.id+'_'+lastBefore.round+'_'+uid);
-   const christmasRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const christmasRef=db.collection(DOG_S2_COLLECTION).doc(uid);
    const [rewardSnap,christmasSnap]=await Promise.all([tx.get(rewardRef),tx.get(christmasRef)]);
    if(!rewardSnap.exists){
     const pack=CHRISTMAS_PACKS.find(p=>p.id===lastBefore.bonusPack);
     if(!pack)throw Error('INVALID_PACK');
-    const previous=christmasSnap.exists?christmasSnap.data():{},drawn=markChristmasDiscoveries(christmasDraw(pack),previous.cards||{});
+    const previous=christmasSnap.exists?christmasSnap.data():{},drawn=dogS2Discoveries(dogS2Draw(DOG_S2_PACKS.find(p=>p.id===pack.id)),previous.cards||{});
     const cards={...(previous.cards||{})};
     for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
     const priorWrite=awardWrite;
-    awardWrite=()=>{priorWrite?.();tx.set(christmasRef,{cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
-      tx.create(rewardRef,{uid,gameId:after.id,round:lastBefore.round,packId:pack.id,packName:pack.name,revealed:drawn,createdAt:Date.now()})};
+    awardWrite=()=>{priorWrite?.();tx.set(christmasRef,{season:2,cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});
+      tx.create(rewardRef,{uid,gameId:after.id,round:lastBefore.round,packId:pack.id,packName:DOG_S2_PACKS.find(p=>p.id===pack.id)?.name||pack.name,revealed:drawn,createdAt:Date.now()})};
    }
   }
   // The Banker hammer is an extra prize for each player who ACCEPTS this offer.
