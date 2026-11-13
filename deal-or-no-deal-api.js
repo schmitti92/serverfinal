@@ -274,9 +274,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    const jokerRef=db.collection('deal_peek_inventory_v1').doc(uid);
    const hatsRef=db.collection('deal_christmas_hats_v1').doc(uid);
    const result=await db.runTransaction(async tx=>{
-    const [payoutSnap,receiptSnap,materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap]=
-     await Promise.all([payoutRef,receiptRef,materialsRef,walletRef,albumRef,iceRef,jokerRef,hatsRef].map(ref=>tx.get(ref)));
+    const receiptSnap=await tx.get(receiptRef);
     if(receiptSnap.exists)return {...receiptSnap.data().result,replayed:true};
+    const payoutSnap=await tx.get(payoutRef);
     if(!payoutSnap.exists)throw Error('GAME_REWARD_NOT_SETTLED');
     // Verify a complete recorded payout, never accept a client-provided award.
     if(payoutSnap.data()?.gameId!==gameId||payoutSnap.data()?.uid!==uid)
@@ -284,8 +284,19 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const progressSnap=await tx.get(db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID));
     const gate=dogGateProgress(progressSnap.exists?progressSnap.data():null).people[uid]?.highestGate??1;
     const prizes=drawMonsterSlots(gate);
-    const now=Date.now(),oldAlbum=albumSnap.exists?albumSnap.data():{};
-    let inventory=materialSnap.exists?materialSnap.data():null;
+    const needed=new Set(prizes.map(prize=>prize.kind));
+    // Read only the inventory documents actually touched by these three prizes.
+    // Replayed claims require a single receipt read and no new Firestore writes.
+    const [materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap]=await Promise.all([
+     needed.has('chest')?tx.get(materialsRef):null,
+     needed.has('cash')?tx.get(walletRef):null,
+     (needed.has('pack')||needed.has('monster'))?tx.get(albumRef):null,
+     needed.has('hammer')?tx.get(iceRef):null,
+     needed.has('joker')?tx.get(jokerRef):null,
+     needed.has('minigame')?tx.get(hatsRef):null
+    ]);
+    const now=Date.now(),oldAlbum=albumSnap?.exists?albumSnap.data():{};
+    let inventory=materialSnap?.exists?materialSnap.data():null;
     let cash=0,jokers=0,miniTickets=0,monsterTickets=0;
     const packs={},hammers={};
     for(const prize of prizes){
