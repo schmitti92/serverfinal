@@ -46,7 +46,7 @@ test('Every new material is obtainable BEFORE its first relevant tier upgrade',(
   }
  }
  assert.deepEqual(sampleCosts['weapon-2'],{iron:3});
- assert.deepEqual(sampleCosts['weapon-10'],{mithril:2,dragonsteel:1});
+ assert.deepEqual(sampleCosts['weapon-10'],{iron:5,forge_coal:3});
 });
 
 test('Forge success odds decline gradually, without changing equipment on failure',()=>{
@@ -355,11 +355,11 @@ test('Group bosses gain small late-chapter HP pressure while keeping the 30-seco
 });
 
 test('Late-stage chests grow moderately while top forge materials stay rare',()=>{
- const chestAverage={wood:1.65,iron:3.5,silver:6,gold:9,legendary:15};
+ const chestAverage={wood:1.65,iron:3.5,silver:6,gold:9,legendary:20};
  const average=chapter=>DOG_CHEST_STAGES[chapter].chestWeights
   .reduce((sum,w,i)=>sum+w/100*chestAverage[DOG_CHEST_TYPE_IDS[i]],0);
  assert.ok(Math.abs(average(0)-1.65)<1e-12);
- assert.ok(Math.abs(average(9)-6.8425)<1e-12);
+ assert.ok(Math.abs(average(9)-7.1925)<1e-12);
  for(let chapter=1;chapter<10;chapter++)
   assert.ok(average(chapter)>=average(chapter-1),
    'the material expectation must not decrease as players progress');
@@ -368,5 +368,5 @@ test('Late-stage chests grow moderately while top forge materials stay rare',()=
  const lastDragonsteel=average(9)*DOG_CHEST_STAGES[9].weights[4]/100/3;
  assert.ok(firstIron<0.6,'starting upgrades still require multiple chests');
  assert.ok(lastDragonsteel<0.15,'legendary upgrades remain a long-term project');
- assert.deepEqual(dogEquipmentCost('weapon',10),{mithril:2,dragonsteel:1});
+ assert.deepEqual(dogEquipmentCost('weapon',10),{iron:5,forge_coal:3});
 });
