@@ -7,6 +7,7 @@ import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrant
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
 import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,slotCashChance} from './monster-slots.js';
+import {addDealRecord,addSlotMoneyRecords,viewPrizeRecord} from './deal-player-records.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
@@ -220,6 +221,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   firestoreUsage.settlementRuns++;
   const promise=settleFinal(db,code).then(result=>{
    if(result!==gameId){settledGames.delete(key);return result;}
+   balanceReadCache.clear(); // Repaired finals must not return stale records.
    return result;
   }).catch(error=>{settledGames.delete(key);throw error});
   settledGames.set(key,promise);
@@ -252,7 +254,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const slotRankings=monsterSlotPlacements(payouts);
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
- for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));const slot=slotRankings.get(p.uid);tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,slotEligible:slot.reels>0,slotReels:slot.reels,slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:2,createdAt:Date.now()});changed=true}return game.id})};
+ for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),dealPrizeStats:addDealRecord(previous,p.amount),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));const slot=slotRankings.get(p.uid);tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,slotEligible:slot.reels>0,slotReels:slot.reels,slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:2,createdAt:Date.now()});changed=true}return game.id})};
  installDogAlbumSeason2(app,{auth,getFirestore,fail});
 
  // Only the champion (three reels) and unique runner-up in 3–4-player
@@ -406,7 +408,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     ...(!hatsSnap.exists?{voucherOnly:true}:{}),updatedAt:now
    },{merge:true});
    if(cash)tx.set(p.walletRef,{
-    balance:checkMonsterBalance(Number(walletSnap.data()?.balance||0),cash),updatedAt:now
+    balance:checkMonsterBalance(Number(walletSnap.data()?.balance||0),cash),
+    slotCashPrizeStats:addSlotMoneyRecords(walletSnap.exists?walletSnap.data():{},
+     p.prizes.filter(prize=>prize.kind==='cash').map(prize=>prize.amountCents)),
+    updatedAt:now
    },{merge:true});
    if(p.prizes.some(prize=>prize.kind==='chest'))tx.set(p.materialsRef,inventory);
    const settled={ok:true,gameId,prizes:settledPrizes,guaranteed:mode==='super'?5:p.reels,
@@ -946,7 +951,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    return res.json({ok:true,...result});
   }catch(e){return fail(res,e)}
  });
- app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await readBalances(db,code,players);return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await readBalances(db,code,players);return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0,
+ dealStats:viewPrizeRecord(snaps[i].data()?.dealPrizeStats),
+ slotStats:viewPrizeRecord(snaps[i].data()?.slotCashPrizeStats)
+ }))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
 
  // Global prices may only be changed by the verified host of an active room.
@@ -1147,14 +1155,14 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    const snapshots=await Promise.all(entries.map(async e=>({wallet:await tx.get(e.account),receipt:await tx.get(e.receipt),materials:await tx.get(e.materials)})));
    for(let i=0;i<entries.length;i++){const e=entries[i],snap=snapshots[i];if(snap.receipt.exists)continue;
     const previous=snap.wallet.exists?snap.wallet.data():{};
-    tx.set(e.account,{balance:(previous.balance||0)+e.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),updatedAt:Date.now()},{merge:true});
+    tx.set(e.account,{balance:(previous.balance||0)+e.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(e.payout===max?1:0),dealPrizeStats:addDealRecord(previous,e.payout),updatedAt:Date.now()},{merge:true});
     // A payout receipt is also the exactly-once DOG chest receipt for this game/player.
     // Only new, server-settled Deal matches grant materials; a replay never does.
     tx.set(e.materials,chestForSettledDeal(e.id,snap.materials.exists?snap.materials.data():null,chestContext));
     tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.credit,baseAmount:e.payout,bonusAmount:e.credit-e.payout,slotEligible:uniqueWinner,createdAt:Date.now()});
    }
   }
-  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);broadcastGame(code,game);
+  awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);if(game?.phase==='final')balanceReadCache.clear();broadcastGame(code,game);
  // Server-side timing is intentionally anonymous and creates no Firestore writes.
  // Slow turn logs distinguish database latency from stalled browser animations.
  const elapsed=Date.now()-actionStarted;

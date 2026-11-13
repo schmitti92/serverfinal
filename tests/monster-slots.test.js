@@ -309,6 +309,12 @@ test('DOG Super Slot pays exactly five prizes for one completed board, spends on
   'five-reel slot settles with the live host money-only distribution');
  assert.equal(docs.get('deal_or_no_deal_wallets_v1/'+uid).balance,
   first.body.prizes.reduce((sum,p)=>sum+p.amountCents,0),'all five cash prizes credit the wallet');
+ const cashAmounts=first.body.prizes.map(p=>p.amountCents);
+ const walletStats=docs.get('deal_or_no_deal_wallets_v1/'+uid).slotCashPrizeStats;
+ assert.equal(walletStats.count,5,'each paid reel is tracked once in the lobby records');
+ assert.equal(walletStats.minCents,Math.min(...cashAmounts));
+ assert.equal(walletStats.maxCents,Math.max(...cashAmounts));
+ assert.equal(walletStats.jackpots,cashAmounts.filter(n=>n===500000000).length);
  assert.equal(docs.get(album).superSlotTickets,0,'ticket must be consumed');
  assert.ok(!writes.some(key=>key.includes('christmas_ice')&&key.includes('bingo')),'Hammer-Bingo must never be modified');
  const count=writes.length;
@@ -317,6 +323,7 @@ test('DOG Super Slot pays exactly five prizes for one completed board, spends on
  assert.equal(replay.body.replayed,true);
  assert.deepEqual(replay.body.prizes,first.body.prizes);
  assert.equal(writes.length,count,'same receipt cannot pay again');
+ assert.equal(docs.get('deal_or_no_deal_wallets_v1/'+uid).slotCashPrizeStats.count,5,'replay cannot count extra Slot wins');
  const second=await send(uid,'another_super_slot_223344');
  assert.equal(second.statusCode,409);
  assert.equal(second.body.error,'SUPER_SLOT_TICKET_REQUIRED');
