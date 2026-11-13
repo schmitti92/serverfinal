@@ -412,7 +412,7 @@ export function installDogBoss10Api(app,{verifyProfile,getFirestore,rand=randomI
       createdAt:now,result});
      return {view:boss10View(team,next,uid,now),result,replayed:false,_changed:!unchanged};
     });
-    if(answer._changed)try{notifyChange?.(10,uid)}catch{}
+    if(answer._changed)try{notifyChange?.(10,uid,command==='ready'?'ready':null)}catch{}
     const {_changed,...publicResponse}=answer;
     res.set('Cache-Control','no-store');return res.json({ok:true,...publicResponse});
    }catch(e){return fail(res,e);}
