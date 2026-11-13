@@ -712,7 +712,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     h.decisions?.length===h.participants?.length&&
     h.decisions.some(d=>d.id===reward.uid&&d.deal===true)
    ))throw Error('INVALID_REWARD');
-   if(kind!=='banker'&&!current.christmasWheelSpins?.[key])throw Error('WHEEL_NOT_STARTED');
+   if(kind==='final'&&!current.christmasWheelSpins?.[key])throw Error('WHEEL_NOT_STARTED');
    if(current.christmasWheelClosed?.[key])return current;
    const updated={...current,christmasWheelClosed:{...(current.christmasWheelClosed||{}),[key]:Date.now()},revision:(current.revision||0)+1};
    tx.update(ref,{game:updated,updatedAt:Date.now()});return updated;
