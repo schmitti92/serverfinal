@@ -209,7 +209,7 @@ test('existing partial picture 23–70 without star is safely upgraded and resto
   const hit=picture>=50?strikeIce(first.state,{index:3,hammer:'single',requestId:'recover-second-hit-'+picture},()=>0):first;
   assert.equal(hit.state.completed,picture);
   assert.equal(hit.state.opened.length,4);
-  assert.equal(hit.state.freeHammers.single,0);
+  assert.equal(hit.state.freeHammers.single,picture%3===2?1:0,'new hammer gifts remain spendable');
   assert.equal(publicIceState(hit.state).star,3);
   assert.equal(publicIceState(hit.state).tilesRequired,tiles);
  }
