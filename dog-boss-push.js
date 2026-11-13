@@ -46,7 +46,7 @@ export function createDogBossPushHub({verifyProfile,getFirestore,
    if(raw.length>4096)return denied(ws);
    let m;
    try{m=JSON.parse(raw)}catch{return denied(ws)}
-   if(m?.type!=='subscribe'||!validGate(m.gate)||
+   if(m?.type!=='subscribe'||!(validGate(m.gate)||(m.gate===0&&m.scope==='team'))||
     typeof m.idToken!=='string'||m.idToken.length>4096)return denied(ws);
    inflight=true;
    try{
@@ -73,16 +73,19 @@ export function createDogBossPushHub({verifyProfile,getFirestore,
   ws.on('close',()=>detach(ws));
   ws.on('error',()=>detach(ws));
  }
- function notify(gate,actorUid=null){
+ function notify(gate,actorUid=null,eventType=null){
   if(!validGate(gate))return 0;
   const rev=(revisions.get(gate)||0)+1;
   revisions.set(gate,rev);
   let count=0;
   for(const [ws,sub] of members){
-   if(sub.gate!==gate||sub.uid===actorUid||ws.readyState!==1)continue;
-   // Deliberately no battle, room or user information in the hint.
-   json(ws,{type:'changed',seq:rev});
-   count++;
+   if(sub.uid===actorUid||ws.readyState!==1)continue;
+   if(sub.gate===gate){
+    json(ws,{type:'changed',seq:rev});count++;
+   }else if(sub.gate===0&&eventType==='ready'){
+    // Team-authenticated event hint; only the gate is public.
+    json(ws,{type:'invite',gate});count++;
+   }
   }
   return count;
  }
