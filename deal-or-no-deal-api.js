@@ -2,6 +2,7 @@ import {create,apply,publicView,payoutFor,cashCreditFor} from './deal-or-no-deal
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
+import {dealEconomyRef,normalizeDealEconomy,validateDealEconomy,goldPackPrice} from './deal-economy.js';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
@@ -121,7 +122,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  };
 
  const auth=async(req,res,next)=>{try{const token=/^Bearer (.+)$/i.exec(req.get('authorization')||'')?.[1];const identity=await verifyProfile(token);if(!identity)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});req.dealIdentity=identity;next()}catch{return res.status(401).json({ok:false,error:'AUTH_FAILED'})}};
- const fail=(res,e)=>{const message=String(e?.message||'ERROR');return res.status(message==='NOT_IN_ROOM'?403:message==='ROOM_NOT_FOUND'?404:409).json({ok:false,error:message})};
+ const fail=(res,e)=>{const message=String(e?.message||'ERROR');return res.status(['NOT_IN_ROOM','HOST_ONLY'].includes(message)?403:message==='ROOM_NOT_FOUND'?404:409).json({ok:false,error:message})};
  // This collection name must match the hub room storage configuration.
  // Share simultaneous game-state reads across players. Authorization remains per request.
  // Mutations invalidate immediately; generation prevents an in-flight stale read
@@ -157,7 +158,6 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const walletCollection='deal_or_no_deal_wallets_v1';
  const payoutCollection='deal_or_no_deal_payouts_v1';
   // One in-game purchase per player and match; all stored amounts are cents.
-  const DOUBLE_BOOST_COST_CENTS=300000000;
  const inventoryCollection='deal_or_no_deal_inventory_v1';
  // Cache only GET membership checks for 2 seconds; all mutations use a fresh room read.
  // Never cache membership failures. A removed user can retain read access for at most 2s.
@@ -460,9 +460,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
  const result=await db.runTransaction(async tx=>{const [wallet,inventory]=await Promise.all([tx.get(walletRef),tx.get(inventoryRef)]);const balance=wallet.exists?wallet.data().balance||0:0;const owned=inventory.exists?inventory.data().owned||[]:[];if(owned.includes(item.id))throw Error('ALREADY_OWNED');if(balance<item.price)throw Error('INSUFFICIENT_FUNDS');const remaining=balance-item.price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});tx.set(inventoryRef,{owned:[...owned,item.id],updatedAt:Date.now()},{merge:true});return {balance:remaining,owned:[...owned,item.id]}});return res.json({ok:true,...result,itemId:item.id})}catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/cards/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CARD_COLLECTION).doc(uid).get()]);const inventory=snap.exists?snap.data():{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards:inventory.cards||{},opened:inventory.opened||0,definitions:CARD_DEFINITIONS,packs:CARD_PACKS.map(({weights,...p})=>({...p,probabilities:Object.fromEntries(rarities.map(r=>[r,Math.round(10000*CARD_DEFINITIONS.filter(c=>c.rarity===r).length*weights[r]/CARD_DEFINITIONS.reduce((sum,c)=>sum+weights[c.rarity],0))/100]))}))})}catch(e){return fail(res,e)}});
- app.post('/api/deal-or-no-deal/cards/open',auth,async(req,res)=>{try{const pack=CARD_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CARD_COLLECTION).doc(uid);
- const result=await db.runTransaction(async tx=>{const [wallet,snap]=await Promise.all([tx.get(walletRef),tx.get(cardsRef)]);const previous=snap.exists?snap.data():{};if(previous.lastPurchase?.requestId===requestId){if(previous.lastPurchase.packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...previous.lastPurchase.result,replayed:true}}const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<pack.price)throw Error('INSUFFICIENT_FUNDS');const owned={...(previous.cards||{})};const cards=openPack(pack);for(const card of cards)owned[card.id]=(owned[card.id]||0)+1;const remaining=balance-pack.price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});const purchaseResult={balance:remaining,cards:owned,opened:(previous.opened||0)+1,revealed:cards.map(({id,name,rarity,emoji,series})=>({id,name,rarity,emoji,series}))};tx.set(cardsRef,{cards:owned,opened:purchaseResult.opened,lastPurchase:{requestId,packId:pack.id,result:purchaseResult},updatedAt:Date.now()},{merge:true});return purchaseResult});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/cards/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap,economySnap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CARD_COLLECTION).doc(uid).get(),dealEconomyRef(db).get()]);const inventory=snap.exists?snap.data():{},economy=normalizeDealEconomy(economySnap.data());return res.json({ok:true,purchasesEnabled:economy.packsEnabled,balance:wallet.exists?wallet.data().balance||0:0,cards:inventory.cards||{},opened:inventory.opened||0,definitions:CARD_DEFINITIONS,packs:CARD_PACKS.map(({weights,...p})=>({...p,price:goldPackPrice(economy,p.id),probabilities:Object.fromEntries(rarities.map(r=>[r,Math.round(10000*CARD_DEFINITIONS.filter(c=>c.rarity===r).length*weights[r]/CARD_DEFINITIONS.reduce((sum,c)=>sum+weights[c.rarity],0))/100]))}))})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/cards/open',auth,async(req,res)=>{try{const pack=CARD_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CARD_COLLECTION).doc(uid),economyRef=dealEconomyRef(db);
+ const result=await db.runTransaction(async tx=>{const [wallet,snap,economySnap]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(economyRef)]);const previous=snap.exists?snap.data():{};if(previous.lastPurchase?.requestId===requestId){if(previous.lastPurchase.packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...previous.lastPurchase.result,replayed:true}}const economy=normalizeDealEconomy(economySnap.data());if(!economy.packsEnabled)throw Error('PACK_PURCHASES_DISABLED');const price=goldPackPrice(economy,pack.id);if(Number.isSafeInteger(req.body?.expectedPrice)&&req.body.expectedPrice!==price)throw Error('PRICE_CHANGED');const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<price)throw Error('INSUFFICIENT_FUNDS');const owned={...(previous.cards||{})};const cards=openPack(pack);for(const card of cards)owned[card.id]=(owned[card.id]||0)+1;const remaining=balance-price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});const purchaseResult={balance:remaining,chargedPrice:price,cards:owned,opened:(previous.opened||0)+1,revealed:cards.map(({id,name,rarity,emoji,series})=>({id,name,rarity,emoji,series}))};tx.set(cardsRef,{cards:owned,opened:purchaseResult.opened,lastPurchase:{requestId,packId:pack.id,result:purchaseResult},updatedAt:Date.now()},{merge:true});return purchaseResult});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
 
  app.get('/api/deal-or-no-deal/christmas/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CHRISTMAS_COLLECTION).doc(uid).get()]);const data=snap.exists?snap.data():{};const cards=data.cards||{};return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,cards,opened:data.opened||0,definitions:CHRISTMAS_CARDS,packs:CHRISTMAS_PACKS,progress:christmasProgress(cards),northPoleClaimed:Object.keys(data.northPoleMilestonesClaimed||{}),northPolePending:[...NORTH_POLE_MILESTONES.filter(m=>christmasProgress(cards).totalBingos>=m.at&&!data.northPoleMilestonesClaimed?.[m.id]).map(m=>m.id),...(data.northPoleMilestonesClaimed?.['north-premium-2']&&!data.northPolePremiumVouchersIssued?['north-premium-2']:[])],freePacks:Object.fromEntries(CHRISTMAS_PACKS.map(p=>[p.id,Math.max(0,Number(data.freeChristmasPacks?.[p.id])||0)])),hammerProgress:hammerBingoProgress(cards,data.hammerBingoClaimed,data.hammerBingoCycles),duplicates:christmasDuplicateStock(cards,data.duplicateReserve,data.monsterWheelTickets),monsterWheel:{durationMs:MONSTER_WHEEL_DURATION_MS,slots:MONSTER_WHEEL_SLOTS,tickets:data.monsterWheelTickets||0,lastSpin:data.monsterWheelLastSpin||null,giftzwergUnlocked:data.monsterGiftzwergUnlocked===true}})}catch(e){return fail(res,e)}});
 
@@ -933,6 +933,41 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  });
  app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await readBalances(db,code,players);return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0}))})}catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
+
+ // Global prices may only be changed by the verified host of an active room.
+ app.get('/api/deal-or-no-deal/:code/economy',auth,async(req,res)=>{
+  try{
+   const code=String(req.params.code||'').toUpperCase();
+   if(!CODE.test(code))throw Error('INVALID_CODE');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const [room,snap]=await Promise.all([check(db,code,req.dealIdentity.uid,true),dealEconomyRef(db).get()]);
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,isHost:room.hostUid===req.dealIdentity.uid,economy:normalizeDealEconomy(snap.data())});
+  }catch(e){return fail(res,e)}
+ });
+ app.post('/api/deal-or-no-deal/:code/economy',auth,async(req,res)=>{
+  try{
+   const code=String(req.params.code||'').toUpperCase();
+   if(!CODE.test(code))throw Error('INVALID_CODE');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const uid=req.dealIdentity.uid,values=validateDealEconomy(req.body);
+   const ref=dealEconomyRef(db),roomRef=db.collection(hubCollection).doc(code);
+   const economy=await db.runTransaction(async tx=>{
+    const [roomSnap,configSnap]=await Promise.all([tx.get(roomRef),tx.get(ref)]);
+    if(!roomSnap.exists)throw Error('ROOM_NOT_FOUND');
+    const room=roomSnap.data();
+    if(!room.players?.some(p=>p.uid===uid&&!p.testBot&&!p.bot))throw Error('NOT_IN_ROOM');
+    if(room.hostUid!==uid)throw Error('HOST_ONLY');
+    const old=normalizeDealEconomy(configSnap.data());
+    const next={...values,revision:old.revision+1,updatedAt:Date.now(),updatedBy:uid};
+    tx.set(ref,next);
+    return normalizeDealEconomy(next);
+   });
+   for(const sockets of dealSockets.values())for(const ws of sockets)sendSocket(ws,{type:'deal-economy',economy});
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,economy,isHost:true});
+  }catch(e){return fail(res,e)}
+ });
  // The player buys the boost while their personal case is still unselected.
  // The game flag and wallet debit are one Firestore transaction: replays,
  // two tabs and concurrent requests cannot charge twice or grant a free boost.
@@ -945,27 +980,31 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    await check(db,code,uid);
    const gameRef=db.collection(collection).doc(code),walletRef=db.collection(walletCollection).doc(uid);
    const result=await db.runTransaction(async tx=>{
-    const [gameSnap,walletSnap]=await Promise.all([tx.get(gameRef),tx.get(walletRef)]);
+    const [gameSnap,walletSnap,economySnap]=await Promise.all([tx.get(gameRef),tx.get(walletRef),tx.get(dealEconomyRef(db))]);
     if(!gameSnap.exists)throw Error('MATCH_NOT_FOUND');
     const game=gameSnap.data().game;
     const player=game?.players?.find(p=>p.id===uid);
     if(!game||game.phase!=='select'||!player||player.case!==null)throw Error('BOOST_WINDOW_CLOSED');
     const balance=walletSnap.exists?Number(walletSnap.data().balance??0):0;
     if(!Number.isSafeInteger(balance)||balance<0)throw Error('INVALID_WALLET_BALANCE');
-    if(player.doublePayout===true)return {game,balance,alreadyActive:true};
-    if(balance<DOUBLE_BOOST_COST_CENTS)throw Error('BOOST_INSUFFICIENT_FUNDS');
+    const economy=normalizeDealEconomy(economySnap.data());
+    if(player.doublePayout===true)return {game,balance,alreadyActive:true,cost:economy.prices.doubleBoost};
+    if(!economy.doubleBoostEnabled)throw Error('BOOST_DISABLED');
+    const cost=economy.prices.doubleBoost;
+    if(Number.isSafeInteger(req.body?.expectedCost)&&req.body.expectedCost!==cost)throw Error('PRICE_CHANGED');
+    if(balance<cost)throw Error('BOOST_INSUFFICIENT_FUNDS');
     const next=structuredClone(game);
     next.players.find(p=>p.id===uid).doublePayout=true;
     next.revision++;
-    const remaining=balance-DOUBLE_BOOST_COST_CENTS;
+    const remaining=balance-cost;
     tx.update(gameRef,{game:next,updatedAt:Date.now()});
     tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});
-    return {game:next,balance:remaining,alreadyActive:false};
+    return {game:next,balance:remaining,alreadyActive:false,cost};
    });
    invalidateGame(code);
    balanceReadCache.clear();
    broadcastGame(code,result.game);
-   return res.json({ok:true,game:publicView(result.game),balance:result.balance,alreadyActive:result.alreadyActive,cost:DOUBLE_BOOST_COST_CENTS});
+   return res.json({ok:true,game:publicView(result.game),balance:result.balance,alreadyActive:result.alreadyActive,cost:result.cost});
   }catch(e){return fail(res,e)}
  });
  app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=15?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');if(snap.exists){const previous=snap.data().game;if(previous.phase==='final'){const payouts=(previous.players||[]).map(p=>payoutFor(previous,p));const tiedFinal=payouts.length>1&&payouts.filter(v=>v===Math.max(...payouts)).length>1;const key='final:'+previous.id;const spinAt=Number(previous.christmasWheelSpins?.[key]||0);const packClosed=!!previous.christmasWheelClosed?.[key];const hammer=previous.christmasHammerWheel;const hammerFinished=hammer?.gameId===previous.id&&Number.isFinite(hammer.startedAt)&&Date.now()-hammer.startedAt>=4300;const ceremonyComplete=previous.monsterSlotsVersion===1||!!spinAt&&packClosed&&hammerFinished;if(!tiedFinal&&!ceremonyComplete&&req.body?.skipFinalWheel!==true)throw Error('FINAL_WHEEL_PENDING');if(previous.monsterSlotsVersion===1&&!tiedFinal)await settleMonsterSlotsBatch(tx,db,previous.id,previous.players.map(p=>p.id),'deal',true)}}const requestedCaseCount=req.body?.caseCount===undefined?(snap.exists?snap.data().game?.values?.length||27:27):Number(req.body.caseCount);if(![26,27,28,29,30].includes(requestedCaseCount))throw Error('INVALID_CASE_COUNT');const game=create(players,undefined,requestedCaseCount);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});

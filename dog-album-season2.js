@@ -4,6 +4,7 @@ import {randomInt} from 'node:crypto';
 import {addExpeditionChestToInventory,DOG_MATERIALS_COLLECTION} from './dog-materials.js';
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {checkMonsterBalance} from './monster-wheel.js';
+import {dealEconomyRef,normalizeDealEconomy,dogPackPrice} from './deal-economy.js';
 import {dogS2RewardStatus,dogS2PlanBingoClaims} from './dog-album-bingo-rewards.js';
 export const DOG_S2_COLLECTION='deal_dog_album_season2_v1';
 export const DOG_S2_BOARDS=Object.freeze(['DOG & Königreich','Weltraum','Dinosaurier','Freizeitpark','Märchen','Western']);
@@ -243,11 +244,11 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const uid=req.dealIdentity.uid;
-   const [w,s,old]=await Promise.all([db.collection(wallet).doc(uid).get(),db.collection(DOG_S2_COLLECTION).doc(uid).get(),db.collection(legacy).doc(uid).get()]);
+   const [w,s,old,economySnap]=await Promise.all([db.collection(wallet).doc(uid).get(),db.collection(DOG_S2_COLLECTION).doc(uid).get(),db.collection(legacy).doc(uid).get(),dealEconomyRef(db).get()]);
    const data=s.exists?s.data():{},legacyData=old.exists?old.data():{};
-   const cards=data.cards||{};
+   const cards=data.cards||{},economy=normalizeDealEconomy(economySnap.data());
    res.set('Cache-Control','no-store');
-   res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS,
+   res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS.map(p=>({...p,price:dogPackPrice(economy,p.id)})),purchasesEnabled:economy.packsEnabled,
     balance:positive(w.data()?.balance),opened:positive(data.opened),
     progress:dogS2CycleProgress(cards,data),lifetimeProgress:dogS2Progress(cards),
     rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,data.bingoRewardsClaimed,data.bingoRewardsHistory),
@@ -265,7 +266,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    const sRef=db.collection(DOG_S2_COLLECTION).doc(uid),wRef=db.collection(wallet).doc(uid),
     oldRef=db.collection(legacy).doc(uid),receipt=db.collection(receipts).doc(uid+'_'+requestId);
    const result=await db.runTransaction(async tx=>{
-    const [s,w,old,r]=await Promise.all([tx.get(sRef),tx.get(wRef),tx.get(oldRef),tx.get(receipt)]);
+    const [s,w,old,r,economySnap]=await Promise.all([tx.get(sRef),tx.get(wRef),tx.get(oldRef),tx.get(receipt),tx.get(dealEconomyRef(db))]);
     if(r.exists){
      if(r.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');
      return {...r.data().result,replayed:true};
@@ -275,15 +276,19 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     if(!Number.isSafeInteger(balance)||balance<0)throw Error('INVALID_WALLET_BALANCE');
     const vouchers={...(legacyData.freeChristmasPacks||{})};
     const free=positive(vouchers[pack.id])>0;
-    if(!free&&balance<pack.price)throw Error('INSUFFICIENT_FUNDS');
+    const economy=normalizeDealEconomy(economySnap.data());
+    if(!free&&!economy.packsEnabled)throw Error('PACK_PURCHASES_DISABLED');
+    const price=dogPackPrice(economy,pack.id);
+    if(!free&&Number.isSafeInteger(req.body?.expectedPrice)&&req.body.expectedPrice!==price)throw Error('PRICE_CHANGED');
+    if(!free&&balance<price)throw Error('INSUFFICIENT_FUNDS');
     if(free)vouchers[pack.id]-=1;
     const cards={...(prev.cards||{})};
     const revealed=dogS2Discoveries(dogS2Draw(pack),cycleCounts(cards,prev.cycleBase));
     for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
-    const remaining=free?balance:balance-pack.price;
+    const remaining=free?balance:balance-price;
     const cycles=dogS2AdvanceCycles(prev.cards||{},cards,prev,now);
     const freePacks=Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(vouchers[p.id])]));
-    const result={season:2,packId:pack.id,opened:positive(prev.opened)+1,balance:remaining,cards,revealed,
+    const result={season:2,packId:pack.id,chargedPrice:free?0:price,opened:positive(prev.opened)+1,balance:remaining,cards,revealed,
      usedFreePack:free,freePacks,progress:cycles.progress,lifetimeProgress:dogS2Progress(cards),
      completedBoards:cycles.finished,pointsAdded:cycles.pointsAdded,
      rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,prev.bingoRewardsClaimed,prev.bingoRewardsHistory),
