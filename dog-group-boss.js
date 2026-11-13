@@ -416,7 +416,7 @@ export function installDogGroupBossApi(app,{verifyProfile,getFirestore,rand=rand
       result,createdAt:now});
      return {view:groupBossView(gate,team,next,uid,now),result,replayed:false,_changed:!unchanged};
     });
-    if(response._changed)try{notifyChange?.(gate,uid)}catch{}
+    if(response._changed)try{notifyChange?.(gate,uid,command==='ready'?'ready':null)}catch{}
     const {_changed,...publicResponse}=response;
     res.set('Cache-Control','no-store');return res.json({ok:true,...publicResponse});
    }catch(e){return error(res,e);}
