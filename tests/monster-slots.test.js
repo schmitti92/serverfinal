@@ -265,6 +265,10 @@ test('DOG Super Slot pays exactly five prizes for one completed board, spends on
  const uid='collector',requestId='dog_super_slot_test_112233',docs=new Map(),routes=new Map(),writes=[];
  const album='deal_dog_album_season2_v1/'+uid;
  docs.set(album,{season:2,cards:{},superSlotTickets:1,cycleBase:{},cycleCompletions:[1,0,0,0,0,0]});
+ // Host-configured 100% cash must apply to all five server-settled DOG reels.
+ docs.set('deal_or_no_deal_economy_v1/global',{slotWeights:{
+  chest:0,pack:0,hammer:0,joker:0,minigame:0,monster:0,cash:100
+ }});
  const db={
   collection:name=>({doc:id=>{
    const key=name+'/'+id;
@@ -301,6 +305,10 @@ test('DOG Super Slot pays exactly five prizes for one completed board, spends on
  assert.equal(first.statusCode,200,JSON.stringify(first.body));
  assert.equal(first.body.prizes.length,5,'five guaranteed reels, not three');
  assert.equal(first.body.guaranteed,5);
+ assert.ok(first.body.prizes.every(p=>p.kind==='cash'&&p.amountCents>=1&&p.amountCents<=500000000),
+  'five-reel slot settles with the live host money-only distribution');
+ assert.equal(docs.get('deal_or_no_deal_wallets_v1/'+uid).balance,
+  first.body.prizes.reduce((sum,p)=>sum+p.amountCents,0),'all five cash prizes credit the wallet');
  assert.equal(docs.get(album).superSlotTickets,0,'ticket must be consumed');
  assert.ok(!writes.some(key=>key.includes('christmas_ice')&&key.includes('bingo')),'Hammer-Bingo must never be modified');
  const count=writes.length;
