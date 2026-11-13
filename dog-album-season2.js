@@ -9,24 +9,30 @@ export const DOG_S2_COLLECTION='deal_dog_album_season2_v1';
 export const DOG_S2_BOARDS=Object.freeze(['DOG & Königreich','Weltraum','Dinosaurier','Freizeitpark','Märchen','Western']);
 const FILES=Object.freeze([["DOG_01_11.png","DOG_02.png","DOG_03.png","DOG_04_plus_minus.png","DOG_05.png","DOG_06.png","DOG_07.png","DOG_08.png","DOG_09.png","DOG_10.png","DOG_12.png","DOG_13.png","DOG_Joker.png","DOG_Tauschen.png","DOG_31_Vier_Koenige.png","DOG_32_Koenigliche_Allianz.png"],["DOG_43_Astronauten.png","DOG_44_Raumstation.png","DOG_45_Rakete.png","DOG_46_Mondlandung.png","DOG_47_Alien_Kartenspiel.png","DOG_48_Galaktischer_Pokal.png","DOG_49_Kosmischer_Wuerfel.png","DOG_50_Weltraum_Sieger.png","DOG_51_Sternenpokal.png","DOG_52_Mondforscher.png","DOG_53_Raumstation.png","DOG_54_Schwerelos.png","DOG_55_Raketenstart.png","DOG_56_Alien_Kartenspiel.png","DOG_57_Sternenportal.png","DOG_58_Weltraumschatz.png"],["DOG_59_Dino_Pokal.png","DOG_60_Dino_Entdecker.png","DOG_61_Dino_Schatz.png","DOG_62_Dino_Spielrunde.png","DOG_63_Dino_Ritter.png","DOG_64_Dino_Zauberer.png","DOG_123_T_Rex_Team.png","DOG_124_Triceratops_Spielbrett.png","DOG_125_Brachiosaurus_Karten.png","DOG_126_Stegosaurus_Wuerfel.png","DOG_127_Raptor_Schatzkarte.png","DOG_128_Flugsaurier_Team.png","DOG_129_Spinosaurus_Spielmuenze.png","DOG_130_Ankylosaurus_Schatzkiste.png","DOG_131_Dino_Baby.png","DOG_132_Dino_Siegerpokal.png"],["DOG_65_Freizeitpark_Panorama.png","DOG_66_Spielpark_Eingang.png","DOG_67_Achterbahn.png","DOG_68_Geisterbahn.png","DOG_134_Achterbahn.png","DOG_135_Riesenrad.png","DOG_136_Karussell.png","DOG_137_Wildwasserbahn.png","DOG_138_Geisterbahn.png","DOG_139_Suessigkeiten.png","DOG_140_Dosenwerfen.png","DOG_141_Kettenkarussell.png","DOG_142_Heissluftballon.png","DOG_143_Feuerwerk.png","DOG_144_Freizeitpark_Pokal.png","DOG_33_Koenigspokal.png"],["DOG_69_Rapunzel.png","DOG_77_Maerchenschloss.png","DOG_78_Kuerbiskutsche.png","DOG_79_Dornroeschen.png","DOG_80_Rotkaeppchen.png","DOG_81_Drei_Schweinchen.png","DOG_82_Schwert_im_Stein.png","DOG_83_Schneewittchen.png","DOG_84_Magisches_Maerchenbuch.png","DOG_145_Rotkaeppchen.png","DOG_146_Haensel_und_Gretel.png","DOG_148_Schneewittchen.png","DOG_149_Gestiefelter_Kater.png","DOG_150_Dornroeschen.png","DOG_151_Rumpelstilzchen.png","DOG_34_Vier_Koenigreiche.png"],["DOG_85_Sheriff.png","DOG_86_Dampflokomotive.png","DOG_87_Western_Freundschaft.png","DOG_88_Saloon.png","DOG_89_Bandit.png","DOG_90_Wuestenlandschaft.png","DOG_91_Cowgirl.png","DOG_92_Rodeo.png","DOG_152_Westernstadt.png","DOG_154_Sheriff.png","DOG_155_Dampflok.png","DOG_156_Cowboy_Pferd.png","DOG_158_Lagerfeuer.png","DOG_159_Sonnenuntergang.png","a_highly_detailed_colorful_glossy_3d_style_board.png","a_highly_detailed_glossy_colorful_close_up_illus.png"]]);
 const RARITIES=['common','rare','epic','legendary'];
-// Additional DOG collection difficulty per 4x4 board (not Hammer-Bingo).
-// There are 11 ordinary cards (15 tickets each), 3 cards at 1/3 of those
-// odds (5 tickets), and 2 cards at 1/5 (3 tickets) in EVERY 16-card board.
-// Positions differ per board, but the spread across existing rarity tiers
-// is identical: 3x: common/rare/epic; 5x: rare/legendary.
+// Strictly harder DOG 4x4 collections (not Christmas Hammer-Bingo).
+// In EACH of the six worlds: 4 normal cards, four 3x rarer, four 8x
+// rarer, two 15x rarer and two 30x rarer. The two hardest cards differ
+// between worlds and remain attainable with every legitimate pack type.
+// Integer tickets preserve EXACT relative odds inside each rarity tier.
+// Four rarities (common/rare/epic/legendary) each keep one normal card.
 export const DOG_S2_SPECIAL_CARD_SLOTS=Object.freeze([
- Object.freeze({triple:Object.freeze([4,8,12]),quintuple:Object.freeze([6,15])}),
- Object.freeze({triple:Object.freeze([3,7,11]),quintuple:Object.freeze([5,16])}),
- Object.freeze({triple:Object.freeze([2,8,10]),quintuple:Object.freeze([6,14])}),
- Object.freeze({triple:Object.freeze([1,5,9]),quintuple:Object.freeze([8,13])}),
- Object.freeze({triple:Object.freeze([4,7,11]),quintuple:Object.freeze([6,16])}),
- Object.freeze({triple:Object.freeze([2,5,12]),quintuple:Object.freeze([7,15])})
+ Object.freeze({normal:Object.freeze([1,5,9,13]),triple:Object.freeze([2,6,10,14]),octuple:Object.freeze([3,7,11,15]),fifteen:Object.freeze([4,12]),thirty:Object.freeze([8,16])}),
+ Object.freeze({normal:Object.freeze([3,6,11,15]),triple:Object.freeze([4,7,12,16]),octuple:Object.freeze([1,8,9,13]),fifteen:Object.freeze([2,10]),thirty:Object.freeze([5,14])}),
+ Object.freeze({normal:Object.freeze([2,8,10,14]),triple:Object.freeze([3,5,11,15]),octuple:Object.freeze([4,6,12,16]),fifteen:Object.freeze([1,9]),thirty:Object.freeze([7,13])}),
+ Object.freeze({normal:Object.freeze([4,7,12,13]),triple:Object.freeze([1,8,9,14]),octuple:Object.freeze([2,5,10,15]),fifteen:Object.freeze([3,11]),thirty:Object.freeze([6,16])}),
+ Object.freeze({normal:Object.freeze([1,6,10,16]),triple:Object.freeze([2,7,11,13]),octuple:Object.freeze([3,8,12,14]),fifteen:Object.freeze([4,9]),thirty:Object.freeze([5,15])}),
+ Object.freeze({normal:Object.freeze([3,5,9,14]),triple:Object.freeze([4,6,10,15]),octuple:Object.freeze([1,7,11,16]),fifteen:Object.freeze([2,12]),thirty:Object.freeze([8,13])})
 ]);
-export const DOG_S2_CARD_WEIGHT_BASE=15;
+export const DOG_S2_CARD_WEIGHT_BASE=120;
 export function dogS2CardDrawWeight(card){
  const config=DOG_S2_SPECIAL_CARD_SLOTS[(card?.board||0)-1];
- if(!config||!Number.isInteger(card?.slot))throw Error('INVALID_DOG_CARD');
- return config.quintuple.includes(card.slot)?3:config.triple.includes(card.slot)?5:DOG_S2_CARD_WEIGHT_BASE;
+ if(!config||!Number.isInteger(card?.slot)||card.slot<1||card.slot>16)throw Error('INVALID_DOG_CARD');
+ if(config.thirty.includes(card.slot))return 4;    // 30x rarer
+ if(config.fifteen.includes(card.slot))return 8;  // 15x rarer
+ if(config.octuple.includes(card.slot))return 15; // 8x rarer
+ if(config.triple.includes(card.slot))return 40;  // 3x rarer
+ if(config.normal.includes(card.slot))return DOG_S2_CARD_WEIGHT_BASE;
+ throw Error('INVALID_DOG_CARD');
 }
 
 export const DOG_S2_CARDS=Object.freeze(FILES.flatMap((files,board)=>files.map((image,slot)=>{
