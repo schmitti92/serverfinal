@@ -279,9 +279,9 @@ test('New expedition chest API opens exactly one earned snapshot and replays saf
 test('All five new types can be opened by the old authenticated materials endpoint',async()=>{
  const f=fixture(()=>0);
  let inv=dogInventory(null);
- const levels={wood:1,iron:21,silver:31,gold:51,legendary:81};
+ const levels={wood:1,iron:20,silver:30,gold:50,legendary:80};
  for(const [tier,gate] of Object.entries(levels)){
-  const weights={wood:0,iron:80,silver:95,gold:98,legendary:97};
+  const weights={wood:0,iron:70,silver:90,gold:92,legendary:98};
   let calls=0;
   const offer=dogChestOffer(gate,limit=>{
    const roll=calls++===0?weights[tier]:0;
@@ -308,10 +308,10 @@ test('All five new types can be opened by the old authenticated materials endpoi
 test('Malformed stored expedition snapshots cannot silently erase earned chests',()=>{
  const b=dogInventory(null);
  assert.throws(()=>dogInventory({...b,expeditionChests:[
-  {version:4,stage:0,tier:'legendary',count:20,quantity:1}
+  {version:4,stage:0,tier:'legendary',count:31,quantity:1}
  ]}),/DOG_CHEST_STORAGE_INVALID/);
  assert.throws(()=>addExpeditionChestToInventory(null,
-  {version:4,stage:0,tier:'legendary',count:20}),/DOG_BALANCE_INVALID_CHEST/);
+  {version:4,stage:0,tier:'legendary',count:31}),/DOG_BALANCE_INVALID_CHEST/);
  assert.throws(()=>dogInventory({...b,expeditionChests:[
   {version:4,stage:0,tier:'wood',count:2,quantity:0}
  ]}),/DOG_CHEST_STORAGE_INVALID/);
