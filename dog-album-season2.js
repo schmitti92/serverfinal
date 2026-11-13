@@ -179,12 +179,12 @@ export function dogS2Discoveries(drawn,previous={}){
 // Used by Monster Slots: awarded packs are opened and credited in the very
 // same Firestore transaction as the three slot prizes. No paid pack purchase,
 // no voucher consumption and no client-driven second draw.
-export function dogS2OpenGrantedPacks(packId,quantity,previous={},rand=randomInt){
+export function dogS2OpenGrantedPacks(packId,quantity,previous={},rand=randomInt,cycleBase={}){
  const pack=DOG_S2_PACKS.find(p=>p.id===packId);
  if(!pack||!Number.isSafeInteger(quantity)||quantity<1||quantity>3)throw Error('INVALID_GRANTED_PACK');
  const cards={...previous},openedPacks=[];
  for(let n=0;n<quantity;n++){
-  const revealed=dogS2Discoveries(dogS2Draw(pack,rand),cards);
+  const revealed=dogS2Discoveries(dogS2Draw(pack,rand),cycleCounts(cards,cycleBase));
   for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
   openedPacks.push({packId,packName:pack.name,hasNew:revealed.some(card=>card.isNew===true),revealed});
  }
@@ -268,7 +268,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
     if(!free&&balance<pack.price)throw Error('INSUFFICIENT_FUNDS');
     if(free)vouchers[pack.id]-=1;
     const cards={...(prev.cards||{})};
-    const revealed=dogS2Discoveries(dogS2Draw(pack),cards);
+    const revealed=dogS2Discoveries(dogS2Draw(pack),cycleCounts(cards,prev.cycleBase));
     for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
     const remaining=free?balance:balance-pack.price;
     const cycles=dogS2AdvanceCycles(prev.cards||{},cards,prev,now);
@@ -280,7 +280,9 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
      duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)};
     if(!free)tx.set(wRef,{balance:remaining,updatedAt:now},{merge:true});
     else tx.set(oldRef,{freeChristmasPacks:vouchers,updatedAt:now},{merge:true});
-    tx.set(sRef,{season:2,cards,...cycles.updates,opened:result.opened,updatedAt:now},{merge:true});
+    tx.set(sRef,{season:2,cards,...cycles.updates,
+     tournamentName:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),
+     opened:result.opened,updatedAt:now},{merge:true});
     if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION).doc(cycles.progress.tournament.month).collection('players').doc(uid),{
      uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
      name:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),updatedAt:now
