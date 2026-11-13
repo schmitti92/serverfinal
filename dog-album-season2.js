@@ -63,7 +63,7 @@ export function dogS2Progress(cards={}){
   const slice=DOG_S2_CARDS.slice(index*16,index*16+16);
   const owned=slice.map(c=>positive(cards[c.id])>0);
   const bingoLines=LINES.map((line,i)=>line.every(j=>owned[j])?i:null).filter(n=>n!==null);
-  return {name,index:index+1,collected:owned.filter(Boolean).length,total:16,bingoLines,bingos:bingoLines.length,maxBingos:10};
+  return {name,index:index+1,collected:owned.filter(Boolean).length,total:16,ownedSlots:owned,bingoLines,bingos:bingoLines.length,maxBingos:10};
  });
  return {season:2,collected:boards.reduce((s,b)=>s+b.collected,0),total:96,
   bingos:boards.reduce((s,b)=>s+b.bingos,0),maxBingos:60,boards,
