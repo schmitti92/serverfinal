@@ -110,20 +110,27 @@ test('every picture starts with a concealed star, including after picture 22',()
  for(const n of [1,10,11,20,21,22,23,29,30,31,39,40,41,50,70]){
   const tiles=n>=40?150:n>=30?100:50;
   const s={...newIceState(()=>0),completed:n-1,maxRewarded:n-1,
-   tileCount:30,star:tiles-1,balance:30000000,finished:false};
+   tileCount:30,star:tiles-1,balance:n>=50?60000000:30000000,finished:false};
   assert.equal(iceTileCount(s),tiles,'picture '+n);
   const shown=publicIceState(s);
   assert.equal(shown.star,null);
   assert.equal(shown.tilesRequired,tiles);
   assert.equal(shown.requiresFullClear,false);
-  const hit=strikeIce(s,{index:tiles-1,hammer:'single',requestId:'star-hit-picture-'+n},()=>0);
+  const first=strikeIce(s,{index:tiles-1,hammer:'single',requestId:'star-hit-picture-'+n},()=>0);
+  if(n>=50){
+   assert.equal(first.result.found,false,'the first hit only cracks the ice');
+   assert.deepEqual(first.state.cracked,[tiles-1]);
+   assert.equal(first.state.opened.length,0);
+   assert.equal(publicIceState(first.state).star,null);
+  }
+  const hit=n>=50?strikeIce(first.state,{index:tiles-1,hammer:'single',requestId:'second-star-hit-picture-'+n},()=>0):first;
   assert.equal(hit.state.completed,n);
   assert.equal(hit.state.finished,true);
   assert.equal(hit.state.opened.length,1,'one tile should reveal '+n);
   assert.equal(publicIceState(hit.state).star,tiles-1);
   assert.equal(hit.result.found,true);
   assert.equal(hit.result.gift?.number,n);
-  const replay=strikeIce(hit.state,{index:tiles-1,hammer:'single',requestId:'star-hit-picture-'+n});
+  const replay=strikeIce(hit.state,{index:tiles-1,hammer:'single',requestId:(n>=50?'second-star-hit-picture-':'star-hit-picture-')+n});
   assert.equal(replay.changed,false);
   assert.equal(replay.result.replayed,true);
  }
@@ -191,13 +198,15 @@ test('existing partial picture 23–70 without star is safely upgraded and resto
   const tiles=picture>=40?150:picture>=30?100:50;
   const old={...newIceState(()=>0),completed:picture-1,maxRewarded:picture-1,
    finished:false,tileCount:30,star:null,opened:[0,1,2],
-   freeHammers:{single:1,double:0,lucky:0}};
+   freeHammers:{single:picture>=50?2:1,double:0,lucky:0}};
   const normalized=normalizeIceState(old);
   assert.equal(normalized.tileCount,tiles);
   assert.deepEqual(normalized.opened,[0,1,2]);
   assert.equal(normalized.star,null,'no extra database write is needed just to migrate');
-  const hit=strikeIce(normalized,{index:3,hammer:'single',requestId:'recover-star-picture-'+picture},()=>0);
-  assert.equal(hit.state.star,3,'first strike draws from unopened positions');
+  const first=strikeIce(normalized,{index:3,hammer:'single',requestId:'recover-star-picture-'+picture},()=>0);
+  assert.equal(first.state.star,3,'first strike draws from unopened positions');
+  if(picture>=50){assert.equal(first.result.found,false);assert.equal(first.state.cracked.includes(3),true);}
+  const hit=picture>=50?strikeIce(first.state,{index:3,hammer:'single',requestId:'recover-second-hit-'+picture},()=>0):first;
   assert.equal(hit.state.completed,picture);
   assert.equal(hit.state.opened.length,4);
   assert.equal(hit.state.freeHammers.single,0);
