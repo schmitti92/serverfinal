@@ -60,7 +60,7 @@ const active=g=>g.players.filter(p=>p.deal===null);
 const locked=g=>new Set(g.players.map(p=>p.case).filter(Number.isInteger));
 const free=g=>{const queued=new Set(g.openingBatch?.picks?.map(p=>p.case)||[]);return Array.from({length:g.values.length},(_,i)=>i).filter(i=>!locked(g).has(i)&&!g.opened.includes(i)&&!queued.has(i));};
 const publicRemaining=g=>Array.from({length:g.values.length},(_,i)=>i).filter(i=>!g.opened.includes(i)).map(i=>g.values[i]);
-function create(players,random=crypto.randomInt,caseCount=27){
+function create(players,random=crypto.randomInt,caseCount=27,options={}){
  if(![26,27,28,29,30].includes(caseCount))throw Error('INVALID_CASE_COUNT');
  if(!Array.isArray(players)||players.length<1||players.length>4)throw Error('PLAYER_COUNT');
  const ids=players.map(p=>String(p.id));if(new Set(ids).size!==ids.length)throw Error('DUPLICATE_PLAYER');
@@ -71,7 +71,7 @@ function create(players,random=crypto.randomInt,caseCount=27){
  const bankerStyle=pickBankerStyle(random);
  // Three queued picks per player, only for newly started 30-case matches.
  const bankerSchedule=openingToSteps(buildBankerTargets(chosen.variant,caseCount,players.length));
- return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null,doublePayout:false})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerStyle,bankerSchedule,bankerScheduleVariant:chosen.variant,...(caseCount===30?{openingBatch:{picks:[],perPlayer:3,startedAt:null,intervalMs:650,endsAt:null}}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
+ return {id:crypto.randomUUID(),revision:0,phase:'select',players:players.map(p=>({id:String(p.id),name:String(p.name||'Spieler').slice(0,30),avatar:Number.isInteger(p.avatar)&&p.avatar>=1&&p.avatar<=15?p.avatar:null,case:null,deal:null,doublePayout:false})),values,order,selectionIndex:0,turnIndex:0,opened:[],round:0,roundOpened:0,bankerStyle,individualBankerOffers:options?.individualBankerOffers===true,bankerSchedule,bankerScheduleVariant:chosen.variant,...(caseCount===30?{openingBatch:{picks:[],perPlayer:3,startedAt:null,intervalMs:650,endsAt:null}}:{}),offer:null,history:[],decisionIndex:0,pending:null,finalIndex:0,events:[],commands:[]};
 }
 function nextTurn(g){for(let i=0;i<g.order.length;i++){const id=g.order[(g.turnIndex+i)%g.order.length];if(g.players.some(p=>p.id===id&&p.deal===null))return id}return null}
 function apply(g,actor,command,random=crypto.randomInt){
@@ -125,7 +125,7 @@ function apply(g,actor,command,random=crypto.randomInt){
   const ballot=next.history[next.history.length-1];
   if(command.type!=='decide'||typeof command.deal!=='boolean'||!ballot.participants.includes(p.id)||ballot.decisions.some(d=>d.id===p.id))throw Error('INVALID_DECISION');
   next.history[next.history.length-1].decisions.push({id:p.id,deal:command.deal});
-  if(command.deal)p.deal=next.offer;
+  if(command.deal)p.deal=bankerOfferFor(next,p.id);
   if(next.history[next.history.length-1].decisions.length===next.history[next.history.length-1].participants.length){
    if(!active(next).length||!free(next).length)next.phase='final';else{next.round++;next.roundOpened=0;next.phase='open';}
   }
@@ -154,6 +154,31 @@ export function drawBankerSpecial(random=crypto.randomInt){
  const roll=random(100);
  if(!Number.isInteger(roll)||roll<0||roll>=100)throw Error('INVALID_BANKER_SPECIAL_ROLL');
  return roll<3?'minigame':roll<6?'monster':null;
+}
+// A persisted offer is binding for the named player. Old rounds stay shared.
+function bankerOfferFor(g,uid){
+ const current=g.history?.at(-1);
+ const personal=g.individualBankerOffers===true?current?.offersByPlayer?.[String(uid)]:undefined;
+ return Number.isSafeInteger(personal)&&personal>=1&&personal<=MAX_MATCH_CREDIT_CENTS?personal:g.offer;
+}
+function rollPersonalBankerOffers(g,participants,random){
+ const offersByPlayer={},megaOfferUids=[],used=new Set();
+ for(const uid of participants){
+  // Rare 2.5% mega offer, otherwise independent poor / normal / good pricing.
+  // These RNG draws happen only on the server and only when the host enabled it.
+  const bucket=random(1000),fraction=random(10001)/10000;
+  let multiplier;
+  if(bucket<25){multiplier=2.25+1.25*fraction;megaOfferUids.push(uid);}
+  else if(bucket<225)multiplier=1.25+.65*fraction;
+  else if(bucket<470)multiplier=.42+.38*fraction;
+  else multiplier=.81+.43*fraction;
+  let amount=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(g.offer*multiplier)));
+  // Never show identical amounts in a shared call, including capped jackpots.
+  const direction=amount===MAX_MATCH_CREDIT_CENTS?-1:1;
+  while(used.has(amount))amount+=direction;
+  offersByPlayer[uid]=amount;used.add(amount);
+ }
+ return {offersByPlayer,megaOfferUids};
 }
 function offer(g,random){
  const remaining=publicRemaining(g);
@@ -198,7 +223,10 @@ function offer(g,random){
  // The exclusive bonuses are each 3%: Hats voucher or Monster Wheel spin.
  // Rewards are separately drawn and remain server-authoritative.
  const bonusSpecial=drawBankerSpecial(random);
- g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants:active(g).map(p=>p.id),decisions:[]});
+ const participants=active(g).map(p=>p.id);
+ const personal=g.individualBankerOffers===true?rollPersonalBankerOffers(g,participants,random):null;
+ g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants,
+  ...(personal||{}),decisions:[]});
  g.phase='decision';
 }
 // This is the ORIGINAL game result. The purchased ×2 never changes rankings,
@@ -217,4 +245,4 @@ function cashCreditFor(g,p){
  return Math.min(multiplied,MAX_MATCH_CREDIT_CENTS);
 }
 function publicView(g){const {values,commands,bankerStyle,...pub}=g;const pending=g.phase==='decision'?g.history.at(-1):null;const hidden=new Set((pending?.decisions||[]).filter(d=>d.deal).map(d=>d.id));return {...pub,caseCount:g.values.length,history:g.history.map((h,i)=>pending&&i===g.history.length-1?{...h,decisions:h.decisions.map(d=>({id:d.id}))}:h),events:g.events.map(e=>({...e})),players:g.players.map(p=>({...p,deal:hidden.has(p.id)?null:p.deal})),openedAmounts:g.opened.map(i=>({case:i,amount:g.values[i],playerId:g.events.find(e=>e.type==='opened'&&e.case===i)?.playerId??null})),pending:g.pending?{case:g.pending.case,actor:g.pending.actor,eventId:g.pending.eventId,...(Number.isFinite(g.pending.startedAt)?{startedAt:g.pending.startedAt}:{})}:null,openingBatch:g.openingBatch?{...g.openingBatch,...(g.phase==='batch-reveal'?{reveals:g.openingBatch.picks.map(p=>({...p,amount:g.values[p.case]}))}:{})}:undefined,finalValues:g.phase==='final'||g.phase==='done'?g.players.map(p=>({id:p.id,case:p.case,amount:g.values[p.case],payout:payoutFor(g,p)})):null};}
-export {MAX_MATCH_CREDIT_CENTS,drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,cashCreditFor,free,active,publicRemaining,nextTurn};
+export {MAX_MATCH_CREDIT_CENTS,drawHammerFromTwelve,drawBankerPack,drawBankerHammer,pickBankerStyle,VALUES,STEPS,STEPS_29,STEPS_30,BANKER_30_OPENINGS,pick30BankerSchedule,MULT,create,apply,publicView,payoutFor,cashCreditFor,bankerOfferFor,free,active,publicRemaining,nextTurn};
