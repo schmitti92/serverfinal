@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {drawMonsterSlot,drawMonsterSlots,monsterSlotChestOdds,MONSTER_SLOTS_WEIGHTS} from '../monster-slots.js';
+import {drawMonsterSlot,drawMonsterSlots,monsterSlotChestOdds,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS} from '../monster-slots.js';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 import {DOG_S2_CARDS,dogS2OpenGrantedPacks} from '../dog-album-season2.js';
 import {create,payoutFor} from '../deal-or-no-deal.js';
@@ -43,7 +43,7 @@ test('won packs open immediately; only unowned cards are marked new, across mult
 test('slot credits require a verified completed-game payout and cannot be replayed for extra prizes',async()=>{
  const gameId='11111111-2222-4333-8444-555555555555',uid='player-a';
  const docs=new Map([
-  ['deal_or_no_deal_payouts_v1/'+gameId+'_'+uid,{gameId,uid,amount:1000000}],
+  ['deal_or_no_deal_payouts_v1/'+gameId+'_'+uid,{gameId,uid,amount:1000000,slotReels:3,slotEligible:true,slotRank:1,slotVersion:2}],
   ['deal_or_no_deal_wallets_v1/'+uid,{balance:2000000,games:1,wins:0}]
  ]);
  const routes=new Map(),writes=[];
@@ -105,11 +105,15 @@ test('next round settles all three participants, including a silent client, with
  docs.set('spielesammlung_hub_v1/'+room,{hostUid:'host',revision:1,players:members});
  const oldGame=create(names.map(id=>({id,name:id})),()=>0);
  oldGame.phase='final';oldGame.monsterSlotsVersion=1;
- oldGame.players.forEach((p,i)=>{p.case=i;p.deal=1500000+(i*1000000)});
+ oldGame.players.forEach((p,i)=>{p.case=i;p.deal=3500000-(i*1000000)});
  docs.set('deal_or_no_deal_matches_v1/'+room,{game:oldGame,hubRevision:1});
+ const oldPayouts=names.map(uid=>({uid,amount:payoutFor(oldGame,oldGame.players.find(p=>p.id===uid))}));
+ const placement=monsterSlotPlacements(oldPayouts);
  for(const uid of names){
+  const rank=placement.get(uid);
   docs.set('deal_or_no_deal_payouts_v1/'+oldGame.id+'_'+uid,{
-   gameId:oldGame.id,uid,amount:payoutFor(oldGame,oldGame.players.find(p=>p.id===uid))
+   gameId:oldGame.id,uid,amount:oldPayouts.find(p=>p.uid===uid).amount,
+   slotReels:rank.reels,slotEligible:rank.reels>0,slotRank:rank.rank,slotVersion:2
   });
   docs.set('deal_or_no_deal_wallets_v1/'+uid,{balance:50000000,games:1,wins:0});
  }
@@ -156,9 +160,10 @@ test('next round settles all three participants, including a silent client, with
  assert.notEqual(next.body.game.id,oldGame.id);
  for(const uid of names){
   const ref='deal_monster_slots_receipts_v1/'+oldGame.id+'_'+uid;
-  assert.ok(docs.has(ref),'missing slot award for '+uid);
-  const prizes=docs.get(ref).result.prizes;
-  assert.equal(prizes.length,3);
+  const reels=placement.get(uid).reels;
+  assert.equal(docs.has(ref),reels>0,'only qualified players get slot awards for '+uid);
+  const prizes=docs.get(ref)?.result.prizes||[];
+  assert.equal(prizes.length,reels);
   const total=(kind,key)=>prizes.filter(p=>p.kind===kind&&(!key||p.id===key))
    .reduce((sum,p)=>sum+(kind==='cash'?p.amountCents:p.quantity),0);
   const wallet=docs.get('deal_or_no_deal_wallets_v1/'+uid);
@@ -188,6 +193,11 @@ test('next round settles all three participants, including a silent client, with
  const countBefore=writes.length;
  for(const uid of names){
   const repeat=await call('POST','/api/deal-or-no-deal/monster-slots/claim',uid,{gameId:oldGame.id});
+  if(placement.get(uid).reels===0){
+   assert.equal(repeat.statusCode,409);
+   assert.equal(repeat.body.error,'SLOT_NOT_ELIGIBLE');
+   continue;
+  }
   assert.equal(repeat.statusCode,200,JSON.stringify(repeat.body));
   assert.equal(repeat.body.replayed,true);
   assert.deepEqual(repeat.body.prizes,docs.get('deal_monster_slots_receipts_v1/'+oldGame.id+'_'+uid).result.prizes);
@@ -300,4 +310,38 @@ test('DOG Super Slot pays exactly five prizes for one completed board, spends on
  const second=await send(uid,'another_super_slot_223344');
  assert.equal(second.statusCode,409);
  assert.equal(second.body.error,'SUPER_SLOT_TICKET_REQUIRED');
+});
+
+
+test('podium slot policy is 3/1/0: loser never spins, runner-up only in matches with 3+ people',()=>{
+ const cases=[
+  {payouts:[['solo',800]],expected:{solo:3}},
+  {payouts:[['winner',900],['loser',100]],expected:{winner:3,loser:0}},
+  {payouts:[['winner',900],['second',500],['loser',100]],expected:{winner:3,second:1,loser:0}},
+  {payouts:[['a',100],['b',800],['c',300],['d',900]],expected:{a:0,b:1,c:0,d:3}},
+  {payouts:[['winner',900],['secondA',500],['secondB',500],['last',100]],expected:{winner:3,secondA:0,secondB:0,last:0}},
+  {payouts:[['firstA',900],['firstB',900],['third',100]],expected:{firstA:0,firstB:0,third:0}},
+  {payouts:[['a',100],['b',100],['c',100]],expected:{a:0,b:0,c:0}}
+ ];
+ for(const scenario of cases){
+  const winners=monsterSlotPlacements(scenario.payouts.map(([uid,amount])=>({uid,amount})));
+  assert.deepEqual(Object.fromEntries([...winners].map(([uid,score])=>[uid,score.reels])),
+   scenario.expected);
+ }
+ assert.throws(()=>monsterSlotPlacements([{uid:'x',amount:1},{uid:'x',amount:2}]),/INVALID_SLOT_RANKINGS/);
+ assert.throws(()=>monsterSlotPlacements([{uid:'x',amount:NaN}]),/INVALID_SLOT_RANKINGS/);
+});
+
+test('a runner-up reel draws exactly one award, while DOG five-reel Super Slots remain unchanged',()=>{
+ const podium=monsterSlotPlacements([
+  {uid:'winner',amount:2500000},
+  {uid:'runner',amount:1500000},
+  {uid:'last',amount:500000}
+ ]);
+ assert.equal(podium.get('winner').reels,3);
+ assert.equal(podium.get('runner').reels,1);
+ assert.equal(podium.get('last').reels,0);
+ const one=[drawMonsterSlot(1,()=>0)];
+ assert.equal(one.length,1);
+ assert.equal(drawMonsterSlots(1,()=>0).length,3);
 });
