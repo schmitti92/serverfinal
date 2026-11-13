@@ -5,6 +5,7 @@ import {FieldValue} from 'firebase-admin/firestore';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer} from './dog-balance.js';
+import {drawMonsterSlots,MONSTER_SLOTS_WEIGHTS} from './monster-slots.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
 import {MONSTER_WHEEL_DURATION_MS,MONSTER_WHEEL_SLOTS,drawMonsterWheel,checkMonsterBalance} from './monster-wheel.js';
@@ -240,7 +241,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const chestForSettledDeal=(uid,raw,ctx)=>{
   if(!ctx.members.has(uid))return addVerifiedChestToInventory(raw);
   const progress=ctx.progress.people[uid],gate=progress?.highestGate??1;
-  return addExpeditionChestToInventory(raw,dogChestOffer(gate));
+  // The guaranteed participation reward is always a wooden chest.
+  const standard=dogChestOffer(gate);
+  const roll=randomInt(100);
+  return addExpeditionChestToInventory(raw,{...standard,tier:'wood',count:roll<50?1:roll<85?2:3});
  };
  const settleFinal=async(db,code)=>{const matchRef=db.collection(collection).doc(code);return db.runTransaction(async tx=>{const match=await tx.get(matchRef);if(!match.exists)return false;const game=match.data().game;if(!game||!['final','done'].includes(game.phase)||!Array.isArray(game.values))return false;
  const chestContext=await chestAwardContext(db,tx);
@@ -249,6 +253,89 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
  for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,createdAt:Date.now()});changed=true}return game.id})};
  installDogAlbumSeason2(app,{auth,getFirestore,fail});
+
+ // One authenticated payout receipt gives each participant exactly three
+ // additional slot wins, even if the host has already started another round.
+ // The result and all inventory credits commit together and replay unchanged.
+ app.get('/api/deal-or-no-deal/monster-slots/catalog',auth,(_req,res)=>
+  res.json({ok:true,reels:3,categoryWeights:MONSTER_SLOTS_WEIGHTS}));
+ app.post('/api/deal-or-no-deal/monster-slots/claim',auth,async(req,res)=>{
+  try{
+   const gameId=String(req.body?.gameId||'');
+   if(!/^[a-f0-9-]{36}$/.test(gameId))throw Error('INVALID_GAME_ID');
+   const uid=req.dealIdentity.uid,db=getFirestore();
+   if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const payoutRef=db.collection(payoutCollection).doc(gameId+'_'+uid);
+   const receiptRef=db.collection('deal_monster_slots_receipts_v1').doc(gameId+'_'+uid);
+   const walletRef=db.collection(walletCollection).doc(uid);
+   const materialsRef=db.collection(DOG_MATERIALS_COLLECTION).doc(uid);
+   const albumRef=db.collection(CHRISTMAS_COLLECTION).doc(uid);
+   const iceRef=db.collection('christmas_ice_progress_v1').doc(uid);
+   const jokerRef=db.collection('deal_peek_inventory_v1').doc(uid);
+   const hatsRef=db.collection('deal_christmas_hats_v1').doc(uid);
+   const result=await db.runTransaction(async tx=>{
+    const [payoutSnap,receiptSnap,materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap]=
+     await Promise.all([payoutRef,receiptRef,materialsRef,walletRef,albumRef,iceRef,jokerRef,hatsRef].map(ref=>tx.get(ref)));
+    if(receiptSnap.exists)return {...receiptSnap.data().result,replayed:true};
+    if(!payoutSnap.exists)throw Error('GAME_REWARD_NOT_SETTLED');
+    // Verify a complete recorded payout, never accept a client-provided award.
+    if(payoutSnap.data()?.gameId!==gameId||payoutSnap.data()?.uid!==uid)
+     throw Error('GAME_REWARD_INVALID');
+    const progressSnap=await tx.get(db.collection(DOG_GATE_PROGRESS_COLLECTION).doc(DOG_GATE_PROGRESS_ID));
+    const gate=dogGateProgress(progressSnap.exists?progressSnap.data():null).people[uid]?.highestGate??1;
+    const prizes=drawMonsterSlots(gate);
+    const now=Date.now(),oldAlbum=albumSnap.exists?albumSnap.data():{};
+    let inventory=materialSnap.exists?materialSnap.data():null;
+    let cash=0,jokers=0,miniTickets=0,monsterTickets=0;
+    const packs={},hammers={};
+    for(const prize of prizes){
+     if(prize.kind==='chest'){
+      const sample=dogChestOffer(gate);
+      inventory=addExpeditionChestToInventory(inventory,{...sample,tier:prize.id});
+     }else if(prize.kind==='pack')packs[prize.id]=(packs[prize.id]||0)+prize.quantity;
+     else if(prize.kind==='hammer')hammers[prize.id]=(hammers[prize.id]||0)+prize.quantity;
+     else if(prize.kind==='joker')jokers+=prize.quantity;
+     else if(prize.kind==='minigame')miniTickets+=prize.quantity;
+     else if(prize.kind==='monster')monsterTickets+=prize.quantity;
+     else if(prize.kind==='cash')cash=checkMonsterBalance(cash,prize.amountCents);
+     else throw Error('INVALID_SLOT_PRIZE');
+    }
+    // The old Christmas pack voucher inventory is also consumed by the
+    // new DOG Season 2 pack-opening endpoint.
+    if(Object.keys(packs).length||monsterTickets){
+     const freeChristmasPacks={...(oldAlbum.freeChristmasPacks||{})};
+     for(const [packId,n] of Object.entries(packs))
+      freeChristmasPacks[packId]=checkMonsterBalance(Number(freeChristmasPacks[packId]||0),n,1000000);
+     const ticketCount=checkMonsterBalance(Number(oldAlbum.monsterWheelTickets||0),monsterTickets,1000000);
+     tx.set(albumRef,{freeChristmasPacks,monsterWheelTickets:ticketCount,updatedAt:now},{merge:true});
+    }
+    if(Object.keys(hammers).length){
+     const ice=iceSnap.exists?normalizeIceState(iceSnap.data()):newIceState();
+     const freeHammers={...ice.freeHammers},wheelHammers={...ice.wheelHammers};
+     for(const [hammer,n] of Object.entries(hammers)){
+      freeHammers[hammer]=checkMonsterBalance(Number(freeHammers[hammer]||0),n,1000000);
+      wheelHammers[hammer]=checkMonsterBalance(Number(wheelHammers[hammer]||0),n,1000000);
+     }
+     tx.set(iceRef,{...ice,freeHammers,wheelHammers,updatedAt:now});
+    }
+    if(jokers)tx.set(jokerRef,{
+     balance:checkMonsterBalance(Number(jokerSnap.data()?.balance||0),jokers,1000000),updatedAt:now
+    },{merge:true});
+    if(miniTickets)tx.set(hatsRef,{
+     bonusTickets:checkMonsterBalance(Number(hatsSnap.data()?.bonusTickets||0),miniTickets,1000000),
+     ...(!hatsSnap.exists?{voucherOnly:true}:{}),updatedAt:now
+    },{merge:true});
+    if(cash)tx.set(walletRef,{
+     balance:checkMonsterBalance(Number(walletSnap.data()?.balance||0),cash),updatedAt:now
+    },{merge:true});
+    if(prizes.some(prize=>prize.kind==='chest'))tx.set(materialsRef,inventory);
+    const settled={ok:true,gameId,prizes,guaranteed:3,replayed:false,createdAt:now};
+    tx.create(receiptRef,{uid,gameId,result:settled,createdAt:now});
+    return settled;
+   });
+   res.set('Cache-Control','no-store');return res.json(result);
+  }catch(e){return fail(res,e)}
+ });
  app.get('/api/deal-or-no-deal/shop/catalog',auth,(req,res)=>res.json({ok:true,items:SHOP_ITEMS,minPrice:100000000}));
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
@@ -761,7 +848,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    return res.json({ok:true,game:publicView(result.game),balance:result.balance,alreadyActive:result.alreadyActive,cost:DOUBLE_BOOST_COST_CENTS});
   }catch(e){return fail(res,e)}
  });
- app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=15?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');if(snap.exists){const previous=snap.data().game;if(previous.phase==='final'){const payouts=(previous.players||[]).map(p=>payoutFor(previous,p));const tiedFinal=payouts.length>1&&payouts.filter(v=>v===Math.max(...payouts)).length>1;const key='final:'+previous.id;const spinAt=Number(previous.christmasWheelSpins?.[key]||0);const packClosed=!!previous.christmasWheelClosed?.[key];const hammer=previous.christmasHammerWheel;const hammerFinished=hammer?.gameId===previous.id&&Number.isFinite(hammer.startedAt)&&Date.now()-hammer.startedAt>=4300;const ceremonyComplete=!!spinAt&&packClosed&&hammerFinished;if(!tiedFinal&&!ceremonyComplete&&req.body?.skipFinalWheel!==true)throw Error('FINAL_WHEEL_PENDING')}}const requestedCaseCount=req.body?.caseCount===undefined?(snap.exists?snap.data().game?.values?.length||27:27):Number(req.body.caseCount);if(![26,27,28,29,30].includes(requestedCaseCount))throw Error('INVALID_CASE_COUNT');const game=create(players,undefined,requestedCaseCount);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
+ app.post('/api/deal-or-no-deal/:code/start',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid);if(room.hostUid!==req.dealIdentity.uid)throw Error('HOST_ONLY');const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4).map(p=>({id:p.uid,name:p.name}));if(players.length<1||room.players.filter(p=>!p.testBot&&!p.bot).length>4)throw Error('PLAYER_COUNT');const avatarMap=await readAvatars(db,code);for(const p of players){p.avatar=Number.isInteger(avatarMap[p.id])&&avatarMap[p.id]>=1&&avatarMap[p.id]<=15?avatarMap[p.id]:null}const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists&&!['final','done'].includes(snap.data().game.phase))throw Error('MATCH_ALREADY_RUNNING');if(snap.exists){const previous=snap.data().game;if(previous.phase==='final'){const payouts=(previous.players||[]).map(p=>payoutFor(previous,p));const tiedFinal=payouts.length>1&&payouts.filter(v=>v===Math.max(...payouts)).length>1;const key='final:'+previous.id;const spinAt=Number(previous.christmasWheelSpins?.[key]||0);const packClosed=!!previous.christmasWheelClosed?.[key];const hammer=previous.christmasHammerWheel;const hammerFinished=hammer?.gameId===previous.id&&Number.isFinite(hammer.startedAt)&&Date.now()-hammer.startedAt>=4300;const ceremonyComplete=previous.monsterSlotsVersion===1||!!spinAt&&packClosed&&hammerFinished;if(!tiedFinal&&!ceremonyComplete&&req.body?.skipFinalWheel!==true)throw Error('FINAL_WHEEL_PENDING')}}const requestedCaseCount=req.body?.caseCount===undefined?(snap.exists?snap.data().game?.values?.length||27:27):Number(req.body.caseCount);if(![26,27,28,29,30].includes(requestedCaseCount))throw Error('INVALID_CASE_COUNT');const game=create(players,undefined,requestedCaseCount);tx.set(ref,{game,hubRevision:room.revision,updatedAt:Date.now()});return game});invalidateGame(code);broadcastGame(code,game);return res.json({ok:true,game:publicView(game)})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/action',auth,async(req,res)=>{const actionStarted=Date.now();try{firestoreUsage.gameActions++;const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
 // Run the fresh room-membership check and the first game-state transaction read
 // concurrently. A valid membership is STILL required before any game mutation,
@@ -858,13 +945,14 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
    }
   }
   if(before.phase!=='final'&&after.phase==='final'){
+   after.monsterSlotsVersion=1;
    const payouts=after.players.map(p=>({id:p.id,payout:payoutFor(after,p),credit:cashCreditFor(after,p)}));
    const max=Math.max(...payouts.map(p=>p.payout));
    // One free Christmas wheel prize for the highest payout (first player wins a tie).
    // The pack and cards are fixed and credited exactly once when the match ends.
    const winner=payouts.find(p=>p.payout===max);
    const uniqueWinner=payouts.filter(p=>p.payout===max).length===1;
-   if(uniqueWinner){
+   if(uniqueWinner&&after.monsterSlotsVersion!==1){
    const finalRewardRef=db.collection('deal_christmas_final_rewards_v1').doc(after.id);
    const finalAlbumRef=db.collection(DOG_S2_COLLECTION).doc(winner.id);
    const [finalRewardSnap,finalAlbumSnap]=await Promise.all([tx.get(finalRewardRef),tx.get(finalAlbumRef)]);
