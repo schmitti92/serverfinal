@@ -4469,7 +4469,8 @@ app.get("/health", (_req, res) =>
     skyjoMissingRooms:skyjoMissingUntil.size,
     skyjoFirebaseWorkers:skyjoFirebaseWorkers.size,
     businessCacheRooms:businessCache.size,
-    businessFirebaseWorkers:businessFirebaseWorkers.size
+    businessFirebaseWorkers:businessFirebaseWorkers.size,
+    profileIdentityCache:profileStatsV8.identityCacheStats()
   })
 );
 
