@@ -91,6 +91,16 @@ export const MONSTER_SLOT_CASH_PRIZES=Object.freeze([
  [75000000,270],[100000000,220],[150000000,150],[200000000,110],
  [250000000,75],[300000000,45],[400000000,25],[500000000,10]
 ].map(entry=>Object.freeze(entry)));
+// SKYJO special only: big cash jackpots should feel more exceptional.
+// 250,000–999,999.99 EUR: 20% lower relative weight.
+// 1,000,000–5,000,000 EUR: 35% lower relative weight.
+// Money category probability stays 50%; all listed amounts remain possible.
+export const MONSTER_SLOT_SKYJO_CASH_PRIZES=Object.freeze(
+ MONSTER_SLOT_CASH_PRIZES.map(([amount,weight])=>Object.freeze([
+  amount,amount>=100000000?Math.max(1,Math.round(weight*0.65)):
+   amount>=25000000?Math.max(1,Math.round(weight*0.8)):weight
+ ]))
+);
 export const slotCashChance=weights=>{
  const total=Object.values(weights||MONSTER_SLOTS_WEIGHTS).reduce((sum,n)=>sum+n,0);
  return total>0?(weights||MONSTER_SLOTS_WEIGHTS).cash/total:0;
@@ -111,7 +121,7 @@ const labelFor=(kind,id,count)=>{
  if(kind==='wildcard')return '❓ Joker-Sammelkarte · Wunschkarte wählen';
  return 'Zufallsgeld';
 };
-export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS){
+export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS,cashPrizes=MONSTER_SLOT_CASH_PRIZES){
  let kind=weighted(Object.entries(categoryWeights),rand);
  // Wildcard is an ultra-rare *item* subtype, so changing cash vs items
  // preserves the requested 2:1 category ratio without a new category weight.
@@ -130,12 +140,12 @@ export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SL
  if(kind==='minigame')count=quantity([60,30,10],rand);
  if(kind==='monster')count=quantity([70,25,5],rand);
  if(kind==='cash'){
-  amountCents=weighted(MONSTER_SLOT_CASH_PRIZES.map(([amount,weight])=>[amount,weight]),rand);
+  amountCents=weighted(cashPrizes.map(([amount,weight])=>[amount,weight]),rand);
  }
  const prize={kind,id,quantity:count,...(amountCents!==null?{amountCents}:{}),
   label:kind==='cash'?(amountCents/100).toLocaleString('de-DE',{style:'currency',currency:'EUR'}):labelFor(kind,id,count)};
  return Object.freeze({...prize,rarity:monsterSlotRarity(prize)});
 }
-export function drawMonsterSlots(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS){
- return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand,categoryWeights));
+export function drawMonsterSlots(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS,cashPrizes=MONSTER_SLOT_CASH_PRIZES){
+ return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand,categoryWeights,cashPrizes));
 }
