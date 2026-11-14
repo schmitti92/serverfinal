@@ -50,6 +50,12 @@ export function skyjoSpecialBonusIndex(matchId,round,playerIndex,cardCount=12){
  n^=n>>>16;
  return (n>>>0)%cardCount;
 }
+// Do not close the shared hub match before the final SKYJO prize ceremony.
+// In ordinary games there is no special to finish.
+export function skyjoHubMatchFinished(game){
+ return game?.phase==='gameOver'&&
+  (!game.skyjoSpecial?.enabled||game.skyjoSpecial.finished===true);
+}
 export function skyjoSpecialAwardRows(game,matchId,round){
  const special=game?.skyjoSpecial;
  if(!special?.enabled||special.matchId!==matchId||special.round!==round||game.round!==round)throw Error('SKYJO_SPECIAL_ROUND_MISMATCH');
