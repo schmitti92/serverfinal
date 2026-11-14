@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DOG_S2_CARDS,DOG_S2_BOARDS,DOG_S2_PACKS,DOG_S2_SPECIAL_CARD_SLOTS,DOG_S2_CARD_WEIGHT_BASE,DOG_S2_JACKPOT_SLOT,DOG_S2_JACKPOT_ODDS,dogS2CardDrawWeight,dogS2Progress,dogS2Draw,dogS2Discoveries,dogS2Duplicates,dogS2Redeem,dogS2OpenGrantedPacks} from '../dog-album-season2.js';
+import {DOG_S2_CARDS,DOG_S2_BOARDS,DOG_S2_PACKS,DOG_S2_SPECIAL_CARD_SLOTS,DOG_S2_CARD_WEIGHT_BASE,DOG_S2_JACKPOT_SLOT,DOG_S2_JACKPOT_ODDS,dogS2CardDrawWeight,dogS2Progress,dogS2Draw,dogS2Discoveries,dogS2Duplicates,dogS2Redeem,dogS2OpenGrantedPacks,dogS2OpenBatch,DOG_S2_PACK_BATCH_MAX,installDogAlbumSeason2,DOG_S2_COLLECTION} from '../dog-album-season2.js';
 
 test('DOG album package prices use the November 2026 server-authoritative values',()=>{
  const expected={small:200000000,large:400000000,premium:600000000,platinum:2000000000};
@@ -163,4 +163,29 @@ test('DOG card weights also affect packages granted by the Monster Slots without
  assert.ok(result.openedPacks[0].revealed.every(card=>card.id===original.id));
  assert.equal(result.openedPacks[0].hasNew,true);
  assert.equal(result.openedPacks[1].hasNew,false);
+});
+
+test('DOG bulk draw applies collection resets and tournament points after every pack',()=>{
+ const now=Date.UTC(2026,10,14),pack=DOG_S2_PACKS.find(p=>p.id==='premium');
+ const initial=Object.fromEntries(DOG_S2_CARDS.map(c=>[c.id,1]));
+ const random=()=>{let i=0;return max=>(i++*37+17)%max};
+ const five=dogS2OpenBatch(pack,5,initial,{},now,random());
+ let cards=initial,state={},pointsAdded=0,finished=[],revealed=[],lastProgress=null;
+ const rng=random();
+ for(let n=0;n<5;n++){
+  const next=dogS2OpenBatch(pack,1,cards,state,now,rng);
+  cards=next.cards;state={...state,...next.updates};lastProgress=next.progress;
+  pointsAdded+=next.pointsAdded;finished.push(...next.completedBoards);revealed.push(...next.revealed);
+ }
+ assert.deepEqual(five.cards,cards);
+ assert.deepEqual(five.progress,lastProgress);
+ assert.deepEqual(five.updates,Object.fromEntries(Object.keys(five.updates).map(k=>[k,state[k]])));
+ assert.deepEqual(five.completedBoards,finished);
+ assert.equal(five.completedBoards.length,6,'full boards count exactly once and reset');
+ assert.equal(five.pointsAdded,pointsAdded);
+ assert.deepEqual(five.revealed,revealed);
+ assert.equal(five.revealed.length,5*pack.count);
+ assert.equal(DOG_S2_PACK_BATCH_MAX,10);
+ assert.throws(()=>dogS2OpenBatch(pack,11),/INVALID_PACK_QUANTITY/);
+ assert.throws(()=>dogS2OpenBatch(pack,0),/INVALID_PACK_QUANTITY/);
 });
