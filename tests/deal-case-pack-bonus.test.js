@@ -50,8 +50,8 @@ test('actual 30-case game engine exposes eligible 50m opening with correct playe
  const game=create([{id:'chris'},{id:'david'}],()=>0,30);
  assert.equal(game.values.includes(FIFTY_MILLION_CASE),true);
  let chosen=game;
- chosen=apply(chosen,'chris',{type:'select',case:0,id:'select0',revision:chosen.revision},()=>0);
- chosen=apply(chosen,'david',{type:'select',case:1,id:'select1',revision:chosen.revision},()=>0);
+ chosen=apply(chosen,chosen.order[0],{type:'select',case:0,id:'select0',revision:chosen.revision},()=>0);
+ chosen=apply(chosen,chosen.order[1],{type:'select',case:1,id:'select1',revision:chosen.revision},()=>0);
  assert.equal(chosen.phase,'batch-pick');
  // Move a special case into the first batch without changing the actual
  // server-owned case value. The game still handles recipient assignment.
