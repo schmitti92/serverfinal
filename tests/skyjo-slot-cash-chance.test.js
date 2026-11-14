@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {drawMonsterSlot,MONSTER_SLOTS_WEIGHTS,MONSTER_SLOT_CASH_PRIZES,
+import {drawMonsterSlot,MONSTER_SLOTS_WEIGHTS,MONSTER_SLOT_CASH_PRIZES,MONSTER_SLOT_SKYJO_CASH_PRIZES,
  skyjoMonsterSlotWeights,slotCashChance} from '../monster-slots.js';
 
 // 50% is the category chance PER reel; money amounts keep their own jackpot odds.
@@ -49,4 +49,40 @@ test('SKYJO payout path uses special 50/50 weights, not global weights',()=>{
  assert.match(api,/mode==='skyjo'\?skyjoMonsterSlotWeights\(slotWeights\):slotWeights/);
  assert.match(api,/drawMonsterSlot\(gate,randomInt,effectiveSlotWeights\)/);
  assert.match(api,/drawMonsterSlots\(gate,randomInt,effectiveSlotWeights\)/);
+});
+
+
+test('SKYJO high cash amounts are rarer while every amount remains obtainable and 50% cash stays intact',()=>{
+ const rangeWeight=(table,min)=>table.filter(([amount])=>amount>=min).reduce((n,[,weight])=>n+weight,0);
+ const total=table=>table.reduce((n,[,weight])=>n+weight,0);
+ const percent=(table,min)=>rangeWeight(table,min)/total(table);
+ const defaultEpic=percent(MONSTER_SLOT_CASH_PRIZES,25_000_000);
+ const newEpic=percent(MONSTER_SLOT_SKYJO_CASH_PRIZES,25_000_000);
+ const defaultLegend=percent(MONSTER_SLOT_CASH_PRIZES,100_000_000);
+ const newLegend=percent(MONSTER_SLOT_SKYJO_CASH_PRIZES,100_000_000);
+ assert.ok(newEpic<defaultEpic,'250k+ is less likely within a cash reel');
+ assert.ok(newLegend<defaultLegend,'1m+ is less likely within a cash reel');
+ assert.ok(newEpic>0&&newLegend>0);
+ assert.equal(MONSTER_SLOT_SKYJO_CASH_PRIZES.length,MONSTER_SLOT_CASH_PRIZES.length);
+ for(let i=0;i<MONSTER_SLOT_CASH_PRIZES.length;i++){
+  const [amount,oldPoints]=MONSTER_SLOT_CASH_PRIZES[i];
+  const [newAmount,newPoints]=MONSTER_SLOT_SKYJO_CASH_PRIZES[i];
+  assert.equal(newAmount,amount);
+  assert.ok(newPoints>0);
+  if(amount<25_000_000)assert.equal(newPoints,oldPoints);
+  else if(amount<100_000_000)assert.equal(newPoints,Math.max(1,Math.round(oldPoints*0.8)));
+  else assert.equal(newPoints,Math.max(1,Math.round(oldPoints*0.65)));
+ }
+ const half=skyjoMonsterSlotWeights();
+ assert.equal(slotCashChance(half),0.5);
+ // Entire RNG endpoints still produce 1 cent and 5 million with the special table.
+ const moneyOnly={chest:0,pack:0,hammer:0,joker:0,minigame:0,monster:0,cash:1};
+ assert.equal(drawMonsterSlot(1,()=>0,moneyOnly,MONSTER_SLOT_SKYJO_CASH_PRIZES).amountCents,1);
+ assert.equal(drawMonsterSlot(1,max=>max-1,moneyOnly,MONSTER_SLOT_SKYJO_CASH_PRIZES).amountCents,500_000_000);
+});
+test('Only SKYJO mode passes reduced jackpot weights to the final award draw',()=>{
+ const api=readFileSync(new URL('../deal-or-no-deal-api.js',import.meta.url),'utf8');
+ assert.match(api,/mode==='skyjo'\?MONSTER_SLOT_SKYJO_CASH_PRIZES:MONSTER_SLOT_CASH_PRIZES/);
+ assert.match(api,/drawMonsterSlots\(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes\)/);
+ assert.match(api,/drawMonsterSlot\(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes\)/);
 });
