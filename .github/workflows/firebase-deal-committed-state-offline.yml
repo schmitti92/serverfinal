@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install server modules without scripts or lockfile changes
+        run: npm install --ignore-scripts --no-audit --no-fund --package-lock=false
       - name: Verify syntax of Render game cache
         run: |
           node --check deal-committed-state-seed.js
