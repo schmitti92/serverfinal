@@ -1419,6 +1419,12 @@ test('Fresh Render WebSocket snapshot serves authenticated HTTP room reads witho
  assert.equal(health.hubStreamReadCache.hits,3);
  assert.equal(health.hubStreamReadCache.ttlMs,2500);
  assert.equal(firestoreDocumentGets,0,'reading Render-only diagnostics does not query Firebase');
+ const preflight=await h.api('POST','/api/hub/rooms/'+code+'/sync','alice',{
+   matchId:'123e4567-e89b-12d3-a456-426614174000'
+ });
+ assert.equal(preflight.status,200);
+ assert.equal(preflight.room.phase,'lobby','inactive match remains unchanged');
+ assert.equal(firestoreDocumentGets,0,'read-only completion preflight also reuses fresh WebSocket room');
 
  h.advance(2501);
  const stale=await h.api('GET','/api/hub/rooms/'+code,'alice');
