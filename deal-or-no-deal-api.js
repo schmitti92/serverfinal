@@ -95,7 +95,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
   resetExpiry();
   ws.on('message',async raw=>{
    let msg;try{msg=JSON.parse(String(raw))}catch{return};
-   if(msg?.type==='ping'){if(joined){sendSocket(ws,{type:'pong',serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});if(Number.isSafeInteger(msg.revision)){try{const db=getFirestore();if(db){const latest=await readGame(db,joined);if(ws.readyState===1&&latest&&Number(latest.revision)!==msg.revision)sendSocket(ws,{type:'deal-state',game:latest})}}catch(error){console.warn('[deal-sync-ping]',String(error?.message||error))}}}return}
+   if(msg?.type==='ping'){if(joined){sendSocket(ws,{type:'pong',serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});if(Number.isSafeInteger(msg.revision)){try{const db=getFirestore();if(db){const latest=await readGame(db,joined,'websocketReconcile');if(ws.readyState===1&&latest&&Number(latest.revision)!==msg.revision)sendSocket(ws,{type:'deal-state',game:latest})}}catch(error){console.warn('[deal-sync-ping]',String(error?.message||error))}}}return}
    if(msg?.type==='reauth'){
     if(!joined||!joinedUid||!authenticated||reauthenticating||ws.readyState!==1)return;
     const token=String(msg.token||'');
@@ -105,7 +105,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
      const identity=await verifyProfile(token);
      if(!identity||identity.uid!==joinedUid)throw Error('LOGIN_REQUIRED');
      const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
-     await check(db,joined,identity.uid); // Fresh membership check: never use stale room cache.
+     await check(db,joined,identity.uid,false,'websocketReconcile'); // Fresh membership check: never use stale room cache.
      if(ws.readyState!==1)return;
      resetExpiry();
      sendSocket(ws,{type:'deal-reauthenticated',serverNow:Date.now()});
@@ -123,14 +123,14 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
     const identity=await verifyProfile(token);
     if(!identity)throw Error('LOGIN_REQUIRED');
     const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
-    await check(db,code,identity.uid);
+    await check(db,code,identity.uid,false,'websocketSubscribe');
     if(ws.readyState!==1)return;
     joined=code;joinedUid=identity.uid;
     if(!dealSockets.has(code))dealSockets.set(code,new Set());
     dealSockets.get(code).add(ws);
     sendSocket(ws,{type:'deal-subscribed',code,serverNow:Date.now(),clientSentAt:Number.isSafeInteger(msg.clientSentAt)?msg.clientSentAt:null});
     // Subscribe before snapshot: any concurrent mutation is reconciled by revision.
-    const game=await readGame(db,code);
+    const game=await readGame(db,code,'websocketSubscribe');
     if(ws.readyState===1)sendSocket(ws,{type:'deal-state',game});
    }catch(error){sendSocket(ws,{type:'deal-error',error:String(error?.message||'SUBSCRIPTION_FAILED')});ws.close(1008)}
   });
@@ -1104,7 +1104,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
   const kind=String(req.query.kind||''),rewardId=String(req.query.rewardId||'');
   if(!['cent','banker','final'].includes(kind)||!rewardId||rewardId.length>180)throw Error('INVALID_REWARD');
-  const game=await readGame(db,code);if(!game)return res.json({ok:true,startedAt:null});
+  const game=await readGame(db,code,'rewardStatus');if(!game)return res.json({ok:true,startedAt:null});
   const prefix=game.id+(kind==='final'?'':'_');
   if(!rewardId.startsWith(prefix))throw Error('INVALID_REWARD');
   return res.json({ok:true,startedAt:game.christmasWheelSpins?.[kind+':'+rewardId]||null,serverNow:Date.now(),gameId:game.id});
@@ -1172,7 +1172,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  app.get('/api/deal-or-no-deal/:code/christmas-final-reward',auth,async(req,res)=>{try{
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
-  const game=await readGame(db,code);if(!game||game.phase!=='final')return res.json({ok:true,reward:null});
+  const game=await readGame(db,code,'rewardStatus');if(!game||game.phase!=='final')return res.json({ok:true,reward:null});
   const snap=await db.collection('deal_christmas_final_rewards_v1').doc(game.id).get();
   if(!snap.exists)return res.json({ok:true,reward:null});
   const data=snap.data();
@@ -1202,7 +1202,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  app.get('/api/deal-or-no-deal/:code/christmas-banker-rewards',auth,async(req,res)=>{try{
  const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
  const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
- const game=await readGame(db,code);if(!game)throw Error('MATCH_NOT_FOUND');
+ const game=await readGame(db,code,'rewardStatus');if(!game)throw Error('MATCH_NOT_FOUND');
  // The accepted bonus and its cards are public to everyone in this room.
  // Read only rewards for accepted deals, never unrevealed/declined offers.
  const accepted=(game.history||[]).flatMap(h=>h.bonusPack&&h.decisions?.length===h.participants?.length?(h.decisions||[]).filter(d=>d.deal===true).map(d=>({round:h.round,uid:d.id})):[]);
@@ -1221,7 +1221,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
   const code=String(req.params.code||'').toUpperCase();
   if(!CODE.test(code))throw Error('INVALID_CODE');
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
-  const game=await readGame(db,code);
+  const game=await readGame(db,code,'rewardStatus');
   if(!game)return res.json({ok:true,reward:null,rewards:[]});
   const events=(game.events||[]).filter(e=>e.type==='opened'&&isCasePackBonusAmount(e.amount)&&
    !game.christmasWheelClosed?.['cent:'+game.id+'_'+e.eventId]);
@@ -1289,11 +1289,11 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    return res.json({ok:true,...result});
   }catch(e){return fail(res,e)}
  });
- app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true);const view=await readGame(db,code);if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await readBalances(db,code,players);return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0,
+ app.get('/api/deal-or-no-deal/:code/balances',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const room=await check(db,code,req.dealIdentity.uid,true,'scoreboard');const view=await readGame(db,code,'scoreboard');if(view&&['final','done'].includes(view.phase))await settleFinalOnce(db,code,view.id);const players=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,4);const snaps=await readBalances(db,code,players);return res.json({ok:true,players:players.map((p,i)=>({id:p.uid,name:p.name,balance:snaps[i].exists?snaps[i].data().balance||0:0,games:snaps[i].exists?snaps[i].data().games||0:0,wins:snaps[i].exists?snaps[i].data().wins||0:0,
  dealStats:viewPrizeRecord(snaps[i].data()?.dealPrizeStats),
  slotStats:viewPrizeRecord(snaps[i].data()?.slotCashPrizeStats)
  }))})}catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/:code',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const readSource=req.query?.syncReason==='slot'?'slotRecovery':'httpGame';await check(db,code,req.dealIdentity.uid,true,readSource);const game=await readGame(db,code,readSource);return res.json({ok:true,game})}catch(e){return fail(res,e)}});
 
  // Global prices may only be changed by the verified host of an active room.
  app.get('/api/deal-or-no-deal/:code/economy',auth,async(req,res)=>{
