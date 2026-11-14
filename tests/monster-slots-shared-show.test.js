@@ -69,7 +69,7 @@ function harness(){
   });
   return res;
  }
- const show=(uid,operation)=>call('/api/deal-or-no-deal/:code/monster-slots/show',uid,{gameId:game.id,operation});
+ const show=(uid,operation,expected={})=>call('/api/deal-or-no-deal/:code/monster-slots/show',uid,{gameId:game.id,operation,...expected});
  return {ids,game,docs,writes,show,call,
   current:()=>docs.get('deal_or_no_deal_matches_v1/'+room).game,
   advance(ms=10000){
@@ -95,20 +95,37 @@ test('room-wide finale: runner-up spins one reel, champion spins three, then cer
  denied=await h.show('chris','confirm');
  assert.equal(denied.statusCode,409);
  assert.equal(denied.body.error,'SLOT_SHOW_STILL_ROLLING');
- h.advance();
+ h.advance(3600);
+ denied=await h.show('chris','confirm');
+ assert.equal(denied.statusCode,409,'reel stop alone must not unlock champion');
+ assert.equal(denied.body.error,'SLOT_SHOW_STILL_ROLLING');
+ h.advance(4300);
  const second=await h.show('chris','confirm');
  assert.equal(second.statusCode,200,JSON.stringify(second.body));
  assert.equal(second.body.game.monsterSlotShow.phase,'ready');
  assert.equal(second.body.game.monsterSlotShow.uid,'david');
  assert.equal(second.body.game.monsterSlotShow.reels,3);
-
- const champion=await h.show('david','spin');
+ assert.ok(second.body.game.monsterSlotShow.runnerConfirmedAt>0);
+ assert.equal(second.body.game.monsterSlotShow.turn,'champion');
+ const delayed=await h.show('chris','confirm',{expectedTurn:'runner',expectedUid:'chris'});
+ assert.equal(delayed.statusCode,409,'stale runner taps cannot advance champion stage');
+ assert.equal(delayed.body.error,'SLOT_SHOW_STALE_STAGE');
+ denied=await h.show('david','spin');
+ assert.equal(denied.statusCode,409,'champion cabinet waits for synchronized opening');
+ assert.equal(denied.body.error,'SLOT_SHOW_PREPARING');
+ h.current().monsterSlotShow.showAt=Date.now()-1;
+ const champion=await h.show('david','spin',{expectedTurn:'champion',expectedUid:'david'});
  assert.equal(champion.statusCode,200,JSON.stringify(champion.body));
  assert.equal(champion.body.game.monsterSlotShow.prizes.length,3);
  assert.equal(h.docs.get('deal_monster_slots_receipts_v1/'+h.game.id+'_david').result.prizes.length,3);
  assert.equal(h.docs.has('deal_monster_slots_receipts_v1/'+h.game.id+'_vanessa'),false);
- h.advance();
- const last=await h.show('david','confirm');
+ h.advance(6200);
+ denied=await h.show('david','confirm');
+ assert.equal(denied.statusCode,409,'the three-reel summary must finish before ceremony');
+ assert.equal(denied.body.error,'SLOT_SHOW_STILL_ROLLING');
+ h.advance(8200);
+ const last=await h.show('david','confirm',{expectedTurn:'champion',expectedUid:'david',
+  expectedStartedAt:h.current().monsterSlotShow.startedAt});
  assert.equal(last.statusCode,200,JSON.stringify(last.body));
  assert.equal(last.body.game.monsterSlotShow.phase,'ceremony');
  assert.ok(last.body.game.monsterSlotShow.finishedAt>0);
