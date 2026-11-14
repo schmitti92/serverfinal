@@ -1297,3 +1297,32 @@ test('Render-first hub sync combines ongoing polls without Firestore transaction
  assert.equal(post.room.phase,'lobby');
  assert.equal(post.room.revision,room.revision);
 });
+
+test('DOG avatars stay per player, reach both match projections and skip unchanged room writes',async()=>{
+ const h=harness();
+ const created=await h.api('POST','/api/hub/rooms','alice',{dogAvatar:5});
+ const code=created.room.code;
+ assert.equal(created.room.players[0].dogAvatar,5);
+ const joined=await h.api('POST','/api/hub/rooms/'+code+'/join','bob',{dogAvatar:11});
+ assert.equal(joined.room.players[1].dogAvatar,11);
+ const chosen=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog',dogAvatar:5});
+ const before=chosen.room.revision;
+ const same=await h.api('POST','/api/hub/rooms/'+code+'/dog/avatar','bob',{avatar:11});
+ assert.equal(same.status,200);
+ assert.equal(same.room.revision,before,'identical avatar causes no room write');
+ const changed=await h.api('POST','/api/hub/rooms/'+code+'/dog/avatar','bob',{avatar:12});
+ assert.equal(changed.status,200);
+ assert.equal(changed.room.revision,before+1);
+ assert.equal(changed.room.players.find(p=>p.name==='Bob').dogAvatar,12);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/dog/avatar','cara',{avatar:3})).status,403);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/dog/avatar','bob',{avatar:18})).status,400);
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true})).room;
+ assert.equal(started.match.game,'dog');
+ assert.deepEqual(started.match.dogAvatars,[5,12,null,null]);
+ const alice=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.deepEqual(alice.match.dogAvatars,[5,12,null,null]);
+ const bob=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ assert.deepEqual(bob.match.dogAvatars,[5,12,null,null]);
+ assert.notEqual(bob.match.dogSeat,alice.match.dogSeat);
+});
