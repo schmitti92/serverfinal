@@ -1372,3 +1372,82 @@ test('Unchanged hub rejoins do not rewrite Firestore room documents',async()=>{
  const final=await h.api('GET','/api/hub/rooms/'+code,'alice');
  assert.equal(final.room.players.length,2);
 });
+
+
+test('Fresh Render WebSocket snapshot serves authenticated HTTP room reads without extra Firestore get',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ let firestoreDocumentGets=0;
+ const originalCollection=h.store.collection;
+ h.store.collection=name=>{
+   const collection=originalCollection(name);
+   return {doc:docId=>{
+     const ref=collection.doc(docId);
+     return {...ref,get:async()=>{
+       if(name==='spielesammlung_hub_v1')firestoreDocumentGets++;
+       return ref.get();
+     }};
+   }};
+ };
+ function socket(user){
+   const ws=new EventEmitter();
+   ws.readyState=1;ws.sent=[];
+   ws.send=payload=>ws.sent.push(JSON.parse(payload));
+   ws.close=()=>{ws.readyState=3;ws.emit('close')};
+   h.adapter.attachSocket(ws);
+   ws.emit('message',JSON.stringify({type:'subscribe',code,profileIdToken:user}));
+   return ws;
+ }
+ const alice=socket('alice'),bob=socket('bob');
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.watchStats().starts,1,'existing subscribers share a single live Firestore watch');
+ assert.ok(alice.sent.some(x=>x.type==='room'));
+ assert.ok(bob.sent.some(x=>x.type==='room'));
+ const [a,b]=await Promise.all([
+   h.api('GET','/api/hub/rooms/'+code,'alice'),
+   h.api('GET','/api/hub/rooms/'+code,'bob')
+ ]);
+ assert.equal(a.status,200);assert.equal(b.status,200);
+ assert.equal(a.room.host,true);
+ assert.equal(b.room.host,false,'each cached read retains caller-specific projection');
+ assert.equal(firestoreDocumentGets,0,'fresh WS state eliminates duplicate Firestore get');
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code,'cara')).status,403);
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code,'stranger')).status,401);
+ assert.equal(firestoreDocumentGets,0,'outsiders are rejected without leaking room state');
+ const health=await h.api('GET','/api/hub/health');
+ assert.equal(health.hubStreamReadCache.hits,3);
+ assert.equal(health.hubStreamReadCache.ttlMs,2500);
+ assert.equal(firestoreDocumentGets,0,'reading Render-only diagnostics does not query Firebase');
+
+ h.advance(2501);
+ const stale=await h.api('GET','/api/hub/rooms/'+code,'alice');
+ assert.equal(stale.status,200);
+ assert.equal(firestoreDocumentGets,1,'stale snapshot falls back to authoritative Firestore get');
+ alice.close();bob.close();
+ assert.equal(h.watchStats().stops,1);
+ const disconnected=await h.api('GET','/api/hub/rooms/'+code,'bob');
+ assert.equal(disconnected.status,200);
+ assert.equal(firestoreDocumentGets,2,'closed WebSocket watch cannot serve stale HTTP state');
+});
+
+test('Hub mutation cannot authorize stale WebSocket room data',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ const ws=new EventEmitter();ws.readyState=1;ws.sent=[];
+ ws.send=payload=>ws.sent.push(JSON.parse(payload));
+ ws.close=()=>{ws.readyState=3;ws.emit('close')};
+ h.adapter.attachSocket(ws);
+ ws.emit('message',JSON.stringify({type:'subscribe',code,profileIdToken:'alice'}));
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code)).room.phase,'lobby');
+ const changed=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ assert.equal(changed.status,200);
+ assert.equal(changed.room.phase,'preparing');
+ const reread=await h.api('GET','/api/hub/rooms/'+code,'alice');
+ assert.equal(reread.status,200);
+ assert.equal(reread.room.game,'dog','authoritative mutation must never be hidden by an old WS snapshot');
+ assert.equal(reread.room.phase,'preparing');
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','bob',{game:'skyjo'})).status,403);
+ ws.close();
+});
