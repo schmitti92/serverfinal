@@ -115,7 +115,7 @@ test('next round settles all three participants, including a silent client, with
   const rank=placement.get(uid);
   docs.set('deal_or_no_deal_payouts_v1/'+oldGame.id+'_'+uid,{
    gameId:oldGame.id,uid,amount:oldPayouts.find(p=>p.uid===uid).amount,
-   slotReels:rank.reels,slotEligible:rank.reels>0,slotRank:rank.rank,slotVersion:2
+   slotReels:rank.reels,slotEligible:rank.reels>0,slotRank:rank.rank,slotVersion:3
   });
   docs.set('deal_or_no_deal_wallets_v1/'+uid,{balance:50000000,games:1,wins:0});
  }
@@ -155,7 +155,7 @@ test('next round settles all three participants, including a silent client, with
  // The host already viewed their own slots, but the other two did not.
  const first=await call('POST','/api/deal-or-no-deal/monster-slots/claim','host',{gameId:oldGame.id});
  assert.equal(first.statusCode,200,JSON.stringify(first.body));
- assert.equal(first.body.prizes.length,3);
+ assert.equal(first.body.prizes.length,6);
  const next=await call('POST','/api/deal-or-no-deal/:code/start','host',{caseCount:27});
  assert.equal(next.statusCode,200,JSON.stringify(next.body));
  assert.equal(next.body.game.phase,'select');
@@ -330,13 +330,13 @@ test('DOG Super Slot pays exactly five prizes for one completed board, spends on
 });
 
 
-test('podium slot policy is 3/1/0: loser never spins, runner-up only in matches with 3+ people',()=>{
+test('podium slot policy is 6/2/0: unique runner-up only in matches with 3+ people',()=>{
  const cases=[
-  {payouts:[['solo',800]],expected:{solo:3}},
-  {payouts:[['winner',900],['loser',100]],expected:{winner:3,loser:0}},
-  {payouts:[['winner',900],['second',500],['loser',100]],expected:{winner:3,second:1,loser:0}},
-  {payouts:[['a',100],['b',800],['c',300],['d',900]],expected:{a:0,b:1,c:0,d:3}},
-  {payouts:[['winner',900],['secondA',500],['secondB',500],['last',100]],expected:{winner:3,secondA:0,secondB:0,last:0}},
+  {payouts:[['solo',800]],expected:{solo:6}},
+  {payouts:[['winner',900],['loser',100]],expected:{winner:6,loser:0}},
+  {payouts:[['winner',900],['second',500],['loser',100]],expected:{winner:6,second:2,loser:0}},
+  {payouts:[['a',100],['b',800],['c',300],['d',900]],expected:{a:0,b:2,c:0,d:6}},
+  {payouts:[['winner',900],['secondA',500],['secondB',500],['last',100]],expected:{winner:6,secondA:0,secondB:0,last:0}},
   {payouts:[['firstA',900],['firstB',900],['third',100]],expected:{firstA:0,firstB:0,third:0}},
   {payouts:[['a',100],['b',100],['c',100]],expected:{a:0,b:0,c:0}}
  ];
@@ -349,18 +349,26 @@ test('podium slot policy is 3/1/0: loser never spins, runner-up only in matches 
  assert.throws(()=>monsterSlotPlacements([{uid:'x',amount:NaN}]),/INVALID_SLOT_RANKINGS/);
 });
 
-test('a runner-up reel draws exactly one award, while DOG five-reel Super Slots remain unchanged',()=>{
+test('new 6/2 podium entitlements coexist with old 3/1 and DOG five-reel slots',()=>{
  const podium=monsterSlotPlacements([
   {uid:'winner',amount:2500000},
   {uid:'runner',amount:1500000},
   {uid:'last',amount:500000}
  ]);
- assert.equal(podium.get('winner').reels,3);
- assert.equal(podium.get('runner').reels,1);
+ assert.equal(podium.get('winner').reels,6);
+ assert.equal(podium.get('runner').reels,2);
  assert.equal(podium.get('last').reels,0);
- const one=[drawMonsterSlot(1,()=>0)];
- assert.equal(one.length,1);
- assert.equal(drawMonsterSlots(1,()=>0).length,3);
+ const second=Array.from({length:2},()=>drawMonsterSlot(1,()=>0));
+ assert.equal(second.length,2);
+ const first=Array.from({length:6},()=>drawMonsterSlot(1,()=>0));
+ assert.equal(first.length,6);
+ const old=monsterSlotPlacements([
+  {uid:'winner',amount:2500000},{uid:'runner',amount:1500000},{uid:'last',amount:500000}
+ ],{legacy:true});
+ assert.equal(old.get('winner').reels,3);
+ assert.equal(old.get('runner').reels,1);
+ assert.equal(drawMonsterSlots(1,()=>0).length,3,'unchanged three-reel helper for legacy receipts');
+ assert.ok(first.every(p=>p.kind==='chest'));
 });
 
 test('slot prize table has varied exact amounts including one cent and five million euros',()=>{
