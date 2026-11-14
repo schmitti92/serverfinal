@@ -7,6 +7,7 @@ on:
       - 'skyjo-pack-vouchers.js'
       - 'deal-or-no-deal-api.js'
       - 'shared-lobby.js'
+      - 'server.js'
       - 'tests/skyjo-special-engine.test.js'
       - 'tests/skyjo-pack-vouchers.test.js'
       - '.github/workflows/skyjo-special-tests.yml'
@@ -16,6 +17,7 @@ on:
       - 'skyjo-pack-vouchers.js'
       - 'deal-or-no-deal-api.js'
       - 'shared-lobby.js'
+      - 'server.js'
       - 'tests/skyjo-special-engine.test.js'
       - 'tests/skyjo-pack-vouchers.test.js'
   workflow_dispatch:
