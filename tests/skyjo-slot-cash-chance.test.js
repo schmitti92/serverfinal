@@ -47,8 +47,8 @@ test('Host item ratios remain customizable but SKYJO always gets 50/50',()=>{
 test('SKYJO payout path uses special 50/50 weights, not global weights',()=>{
  const api=readFileSync(new URL('../deal-or-no-deal-api.js',import.meta.url),'utf8');
  assert.match(api,/mode==='skyjo'\?skyjoMonsterSlotWeights\(slotWeights\):slotWeights/);
- assert.match(api,/drawMonsterSlot\(gate,randomInt,effectiveSlotWeights\)/);
- assert.match(api,/drawMonsterSlots\(gate,randomInt,effectiveSlotWeights\)/);
+ assert.match(api,/drawMonsterSlot\(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes\)/);
+ assert.match(api,/drawMonsterSlots\(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes\)/);
 });
 
 
