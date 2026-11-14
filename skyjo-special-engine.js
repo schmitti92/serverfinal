@@ -22,7 +22,17 @@ export const SKYJO_SPECIAL_MISSIONS=Object.freeze([
  {id:'five-groups',name:'Räume fünf Kombinationen ab',slots:10,tier:'hard',field:'groups',at:5},
  {id:'clear-board',name:'Räume dein ganzes Spielfeld ab',slots:10,tier:'hard',field:'boardClear',at:1},
  {id:'four-columns',name:'Räume vier Spalten ab',slots:10,tier:'hard',field:'columns',at:4},
- {id:'below-minus-ten',name:'Beende die Runde mit −10 oder weniger Punkten',slots:6,tier:'hard',field:'score',at:-10,less:true}
+ {id:'below-minus-ten',name:'Beende die Runde mit −10 oder weniger Punkten',slots:6,tier:'hard',field:'score',at:-10,less:true},
+ // New mission variants fill the entire 1–10 reel reward range without new Firestore writes.
+ {id:'first-combo',name:'Auftakt-Kombo: Räume deine erste Kombination ab',slots:1,tier:'easy',field:'groups',at:1},
+ {id:'finish-ten',name:'Punktesammler: Schließe mit höchstens 10 Punkten ab',slots:1,tier:'easy',field:'score',at:10,less:true},
+ {id:'zero-trio',name:'Nullen-Trio: Zeige drei Nullen gleichzeitig',slots:3,tier:'medium',field:'zerosAtOnce',at:3},
+ {id:'minus-five',name:'Eiskalt kalkuliert: Beende die Runde mit höchstens −5 Punkten',slots:5,tier:'medium',field:'score',at:-5,less:true},
+ {id:'three-columns',name:'Säulenstürmer: Räume drei Spalten ab',slots:7,tier:'hard',field:'columns',at:3},
+ {id:'three-jokers',name:'Jokerfestival: Zeige drei Joker gleichzeitig',slots:8,tier:'hard',field:'jokersAtOnce',at:3},
+ {id:'six-groups',name:'Kombinationskönig: Räume sechs Kombinationen ab',slots:9,tier:'hard',field:'groups',at:6},
+ {id:'double-twelve',name:'Doppelte Zwölf: Räume zwei reine 12er-Reihen ab',slots:9,tier:'hard',field:'twelveRows',at:2},
+ {id:'minus-twenty',name:'Eisbrecher: Schließe mit −20 Punkten oder weniger ab',slots:10,tier:'hard',field:'score',at:-20,less:true}
 ]);
 const allowedFields=['rows','columns','streets','twelveRows','groups','zeroSeen','jokerSeen','zerosAtOnce','jokersAtOnce','boardClear'];
 export function skyjoSpecialSeed(matchId,round){
@@ -30,13 +40,26 @@ export function skyjoSpecialSeed(matchId,round){
  for(const ch of String(matchId)+'|'+String(round)){n=Math.imul(n^ch.charCodeAt(0),16777619)>>>0;}
  return n;
 }
-export function skyjoSpecialMissions(matchId,round){
+// Preserve three-mission rounds started before the update; their payouts remain unchanged.
+const LEGACY_SKYJO_MISSIONS=SKYJO_SPECIAL_MISSIONS.slice(0,22);
+export function skyjoSpecialMissions(matchId,round,{legacy=false}={}){
  let n=skyjoSpecialSeed(matchId,round);
- return ['easy','medium','hard'].map(tier=>{
-  const pool=SKYJO_SPECIAL_MISSIONS.filter(m=>m.tier===tier);
+ if(legacy)return ['easy','medium','hard'].map(tier=>{
+  const pool=LEGACY_SKYJO_MISSIONS.filter(m=>m.tier===tier);
   n=(Math.imul(n,1664525)+1013904223)>>>0;
   return pool[n%pool.length];
  });
+ // Every NEW round has one accessible, two challenging and one elite mission.
+ // Different progress fields stop the same action from repeatedly paying out.
+ const chosen=[],used=new Set();
+ for(const tier of ['hard','easy','medium','medium']){
+  const pool=SKYJO_SPECIAL_MISSIONS.filter(m=>m.tier===tier&&!used.has(m.field));
+  if(!pool.length)throw Error('SKYJO_MISSION_POOL_EXHAUSTED');
+  n=(Math.imul(n,1664525)+1013904223)>>>0;
+  const mission=pool[n%pool.length];
+  chosen.push(mission);used.add(mission.field);
+ }
+ return [chosen[1],chosen[2],chosen[3],chosen[0]];
 }
 // Stable pseudo-random bonus field per player and round. It is derived from
 // the match identifier, so each device and the server use the same index.
@@ -60,7 +83,8 @@ export function skyjoSpecialAwardRows(game,matchId,round){
  const special=game?.skyjoSpecial;
  if(!special?.enabled||special.matchId!==matchId||special.round!==round||game.round!==round)throw Error('SKYJO_SPECIAL_ROUND_MISMATCH');
  if(!['betweenRounds','gameOver'].includes(game.phase)||!game.lastRoundSummary||game.lastRoundSummary.round!==round)throw Error('SKYJO_ROUND_NOT_SETTLED');
- const expected=skyjoSpecialMissions(matchId,round);
+ const legacy=Array.isArray(special.missions)&&special.missions.length===3;
+ const expected=skyjoSpecialMissions(matchId,round,{legacy});
  if(JSON.stringify(special.missions)!==JSON.stringify(expected.map(m=>m.id)))throw Error('SKYJO_MISSIONS_INVALID');
  const summary=game.lastRoundSummary;
  if(!Array.isArray(summary.players)||summary.players.length!==game.players?.length||!summary.players.length)throw Error('SKYJO_SCORE_INVALID');
