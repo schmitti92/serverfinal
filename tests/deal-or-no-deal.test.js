@@ -700,3 +700,83 @@ test('ordinary Banker games retain the exact original shared offer contract',()=
  assert.equal(game.players.find(p=>p.id==='a').deal,h.offer);
  assert.equal(game.players.find(p=>p.id==='b').deal,h.offer);
 });
+
+
+// Real game transition test: only the server's existing game transition creates
+// offers. No UI-only amount increases or additional database writes are needed.
+function advanceBankerUntilDecision(game,rng){
+ let safety=80;
+ while(game.phase!=='decision'&&safety-->0){
+  if(game.phase==='open'){
+   const cheapest=free(game).sort((a,b)=>game.values[a]-game.values[b])[0];
+   game=apply(game,nextTurn(game),{id:'smart-open-'+game.revision,revision:game.revision,type:'open',case:cheapest},rng);
+  }else if(game.phase==='reveal'){
+   game=apply(game,game.pending.actor,{id:'smart-ack-'+game.revision,revision:game.revision,type:'ack-reveal'},rng);
+  }else throw Error('Unexpected Banker setup phase: '+game.phase);
+ }
+ assert.equal(game.phase,'decision');
+ return game;
+}
+function allRefuseBanker(game,rng){
+ const ids=[...game.history.at(-1).participants];
+ for(const id of ids){
+  game=apply(game,id,{id:'smart-no-'+game.revision,revision:game.revision,type:'decide',deal:false},rng);
+ }
+ return game;
+}
+test('Banker progressively raises shared bids as low cases leave the board',()=>{
+ const rng=max=>max===100?60:max===10001?0:max===1000?850:0;
+ let g=create([{id:'a'},{id:'b'}],rng,27);
+ for(const id of g.order)g=apply(g,id,{id:'smart-select-'+g.revision,revision:g.revision,type:'select',case:free(g)[0]},rng);
+ g=advanceBankerUntilDecision(g,rng);
+ const old=g.history.at(-1);
+ const oldOffer=old.offer,oldAverage=old.expectedValue;
+ g=allRefuseBanker(g,rng);
+ g=advanceBankerUntilDecision(g,rng);
+ const next=g.history.at(-1);
+ assert.ok(next.expectedValue>=oldAverage*.985,'cheap case removals preserve/improve the remaining board');
+ const cap=Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(next.expectedValue*1.25));
+ assert.ok(next.offer>oldOffer,'the next shared Banker bid must visibly increase');
+ assert.ok(next.offer>=Math.min(cap,Math.round(oldOffer*1.065)),'follow-up increase at least 6.5% unless fair ceiling binds');
+ assert.ok(next.offer<=cap,'the original 125% fair-value limit still applies');
+});
+test('personal Banker bids progress independently after low cases leave',()=>{
+ let later=false;
+ const rng=max=>max===100?60:max===10001?0:max===1000?(later?300:800):0;
+ let g=create([{id:'a'},{id:'b'},{id:'c'}],rng,27,{individualBankerOffers:true});
+ for(const id of g.order)g=apply(g,id,{id:'smart-select-'+g.revision,revision:g.revision,type:'select',case:free(g)[0]},rng);
+ g=advanceBankerUntilDecision(g,rng);
+ const before=g.history.at(-1);
+ assert.deepEqual(before.megaOfferUids,[]);
+ const prior=structuredClone(before.offersByPlayer);
+ g=allRefuseBanker(g,rng);
+ later=true; // Deliberately force a worse random tier on the next call.
+ g=advanceBankerUntilDecision(g,rng);
+ const after=g.history.at(-1);
+ assert.ok(after.expectedValue>=before.expectedValue*.985);
+ for(const uid of after.participants){
+  assert.ok(after.offersByPlayer[uid]>prior[uid],uid+' still receives a rising bid');
+  assert.ok(after.offersByPlayer[uid]>=Math.round(prior[uid]*1.065),
+   uid+' has the minimum 6.5% follow-up despite a low pricing roll');
+  assert.ok(after.offersByPlayer[uid]<=MAX_MATCH_CREDIT_CENTS);
+ }
+ assert.equal(new Set(Object.values(after.offersByPlayer)).size,3);
+});
+test('Banker can reduce its bid when a major remaining jackpot disappears',()=>{
+ const rng=max=>max===100?60:max===10001?0:max===1000?850:0;
+ let g=create([{id:'a'},{id:'b'}],rng,27);
+ for(const id of g.order)g=apply(g,id,{id:'smart-select-'+g.revision,revision:g.revision,type:'select',case:free(g)[0]},rng);
+ g=advanceBankerUntilDecision(g,rng);
+ const before=g.history.at(-1);
+ g=allRefuseBanker(g,rng);
+ // Make the largest remaining *openable* case the next casualty.
+ const expensive=free(g).sort((a,b)=>g.values[b]-g.values[a])[0];
+ const actor=nextTurn(g);
+ g=apply(g,actor,{id:'smart-expensive-'+g.revision,revision:g.revision,type:'open',case:expensive},rng);
+ g=apply(g,actor,{id:'smart-expensive-ack-'+g.revision,revision:g.revision,type:'ack-reveal'},rng);
+ g=advanceBankerUntilDecision(g,rng);
+ const after=g.history.at(-1);
+ assert.ok(after.expectedValue<before.expectedValue*.985,'the lost high value changes risk materially');
+ assert.ok(after.offer<=Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(after.expectedValue*1.25)));
+ assert.ok(after.offer>=1);
+});
