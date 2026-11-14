@@ -130,3 +130,28 @@ test('XL board can award a Joker bonus only on its own marked 15-card position',
  assert.equal(rows[2].bonusIndex,idx);
  assert.equal(rows[0].bonusSlots,0);
 });
+
+
+test('Every participant gets an independent Joker target and correct stacked slots with 2–5 players',()=>{
+ for(const count of [2,3,4,5]){
+  const game=roundGame();
+  game.players=Array.from({length:count},(_,i)=>({name:'Spieler '+(i+1),grid:
+   Array.from({length:12},()=>({type:'number',value:6,faceUp:true}))}));
+  game.lastRoundSummary.players=game.players.map((p,i)=>({index:i,name:p.name,round:i+1,
+   gridSnapshot:structuredClone(p.grid)}));
+  game.skyjoSpecial.progress={};
+  game.skyjoSpecial.bonusCells=Object.fromEntries(game.players.map((_,i)=>[i,skyjoSpecialBonusIndex(MATCH,1,i,12)]));
+  for(let i=0;i<count;i++){
+   const idx=game.skyjoSpecial.bonusCells[i];
+   game.lastRoundSummary.players[i].gridSnapshot[idx]={type:'star',faceUp:true};
+  }
+  const rows=skyjoSpecialAwardRows(game,MATCH,1).players;
+  assert.equal(rows.length,count);
+  for(let i=0;i<count;i++){
+   assert.equal(rows[i].bonusSlots,2);
+   assert.equal(rows[i].winnerSlots,i===0?2:0);
+   assert.equal(rows[i].slots,rows[i].missionSlots+rows[i].winnerSlots+2);
+   assert.equal(rows[i].name,'Spieler '+(i+1));
+  }
+ }
+});
