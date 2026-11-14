@@ -4479,7 +4479,8 @@ app.get("/health", (_req, res) =>
     dogSharedReadCache:dogSharedReadCoordinator.stats(),
     // Rolling per-route counters are Render RAM only; no Firebase access.
     dealReadDiagnostics:dealOrNoDealOnline.readDiagnostics(),
-    dealRewardReadCache:dealOrNoDealOnline.rewardReadStats()
+    dealRewardReadCache:dealOrNoDealOnline.rewardReadStats(),
+    dealGameCommitSeeds:dealOrNoDealOnline.commitSeedStats()
   })
 );
 
