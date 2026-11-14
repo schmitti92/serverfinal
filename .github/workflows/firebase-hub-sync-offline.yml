@@ -21,4 +21,4 @@ jobs:
       - name: Verify syntax without network
         run: node --check shared-lobby.js
       - name: Run isolated Render-first hub cache test with fake Firestore
-        run: node --test --test-name-pattern="Render-first hub sync combines ongoing polls|Unchanged hub rejoins do not rewrite Firestore room documents" tests/shared-lobby.test.js
+        run: node --test --test-name-pattern="Render-first hub sync combines ongoing polls|Unchanged hub rejoins do not rewrite Firestore room documents|Fresh Render WebSocket snapshot serves authenticated HTTP room reads without extra Firestore get|Hub mutation cannot authorize stale WebSocket room data" tests/shared-lobby.test.js
