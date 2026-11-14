@@ -1457,3 +1457,45 @@ test('Hub mutation cannot authorize stale WebSocket room data',async()=>{
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','bob',{game:'skyjo'})).status,403);
  ws.close();
 });
+
+test('DOG emojis use one authenticated hub stream, reject locked or spammed IDs, and never write Firestore',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true})).room;
+ assert.equal(started.phase,'playing');
+ const matchId=started.match.id,revision=started.revision;
+ function connect(user){
+  const ws=new EventEmitter();ws.readyState=1;ws.sent=[];
+  ws.send=payload=>ws.sent.push(JSON.parse(payload));
+  ws.close=()=>{ws.readyState=3;ws.emit('close');};
+  h.adapter.attachSocket(ws);
+  ws.emit('message',JSON.stringify({type:'subscribe',code,profileIdToken:user}));
+  return ws;
+ }
+ const alice=connect('alice'),bob=connect('bob');
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.watchStats().starts,1,'only the existing hub listener is used');
+ alice.emit('message',JSON.stringify({type:'dog_emoji',matchId,emojiId:'emoji_01'}));
+ assert.equal(alice.sent.filter(v=>v.type==='dog_emoji').length,1);
+ assert.equal(bob.sent.filter(v=>v.type==='dog_emoji').length,1);
+ assert.equal(bob.sent.find(v=>v.type==='dog_emoji')?.emojiId,'emoji_01');
+ assert.equal(bob.sent.find(v=>v.type==='dog_emoji')?.senderName,'Alice');
+ alice.emit('message',JSON.stringify({type:'dog_emoji',matchId,emojiId:'emoji_02'}));
+ assert.equal(alice.sent.at(-1).reason,'COOLDOWN');
+ h.advance(5001);
+ alice.emit('message',JSON.stringify({type:'dog_emoji',matchId,emojiId:'emoji_04'}));
+ assert.equal(alice.sent.at(-1).reason,'EMOJI_LOCKED');
+ alice.emit('message',JSON.stringify({type:'dog_emoji',matchId:'wrong-match',emojiId:'emoji_03'}));
+ assert.equal(alice.sent.at(-1).reason,'NO_DOG_MATCH');
+ alice.emit('message',JSON.stringify({type:'dog_emoji',matchId,emojiId:'emoji_03'}));
+ assert.equal(bob.sent.filter(v=>v.type==='dog_emoji').length,2);
+ assert.equal(h.watchStats().starts,1);
+ const check=await h.api('GET','/api/hub/rooms/'+code,'alice');
+ assert.equal(check.room.revision,revision,'emoji events do not modify Firestore room revisions');
+ alice.close();bob.close();
+ assert.equal(h.watchStats().stops,1);
+});
