@@ -49,13 +49,15 @@ test('a 30-case batch can award both special cases to different players',()=>{
 test('actual 30-case game engine exposes eligible 50m opening with correct player id',()=>{
  const game=create([{id:'chris'},{id:'david'}],()=>0,30);
  assert.equal(game.values.includes(FIFTY_MILLION_CASE),true);
+ const jackpotCase=game.values.indexOf(FIFTY_MILLION_CASE);
+ const selectable=game.values.map((_,index)=>index).filter(index=>index!==jackpotCase);
  let chosen=game;
- chosen=apply(chosen,chosen.order[0],{type:'select',case:0,id:'select0',revision:chosen.revision},()=>0);
- chosen=apply(chosen,chosen.order[1],{type:'select',case:1,id:'select1',revision:chosen.revision},()=>0);
+ chosen=apply(chosen,chosen.order[0],{type:'select',case:selectable[0],id:'select0',revision:chosen.revision},()=>0);
+ chosen=apply(chosen,chosen.order[1],{type:'select',case:selectable[1],id:'select1',revision:chosen.revision},()=>0);
  assert.equal(chosen.phase,'batch-pick');
  // Move a special case into the first batch without changing the actual
  // server-owned case value. The game still handles recipient assignment.
- const jackpotCase=chosen.values.indexOf(FIFTY_MILLION_CASE);
+
  let actorOrder=[...chosen.order];
  let opener=chosen;
  for(let i=0;i<opener.openingBatch.perPlayer*opener.players.length;i++){
