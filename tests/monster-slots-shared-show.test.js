@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {create} from '../deal-or-no-deal.js';
 import {installDealOrNoDeal} from '../deal-or-no-deal-api.js';
 
-function harness(){
+function harness({modern=false}={}){
  const ids=['chris','david','vanessa'],room='123',routes=new Map(),docs=new Map(),writes=[];
  const game=create(ids.map(id=>({id,name:id})),()=>0);
  game.phase='final';game.monsterSlotsVersion=1;game.revision=15;
@@ -17,7 +17,7 @@ function harness(){
   {id:'vanessa',payout:200000,amount:200000,case:2}
  ];
  game.monsterSlotShow={
-  phase:'ready',turn:'runner',uid:'chris',reels:1,
+  phase:'ready',turn:'runner',uid:'chris',reels:modern?2:1,
   runnerUid:'chris',championUid:'david',activatedAt:Date.now(),
   startedAt:null,prizes:[]
  };
@@ -25,10 +25,10 @@ function harness(){
   players:ids.map(uid=>({uid,name:uid})),hostUid:'chris',revision:1
  });
  docs.set('deal_or_no_deal_matches_v1/'+room,{game,hubRevision:1});
- for(const [uid,reels,rank] of [['chris',1,2],['david',3,1],['vanessa',0,3]]){
+ for(const [uid,reels,rank] of [['chris',modern?2:1,2],['david',modern?6:3,1],['vanessa',0,3]]){
   docs.set('deal_or_no_deal_payouts_v1/'+game.id+'_'+uid,{
    uid,gameId:game.id,baseAmount:uid==='david'?900000:uid==='chris'?400000:200000,
-   slotEligible:reels>0,slotReels:reels,slotRank:rank,slotVersion:2
+   slotEligible:reels>0,slotReels:reels,slotRank:rank,slotVersion:modern?3:2
   });
   docs.set('deal_or_no_deal_wallets_v1/'+uid,{balance:0,games:1});
  }
@@ -146,4 +146,40 @@ test('any remaining participant can resume an abandoned turn after 30 seconds',a
  assert.equal(rescued.body.game.monsterSlotShow.uid,'chris');
  assert.equal(rescued.body.game.monsterSlotShow.prizes.length,1);
  assert.equal(h.docs.get('deal_monster_slots_receipts_v1/'+h.game.id+'_chris').result.prizes.length,1);
+});
+
+
+test('new finale: runner-up gets two prizes then champion six, with server-stamped completion',async()=>{
+ const h=harness({modern:true});
+ const blocked=await h.show('david','spin');
+ assert.equal(blocked.body.error,'SLOT_SHOW_NOT_YOUR_TURN');
+ const first=await h.show('chris','spin');
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.equal(first.body.game.monsterSlotShow.prizes.length,2);
+ assert.equal(h.docs.get('deal_monster_slots_receipts_v1/'+h.game.id+'_chris').result.prizes.length,2);
+ h.advance(6000);
+ const tooSoon=await h.show('chris','confirm');
+ assert.equal(tooSoon.body.error,'SLOT_SHOW_STILL_ROLLING','two prizes require a complete summary');
+ h.advance(6700);
+ const runnerConfirmed=await h.show('chris','confirm',{expectedTurn:'runner'});
+ assert.equal(runnerConfirmed.statusCode,200,JSON.stringify(runnerConfirmed.body));
+ assert.equal(runnerConfirmed.body.game.monsterSlotShow.reels,6);
+ assert.equal(runnerConfirmed.body.game.monsterSlotShow.turn,'champion');
+ assert.ok(runnerConfirmed.body.game.monsterSlotShow.runnerConfirmedAt);
+ assert.equal((await h.show('david','spin')).body.error,'SLOT_SHOW_PREPARING');
+ h.current().monsterSlotShow.showAt=Date.now()-1;
+ const winner=await h.show('david','spin',{expectedTurn:'champion'});
+ assert.equal(winner.statusCode,200,JSON.stringify(winner.body));
+ assert.equal(winner.body.game.monsterSlotShow.prizes.length,6);
+ assert.equal(h.docs.get('deal_monster_slots_receipts_v1/'+h.game.id+'_david').result.prizes.length,6);
+ h.advance(9000);
+ assert.equal((await h.show('david','confirm')).body.error,'SLOT_SHOW_STILL_ROLLING');
+ h.advance(10300);
+ const done=await h.show('david','confirm',{expectedTurn:'champion'});
+ assert.equal(done.statusCode,200,JSON.stringify(done.body));
+ assert.equal(done.body.game.monsterSlotShow.phase,'ceremony');
+ const writes=h.writes.length;
+ assert.equal((await h.show('david','confirm')).statusCode,200);
+ assert.equal(h.writes.length,writes,'no prize can be credited twice');
+ assert.equal(h.docs.has('deal_monster_slots_receipts_v1/'+h.game.id+'_vanessa'),false);
 });
