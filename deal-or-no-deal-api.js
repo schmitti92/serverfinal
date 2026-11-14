@@ -1,4 +1,5 @@
 import {create,apply,publicView,payoutFor,cashCreditFor} from './deal-or-no-deal.js';
+import {isCasePackBonusAmount,newCasePackBonusEvents,drawCasePackBonus} from './deal-case-pack-bonus.js';
 import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
@@ -916,7 +917,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    if(reward.gameId!==current.id||reward.uid!==req.dealIdentity.uid)throw Error('WINNER_ONLY');
    if(kind==='final'&&current.phase!=='final')throw Error('MATCH_NOT_FINAL');
    if(kind==='final'){const payouts=current.players.map(p=>payoutFor(current,p));if(payouts.filter(v=>v===Math.max(...payouts)).length!==1)throw Error('TIED_GAME_NO_WINNER_WHEEL')}
-   if(kind==='cent'&&!current.events?.some(e=>e.type==='opened'&&e.eventId===reward.eventId&&e.amount===1))throw Error('INVALID_REWARD');
+   if(kind==='cent'&&!current.events?.some(e=>e.type==='opened'&&e.eventId===reward.eventId&&isCasePackBonusAmount(e.amount)&&e.playerId===reward.uid))throw Error('INVALID_REWARD');
    if(kind==='banker'&&!current.history?.some(h=>h.round===reward.round&&h.decisions?.some(d=>d.id===reward.uid&&d.deal)))throw Error('INVALID_REWARD');
    const key=kind+':'+rewardId;
    if(current.christmasWheelSpins?.[key])return current;
@@ -1006,7 +1007,32 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  }));
  return res.json({ok:true,rewards:rewards.filter(Boolean).sort((a,b)=>a.createdAt-b.createdAt)});
  }catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/:code/christmas-cent-reward',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);const game=await readGame(db,code);if(!game)return res.json({ok:true,reward:null});const event=(game.events||[]).find(e=>e.type==='opened'&&e.amount===1);if(!event)return res.json({ok:true,reward:null});const reward=await db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+event.eventId).get();if(!reward.exists)return res.json({ok:true,reward:null});const data=reward.data();return res.json({ok:true,reward:{id:reward.id,gameId:data.gameId,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Spieler',packId:data.packId,packName:data.packName,revealed:data.revealed,createdAt:data.createdAt}})}catch(e){return fail(res,e)}});
+
+ // The shared card reveal endpoint serves both the original 1-cent reward
+ // and the 50-million case, preserving old clients and recorded rewards.
+ app.get('/api/deal-or-no-deal/:code/christmas-cent-reward',auth,async(req,res)=>{try{
+  const code=String(req.params.code||'').toUpperCase();
+  if(!CODE.test(code))throw Error('INVALID_CODE');
+  const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
+  const game=await readGame(db,code);
+  if(!game)return res.json({ok:true,reward:null,rewards:[]});
+  const events=(game.events||[]).filter(e=>e.type==='opened'&&isCasePackBonusAmount(e.amount));
+  if(!events.length)return res.json({ok:true,reward:null,rewards:[]});
+  const snaps=await Promise.all(events.map(e=>
+   db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+e.eventId).get()));
+  const rewards=snaps.flatMap((snap,i)=>{
+   if(!snap.exists)return [];
+   const data=snap.data(),event=events[i];
+   return [{
+    id:snap.id,gameId:data.gameId,uid:data.uid,
+    playerName:game.players.find(p=>p.id===data.uid)?.name||'Spieler',
+    packId:data.packId,packName:data.packName,revealed:data.revealed,
+    eventId:data.eventId,triggerAmount:data.triggerAmount??event.amount,
+    createdAt:data.createdAt
+   }];
+  });
+  return res.json({ok:true,reward:rewards[0]||null,rewards});
+ }catch(e){return fail(res,e)}});
  app.get('/api/deal-or-no-deal/:code/avatars',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);const avatars=await readAvatars(db,code);return res.json({ok:true,avatars})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/:code/avatar',auth,async(req,res)=>{try{const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');const avatar=Number(req.body?.avatar);if(!Number.isInteger(avatar)||avatar<1||avatar>15)throw Error('INVALID_AVATAR');const db=getFirestore();await check(db,code,req.dealIdentity.uid);if(avatar===11||avatar===12||avatar===13){const christmas=await db.collection(CHRISTMAS_COLLECTION).doc(req.dealIdentity.uid).get();const reward=avatar===11?'rudolph':avatar===12?'santa':'snowman-profile-avatar';if(!christmasProgress(christmas.exists?christmas.data().cards||{}:{}).rewards.includes(reward))throw Error('CHRISTMAS_REWARD_LOCKED')}if(avatar===15){const christmas=await db.collection(CHRISTMAS_COLLECTION).doc(req.dealIdentity.uid).get();if(christmas.data()?.monsterGiftzwergUnlocked!==true)throw Error('CHRISTMAS_REWARD_LOCKED')}if(avatar===14){const iceSnap=await db.collection('christmas_ice_progress_v1').doc(req.dealIdentity.uid).get();const ice=iceSnap.exists?normalizeIceState(iceSnap.data()):null;if(!ice||Math.max(Number(ice.maxRewarded||0),Number(ice.completed||0))<10)throw Error('CHRISTMAS_REWARD_LOCKED')}const ref=db.collection(avatarCollection).doc(code);const avatars=await db.runTransaction(async tx=>{const snap=await tx.get(ref);const choices={...(snap.exists?snap.data().avatars||{}:{})};if(Object.entries(choices).some(([uid,value])=>uid!==req.dealIdentity.uid&&Number(value)===avatar))throw Error('AVATAR_TAKEN');choices[req.dealIdentity.uid]=avatar;tx.set(ref,{avatars:choices,updatedAt:Date.now()});return choices});invalidateAvatars(code);return res.json({ok:true,avatar,avatars})}catch(e){return fail(res,e)}});
  // Deduplicate concurrent scoreboard reads across players, while retaining a
@@ -1144,25 +1170,54 @@ const membership=check(db,code,req.dealIdentity.uid);
 const ref=db.collection(collection).doc(code);const game=await db.runTransaction(async tx=>{const [,snap]=await Promise.all([membership,tx.get(ref)]);if(!snap.exists)throw Error('MATCH_NOT_FOUND');const before=snap.data().game;
 if(before.pendingCardReveals?.length&&!(before.commands||[]).includes(req.body?.id))throw Error('CARD_REVEAL_PENDING');
 const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
-  // Server-authoritative, exactly-once Christmas reward for the actor who revealed 0.01 EUR.
+  // Grant one card pack to whoever reveals 1 cent OR 50 million euros.
+  // Rewards, DOG cards and shared reveal gates are committed atomically.
   let awardWrite=null;
-  const openedOneCent=after.events?.find(e=>e.type==='opened'&&e.amount===1&&!before.events?.some(old=>old.eventId===e.eventId));
-  if(openedOneCent&&((req.body?.type==='ack-reveal'&&before.pending?.eventId===openedOneCent.eventId)||(req.body?.type==='ack-batch'&&before.phase==='batch-reveal'))){
-   const uid=openedOneCent.playerId;
-   const rewardId=after.id+'_'+openedOneCent.eventId;
-   const rewardRef=db.collection('deal_christmas_cent_rewards_v1').doc(rewardId);
-   // Lock moves in the very same transaction that makes this award public.
-   after.pendingCardReveals=[...(after.pendingCardReveals||[]),{kind:'cent',rewardId,uid}];
-   const christmasRef=db.collection(DOG_S2_COLLECTION).doc(uid);
-   const [rewardSnap,christmasSnap]=await Promise.all([tx.get(rewardRef),tx.get(christmasRef)]);
-   if(!rewardSnap.exists){
-    const roll=randomInt(100);
-    const pack=CHRISTMAS_PACKS.find(x=>x.id===(roll<10?'premium':roll<60?'large':'small'));
-    const previous=christmasSnap.exists?christmasSnap.data():{};
-    const drawn=dogS2Discoveries(dogS2Draw(DOG_S2_PACKS.find(p=>p.id===pack.id)),previous.cards||{});
-    const cards={...(previous.cards||{})};
-    for(const card of drawn)cards[card.id]=(cards[card.id]||0)+1;
-    awardWrite=()=>{tx.set(christmasRef,{season:2,cards,opened:(previous.opened||0)+1,updatedAt:Date.now()},{merge:true});tx.create(rewardRef,{uid,gameId:after.id,eventId:openedOneCent.eventId,packId:pack.id,packName:DOG_S2_PACKS.find(p=>p.id===pack.id)?.name||pack.name,revealed:drawn,createdAt:Date.now()})};
+  const openedBonusCases=newCasePackBonusEvents(before,after,req.body);
+  if(openedBonusCases.length){
+   // One 30-case batch can contain both bonuses, possibly for different players.
+   const owners=[...new Set(openedBonusCases.map(event=>event.playerId))];
+   const albumRefs=new Map(owners.map(uid=>[uid,db.collection(DOG_S2_COLLECTION).doc(uid)]));
+   const rewardRefs=openedBonusCases.map(event=>
+    db.collection('deal_christmas_cent_rewards_v1').doc(after.id+'_'+event.eventId));
+   const [albumSnaps,rewardSnaps]=await Promise.all([
+    Promise.all(owners.map(uid=>tx.get(albumRefs.get(uid)))),
+    Promise.all(rewardRefs.map(rewardRef=>tx.get(rewardRef)))
+   ]);
+   const albums=new Map(owners.map((uid,i)=>{
+    const previous=albumSnaps[i].exists?albumSnaps[i].data():{};
+    return [uid,{previous,cards:{...(previous.cards||{})},count:0}];
+   }));
+   const pendingWrites=[];
+   for(let i=0;i<openedBonusCases.length;i++){
+    const event=openedBonusCases[i],uid=event.playerId;
+    const rewardId=after.id+'_'+event.eventId;
+    after.pendingCardReveals=[...(after.pendingCardReveals||[]),{kind:'cent',rewardId,uid}];
+    if(rewardSnaps[i].exists)continue;
+    const packId=drawCasePackBonus(randomInt);
+    const pack=DOG_S2_PACKS.find(p=>p.id===packId);
+    if(!pack)throw Error('INVALID_PACK');
+    const album=albums.get(uid);
+    const drawn=dogS2Discoveries(dogS2Draw(pack),album.cards);
+    for(const card of drawn)album.cards[card.id]=(album.cards[card.id]||0)+1;
+    album.count++;
+    pendingWrites.push({ref:rewardRefs[i],data:{
+     uid,gameId:after.id,eventId:event.eventId,triggerAmount:event.amount,
+     packId,packName:pack.name,revealed:drawn,createdAt:Date.now()
+    }});
+   }
+   if(pendingWrites.length){
+    awardWrite=()=>{
+     for(const uid of owners){
+      const album=albums.get(uid);
+      if(!album.count)continue;
+      tx.set(albumRefs.get(uid),{
+       season:2,cards:album.cards,opened:(album.previous.opened||0)+album.count,
+       updatedAt:Date.now()
+      },{merge:true});
+     }
+     for(const entry of pendingWrites)tx.create(entry.ref,entry.data);
+    };
    }
   }
 // A Christmas pack is included in a banker offer only when the player accepts the deal.
