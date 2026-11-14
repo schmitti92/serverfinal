@@ -1303,6 +1303,9 @@ test('DOG avatars stay per player, reach both match projections and skip unchang
  const created=await h.api('POST','/api/hub/rooms','alice',{dogAvatar:5});
  const code=created.room.code;
  assert.equal(created.room.players[0].dogAvatar,5);
+ const early=await h.api('POST','/api/hub/rooms/'+code+'/dog/avatar','alice',{avatar:4});
+ assert.equal(early.status,200,'avatar can be chosen in the room before DOG is selected');
+ assert.equal(early.room.players[0].dogAvatar,4);
  const joined=await h.api('POST','/api/hub/rooms/'+code+'/join','bob',{dogAvatar:11});
  assert.equal(joined.room.players[1].dogAvatar,11);
  const chosen=await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog',dogAvatar:5});
