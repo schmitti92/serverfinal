@@ -366,7 +366,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    p.needed.has('hammer')?tx.get(p.iceRef):null,
    p.needed.has('joker')?tx.get(p.jokerRef):null,
    p.needed.has('minigame')?tx.get(p.hatsRef):null,
-   (mode==='super'||p.needed.has('pack')||p.needed.has('wildcard'))?tx.get(p.dogAlbumRef):null,
+   (mode==='super'||mode!=='skyjo'&&p.needed.has('pack')||p.needed.has('wildcard'))?tx.get(p.dogAlbumRef):null,
    p.inboxRef?tx.get(p.inboxRef):null
   ])));
   const now=Date.now();
