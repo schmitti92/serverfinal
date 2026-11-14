@@ -77,7 +77,7 @@ test('Only GET display routes use the cache; slot settlement and purchases still
  assert.match(source,/createDealEconomyReadCache\(\)/);
  assert.match(source,/app\.get\('\/api\/deal-or-no-deal\/monster-slots\/catalog'[\s\S]*?economyReadCache\.read\(db\)/);
  assert.match(source,/app\.get\('\/api\/deal-or-no-deal\/:code\/economy'[\s\S]*?economyReadCache\.read\(db\)/);
- assert.match(source,/const \[wallet,snap,economy\]=await Promise\.all\(\[db\.collection\(walletCollection\).*?economyReadCache\.read\(db\)\]\)/);
+ assert.match(source,/const \[wallet,snap,economy\]=await Promise\.all\(\[readDisplayWallet\(db,uid\),db\.collection\(CARD_COLLECTION\).*?economyReadCache\.read\(db\)\]\)/);
  assert.match(source,/tx\.get\(dealEconomyRef\(db\)\)/);
  assert.match(source,/tx\.get\(economyRef\)/);
  assert.match(source,/economyReadCache\.invalidate\(\)/);
