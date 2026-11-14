@@ -40,7 +40,7 @@ test('Server awards missions plus a two-reel round-winner bonus',()=>{
  assert.deepEqual(out.missions.map(m=>m.id),game.skyjoSpecial.missions);
  assert.equal(out.players[0].winner,true);
  assert.equal(out.players[0].slots,out.players[0].missionSlots+2);
- assert.equal(out.players[1].slots,out.missions.filter(m=>m.field!=='score').reduce((n,m)=>n+m.slots,0));
+ assert.equal(out.players[1].slots,out.missions.filter(m=>m.less?15<=m.at:Number(fullProgress()[m.field]||0)>=m.at).reduce((n,m)=>n+m.slots,0));
  assert.ok(out.players[0].slots>=2);
 });
 test('Without board missions, the winner receives two reels plus any score-based mission',()=>{
