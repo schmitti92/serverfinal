@@ -1237,22 +1237,21 @@ const ref=db.collection(collection).doc(code);const game=await db.runTransaction
 if(before.pendingCardReveals?.length&&!(before.commands||[]).includes(req.body?.id))throw Error('CARD_REVEAL_PENDING');
  if(before.caseSlotShow&&!(before.commands||[]).includes(req.body?.id))throw Error('CASE_SLOT_PENDING');
 const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
-  // New matches: one synchronized three-reel spin for each special suitcase.
-  // No card pack is credited here; previous rounds retain existing rewards.
+  // Each freshly opened 1-cent or 50-million suitcase earns ONE three-reel
+  // spin, including ongoing rounds; older credited pack receipts stay valid.
   let awardWrite=null;
-  if(after.caseSlotRewardVersion===1){
-   const events=newCasePackBonusEvents(before,after,req.body);
-   if(events.length){
-    const queued=[...(after.caseSlotQueue||[]),...events.map(event=>({
-     uid:event.playerId,eventId:event.eventId,amount:event.amount
-    }))];
-    if(!after.caseSlotShow){
-     const first=queued.shift(),now=Date.now();
-     after.caseSlotShow={...first,phase:'ready',turn:'case',reels:3,
-      activatedAt:now,showAt:now+2200,startedAt:null,prizes:[]};
-    }
-    after.caseSlotQueue=queued;
+  const specialEvents=newCasePackBonusEvents(before,after,req.body);
+  if(specialEvents.length){
+   const queued=[...(after.caseSlotQueue||[]),...specialEvents.map(event=>({
+    uid:event.playerId,eventId:event.eventId,amount:event.amount
+   }))];
+   if(!after.caseSlotShow){
+    const first=queued.shift(),now=Date.now();
+    after.caseSlotShow={...first,phase:'ready',turn:'case',reels:3,
+     activatedAt:now,showAt:now+2200,startedAt:null,prizes:[]};
    }
+   after.caseSlotQueue=queued;
+   after.caseSlotRewardVersion=1;
   }
 // A Christmas pack is included in a banker offer only when the player accepts the deal.
   const lastBefore=before.history?.at(-1);
