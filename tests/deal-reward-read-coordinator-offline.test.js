@@ -101,7 +101,7 @@ test('Only authorized GET reward views share receipts; settlement still uses tra
  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  assert.match(api,/createDealRewardReadCoordinator\(\)/);
  assert.match(api,/rewardReadCoordinator\.invalidateAll\(\);\s*const listeners=dealSockets\.get\(code\)/);
- for(const coll of COLLECTIONS)assert.match(api,new RegExp('rewardReadCoordinator\\.read\\(db,db\\.collection\\(\\\''+coll+'\\\'\\)'));
+ for(const coll of COLLECTIONS)assert.ok(api.includes("rewardReadCoordinator.read(db,db.collection('"+coll+"')"),'reward GET not wired: '+coll);
  assert.match(api,/rewardReadStats:\(\)=>rewardReadCoordinator\.snapshot\(\)/);
  assert.match(server,/dealRewardReadCache:dealOrNoDealOnline\.rewardReadStats\(\)/);
  assert.match(api,/app\.post\('\/api\/deal-or-no-deal\/christmas\/season2\/super-slot\/play'[\s\S]*?db\.runTransaction/);
