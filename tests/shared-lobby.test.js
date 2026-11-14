@@ -1329,3 +1329,46 @@ test('DOG avatars stay per player, reach both match projections and skip unchang
  assert.deepEqual(bob.match.dogAvatars,[5,12,null,null]);
  assert.notEqual(bob.match.dogSeat,alice.match.dogSeat);
 });
+
+
+test('Unchanged hub rejoins do not rewrite Firestore room documents',async()=>{
+ const h=harness(),initial=await h.api('POST','/api/hub/rooms'),code=initial.room.code;
+ const bobFirst=await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ assert.equal(bobFirst.status,200);
+ let writes=0;
+ const runTransaction=h.store.runTransaction.bind(h.store);
+ h.store.runTransaction=fn=>runTransaction(tx=>fn({
+   ...tx,
+   set(ref,value){writes++;tx.set(ref,value);}
+ }));
+ const same=await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ assert.equal(same.status,200);
+ assert.equal(writes,0,'same player in same room must not trigger a Firestore write');
+ assert.equal(same.room.revision,bobFirst.room.revision);
+ assert.equal(same.room.players.length,2);
+ const sameHost=await h.api('POST','/api/hub/rooms/'+code+'/join','alice',{dogAvatar:0});
+ assert.equal(sameHost.status,200);
+ assert.equal(writes,0,'rejoining host does not rewrite the room either');
+
+ h.identities.bob.name='Robert';
+ const renamed=await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ assert.equal(renamed.status,200);
+ assert.equal(writes,1,'a changed display name is persisted');
+ assert.equal(renamed.room.revision,bobFirst.room.revision+1);
+ assert.equal(renamed.room.players.find(p=>p.me).name,'Robert');
+
+ const newAvatar=await h.api('POST','/api/hub/rooms/'+code+'/join','bob',{dogAvatar:4});
+ assert.equal(newAvatar.status,200);
+ assert.equal(writes,2,'an explicit new avatar is persisted');
+ assert.equal(newAvatar.room.players.find(p=>p.me).dogAvatar,4);
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob',{dogAvatar:4});
+ assert.equal(writes,2,'reselecting the same avatar must not rewrite the document');
+
+ h.advance(19*3600*1000);
+ const ttl=await h.api('POST','/api/hub/rooms/'+code+'/join','bob',{dogAvatar:4});
+ assert.equal(ttl.status,200);
+ assert.equal(writes,3,'room expiry is renewed when under six hours remain');
+ assert.equal(ttl.room.revision,newAvatar.room.revision+1);
+ const final=await h.api('GET','/api/hub/rooms/'+code,'alice');
+ assert.equal(final.room.players.length,2);
+});
