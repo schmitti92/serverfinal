@@ -4409,7 +4409,7 @@ installEngine2Api(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
-const dealOrNoDealOnline=installDealOrNoDeal(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
+const dealOrNoDealOnline=installDealOrNoDeal(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},getSkyjoState:readSkyjoPersisted});
 installPeekJoker(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 installChristmasIceApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},notifyDealGameChanged:dealOrNoDealOnline.notifyGameChanged});
 // Independent 10-room Christmas hats jackpot (no effect on core Deal matches).
