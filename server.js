@@ -4502,7 +4502,8 @@ async function hubSkyjoGuard(req,res,next){
     const token=/^Bearer (\S+)$/i.exec(String(req.get('authorization')||''))?.[1];
     if(!token)return res.status(401).json({ok:false,error:'LOGIN_REQUIRED'});
     const profile=await profileStatsV8.identity(token);
-    const seat=await sharedLobby.skyjoSeat(String(req.params.code),profile);
+    // Only safe GET polling may use the 3-second room cache; POST actions always reauthorize from Firestore.
+    const seat=await sharedLobby.skyjoSeat(String(req.params.code),profile,{readOnly:req.method==='GET'});
     if(seat.error)return res.status(seat.error==='LOGIN_REQUIRED'?401:403).json({ok:false,error:seat.error});
     req.hubSkyjo=seat;
     return next();
