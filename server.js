@@ -10,6 +10,7 @@ import { installDogMaterialsApi } from "./dog-materials.js";
 import { installDogForgeApi } from "./dog-forge.js";
 import { installDogBossApi } from "./dog-boss.js";
 import { installDogGatesApi } from "./dog-gates.js";
+import { createDogSharedReadCoordinator } from "./dog-shared-read-coordinator.js";
 import { installDogDeveloperApi } from "./dog-developer.js";
 import { installDogBoss10Api } from "./dog-boss10.js";
 import { installDogGroupBossApi } from "./dog-group-boss.js";
@@ -4358,11 +4359,14 @@ const profileStatsV8=installProfileStats(app,{
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 invalidateCachedProfileIdentity=profileStatsV8.invalidateIdentity;
+// One Render instance can reuse *simultaneous* read-only DOG team/progress GETs.
+const dogSharedReadCoordinator=createDogSharedReadCoordinator();
 // DOG expedition: inventory and chest opening stay server-authoritative.
 // Only Deal-or-No-Deal's verified final payout credits new chests.
 installDogMaterialsApi(app,{
   verifyProfile:profileStatsV8.identity,
-  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
+  getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
+  readSharedDoc:dogSharedReadCoordinator.read
 });
 installDogForgeApi(app,{
   verifyProfile:profileStatsV8.identity,
@@ -4386,7 +4390,8 @@ installDogDeveloperApi(app,{
 installDogGatesApi(app,{
   verifyProfile:profileStatsV8.identity,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;},
-  botLogic:liveBotLogic
+  botLogic:liveBotLogic,
+  readSharedDoc:dogSharedReadCoordinator.read
 });
 installDogBoss10Api(app,{
   notifyChange:(gate,actorUid,eventType)=>dogBossPush?.notify(gate,actorUid,eventType),
@@ -4470,7 +4475,8 @@ app.get("/health", (_req, res) =>
     skyjoFirebaseWorkers:skyjoFirebaseWorkers.size,
     businessCacheRooms:businessCache.size,
     businessFirebaseWorkers:businessFirebaseWorkers.size,
-    profileIdentityCache:profileStatsV8.identityCacheStats()
+    profileIdentityCache:profileStatsV8.identityCacheStats(),
+    dogSharedReadCache:dogSharedReadCoordinator.stats()
   })
 );
 
