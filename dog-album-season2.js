@@ -279,7 +279,7 @@ export function dogS2Redeem(cards={}){
  }
  return next;
 }
-export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
+export function installDogAlbumSeason2(app,{auth,getFirestore,fail,readDisplayEconomy=async db=>normalizeDealEconomy((await dealEconomyRef(db).get()).data())}){
  const base='/api/deal-or-no-deal/christmas/season2';
  const legacy='deal_or_no_deal_christmas_v1';
  const wallet='deal_or_no_deal_wallets_v1';
@@ -288,9 +288,9 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const uid=req.dealIdentity.uid;
-   const [w,s,old,economySnap]=await Promise.all([db.collection(wallet).doc(uid).get(),db.collection(DOG_S2_COLLECTION).doc(uid).get(),db.collection(legacy).doc(uid).get(),dealEconomyRef(db).get()]);
+   const [w,s,old,economy]=await Promise.all([db.collection(wallet).doc(uid).get(),db.collection(DOG_S2_COLLECTION).doc(uid).get(),db.collection(legacy).doc(uid).get(),readDisplayEconomy(db)]);
    const data=s.exists?s.data():{},legacyData=old.exists?old.data():{};
-   const cards=data.cards||{},economy=normalizeDealEconomy(economySnap.data());
+   const cards=data.cards||{};
    res.set('Cache-Control','no-store');
    res.json({ok:true,season:2,cards,definitions:DOG_S2_CARDS,packs:DOG_S2_PACKS.map(p=>({...p,price:dogPackPrice(economy,p.id)})),purchasesEnabled:economy.packsEnabled,
     balance:positive(w.data()?.balance),opened:positive(data.opened),
