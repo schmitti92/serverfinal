@@ -188,7 +188,7 @@ export function openDogChestInInventory(input,drop,now=Date.now(),sourceTier=dro
 const ERROR_STATUS=Object.freeze({LOGIN_REQUIRED:401,INVALID_REQUEST_ID:400,INVALID_DOG_CHEST_TIER:400,INVALID_DOG_CHEST_QUANTITY:400,DOG_CHEST_BATCH_TOO_LARGE:409,
  NO_DOG_CHESTS:409,NO_DOG_CHEST_TYPE:409,DOG_MATERIALS_LIMIT:409,
  DOG_CHEST_STORAGE_INVALID:409,DOG_CHEST_STORAGE_LIMIT:409});
-export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=randomInt}){
+export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=randomInt,readSharedDoc=(_db,ref)=>ref.get()}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -213,8 +213,8 @@ export function installDogMaterialsApi(app,{verifyProfile,getFirestore,rand=rand
    // One explicit inventory page load; no continuous listening or polling.
    const [snap,team,progressSnap]=await Promise.all([
     db.collection(DOG_MATERIALS_COLLECTION).doc(req.dogUid).get(),
-    db.collection('dog_boss_team_v1').doc('first-three-heroes').get(),
-    db.collection('dog_gate_progress_v1').doc('first-three-heroes').get()
+    readSharedDoc(db,db.collection('dog_boss_team_v1').doc('first-three-heroes')),
+    readSharedDoc(db,db.collection('dog_gate_progress_v1').doc('first-three-heroes'))
    ]);
    const member=team.exists&&Array.isArray(team.data()?.members)&&
     team.data().members.some(p=>p?.uid===req.dogUid);
