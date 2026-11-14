@@ -1,0 +1,27 @@
+name: Firebase profile cache (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'profile-stats.js'
+      - 'profile-api.js'
+      - 'server.js'
+      - 'tests/profile-identity-cache-offline.test.js'
+      - '.github/workflows/firebase-profile-cache-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profile-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check profile-stats.js
+      - run: node --check profile-api.js
+      - run: node --check server.js
+      - name: Verify profile cache with simulated Firestore
+        run: node --test tests/profile-identity-cache-offline.test.js
