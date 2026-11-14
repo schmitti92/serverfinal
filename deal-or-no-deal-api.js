@@ -7,7 +7,7 @@ import {dealEconomyRef,normalizeDealEconomy,validateDealEconomy,goldPackPrice} f
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
-import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,slotCashChance,skyjoMonsterSlotWeights} from './monster-slots.js';
+import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,MONSTER_SLOT_SKYJO_CASH_PRIZES,MONSTER_SLOT_CASH_PRIZES,slotCashChance,skyjoMonsterSlotWeights} from './monster-slots.js';
 import {skyjoSpecialAwardRows} from './skyjo-special-engine.js';
 import {creditSkyjoPackVouchers} from './skyjo-pack-vouchers.js';
 import {addDealRecord,addSlotMoneyRecords,viewPrizeRecord} from './deal-player-records.js';
@@ -352,12 +352,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
   // SKYJO's 50/50 chance applies to every real reel and is independent of
   // the host-adjustable global slot cash share; existing DOND modes are unchanged.
   const effectiveSlotWeights=mode==='skyjo'?skyjoMonsterSlotWeights(slotWeights):slotWeights;
+  const effectiveCashPrizes=mode==='skyjo'?MONSTER_SLOT_SKYJO_CASH_PRIZES:MONSTER_SLOT_CASH_PRIZES;
   const progress=dogGateProgress(progressSnap.exists?progressSnap.data():null);
   const prepared=missing.map(p=>{
    const gate=progress.people[p.uid]?.highestGate??1;
-   const prizes=mode==='super'?Array.from({length:5},()=>drawMonsterSlot(gate,randomInt,effectiveSlotWeights)):
-    p.reels===3?drawMonsterSlots(gate,randomInt,effectiveSlotWeights):
-    Array.from({length:p.reels},()=>drawMonsterSlot(gate,randomInt,effectiveSlotWeights));
+   const prizes=mode==='super'?Array.from({length:5},()=>drawMonsterSlot(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes)):
+    p.reels===3?drawMonsterSlots(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes):
+    Array.from({length:p.reels},()=>drawMonsterSlot(gate,randomInt,effectiveSlotWeights,effectiveCashPrizes));
    const needed=new Set(prizes.map(prize=>prize.kind));
    return {...p,gate,prizes,needed};
   });
