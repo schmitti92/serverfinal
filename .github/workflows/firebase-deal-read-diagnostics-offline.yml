@@ -1,0 +1,26 @@
+name: Firebase Deal read diagnostics (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-read-diagnostics.js'
+      - 'deal-or-no-deal-api.js'
+      - 'server.js'
+      - 'tests/deal-read-diagnostics-offline.test.js'
+      - '.github/workflows/firebase-deal-read-diagnostics-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check deal-read-diagnostics.js
+      - run: node --check deal-or-no-deal-api.js
+      - run: node --check server.js
+      - run: node --test tests/deal-read-diagnostics-offline.test.js
