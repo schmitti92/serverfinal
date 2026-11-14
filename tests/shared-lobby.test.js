@@ -1243,3 +1243,57 @@ test('SKYJO read-only seat cache saves Firestore reads but never caches mutation
  h.advance(3001);
  assert.equal((await h.adapter.skyjoSeat(gameCode,h.identities.alice,{readOnly:true})).error,'MATCH_NOT_FOUND');
 });
+
+
+test('Render-first hub sync combines ongoing polls without Firestore transactions',async()=>{
+ const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'business'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true})).room;
+ const matchId=started.match.id,route='/api/hub/rooms/'+code+'/sync';
+ let reads=0,transactions=0;
+ const originalCollection=h.store.collection;
+ h.store.collection=name=>{
+  const col=originalCollection(name);
+  return {doc:code=>{
+   const doc=col.doc(code);
+   return {...doc,get:async()=>{reads++;return doc.get()}};
+  }};
+ };
+ const originalTransaction=h.store.runTransaction.bind(h.store);
+ h.store.runTransaction=fn=>{transactions++;return originalTransaction(fn)};
+ const [first,second]=await Promise.all([
+  h.api('POST',route,'alice',{matchId}),
+  h.api('POST',route,'bob',{matchId})
+ ]);
+ assert.equal(first.status,200);
+ assert.equal(second.status,200);
+ assert.equal(first.room.phase,'playing');
+ assert.equal(second.room.phase,'playing');
+ assert.equal(reads,1,'both clients share one read-only Firestore lookup');
+ assert.equal(transactions,0,'ongoing games never start Firestore transactions on each poll');
+ assert.equal((await h.api('POST',route,'cara',{matchId})).status,403,'nonmember cannot access cached room');
+ await h.api('POST',route,'alice',{matchId});
+ assert.equal(reads,1,'same-room polling remains in Render RAM for 2.5 seconds');
+ h.advance(2501);
+ const after=await h.api('POST',route,'bob',{matchId});
+ assert.equal(after.room.revision,started.revision);
+ assert.equal(reads,2,'expired cache reloads Firestore');
+ assert.equal(transactions,0);
+ h.setFinished(true);
+ const [endedOne,endedTwo]=await Promise.all([
+  h.api('POST',route,'alice',{matchId}),
+  h.api('POST',route,'bob',{matchId})
+ ]);
+ assert.equal(endedOne.status,200);
+ assert.equal(endedTwo.status,200);
+ const room=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
+ assert.equal(room.phase,'lobby');
+ assert.equal(room.lastCompleted.id,matchId);
+ assert.equal(room.revision,started.revision+1,'duplicate completion never writes twice');
+ assert.ok(transactions>=1,'real completion uses authoritative Firestore transaction');
+ const post=await h.api('POST',route,'alice',{matchId});
+ assert.equal(post.room.phase,'lobby');
+ assert.equal(post.room.revision,room.revision);
+});
