@@ -1,0 +1,29 @@
+name: Firebase Deal committed state reuse (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-committed-state-seed.js'
+      - 'deal-or-no-deal-api.js'
+      - 'server.js'
+      - 'tests/deal-committed-state-seed-offline.test.js'
+      - '.github/workflows/firebase-deal-committed-state-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  committed-state-reads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify syntax of Render game cache
+        run: |
+          node --check deal-committed-state-seed.js
+          node --check deal-or-no-deal-api.js
+          node --check server.js
+      - name: Confirm game GET and slot recovery with fake Firestore
+        run: node --test tests/deal-committed-state-seed-offline.test.js
