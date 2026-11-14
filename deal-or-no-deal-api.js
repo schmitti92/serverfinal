@@ -264,7 +264,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
  for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),dealPrizeStats:addDealRecord(previous,p.amount),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));const slot=slotRankings.get(p.uid);tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,slotEligible:slot.reels>0,slotReels:slot.reels,slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:slot.reels===6||slot.reels===2?3:2,createdAt:Date.now()});changed=true}return game.id})};
- installDogAlbumSeason2(app,{auth,getFirestore,fail});
+ installDogAlbumSeason2(app,{auth,getFirestore,fail,
+  // Only album GET displays reuse the shared read cache. Paid opens are transactional.
+  readDisplayEconomy:db=>economyReadCache.read(db)});
 
  // New finales award six winner reels and two unique runner-up reels (3–4 players).
  // Existing 3/1 receipts and already-started shows keep their original prizes.
