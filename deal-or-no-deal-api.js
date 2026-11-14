@@ -6,6 +6,7 @@ import {FieldValue} from 'firebase-admin/firestore';
 import {dealEconomyRef,normalizeDealEconomy,validateDealEconomy,goldPackPrice} from './deal-economy.js';
 import {createDealEconomyReadCache} from './deal-economy-read-cache.js';
 import {createDealWalletReadCoordinator} from './deal-wallet-read-coordinator.js';
+import {createDealReadDiagnostics} from './deal-read-diagnostics.js';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
@@ -73,6 +74,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  // Share only simultaneous personal balance reads for display purposes.
  // There is NO wallet value TTL; all writes/credits still use transactions.
  const walletReadCoordinator=createDealWalletReadCoordinator();
+ const dealReadDiagnostics=createDealReadDiagnostics();
  const readDisplayWallet=(db,uid)=>walletReadCoordinator.read(db,uid);
  const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
  const broadcastGame=(code,game)=>{
@@ -151,22 +153,29 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    gameReads:firestoreUsage.gameReads,gameCacheHits:firestoreUsage.gameCacheHits,
    roomReads:firestoreUsage.roomReads,roomCacheHits:firestoreUsage.roomCacheHits,
    gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,walletReads:firestoreUsage.walletReads,christmasReads:firestoreUsage.christmasReads,rewardReads:firestoreUsage.rewardReads,
-   economyReadCache:economyReadCache.stats(),walletReadCoordinator:walletReadCoordinator.stats()
+   economyReadCache:economyReadCache.stats(),walletReadCoordinator:walletReadCoordinator.stats(),
+   dealReadDiagnostics:dealReadDiagnostics.snapshot().lastMinutes
   }));
  },60000);
  usageTimer.unref?.();
  const gameCache=new Map();
  const gameGenerations=new Map();
  const invalidateGame=code=>{gameGenerations.set(code,(gameGenerations.get(code)||0)+1);gameCache.delete(code)};
- const readGame=async(db,code)=>{
+ const readGame=async(db,code,source='other')=>{
+  dealReadDiagnostics.record('game',source,'request');
   const now=Date.now(),existing=gameCache.get(code);
-  if(existing&&existing.expires>now){firestoreUsage.gameCacheHits++;return existing.promise;}
+  if(existing&&existing.expires>now){
+   firestoreUsage.gameCacheHits++;
+   dealReadDiagnostics.record('game',source,'cacheHit');
+   return existing.promise;
+  }
   const generation=gameGenerations.get(code)||0;
   firestoreUsage.gameReads++;
+  dealReadDiagnostics.record('game',source,'firestoreGet');
   const promise=db.collection(collection).doc(code).get().then(snap=>snap.exists?publicView(snap.data().game):null);
   gameCache.set(code,{promise,expires:now+2500});
   if(gameCache.size>300){for(const [key,item] of gameCache){if(item.expires<=now)gameCache.delete(key)}if(gameCache.size>300)gameCache.delete(gameCache.keys().next().value)}
-  try{const result=await promise;if((gameGenerations.get(code)||0)!==generation)return readGame(db,code);return result}catch(error){if((gameGenerations.get(code)||0)===generation&&gameCache.get(code)?.promise===promise)gameCache.delete(code);throw error}
+  try{const result=await promise;if((gameGenerations.get(code)||0)!==generation)return readGame(db,code,source);return result}catch(error){if((gameGenerations.get(code)||0)===generation&&gameCache.get(code)?.promise===promise)gameCache.delete(code);throw error}
  };
  const hubCollection='spielesammlung_hub_v1';
  const avatarCollection='deal_or_no_deal_avatars_v1';
@@ -196,27 +205,33 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  // three players act at nearly the same moment. The promise is discarded as
  // soon as it settles: write operations still check fresh room membership.
  const roomReadsInFlight=new Map();
- const freshRoomSnapshot=(db,code)=>{
+ const freshRoomSnapshot=(db,code,source='other')=>{
   const running=roomReadsInFlight.get(code);
-  if(running){firestoreUsage.roomCacheHits++;return running}
+  if(running){
+   firestoreUsage.roomCacheHits++;
+   dealReadDiagnostics.record('room',source,'cacheHit');
+   return running;
+  }
   firestoreUsage.roomReads++;
+  dealReadDiagnostics.record('room',source,'firestoreGet');
   const promise=db.collection(hubCollection).doc(code).get();
   roomReadsInFlight.set(code,promise);
   const clear=()=>{if(roomReadsInFlight.get(code)===promise)roomReadsInFlight.delete(code)};
   promise.then(clear,clear);
   return promise;
  };
- const check=async(db,code,uid,allowCache=false)=>{
+ const check=async(db,code,uid,allowCache=false,source='other')=>{
+  dealReadDiagnostics.record('room',source,'request');
   const now=Date.now();
   let entry=allowCache?roomReadCache.get(code):null;
   if(!entry||entry.expires<=now){
-   const promise=freshRoomSnapshot(db,code);
+   const promise=freshRoomSnapshot(db,code,source);
    entry={promise,expires:now+2000};
    if(allowCache){
     roomReadCache.set(code,entry);
     if(roomReadCache.size>300){for(const [key,item] of roomReadCache){if(item.expires<=now)roomReadCache.delete(key)}if(roomReadCache.size>300)roomReadCache.delete(roomReadCache.keys().next().value)}
    }
-  }else if(allowCache){firestoreUsage.roomCacheHits++;}
+  }else if(allowCache){firestoreUsage.roomCacheHits++;dealReadDiagnostics.record('room',source,'cacheHit');}
   let snap;
   try{snap=await entry.promise}catch(e){if(roomReadCache.get(code)===entry)roomReadCache.delete(code);throw e}
   if(!snap.exists)throw Error('ROOM_NOT_FOUND');
@@ -1524,5 +1539,5 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
  const elapsed=Date.now()-actionStarted;
  if(elapsed>=2500)console.warn('[deal-slow-action]',JSON.stringify({type:String(req.body?.type||'').slice(0,24),ms:elapsed,ok:false,error:String(e?.message||'ERROR').slice(0,64)}));
  return fail(res,e)}});
- return {collection,attachSocket,notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
+ return {collection,attachSocket,readDiagnostics:()=>dealReadDiagnostics.snapshot(),notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
 }
