@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createDealEconomyReadCache} from '../deal-economy-read-cache.js';
+import {installDogAlbumSeason2} from '../dog-album-season2.js';
 
 function fixture(){
  let now=1000,reads=0,failNext=false,gate=null;
@@ -80,4 +81,44 @@ test('Only GET display routes use the cache; slot settlement and purchases still
  assert.match(source,/tx\.get\(dealEconomyRef\(db\)\)/);
  assert.match(source,/tx\.get\(economyRef\)/);
  assert.match(source,/economyReadCache\.invalidate\(\)/);
+});
+
+
+test('DOG album inventory displays share the slot catalogue economy cache',async()=>{
+ const h=fixture(),routes=new Map();
+ const app={get:(route,_auth,fn)=>routes.set(route,fn),post:()=>{}};
+ const db={collection:name=>{
+  if(name==='deal_or_no_deal_economy_v1')return h.db.collection(name);
+  return {doc:()=>({get:async()=>({exists:false,data:()=>({})})})};
+ }};
+ installDogAlbumSeason2(app,{
+  auth:()=>{},getFirestore:()=>db,
+  fail:(_res,e)=>{throw e},
+  readDisplayEconomy:db=>h.cache.read(db)
+ });
+ const handler=routes.get('/api/deal-or-no-deal/christmas/season2/me');
+ assert.equal(typeof handler,'function');
+ const call=async uid=>{
+  const res={set(){return this},json(payload){this.payload=payload;return payload}};
+  await handler({dealIdentity:{uid}},res);
+  assert.equal(res.payload.ok,true);
+  return res.payload;
+ };
+ const a=await call('user_one_111'),b=await call('user_two_222');
+ assert.equal(h.reads(),1,'all players and slot displays share a single economy document read');
+ assert.ok(a.packs.length>0);
+ assert.deepEqual(b.packs,a.packs);
+ h.setPrices({dogSmall:54321000});
+ h.cache.invalidate();
+ const updated=await call('user_one_111');
+ assert.equal(updated.packs.find(p=>p.id==='small').price,54321000);
+ assert.equal(h.reads(),2);
+});
+
+test('DOG album display cache is injected only into its GET handler, not purchase settlement',()=>{
+ const source=readFileSync(new URL('../deal-or-no-deal-api.js',import.meta.url),'utf8');
+ const album=readFileSync(new URL('../dog-album-season2.js',import.meta.url),'utf8');
+ assert.match(source,/readDisplayEconomy:db=>economyReadCache\.read\(db\)/);
+ assert.match(album,/readDisplayEconomy\(db\)/);
+ assert.match(album,/app\.post\(base\+'\/open'[\s\S]*?db\.runTransaction/);
 });
