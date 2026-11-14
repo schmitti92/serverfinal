@@ -24,10 +24,10 @@ export function monsterSlotRarity(prize){
     prize?.kind==='cash'&&prize.amountCents>=1000000)return 'rare';
  return 'common';
 }
-// Deal or No Deal: one unique champion earns 3 reels, one unique runner-up
-// earns 1 reel in games with >=3 participants, everyone else earns none.
+// Deal or No Deal: one unique champion earns 6 reels and the unique runner-up
+// earns 2 reels in games with >=3 participants. Legacy payouts can retain 3/1.
 // Tied champions earn no slots; ×2 wallet bonuses never affect ranking.
-export function monsterSlotPlacements(payouts=[]){
+export function monsterSlotPlacements(payouts=[],{legacy=false}={}){
  if(!Array.isArray(payouts)||payouts.length<1||payouts.length>4||
   payouts.some(p=>typeof p?.uid!=='string'||!p.uid||
    !Number.isSafeInteger(p.amount)||p.amount<0)||
@@ -41,8 +41,8 @@ export function monsterSlotPlacements(payouts=[]){
   payouts.filter(p=>p.amount===secondAmount):[];
  return new Map(payouts.map(p=>[p.uid,{
   rank:amounts.indexOf(p.amount)+1,
-  reels:uniqueChampion&&p.amount===amounts[0]?3:
-   second.length===1&&p.uid===second[0].uid?1:0,
+  reels:uniqueChampion&&p.amount===amounts[0]?(legacy?3:6):
+   second.length===1&&p.uid===second[0].uid?(legacy?1:2):0,
   tiedTop:!uniqueChampion
  }]));
 }
