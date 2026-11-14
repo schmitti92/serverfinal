@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createDogSharedReadCoordinator} from '../dog-shared-read-coordinator.js';
 import {installDogGatesApi} from '../dog-gates.js';
-import {installDogMaterialsApi} from '../dog-materials.js';
+import {installDogMaterialsApi,DOG_MATERIALS_COLLECTION} from '../dog-materials.js';
 
 function fakeDatabase(){
  const docs=new Map(),reads=new Map(),gates=new Map();
@@ -95,8 +95,8 @@ test('DOG map and materials share concurrently requested team/progress documents
  assert.equal(a.body.ok,true);assert.equal(b.body.ok,true);assert.equal(c.body.ok,true);
  assert.equal(f.reads(team),1,'one team GET shared between three authenticated page loads');
  assert.equal(f.reads(progress),1,'one progress GET shared between three authenticated page loads');
- assert.equal(f.reads('dog_materials_v3/dog-alice')+f.reads('dog_materials_v2/dog-alice'),0,
-  'inventory collection name is not inferred here');
+ assert.equal(f.reads(DOG_MATERIALS_COLLECTION+'/dog-alice'),1,
+  'the personal inventory remains a separate direct Firestore read');
  assert.equal(share.stats().sharedReads,4);
  assert.equal(share.stats().documentReads,2);
  // Subsequent page visits have no stale TTL, even if the same player is still active.
