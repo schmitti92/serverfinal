@@ -6,22 +6,26 @@ import {randomInt} from 'node:crypto';
 export const MONSTER_SLOTS_WEIGHTS=Object.freeze({
  chest:35,pack:30,hammer:20,joker:4,minigame:3,monster:3,cash:190
 });
-// SKYJO 100 Tore Special: 50% of all reel prizes are money, 50% are items.
-// Keep the host's relative NON-cash weights (packs, hammers, etc.), without
-// letting a host setting change this particular special's 50/50 promise.
-// For a 100%-cash global configuration, restore default item weights rather
-// than silently turning the SKYJO special into a money-only machine.
-export function skyjoMonsterSlotWeights(categoryWeights=MONSTER_SLOTS_WEIGHTS){
- const itemKeys=Object.keys(MONSTER_SLOTS_WEIGHTS).filter(key=>key!=='cash');
- const items=Object.fromEntries(itemKeys.map(key=>[
-  key,Number.isSafeInteger(categoryWeights?.[key])&&categoryWeights[key]>=0?categoryWeights[key]:MONSTER_SLOTS_WEIGHTS[key]
- ]));
- let itemTotal=Object.values(items).reduce((sum,weight)=>sum+weight,0);
- if(itemTotal===0){
-  for(const key of itemKeys)items[key]=MONSTER_SLOTS_WEIGHTS[key];
-  itemTotal=Object.values(items).reduce((sum,weight)=>sum+weight,0);
- }
- return Object.freeze({...items,cash:itemTotal});
+// SKYJO 100 Tore Special has its own deliberately album-focused economy.
+// 55% money, 23% album packs, 13% hammers, 5% material chests, 4% other.
+// Its mix is independent of DOND's host-configurable global Monster Slot odds;
+// those settings and all other DOND/100-Tore reward modes are untouched.
+export const MONSTER_SLOT_SKYJO_WEIGHTS=Object.freeze({
+ chest:50,pack:230,hammer:130,joker:18,minigame:12,monster:10,cash:550
+});
+export function skyjoMonsterSlotWeights(){
+ return MONSTER_SLOT_SKYJO_WEIGHTS;
+}
+// Within each SKYJO category: common DOG packs and the single hammer dominate.
+// Premium, platinum, lucky hammers and gold/legendary material chests are rarer.
+export const MONSTER_SLOT_SKYJO_LOOT=Object.freeze({
+ pack:Object.freeze({small:120,large:86,premium:20,platinum:4}),
+ hammer:Object.freeze({single:110,double:17,lucky:3})
+});
+export function skyjoMonsterSlotChestOdds(gate=1){
+ const base=monsterSlotChestOdds(gate);
+ return [base[0],base[1],base[2],Math.max(1,Math.round(base[3]*0.35)),
+  Math.max(1,Math.round(base[4]*0.15))];
 }
 export const MONSTER_SLOTS_COUNT=3;
 // Exactly one wildcard in 3,000 non-cash prize rolls.
@@ -91,14 +95,14 @@ export const MONSTER_SLOT_CASH_PRIZES=Object.freeze([
  [75000000,270],[100000000,220],[150000000,150],[200000000,110],
  [250000000,75],[300000000,45],[400000000,25],[500000000,10]
 ].map(entry=>Object.freeze(entry)));
-// SKYJO special only: big cash jackpots should feel more exceptional.
-// 250,000–999,999.99 EUR: 20% lower relative weight.
-// 1,000,000–5,000,000 EUR: 35% lower relative weight.
-// Money category probability stays 50%; all listed amounts remain possible.
+// SKYJO special only: epic and legendary money jackpots are particularly rare.
+// Relative cash weight: 250,000–999,999.99 EUR reduced by 50%;
+// 1,000,000–5,000,000 EUR reduced by 65%.
+// Overall cash chance is 55%, but all prize amounts remain obtainable.
 export const MONSTER_SLOT_SKYJO_CASH_PRIZES=Object.freeze(
  MONSTER_SLOT_CASH_PRIZES.map(([amount,weight])=>Object.freeze([
-  amount,amount>=100000000?Math.max(1,Math.round(weight*0.65)):
-   amount>=25000000?Math.max(1,Math.round(weight*0.8)):weight
+  amount,amount>=100000000?Math.max(1,Math.round(weight*0.35)):
+   amount>=25000000?Math.max(1,Math.round(weight*0.5)):weight
  ]))
 );
 export const slotCashChance=weights=>{
@@ -121,19 +125,26 @@ const labelFor=(kind,id,count)=>{
  if(kind==='wildcard')return '❓ Joker-Sammelkarte · Wunschkarte wählen';
  return 'Zufallsgeld';
 };
-export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS,cashPrizes=MONSTER_SLOT_CASH_PRIZES){
+export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS,
+ cashPrizes=MONSTER_SLOT_CASH_PRIZES,lootMix=null){
  let kind=weighted(Object.entries(categoryWeights),rand);
  // Wildcard is an ultra-rare *item* subtype, so changing cash vs items
  // preserves the requested 2:1 category ratio without a new category weight.
  if(kind!=='cash'&&rand(MONSTER_SLOT_WILDCARD_NONCASH_ODDS)===1234)kind='wildcard';
  let id=null,count=1,amountCents=null;
- if(kind==='chest')id=weighted(tiers.map((tier,i)=>[tier,monsterSlotChestOdds(gate)[i]]),rand);
+ if(kind==='chest'){
+  const chestWeights=lootMix===MONSTER_SLOT_SKYJO_LOOT?
+   skyjoMonsterSlotChestOdds(gate):monsterSlotChestOdds(gate);
+  id=weighted(tiers.map((tier,i)=>[tier,chestWeights[i]]),rand);
+ }
  if(kind==='pack'){
-  id=weighted(Object.entries(packs).map(([name,weights])=>[name,weights.reduce((a,b)=>a+b,0)]),rand);
+  id=weighted(lootMix?.pack?Object.entries(lootMix.pack):
+   Object.entries(packs).map(([name,weights])=>[name,weights.reduce((a,b)=>a+b,0)]),rand);
   count=quantity(packs[id],rand);
  }
  if(kind==='hammer'){
-  id=weighted(Object.entries(hammerOdds).map(([name,weights])=>[name,weights.reduce((a,b)=>a+b,0)]),rand);
+  id=weighted(lootMix?.hammer?Object.entries(lootMix.hammer):
+   Object.entries(hammerOdds).map(([name,weights])=>[name,weights.reduce((a,b)=>a+b,0)]),rand);
   count=quantity(hammerOdds[id],rand);
  }
  if(kind==='joker')count=quantity([75,25],rand);
@@ -146,6 +157,7 @@ export function drawMonsterSlot(gate=1,rand=randomInt,categoryWeights=MONSTER_SL
   label:kind==='cash'?(amountCents/100).toLocaleString('de-DE',{style:'currency',currency:'EUR'}):labelFor(kind,id,count)};
  return Object.freeze({...prize,rarity:monsterSlotRarity(prize)});
 }
-export function drawMonsterSlots(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS,cashPrizes=MONSTER_SLOT_CASH_PRIZES){
- return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand,categoryWeights,cashPrizes));
+export function drawMonsterSlots(gate=1,rand=randomInt,categoryWeights=MONSTER_SLOTS_WEIGHTS,
+ cashPrizes=MONSTER_SLOT_CASH_PRIZES,lootMix=null){
+ return Array.from({length:MONSTER_SLOTS_COUNT},()=>drawMonsterSlot(gate,rand,categoryWeights,cashPrizes,lootMix));
 }
