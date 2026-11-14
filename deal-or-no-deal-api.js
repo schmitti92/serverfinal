@@ -252,7 +252,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const settleFinal=async(db,code)=>{const matchRef=db.collection(collection).doc(code);return db.runTransaction(async tx=>{const match=await tx.get(matchRef);if(!match.exists)return false;const game=match.data().game;if(!game||!['final','done'].includes(game.phase)||!Array.isArray(game.values))return false;
  const chestContext=await chestAwardContext(db,tx);
  const payouts=game.players.map(p=>({uid:p.id,amount:payoutFor(game,p),credit:cashCreditFor(game,p)}));if(payouts.some(p=>!Number.isSafeInteger(p.amount)||p.amount<0||!Number.isSafeInteger(p.credit)))throw Error('INVALID_PAYOUT');const maximum=Math.max(...payouts.map(p=>p.amount));
- const slotRankings=monsterSlotPlacements(payouts,{legacy:[1,3].includes(game.monsterSlotShow?.reels)});
+ const slotRankings=monsterSlotPlacements(payouts,{legacy:game.slotRewardVersion!==3});
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
  for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),dealPrizeStats:addDealRecord(previous,p.amount),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));const slot=slotRankings.get(p.uid);tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,slotEligible:slot.reels>0,slotReels:slot.reels,slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:slot.reels===6||slot.reels===2?3:2,createdAt:Date.now()});changed=true}return game.id})};
@@ -1305,6 +1305,7 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
   }
   if(before.phase!=='final'&&after.phase==='final'){
    after.monsterSlotsVersion=1;
+   after.slotRewardVersion=3; // New 6/2 finale; old completed games have no such flag.
    const payouts=after.players.map(p=>({id:p.id,payout:payoutFor(after,p),credit:cashCreditFor(after,p)}));
    const max=Math.max(...payouts.map(p=>p.payout));
    // Tied top payouts are not eligible for a unique-winner bonus or Monster Slots.
