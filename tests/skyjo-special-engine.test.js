@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {SKYJO_SPECIAL_MISSIONS,skyjoSpecialMissions,skyjoSpecialBonusIndex,skyjoSpecialAwardRows} from '../skyjo-special-engine.js';
+import {SKYJO_SPECIAL_MISSIONS,skyjoSpecialMissions,skyjoSpecialBonusIndex,skyjoSpecialAwardRows,skyjoHubMatchFinished} from '../skyjo-special-engine.js';
 
 const MATCH='01234567-89ab-4cde-a123-456789abcdef';
 const fullProgress=()=>({rows:3,columns:5,streets:4,twelveRows:1,groups:6,
@@ -154,4 +154,15 @@ test('Every participant gets an independent Joker target and correct stacked slo
    assert.equal(rows[i].name,'Spieler '+(i+1));
   }
  }
+});
+
+
+test('SKYJO hub remains in its active match until mission prizes finish, also in the last round',()=>{
+ assert.equal(skyjoHubMatchFinished({phase:'betweenRounds',skyjoSpecial:{enabled:true,finished:true}}),false);
+ assert.equal(skyjoHubMatchFinished({phase:'gameOver',skyjoSpecial:{enabled:true,finished:false}}),false);
+ assert.equal(skyjoHubMatchFinished({phase:'gameOver',skyjoSpecial:{enabled:true}}),false);
+ assert.equal(skyjoHubMatchFinished({phase:'gameOver',skyjoSpecial:{enabled:true,finished:true}}),true);
+ assert.equal(skyjoHubMatchFinished({phase:'gameOver'}),true);
+ assert.equal(skyjoHubMatchFinished({phase:'gameOver',skyjoSpecial:{enabled:false}}),true);
+ assert.equal(skyjoHubMatchFinished(null),false);
 });
