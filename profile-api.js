@@ -32,7 +32,7 @@ function validAvatarImage(value,maxBytes=98304){
   return b.toString('ascii',0,4)==='RIFF'&&b.toString('ascii',8,12)==='WEBP';
 }
 function error(res,status,code){return res.status(status).json({ok:false,error:code});}
-export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
+export function installProfileApi(app,{admin,getFirestore,isReady=()=>true,onProfileSaved=()=>{}}){
   // In-memory rate limit is a useful supplementary throttle, not a distributed abuse control.
   const limits=new Map();
   app.use('/api/profile',async(req,res,next)=>{
@@ -131,6 +131,8 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
       if(result.status===409)return res.status(409).json({ok:false,error:'PROFILE_CONFLICT',profile:result.profile});
       if(result.status===404)return error(res,404,'PROFILE_MISSING');
       if(result.status===403)return error(res,403,'SETUP_REQUIRED');
+      // A completed profile edit invalidates the Render-only name cache.
+      onProfileSaved(req.profileUid);
       return res.json({ok:true,profile:result.profile});
     }catch(e){console.error('[profile/update]',e);return error(res,500,'PROFILE_WRITE_FAILED');}
   });
@@ -153,6 +155,8 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true}){
       });
       if(result.status===404)return error(res,404,'PROFILE_MISSING');
       if(result.status===409)return res.status(409).json({ok:false,error:'ALREADY_COMPLETE',profile:result.profile});
+      // Newly completed onboarding must become visible without a cache delay.
+      onProfileSaved(req.profileUid);
       return res.json({ok:true,profile:result.profile});
     }catch(e){console.error('[profile/complete]',e);return error(res,500,'PROFILE_SETUP_FAILED');}
   });
