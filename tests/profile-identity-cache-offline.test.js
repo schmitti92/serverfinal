@@ -63,6 +63,8 @@ test('Concurrent profile authentication shares a single Firestore document read'
  release();
  const results=await Promise.all(requests);
  assert.equal(f.reads(),1,'singleflight should collapse same-uid document reads');
+ assert.equal(f.stats.identityCacheStats().documentReads,1);
+ assert.equal(f.stats.identityCacheStats().sharedReads,11);
  assert.equal(f.verifications(),12,'tokens still verified independently including revocation');
  assert.ok(results.every(x=>x?.uid===uid&&x.name==='Original'));
  const again=await f.stats.identity(token);
@@ -111,6 +113,7 @@ test('Completed profile writes invalidate the identity cache immediately',async(
  const refreshed=await f.stats.identity(token);
  assert.equal(refreshed.name,'Aktualisiert','cache must not retain old profile name');
  assert.equal(f.reads(),2,'the next read fetches one fresh profile document');
+ assert.equal(f.stats.identityCacheStats().invalidations,1);
 });
 
 test('Invalidating an in-flight profile read cannot repopulate stale cache',async()=>{
