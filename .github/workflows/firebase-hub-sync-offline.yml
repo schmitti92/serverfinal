@@ -1,0 +1,25 @@
+name: Firebase Render-first hub sync (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/shared-lobby.test.js'
+      - '.github/workflows/firebase-hub-sync-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mock-firestore-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - name: Verify syntax without network
+        run: node --check shared-lobby.js
+      - name: Run isolated Render-first hub cache test with fake Firestore
+        run: node --test --test-name-pattern="Render-first hub sync combines ongoing polls" tests/shared-lobby.test.js
