@@ -251,21 +251,21 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  const settleFinal=async(db,code)=>{const matchRef=db.collection(collection).doc(code);return db.runTransaction(async tx=>{const match=await tx.get(matchRef);if(!match.exists)return false;const game=match.data().game;if(!game||!['final','done'].includes(game.phase)||!Array.isArray(game.values))return false;
  const chestContext=await chestAwardContext(db,tx);
  const payouts=game.players.map(p=>({uid:p.id,amount:payoutFor(game,p),credit:cashCreditFor(game,p)}));if(payouts.some(p=>!Number.isSafeInteger(p.amount)||p.amount<0||!Number.isSafeInteger(p.credit)))throw Error('INVALID_PAYOUT');const maximum=Math.max(...payouts.map(p=>p.amount));
- const slotRankings=monsterSlotPlacements(payouts);
+ const slotRankings=monsterSlotPlacements(payouts,{legacy:[1,3].includes(game.monsterSlotShow?.reels)});
  const refs=payouts.map(p=>({...p,wallet:db.collection(walletCollection).doc(p.uid),receipt:db.collection(payoutCollection).doc(game.id+'_'+p.uid),materials:db.collection(DOG_MATERIALS_COLLECTION).doc(p.uid)}));
  const reads=await Promise.all(refs.map(async p=>({wallet:await tx.get(p.wallet),receipt:await tx.get(p.receipt),materials:await tx.get(p.materials)})));let changed=false;
- for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),dealPrizeStats:addDealRecord(previous,p.amount),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));const slot=slotRankings.get(p.uid);tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,slotEligible:slot.reels>0,slotReels:slot.reels,slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:2,createdAt:Date.now()});changed=true}return game.id})};
+ for(let i=0;i<refs.length;i++){const p=refs[i],old=reads[i];if(old.receipt.exists)continue;const previous=old.wallet.exists?old.wallet.data():{};tx.set(p.wallet,{balance:(previous.balance||0)+p.credit,games:(previous.games||0)+1,wins:(previous.wins||0)+(p.amount===maximum?1:0),dealPrizeStats:addDealRecord(previous,p.amount),updatedAt:Date.now()},{merge:true});tx.set(p.materials,chestForSettledDeal(p.uid,old.materials.exists?old.materials.data():null,chestContext));const slot=slotRankings.get(p.uid);tx.create(p.receipt,{gameId:game.id,uid:p.uid,amount:p.credit,baseAmount:p.amount,bonusAmount:p.credit-p.amount,slotEligible:slot.reels>0,slotReels:slot.reels,slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:slot.reels===6||slot.reels===2?3:2,createdAt:Date.now()});changed=true}return game.id})};
  installDogAlbumSeason2(app,{auth,getFirestore,fail});
 
- // Only the champion (three reels) and unique runner-up in 3–4-player
- // matches (one reel) earn slots; other players get no slot entitlement.
+ // New finales award six winner reels and two unique runner-up reels (3–4 players).
+ // Existing 3/1 receipts and already-started shows keep their original prizes.
  // The result and all inventory credits commit together and replay unchanged.
  app.get('/api/deal-or-no-deal/monster-slots/catalog',auth,async(_req,res)=>{
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const economy=normalizeDealEconomy((await dealEconomyRef(db).get()).data());
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,reels:3,runnerUpReels:1,superSlotReels:5,
+   return res.json({ok:true,reels:6,runnerUpReels:2,superSlotReels:5,
     categoryWeights:economy.slotWeights,cashChance:slotCashChance(economy.slotWeights),
     cashMinCents:1,cashMaxCents:500000000});
   }catch(e){return fail(res,e)}
@@ -310,7 +310,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      !Number.isSafeInteger(row.baseAmount)||row.baseAmount<0)||
      new Set(rows.map(row=>row.uid)).size!==rows.length)
      throw Error('GAME_REWARD_INVALID');
-    legacyRanks=monsterSlotPlacements(rows.map(row=>({uid:row.uid,amount:row.baseAmount})));
+    legacyRanks=monsterSlotPlacements(rows.map(row=>({uid:row.uid,amount:row.baseAmount})),{legacy:true});
    }
    const eligible=[];
    for(let i=0;i<missing.length;i++){
@@ -322,7 +322,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      const verified=legacyRanks?.get(data.uid);
      if(verified?.reels>0){reels=verified.reels;rank=verified.rank;legacyRepair=true;}
     }
-    if(!Number.isSafeInteger(reels)||![0,1,3].includes(reels))throw Error('GAME_REWARD_INVALID');
+    if(!Number.isSafeInteger(reels)||![0,1,2,3,6].includes(reels))throw Error('GAME_REWARD_INVALID');
     if(reels===0){
      if(skipIneligible)continue;
      throw Error(data.slotTiedTop===true||data.slotEligible===false&&data.slotVersion!==2?
@@ -344,7 +344,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const prepared=missing.map(p=>{
    const gate=progress.people[p.uid]?.highestGate??1;
    const prizes=mode==='super'?Array.from({length:5},()=>drawMonsterSlot(gate,randomInt,slotWeights)):
-    p.reels===1?[drawMonsterSlot(gate,randomInt,slotWeights)]:drawMonsterSlots(gate,randomInt,slotWeights);
+    p.reels===3?drawMonsterSlots(gate,randomInt,slotWeights):
+    Array.from({length:p.reels},()=>drawMonsterSlot(gate,randomInt,slotWeights));
    const needed=new Set(prizes.map(prize=>prize.kind));
    return {...p,gate,prizes,needed};
   });
@@ -508,10 +509,10 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
      if(state.phase!=='rolling')throw Error('SLOT_SHOW_NOT_STARTED');
      // Reveal is not finished until all prize cards and the confirmation
      // screen are visible, not merely when the last reel stops.
-     if(now-Number(state.startedAt||0)<(state.reels===1?4200:7800))
+     if(now-Number(state.startedAt||0)<(state.reels===6?10000:state.reels===2?6500:state.reels===1?4200:7800))
       throw Error('SLOT_SHOW_STILL_ROLLING');
      updated=state.turn==='runner'
-      ?{phase:'ready',turn:'champion',uid:state.championUid,reels:3,
+      ?{phase:'ready',turn:'champion',uid:state.championUid,reels:state.reels===1?3:6,
          runnerUid:state.runnerUid,championUid:state.championUid,
          activatedAt:now,showAt:now+2200,runnerConfirmedAt:now,startedAt:null,prizes:[]}
       :{phase:'ceremony',turn:'complete',uid:null,reels:0,
@@ -1257,10 +1258,10 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
    const slotRankings=monsterSlotPlacements(payouts.map(p=>({uid:p.id,amount:p.payout})));
    // Shared finale: unique runner-up first, then champion; every player watches.
    if(uniqueWinner){
-    const runner=payouts.find(p=>slotRankings.get(p.id)?.reels===1);
+    const runner=payouts.find(p=>slotRankings.get(p.id)?.reels===2);
     after.monsterSlotShow={
      phase:'ready',turn:runner?'runner':'champion',
-     uid:runner?.id||winner.id,reels:runner?1:3,
+     uid:runner?.id||winner.id,reels:runner?2:6,
      runnerUid:runner?.id||null,championUid:winner.id,
      activatedAt:Date.now(),showAt:Date.now()+2200,startedAt:null,prizes:[]
     };
@@ -1293,7 +1294,7 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
     const slot=slotRankings.get(e.id);
     tx.create(e.receipt,{gameId:after.id,uid:e.id,amount:e.credit,baseAmount:e.payout,
      bonusAmount:e.credit-e.payout,slotEligible:slot.reels>0,slotReels:slot.reels,
-     slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:2,createdAt:Date.now()});
+     slotRank:slot.rank,slotTiedTop:slot.tiedTop,slotVersion:slot.reels===6||slot.reels===2?3:2,createdAt:Date.now()});
    }
   }
   awardWrite?.();tx.update(ref,{game:after,updatedAt:Date.now()})}return after});invalidateGame(code);if(game?.phase==='final')balanceReadCache.clear();broadcastGame(code,game);
