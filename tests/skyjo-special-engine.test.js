@@ -30,12 +30,14 @@ test('Server awards missions plus a two-reel round-winner bonus',()=>{
  assert.equal(out.players[1].slots,out.missions.filter(m=>m.field!=='score').reduce((n,m)=>n+m.slots,0));
  assert.ok(out.players[0].slots>12);
 });
-test('Even without mission progress, round winner receives two reels',()=>{
+test('Without board missions, the winner receives two reels plus any score-based mission',()=>{
  const game=roundGame({progress:{}});
  const out=skyjoSpecialAwardRows(game,MATCH,1);
- assert.equal(out.players[0].slots,2);
- assert.equal(out.players[1].slots,0);
- assert.equal(out.players[2].slots,0);
+ for(let i=0;i<3;i++){
+  const score=game.lastRoundSummary.players[i].round;
+  const scoreSlots=out.missions.filter(m=>m.less&&score<=m.at).reduce((n,m)=>n+m.slots,0);
+  assert.equal(out.players[i].slots,scoreSlots+(i===0?2:0));
+ }
 });
 test('Forged mission combinations and incomplete rounds cannot pay out',()=>{
  const game=roundGame({missionIds:['one-row','one-column','three-streets']});
