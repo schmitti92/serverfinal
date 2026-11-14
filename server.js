@@ -31,6 +31,7 @@ import { installHubBusiness } from "./business-hub.js";
 import { installEisstockOnline } from "./eisstock-online.js";
 import { installFallingOnline } from "./falling-online.js";
 import { validHubSkyjoState } from "./skyjo-hub-policy.js";
+import { skyjoHubMatchFinished } from "./skyjo-special-engine.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
 
 /*
@@ -4440,7 +4441,7 @@ const sharedLobby=installSharedLobby(app,{
   },
   isMatchFinished:async match=>{
     if(match.game==='kreuz')return kkOnline.isHubMatchFinished(match);
-    if(match.game==='skyjo'){const doc=await readSkyjoPersisted(match.gameCode),game=doc?.state?.game;return game?.phase==='gameOver'&&(!game.skyjoSpecial?.enabled||game.skyjoSpecial.finished===true);}
+    if(match.game==='skyjo'){const doc=await readSkyjoPersisted(match.gameCode);return skyjoHubMatchFinished(doc?.state?.game);}
     if(match.game==='business')return hubBusinessApi?.isFinished(match)||false;
     if(match.game!=='barikade')return false;
     let legacyRoom=rooms.get(match.gameCode);
