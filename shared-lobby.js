@@ -64,6 +64,7 @@ const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   const error=(status,message)=>Object.assign(new Error(message),{status});
+  const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
   const validCode=s=>typeof s==='string'&&CODE_PATTERN.test(s.toUpperCase())?s.toUpperCase():null;
   async function authentication(req,res,next){
@@ -576,7 +577,7 @@ function finishEisstock(ch,members){
       canLaunch:!!HUB_GAMES[room.game],
       settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
-      players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
+      players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,dogAvatar:validDogAvatar(p.dogAvatar)?p.dogAvatar:0,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
       chat:(Array.isArray(room.chat)?room.chat:[]).slice(-40).map(m=>({id:m.id,name:m.name,text:m.text,at:m.at})),
       allReady:allReady(room),
@@ -591,6 +592,7 @@ function finishEisstock(ch,members){
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
+        dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -721,7 +723,7 @@ function finishEisstock(ch,members){
     for(let attempts=0;attempts<8;attempts++){
       const code=validCode(codeGenerator());if(!code)throw error(500,'ROOM_CODE_ERROR');
       const ref=documentFor(store,code),now=clock();
-      const room={code,hostUid:identity.uid,players:[{uid:identity.uid,seat:randomUUID(),name:identity.name,ready:false,participating:false,joinedAt:now}],
+      const room={code,hostUid:identity.uid,players:[{uid:identity.uid,seat:randomUUID(),name:identity.name,dogAvatar:validDogAvatar(req.body?.dogAvatar)?req.body.dogAvatar:0,ready:false,participating:false,joinedAt:now}],
         game:null,phase:'lobby',revision:1,createdAt:now,updatedAt:now,expiresAt:now+TTL_MS};
       try{
         await store.runTransaction(async tx=>{const old=await tx.get(ref);if(old.exists&&old.data()?.expiresAt>now)throw error(409,'CODE_OCCUPIED');tx.set(ref,room);});
@@ -745,10 +747,11 @@ function finishEisstock(ch,members){
       if(!p){if(r.players.length>=6)throw error(409,'ROOM_FULL');
         // A full game may still have spectators in the central room.
         const seatAvailable=!!r.game&&r.players.filter(x=>x.participating).length<HUB_GAMES[r.game].max;
-        p={uid:identity.uid,seat:randomUUID(),name:identity.name,ready:false,participating:seatAvailable,joinedAt:clock()};r.players.push(p);
+        p={uid:identity.uid,seat:randomUUID(),name:identity.name,dogAvatar:validDogAvatar(req.body?.dogAvatar)?req.body.dogAvatar:0,ready:false,participating:seatAvailable,joinedAt:clock()};r.players.push(p);
         r.players.forEach(x=>x.ready=false);
       }
       p.name=identity.name;
+      if(validDogAvatar(req.body?.dogAvatar))p.dogAvatar=req.body.dogAvatar;
       r.revision++;r.updatedAt=clock();r.expiresAt=clock()+TTL_MS;
       tx.set(ref,r);return r;
     });
@@ -769,12 +772,30 @@ function finishEisstock(ch,members){
       if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
       room.game=game;room.phase='preparing';
+      if(game==='dog'&&validDogAvatar(req.body?.dogAvatar)){
+        const me=room.players.find(p=>p.uid===identity.uid);
+        if(me)me.dogAvatar=req.body.dogAvatar;
+      }
       if(game==='kniffel')room.settings={...room.settings,kniffel:{mode:room.settings?.kniffel?.mode||'classic',extraJokers:room.settings?.kniffel?.extraJokers===true}};
       if(game==='barikade')room.settings={...room.settings,barikade:gameSettings(room.settings?.barikade)||{...BARIKADE_DEFAULTS}};
       if(game==='skyjo')room.settings={...room.settings,skyjo:skyjoSettings(room.settings?.skyjo)||{...SKYJO_DEFAULTS}};
       if(game==='business')room.settings={...room.settings,business:businessSettings(room.settings?.business)||{...BUSINESS_DEFAULTS}};
       if(game==='partychallenge')room.settings={...room.settings,partychallenge:{count:CHALLENGE_READY_GAMES.length,selectedGame:null}};
       room.players.forEach((p,i)=>{p.ready=false;p.participating=i<HUB_GAMES[game].max;});
+    })};
+  }));
+
+  // DOG avatars are cosmetic metadata and never change cards, turns or readiness.
+  app.post('/api/hub/rooms/:code/dog/avatar',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,avatar=req.body?.avatar;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(!validDogAvatar(avatar))throw error(400,'INVALID_DOG_AVATAR');
+    return {room:await mutate(code,identity,room=>{
+      if(room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
+      const me=room.players.find(p=>p.uid===identity.uid);
+      if(!me)throw error(403,'NOT_A_MEMBER');
+      if(me.dogAvatar===avatar)return {unchanged:true};
+      me.dogAvatar=avatar;
     })};
   }));
 
