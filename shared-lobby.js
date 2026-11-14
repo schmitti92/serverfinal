@@ -635,6 +635,38 @@ function finishEisstock(ch,members){
     if(!room||room.expiresAt<=clock())throw error(404,'ROOM_NOT_FOUND');
     if(!room.players.some(p=>p.uid===identity.uid))throw error(403,'NOT_A_MEMBER');
   }
+  // Render-first completion checks: share a brief, read-only room snapshot across
+  // clients instead of starting an unchanged Firestore transaction every 7 seconds.
+  // This cache NEVER authorizes a write. Completion and payouts still use mutate().
+  const SYNC_ROOM_READ_TTL_MS=2500;
+  const SYNC_ROOM_READ_MAX=128;
+  const syncRoomReads=new Map();
+  async function readRoomForSync(code){
+    const now=clock(),cached=syncRoomReads.get(code);
+    if(cached?.room&&cached.expiresAt>now)return cached.room;
+    if(cached?.pending)return cached.pending;
+    const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const pending=(async()=>{
+      const snapshot=await documentFor(store,code).get();
+      return snapshot.exists?snapshot.data():null;
+    })();
+    syncRoomReads.set(code,{pending});
+    try{
+      const room=await pending;
+      if(syncRoomReads.get(code)?.pending===pending){
+        syncRoomReads.delete(code);
+        if(room&&room.expiresAt>clock()){
+          syncRoomReads.set(code,{room,expiresAt:clock()+SYNC_ROOM_READ_TTL_MS});
+          if(syncRoomReads.size>SYNC_ROOM_READ_MAX)
+            syncRoomReads.delete(syncRoomReads.keys().next().value);
+        }
+      }
+      return room;
+    }catch(e){
+      if(syncRoomReads.get(code)?.pending===pending)syncRoomReads.delete(code);
+      throw e;
+    }
+  }
   async function mutate(code,identity,change){
     const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=documentFor(store,code);
@@ -663,6 +695,8 @@ function finishEisstock(ch,members){
       tx.set(ref,room);
       return expose(room,identity);
     });
+    // A successful authoritative transaction supersedes any earlier RAM view.
+    syncRoomReads.delete(code);
     return outcome;
   }
   const handler=fn=>async(req,res)=>{
@@ -1235,20 +1269,26 @@ function finishEisstock(ch,members){
       catch(e){throw error(409,e.message);}
     })};
   }));
-  // Any authenticated room member can request a completion check. The backend
-  // alone decides whether the active game really ended; no client-supplied score
-  // or gameOver boolean can finish a match. A match ID prevents stale tabs from
-  // finishing a newer game in the same hub. Firestore transactions serialize calls.
+  // Any authenticated member can request completion. Normal, still-running
+  // games are checked with a short Render RAM cache. Only a plausible completion
+  // enters Firestore's authoritative transaction. Never trust the client to finish.
   app.post('/api/hub/rooms/:code/sync',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     const matchId=req.body?.matchId;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(typeof matchId!=='string'||!/^[0-9a-f-]{36}$/i.test(matchId))throw error(400,'INVALID_MATCH_ID');
-    return {room:await mutate(code,identity,async room=>{
-      if(room.phase!=='playing'||!room.match||room.match.id!==matchId)return {unchanged:true};
-      if(room.match.game==='partychallenge')return {unchanged:true};
-      if(!(await isMatchFinished(room.match)))return {unchanged:true};
-      archiveCompletedMatch(room);
+    const room=await readRoomForSync(code);
+    validateRead(room,identity);
+    if(room.phase!=='playing'||!room.match||room.match.id!==matchId||
+       room.match.game==='partychallenge'||!(await isMatchFinished(room.match))){
+      return {room:expose(room,identity)};
+    }
+    // Re-check room identity, membership, match and completion inside Firestore.
+    // Parallel clients cannot finish twice or archive a newer match.
+    return {room:await mutate(code,identity,async latest=>{
+      if(latest.phase!=='playing'||!latest.match||latest.match.id!==matchId)return {unchanged:true};
+      if(latest.match.game==='partychallenge'||!(await isMatchFinished(latest.match)))return {unchanged:true};
+      archiveCompletedMatch(latest);
     })};
   }));
   // A single server-generated arithmetic question. Never accept a client score.
