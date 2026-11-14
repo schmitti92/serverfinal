@@ -643,6 +643,30 @@ function finishEisstock(ch,members){
   const SYNC_ROOM_READ_TTL_MS=2500;
   const SYNC_ROOM_READ_MAX=128;
   const syncRoomReads=new Map();
+  // The existing Firestore onSnapshot already put this authoritative room into
+  // Render RAM for live WebSocket subscribers. Share only VERY recent snapshots
+  // with HTTP readers; never use a snapshot for an action or an authorization
+  // that changes state. Independent Firebase Auth and membership checks remain.
+  const HUB_STREAM_READ_TTL_MS=2500;
+  const hubStreamReadCounts={hits:0,misses:0,invalidations:0};
+  function recentHubStreamRoom(code){
+    const stream=roomStreams.get(code);
+    const age=stream?.snapshotAt!=null?clock()-stream.snapshotAt:Infinity;
+    if(stream?.hasSnapshot&&stream.subscribers.size>0&&stream.room&&
+       Number.isFinite(age)&&age>=0&&age<HUB_STREAM_READ_TTL_MS&&
+       stream.room.expiresAt>clock()){
+      hubStreamReadCounts.hits++;
+      return stream.room;
+    }
+    hubStreamReadCounts.misses++;
+    return null;
+  }
+  function invalidateHubReadCache(code){
+    syncRoomReads.delete(code);
+    const stream=roomStreams.get(code);
+    if(stream)stream.snapshotAt=null;
+    hubStreamReadCounts.invalidations++;
+  }
   async function readRoomForSync(code){
     const now=clock(),cached=syncRoomReads.get(code);
     if(cached?.room&&cached.expiresAt>now)return cached.room;
@@ -698,7 +722,7 @@ function finishEisstock(ch,members){
       return expose(room,identity);
     });
     // A successful authoritative transaction supersedes any earlier RAM view.
-    syncRoomReads.delete(code);
+    invalidateHubReadCache(code);
     return outcome;
   }
   const handler=fn=>async(req,res)=>{
@@ -706,7 +730,10 @@ function finishEisstock(ch,members){
     catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
-  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog'],challengeFoundation:true}));
+  app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog'],challengeFoundation:true,
+    // Counters are Render RAM only; never fetch Firebase to report them.
+    hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size}
+  }));
   app.use('/api/hub/rooms',authentication);
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
@@ -761,11 +788,20 @@ function finishEisstock(ch,members){
       r.revision++;r.updatedAt=clock();r.expiresAt=clock()+TTL_MS;
       tx.set(ref,r);return r;
     });
+    // The join endpoint is an independent transaction, not mutate().
+    // Do not serve a pre-join socket snapshot before the change is broadcast.
+    invalidateHubReadCache(code);
     return {room:expose(room,identity)};
   }));
   app.get('/api/hub/rooms/:code',handler(async req=>{
     const code=validCode(req.params.code);if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const store=db();const snap=await documentFor(store,code).get();const room=snap.exists?snap.data():null;
+    // No additional Firestore read when an active room watcher has just
+    // delivered a fresh snapshot. No watcher/stale state => direct Firestore.
+    let room=recentHubStreamRoom(code);
+    if(!room){
+      const store=db();const snap=await documentFor(store,code).get();
+      room=snap.exists?snap.data():null;
+    }
     validateRead(room,req.hubIdentity);return {room:expose(room,req.hubIdentity)};
   }));
   app.post('/api/hub/rooms/:code/select',handler(async req=>{
@@ -1955,13 +1991,16 @@ function finishEisstock(ch,members){
   function watchRoom(code,store,subscriber){
     let stream=roomStreams.get(code);
     if(!stream){
-      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null};
+      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null,snapshotAt:null};
       roomStreams.set(code,stream);
       try{
         stream.unsubscribe=documentFor(store,code).onSnapshot(snapshot=>{
           if(roomStreams.get(code)!==stream)return;
           stream.room=snapshot.exists?snapshot.data():null;
           stream.hasSnapshot=true;
+          stream.snapshotAt=clock();
+          // Wake any short-lived HTTP sync cache with this newer DB revision.
+          syncRoomReads.delete(code);
           for(const fn of [...stream.subscribers])fn(stream.room,null);
         },err=>{
           if(roomStreams.get(code)!==stream)return;
