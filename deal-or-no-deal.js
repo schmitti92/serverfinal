@@ -173,9 +173,15 @@ function rollPersonalBankerOffers(g,participants,random){
   else if(bucket<470)multiplier=.42+.38*fraction;
   else multiplier=.81+.43*fraction;
   let amount=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(g.offer*multiplier)));
-  // Never show identical amounts in a shared call, including capped jackpots.
-  const direction=amount===MAX_MATCH_CREDIT_CENTS?-1:1;
-  while(used.has(amount))amount+=direction;
+  // Never show matching amounts, including when several bids hit the 50m cap.
+  // A meaningful small percentage step keeps capped "mega" offers distinct.
+  const initial=amount,gap=Math.max(1,Math.round(g.offer*.045));
+  const direction=initial+3*gap<=MAX_MATCH_CREDIT_CENTS?1:-1;
+  let offset=0;
+  while(used.has(amount)){
+   offset++;
+   amount=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,initial+direction*gap*offset));
+  }
   offersByPlayer[uid]=amount;used.add(amount);
  }
  return {offersByPlayer,megaOfferUids};
