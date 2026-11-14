@@ -1,0 +1,29 @@
+name: Firebase Deal spectator rewards (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-reward-read-coordinator.js'
+      - 'deal-or-no-deal-api.js'
+      - 'server.js'
+      - 'tests/deal-reward-read-coordinator-offline.test.js'
+      - '.github/workflows/firebase-deal-rewards-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  spectator-reward-reads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check server module syntax
+        run: |
+          node --check deal-reward-read-coordinator.js
+          node --check deal-or-no-deal-api.js
+          node --check server.js
+      - name: Run fake Firestore spectator and transactional safety tests
+        run: node --test tests/deal-reward-read-coordinator-offline.test.js
