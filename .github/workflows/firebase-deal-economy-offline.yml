@@ -1,0 +1,25 @@
+name: Firebase Deal economy reads (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-economy-read-cache.js'
+      - 'deal-or-no-deal-api.js'
+      - 'deal-economy.js'
+      - 'tests/deal-economy-read-cache-offline.test.js'
+      - '.github/workflows/firebase-deal-economy-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deal-economy-read-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check deal-economy-read-cache.js
+      - run: node --check deal-or-no-deal-api.js
+      - run: node --test tests/deal-economy-read-cache-offline.test.js
