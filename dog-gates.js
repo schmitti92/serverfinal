@@ -252,7 +252,7 @@ const ERRORS={LOGIN_REQUIRED:401,DOG_GATE_INVALID:400,INVALID_REQUEST_ID:400,
  DOG_GATE_ALREADY_WON:409,DOG_GATE_BOSS_REQUIRED:409,DOG_GATE_COOLDOWN:429,
  DOG_GATE_TEAM_FULL:409,DOG_GATE_BOSS_ACTIVE:409,NOT_DOG_TEAM_MEMBER:403,DOG_HERO_CLASS_INVALID:400,
  DOG_HERO_ALREADY_LOCKED:409,DOG_HERO_SELECTION_REQUIRED:409};
-export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null}){
+export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomInt,clock=Date.now,botLogic=null,readSharedDoc=(_db,ref)=>ref.get()}){
  const auth=async(req,res,next)=>{
   try{
    const match=/^Bearer\s+([\w.\-]+)$/.exec(String(req.get('authorization')||''));
@@ -276,7 +276,7 @@ export function installDogGatesApi(app,{verifyProfile,getFirestore,rand=randomIn
  app.get('/api/dog/gates/map',auth,async(req,res)=>{
   try{
    const {db,teamRef,progressRef}=refs();
-   const [teamSnap,progressSnap]=await Promise.all([teamRef.get(),progressRef.get()]);
+   const [teamSnap,progressSnap]=await Promise.all([readSharedDoc(db,teamRef),readSharedDoc(db,progressRef)]);
    let team=teamSnap.exists?teamSnap.data():null,uid=req.dogGateProfile.uid;
    let progress=progressSnap.exists?progressSnap.data():null;
    // Public release: retire obsolete trial bots once, on an ordinary map
