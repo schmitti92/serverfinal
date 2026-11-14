@@ -8,6 +8,7 @@ import {createDealEconomyReadCache} from './deal-economy-read-cache.js';
 import {createDealWalletReadCoordinator} from './deal-wallet-read-coordinator.js';
 import {createDealReadDiagnostics} from './deal-read-diagnostics.js';
 import {createDealRewardReadCoordinator} from './deal-reward-read-coordinator.js';
+import {createDealCommittedStateSeed} from './deal-committed-state-seed.js';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
@@ -77,14 +78,18 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  const walletReadCoordinator=createDealWalletReadCoordinator();
  const dealReadDiagnostics=createDealReadDiagnostics();
  const rewardReadCoordinator=createDealRewardReadCoordinator();
+ const committedStateSeed=createDealCommittedStateSeed();
  const readDisplayWallet=(db,uid)=>walletReadCoordinator.read(db,uid);
  const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
  const broadcastGame=(code,game)=>{
-  // A committed game update can create a reward receipt. New display requests
-  // must not join a Firestore get() started before that commit.
+  // A confirmed action already has a complete, authoritative game state.
+  // Reuse the same PUBLIC projection for the existing 2.5-second read-only
+  // safety cache, even when no WebSocket listeners are currently connected.
+  // HTTP authentication and fresh membership checks remain unchanged.
   rewardReadCoordinator.invalidateAll();
-  const listeners=dealSockets.get(code);if(!listeners?.size)return;
   const view=publicView(game);
+  seedCommittedGameView(code,game,view);
+  const listeners=dealSockets.get(code);if(!listeners?.size)return;
   for(const ws of listeners)sendSocket(ws,{type:'deal-state',game:view});
  };
  const attachSocket=(ws)=>{
@@ -161,18 +166,28 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    economyReadCache:economyReadCache.stats(),walletReadCoordinator:walletReadCoordinator.stats(),
    rewardReadCoordinator:rewardReadCoordinator.snapshot(),
    dealReadDiagnostics:dealReadDiagnostics.snapshot().lastMinutes,
+   dealGameCommitSeeds:committedStateSeed.stats(),
    measurementScope:'server_get_attempts_not_firebase_billing'
   }));
  },60000);
  usageTimer.unref?.();
  const gameCache=new Map();
  const gameGenerations=new Map();
+ const commitSeedHits={reads:0};
  const invalidateGame=code=>{gameGenerations.set(code,(gameGenerations.get(code)||0)+1);gameCache.delete(code)};
+ const seedCommittedGameView=(code,game,view)=>{
+  const entry=committedStateSeed.seed(code,game,view);
+  if(!entry)return;
+  gameCache.set(code,entry);
+  // Keep the same bounded cache size as the normal Firestore-read path.
+  if(gameCache.size>300)gameCache.delete(gameCache.keys().next().value);
+ };
  const readGame=async(db,code,source='other')=>{
   dealReadDiagnostics.record('game',source,'request');
   const now=Date.now(),existing=gameCache.get(code);
   if(existing&&existing.expires>now){
    firestoreUsage.gameCacheHits++;
+   if(existing.committed)commitSeedHits.reads++;
    dealReadDiagnostics.record('game',source,'cacheHit');
    return existing.promise;
   }
@@ -1546,5 +1561,5 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
  const elapsed=Date.now()-actionStarted;
  if(elapsed>=2500)console.warn('[deal-slow-action]',JSON.stringify({type:String(req.body?.type||'').slice(0,24),ms:elapsed,ok:false,error:String(e?.message||'ERROR').slice(0,64)}));
  return fail(res,e)}});
- return {collection,attachSocket,readDiagnostics:()=>dealReadDiagnostics.snapshot(),rewardReadStats:()=>rewardReadCoordinator.snapshot(),notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
+ return {collection,attachSocket,readDiagnostics:()=>dealReadDiagnostics.snapshot(),rewardReadStats:()=>rewardReadCoordinator.snapshot(),commitSeedStats:()=>({...committedStateSeed.stats(),readHits:commitSeedHits.reads}),notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
 }
