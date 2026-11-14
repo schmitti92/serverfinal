@@ -4342,6 +4342,7 @@ if (!profileProjectMatches) {
 }
 // Schon vor dem ersten Login initialisieren; sonst wäre admin.apps anfangs leer.
 initFirebaseIfConfigured();
+let invalidateCachedProfileIdentity=()=>{};
 installProfileApi(app,{
   admin,
   isReady: () => profileProjectMatches,
@@ -4349,12 +4350,14 @@ installProfileApi(app,{
     if (!profileProjectMatches) return null;
     initFirebaseIfConfigured();
     return firestore;
-  }
+  },
+  onProfileSaved: uid=>invalidateCachedProfileIdentity(uid)
 });
 const profileStatsV8=installProfileStats(app,{
   admin,isReady:()=>profileProjectMatches,
   getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
+invalidateCachedProfileIdentity=profileStatsV8.invalidateIdentity;
 // DOG expedition: inventory and chest opening stay server-authoritative.
 // Only Deal-or-No-Deal's verified final payout credits new chests.
 installDogMaterialsApi(app,{
