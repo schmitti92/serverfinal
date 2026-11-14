@@ -1016,7 +1016,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
   const game=await readGame(db,code);
   if(!game)return res.json({ok:true,reward:null,rewards:[]});
-  const events=(game.events||[]).filter(e=>e.type==='opened'&&isCasePackBonusAmount(e.amount));
+  const events=(game.events||[]).filter(e=>e.type==='opened'&&isCasePackBonusAmount(e.amount)&&
+   !game.christmasWheelClosed?.['cent:'+game.id+'_'+e.eventId]);
   if(!events.length)return res.json({ok:true,reward:null,rewards:[]});
   const snaps=await Promise.all(events.map(e=>
    db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+e.eventId).get()));
