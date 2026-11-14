@@ -24,8 +24,11 @@ export const MONSTER_SLOT_SKYJO_LOOT=Object.freeze({
 });
 export function skyjoMonsterSlotChestOdds(gate=1){
  const base=monsterSlotChestOdds(gate);
- return [base[0],base[1],base[2],Math.max(1,Math.round(base[3]*0.35)),
-  Math.max(1,Math.round(base[4]*0.15))];
+ // Boost ordinary tiers instead of rounding the legendary tier down to 0:
+ // even the 1-point legendary tier becomes genuinely rarer at low gates.
+ return [base[0]*3,base[1]*3,base[2]*3,
+  Math.max(1,Math.round(base[3]*0.5)),
+  Math.max(1,Math.round(base[4]*0.2))];
 }
 export const MONSTER_SLOTS_COUNT=3;
 // Exactly one wildcard in 3,000 non-cash prize rolls.
