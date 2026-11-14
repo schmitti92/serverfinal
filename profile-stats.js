@@ -2,31 +2,67 @@
  * The browser has READ access only. No endpoint accepts wins or scores.
  * Matches are booked atomically once per server-owned match ID.
  */
-export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
+export function installProfileStats(app,{admin,getFirestore,isReady=()=>true,clock=()=>Date.now()}) {
   const MATCHES='verified_matches_v8', STATS='player_stats_v8', PROFILES='player_profiles_v1';
   const clean=(s,max=48)=>String(s??'').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,max);
   const validUid=x=>typeof x==='string' && /^[A-Za-z0-9_-]{8,128}$/.test(x);
   const db=()=>{if(!isReady())return null;try{return getFirestore()||null;}catch{return null;}};
   const count=n=>Number.isSafeInteger(n)&&n>=0?n:0;
   const safeScore=n=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<=1e8?n:null;
-  // Short-lived profile cache: Firebase Auth still verifies every token, including revocation.
-  // Only the Firestore profile lookup is cached; incomplete profiles are never cached.
+  // Render owns only the temporary name cache. Every request still verifies
+  // Firebase Auth with checkRevoked=true; this does NOT cache authorization.
+  // Completed profiles are safe to cache for a minute because updates/initial
+  // onboarding synchronously invalidate them in the profile API.
+  const PROFILE_NAME_TTL_MS=60_000;
+  const PROFILE_NAME_CACHE_MAX=1000;
   const identityProfiles=new Map();
+  function invalidateIdentity(uid){
+    if(validUid(uid))identityProfiles.delete(uid);
+  }
+  function trimIdentityCache(now){
+    if(identityProfiles.size<PROFILE_NAME_CACHE_MAX)return;
+    for(const [uid,entry] of identityProfiles){
+      if(entry.expires&&entry.expires<=now)identityProfiles.delete(uid);
+    }
+    if(identityProfiles.size>=PROFILE_NAME_CACHE_MAX)
+      identityProfiles.delete(identityProfiles.keys().next().value);
+  }
   async function identity(idToken){
     if(typeof idToken!=='string'||idToken.length<80||idToken.length>8000||!admin.apps.length||!isReady())return null;
     try{
       const decoded=await admin.auth().verifyIdToken(idToken,true);
       if(!validUid(decoded.uid))return null;
       const store=db();if(!store)return null;
-      const now=Date.now();
-      const cached=identityProfiles.get(decoded.uid);
-      if(cached&&cached.expires>now)return {uid:decoded.uid,name:cached.name};
-      const p=await store.collection(PROFILES).doc(decoded.uid).get();
-      if(!p.exists||p.data()?.setupComplete===false)return null;
-      const name=clean(p.data()?.name,24)||'Spieler';
-      if(identityProfiles.size>=1000){for(const [uid,entry] of identityProfiles){if(entry.expires<=now)identityProfiles.delete(uid)}if(identityProfiles.size>=1000)identityProfiles.delete(identityProfiles.keys().next().value)}
-      identityProfiles.set(decoded.uid,{name,expires:now+15000});
-      return {uid:decoded.uid,name};
+      const uid=decoded.uid,now=clock();
+      const cached=identityProfiles.get(uid);
+      if(cached?.name&&cached.expires>now)return {uid,name:cached.name};
+      if(cached?.pending){
+        const name=await cached.pending;
+        return name?{uid,name}:null;
+      }
+      // Singleflight: simultaneous SKYJO/Hub requests for one profile do
+      // one Firestore document get(), not one get() per connected client call.
+      const pending=(async()=>{
+        const snap=await store.collection(PROFILES).doc(uid).get();
+        if(!snap.exists||snap.data()?.setupComplete===false)return null;
+        return clean(snap.data()?.name,24)||'Spieler';
+      })();
+      const entry={pending};
+      trimIdentityCache(now);
+      identityProfiles.set(uid,entry);
+      try{
+        const name=await pending;
+        // A profile edit can invalidate while the query is in flight.
+        // The old query must never restore stale names to the cache.
+        if(identityProfiles.get(uid)===entry){
+          if(name)identityProfiles.set(uid,{name,expires:clock()+PROFILE_NAME_TTL_MS});
+          else identityProfiles.delete(uid);
+        }
+        return name?{uid,name}:null;
+      }catch{
+        if(identityProfiles.get(uid)===entry)identityProfiles.delete(uid);
+        return null;
+      }
     }catch{return null;}
   }
   // Only trusted, internal server code calls book(); no public POST route exists.
@@ -104,5 +140,5 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true}) {
       return res.json({ok:true,stats:{games:count(d.games),wins:count(d.wins),losses:count(d.losses),draws:count(d.draws),byGame},matches,verifiedGames:['barikade','kreuz'],pendingGames:['skyjo','business']});
     }catch(e){console.error('[profile/stats]',e?.message||e);return res.status(500).json({ok:false,error:'STATS_READ_FAILED'});}
   });
-  return {identity,book};
+  return {identity,invalidateIdentity,book};
 }
