@@ -38,6 +38,18 @@ export function skyjoSpecialMissions(matchId,round){
   return pool[n%pool.length];
  });
 }
+// Stable pseudo-random bonus field per player and round. It is derived from
+// the match identifier, so each device and the server use the same index.
+export function skyjoSpecialBonusIndex(matchId,round,playerIndex,cardCount=12){
+ if(!Number.isSafeInteger(playerIndex)||playerIndex<0||playerIndex>9||
+   !Number.isSafeInteger(cardCount)||![12,15].includes(cardCount))
+  throw Error('SKYJO_BONUS_FIELD_INVALID');
+ let n=(skyjoSpecialSeed(matchId,round)^Math.imul(playerIndex+1,0x9e3779b9))>>>0;
+ n^=n>>>16;n=Math.imul(n,0x7feb352d)>>>0;
+ n^=n>>>15;n=Math.imul(n,0x846ca68b)>>>0;
+ n^=n>>>16;
+ return (n>>>0)%cardCount;
+}
 export function skyjoSpecialAwardRows(game,matchId,round){
  const special=game?.skyjoSpecial;
  if(!special?.enabled||special.matchId!==matchId||special.round!==round||game.round!==round)throw Error('SKYJO_SPECIAL_ROUND_MISMATCH');
@@ -48,6 +60,9 @@ export function skyjoSpecialAwardRows(game,matchId,round){
  if(!Array.isArray(summary.players)||summary.players.length!==game.players?.length||!summary.players.length)throw Error('SKYJO_SCORE_INVALID');
  const min=Math.min(...summary.players.map(p=>Number(p.round)));
  if(!Number.isFinite(min)||summary.players.some(p=>!Number.isFinite(Number(p.round))))throw Error('SKYJO_SCORE_INVALID');
+ const hasBonusFields=special.bonusCells!=null;
+ if(hasBonusFields&&(!special.bonusCells||typeof special.bonusCells!=='object'||
+   Array.isArray(special.bonusCells)))throw Error('SKYJO_BONUS_FIELDS_INVALID');
  const results=summary.players.map((p,index)=>{
   if(p.index!==index||!game.players[index]||p.name!==game.players[index].name)throw Error('SKYJO_PLAYER_INVALID');
   const raw=special.progress?.[index]||{};
@@ -59,7 +74,28 @@ export function skyjoSpecialAwardRows(game,matchId,round){
   }
   const won=expected.filter(m=>m.less?metrics.score<=m.at:metrics[m.field]>=m.at);
   const winner=Number(p.round)===min;
-  return {index,name:p.name,slots:won.reduce((total,m)=>total+m.slots,0)+(winner?2:0),
+  const missionSlots=won.reduce((total,m)=>total+m.slots,0);
+  const winnerSlots=winner?2:0;
+  let bonusIndex=null,bonusAchieved=false;
+  if(hasBonusFields){
+   const board=p.gridSnapshot;
+   if(!Array.isArray(board)||![12,15].includes(board.length)||
+      !Array.isArray(game.players[index].grid)||game.players[index].grid.length!==board.length)
+    throw Error('SKYJO_BONUS_SCORE_INVALID');
+   const expectedIndex=skyjoSpecialBonusIndex(matchId,round,index,board.length);
+   if(!Object.hasOwn(special.bonusCells,index)||
+      !Number.isSafeInteger(special.bonusCells[index])||
+      special.bonusCells[index]!==expectedIndex)
+    throw Error('SKYJO_BONUS_FIELDS_INVALID');
+   bonusIndex=expectedIndex;
+   // gridSnapshot is captured at the actual final score, AFTER optional and
+   // automatic row removals. A removed Joker becomes null and is not eligible.
+   const card=board[bonusIndex];
+   bonusAchieved=!!card&&card.type==='star'&&card.faceUp===true;
+  }
+  const bonusSlots=bonusAchieved?2:0;
+  return {index,name:p.name,slots:missionSlots+winnerSlots+bonusSlots,
+   missionSlots,winnerSlots,bonusSlots,bonusIndex,bonusAchieved,
    missionIds:won.map(m=>m.id),winner,score:Number(p.round)};
  });
  return {missions:expected,players:results,round};
