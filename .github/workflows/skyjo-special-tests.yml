@@ -4,16 +4,20 @@ on:
     branches: [main]
     paths:
       - 'skyjo-special-engine.js'
+      - 'skyjo-pack-vouchers.js'
       - 'deal-or-no-deal-api.js'
       - 'shared-lobby.js'
       - 'tests/skyjo-special-engine.test.js'
+      - 'tests/skyjo-pack-vouchers.test.js'
       - '.github/workflows/skyjo-special-tests.yml'
   pull_request:
     paths:
       - 'skyjo-special-engine.js'
+      - 'skyjo-pack-vouchers.js'
       - 'deal-or-no-deal-api.js'
       - 'shared-lobby.js'
       - 'tests/skyjo-special-engine.test.js'
+      - 'tests/skyjo-pack-vouchers.test.js'
   workflow_dispatch:
 jobs:
   special-rules:
@@ -26,5 +30,6 @@ jobs:
           node-version: '22'
       - run: node --check deal-or-no-deal-api.js
       - run: node --check skyjo-special-engine.js
+      - run: node --check skyjo-pack-vouchers.js
       - run: node --check server.js
-      - run: node --test tests/skyjo-special-engine.test.js
+      - run: node --test tests/skyjo-special-engine.test.js tests/skyjo-pack-vouchers.test.js
