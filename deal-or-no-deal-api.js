@@ -8,6 +8,7 @@ import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrant
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
 import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,slotCashChance} from './monster-slots.js';
+import {skyjoSpecialAwardRows} from './skyjo-special-engine.js';
 import {addDealRecord,addSlotMoneyRecords,viewPrizeRecord} from './deal-player-records.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
@@ -59,7 +60,7 @@ function drawBingoPlatinumPack(){
  return [...legendary,...rest];
 }
 const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
-export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
+export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoState=async()=>null}){
  const collection='deal_or_no_deal_matches_v1';
  const dealSockets=new Map();
  const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
@@ -274,11 +275,12 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
  // Server-owned, exactly-once settlement shared by personal claims and the
  // next-round handoff. The entire batch reads first, then credits inventories.
  // This protects offline/slow participants without asking each client to spin.
- async function settleMonsterSlotsBatch(tx,db,gameId,uids,mode='deal',skipIneligible=false){
+ async function settleMonsterSlotsBatch(tx,db,gameId,uids,mode='deal',skipIneligible=false,skyjoReels=null){
   const players=[...new Set(uids)].map(uid=>({
    uid,
-   receiptRef:db.collection(mode==='super'?'deal_dog_super_slots_receipts_v1':mode==='case'?'deal_case_slots_receipts_v1':'deal_monster_slots_receipts_v1').doc(gameId+'_'+uid),
-   payoutRef:mode==='super'?null:db.collection(payoutCollection).doc(gameId+'_'+uid),
+   receiptRef:db.collection(mode==='skyjo'?'deal_skyjo_special_receipts_v1':mode==='super'?'deal_dog_super_slots_receipts_v1':mode==='case'?'deal_case_slots_receipts_v1':'deal_monster_slots_receipts_v1').doc(gameId+'_'+uid),
+   inboxRef:mode==='skyjo'?db.collection('deal_skyjo_special_inbox_v1').doc(uid):null,
+   payoutRef:mode==='super'||mode==='skyjo'?null:db.collection(payoutCollection).doc(gameId+'_'+uid),
    materialsRef:db.collection(DOG_MATERIALS_COLLECTION).doc(uid),
    walletRef:db.collection(walletCollection).doc(uid),
    albumRef:db.collection(CHRISTMAS_COLLECTION).doc(uid),
@@ -296,6 +298,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   if(!missing.length)return results;
   if(mode==='case'){
    missing=missing.map(p=>({...p,reels:3,rank:'case'}));
+  }else if(mode==='skyjo'){
+   missing=missing.filter(p=>Number(skyjoReels?.get(p.uid)||0)>0).map(p=>({...p,reels:Number(skyjoReels.get(p.uid)),rank:'skyjo'}));
+   if(missing.some(p=>!Number.isSafeInteger(p.reels)||p.reels>32))throw Error('SKYJO_SLOTS_INVALID');
   }else if(mode!=='super'){
    const payouts=await Promise.all(missing.map(p=>tx.get(p.payoutRef)));
    // A previous finalization path wrote slotEligible=true for ALL players
@@ -360,11 +365,12 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    p.needed.has('hammer')?tx.get(p.iceRef):null,
    p.needed.has('joker')?tx.get(p.jokerRef):null,
    p.needed.has('minigame')?tx.get(p.hatsRef):null,
-   (mode==='super'||p.needed.has('pack')||p.needed.has('wildcard'))?tx.get(p.dogAlbumRef):null
+   (mode==='super'||p.needed.has('pack')||p.needed.has('wildcard'))?tx.get(p.dogAlbumRef):null,
+   p.inboxRef?tx.get(p.inboxRef):null
   ])));
   const now=Date.now();
   for(let i=0;i<prepared.length;i++){
-   const p=prepared[i], [materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap,dogAlbumSnap]=inventories[i];
+   const p=prepared[i], [materialSnap,walletSnap,albumSnap,iceSnap,jokerSnap,hatsSnap,dogAlbumSnap,inboxSnap]=inventories[i];
    const oldAlbum=albumSnap?.exists?albumSnap.data():{};
    const dogOld=dogAlbumSnap?.exists?dogAlbumSnap.data():{};
    const oldTickets=Number(dogOld.superSlotTickets||0);
@@ -444,6 +450,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    if(p.legacyRepair)tx.set(p.payoutRef,{
     slotEligible:true,slotReels:p.reels,slotRank:p.rank,slotTiedTop:false,slotVersion:2
    },{merge:true});
+   if(mode==='skyjo'){
+    const pending=Array.isArray(inboxSnap?.data()?.items)?inboxSnap.data().items:[];
+    const summary=settledPrizes.map(prize=>({kind:prize.kind,id:prize.id,quantity:prize.quantity,
+     label:prize.label,rarity:prize.rarity,...(prize.amountCents!=null?{amountCents:prize.amountCents}:{})}));
+    if(pending.length>=60)throw Error('SKYJO_INBOX_FULL');
+    tx.set(p.inboxRef,{items:[...pending,{id:gameId,round:Number(gameId.split('_r').at(-1)),slots:p.reels,prizes:summary,createdAt:now}],updatedAt:now},{merge:true});
+   }
    tx.create(p.receiptRef,{uid:p.uid,gameId,result:settled,createdAt:now});
    results.set(p.uid,settled);
   }
@@ -463,6 +476,78 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   }catch(e){return fail(res,e)}
  });
 
+
+
+ // SKYJO Action: settle one finished round into the existing Deal inventories.
+ // The same receipt key is replayed after retries/reconnects: never double-credit.
+ app.post('/api/deal-or-no-deal/skyjo-special/settle',auth,async(req,res)=>{
+  try{
+   const hubCode=String(req.body?.hubCode||'').toUpperCase();
+   const matchId=String(req.body?.matchId||'');
+   const round=Number(req.body?.round);
+   if(!/^(?:[0-9]{3}|[A-HJ-NP-Z2-9]{6})$/.test(hubCode)||!/^[a-f0-9-]{36}$/.test(matchId)||
+      !Number.isSafeInteger(round)||round<1||round>1000)throw Error('SKYJO_REQUEST_INVALID');
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const hubSnap=await db.collection(hubCollection).doc(hubCode).get();
+   if(!hubSnap.exists)throw Error('ROOM_NOT_FOUND');
+   const hub=hubSnap.data(),uid=req.dealIdentity.uid;
+   if(hub?.phase!=='playing'||hub?.game!=='skyjo'||hub?.match?.game!=='skyjo'||
+      hub?.match?.id!==matchId||hub?.match?.settings?.toreSpecialEnabled!==true)
+      throw Error('SKYJO_MATCH_INVALID');
+   const members=Array.isArray(hub.match.members)?hub.match.members:[];
+   if(!members.some(m=>m.uid===uid)||!hub.players?.some(p=>p.uid===uid&&!p.bot&&!p.testBot))
+      throw Error('NOT_IN_ROOM');
+   if(uid!==hub.hostUid)throw Error('HOST_ONLY');
+   const persisted=await getSkyjoState(hub.match.gameCode);
+   const live=persisted?.state;
+   if(live?.kind!=='skyjo-room-v2'||live?.lobby?.settings?.toreSpecialEnabled!==true||
+     live?.lobby?.status!=='playing')throw Error('SKYJO_ROOM_INVALID');
+   const awards=skyjoSpecialAwardRows(live.game,matchId,round);
+   if(awards.players.length!==members.length||members.some((m,i)=>m.uid==null||m.name!==awards.players[i]?.name))
+      throw Error('SKYJO_PLAYERS_INVALID');
+   const gameId=matchId+'_r'+round;
+   const results=[];
+   for(const member of members){
+    const row=awards.players.find((p,i)=>members[i]?.uid===member.uid);
+    if(!row)throw Error('SKYJO_PLAYERS_INVALID');
+    if(row.slots===0){results.push({uid:member.uid,name:member.name,slots:0,prizes:[],missionIds:row.missionIds,winner:row.winner});continue}
+    const settled=await db.runTransaction(async tx=>
+      (await settleMonsterSlotsBatch(tx,db,gameId,[member.uid],'skyjo',false,new Map([[member.uid,row.slots]]))).get(member.uid)
+    );
+    results.push({uid:member.uid,name:member.name,slots:row.slots,prizes:settled.prizes,missionIds:row.missionIds,
+     winner:row.winner,replayed:settled.replayed});
+   }
+   balanceReadCache.clear();
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,matchId,round,missions:awards.missions.map(m=>({id:m.id,name:m.name,slots:m.slots})),results});
+  }catch(e){return fail(res,e)}
+ });
+ app.get('/api/deal-or-no-deal/skyjo-special/inbox',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const snap=await db.collection('deal_skyjo_special_inbox_v1').doc(req.dealIdentity.uid).get();
+   res.set('Cache-Control','no-store');
+   return res.json({ok:true,items:Array.isArray(snap.data()?.items)?snap.data().items:[]});
+  }catch(e){return fail(res,e)}
+ });
+ app.post('/api/deal-or-no-deal/skyjo-special/inbox/ack',auth,async(req,res)=>{
+  try{
+   const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+   const ids=req.body?.ids;
+   if(!Array.isArray(ids)||ids.length<1||ids.length>60||ids.some(id=>typeof id!=='string'||id.length>90))
+    throw Error('INVALID_ACK');
+   const set=new Set(ids);
+   const ref=db.collection('deal_skyjo_special_inbox_v1').doc(req.dealIdentity.uid);
+   const left=await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref);
+    const pending=Array.isArray(snap.data()?.items)?snap.data().items:[];
+    const next=pending.filter(item=>!set.has(item.id));
+    if(next.length!==pending.length)tx.set(ref,{items:next,updatedAt:Date.now()},{merge:true});
+    return next.length;
+   });
+   res.set('Cache-Control','no-store');return res.json({ok:true,remaining:left});
+  }catch(e){return fail(res,e)}
+ });
 
  // One shared slot-turn per room. Websocket broadcasts show the same reels
  // and prizes to winner, runner-up and all spectators on every device.
