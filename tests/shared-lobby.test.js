@@ -1200,3 +1200,46 @@ test('DOG online phase 1: a fifth hub member can spectate without private cards 
  const after=(await h.api('GET','/api/hub/rooms/'+code,'alice')).room;
  assert.equal(after.match.dog.revision,guest.match.dog.revision);
 });
+
+test('SKYJO read-only seat cache saves Firestore reads but never caches mutations',async()=>{
+ const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'skyjo'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const {room:running}=await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ assert.equal(running.phase,'playing');
+ const gameCode=running.match.gameCode;
+ // Instrument the in-memory fake store, not a live Firebase database.
+ let documentReads=0;
+ const originalCollection=h.store.collection;
+ h.store.collection=name=>{
+  const coll=originalCollection(name);
+  return {doc:id=>{
+   const ref=coll.doc(id);
+   return {...ref,get:async()=>{documentReads++;return ref.get()}};
+  }};
+ };
+ const [alice,bob]=await Promise.all([
+  h.adapter.skyjoSeat(gameCode,h.identities.alice,{readOnly:true}),
+  h.adapter.skyjoSeat(gameCode,h.identities.bob,{readOnly:true})
+ ]);
+ assert.equal(alice.uid,h.identities.alice.uid);
+ assert.equal(bob.uid,h.identities.bob.uid);
+ assert.equal(documentReads,1,'concurrent read-only checks share one Firestore lookup');
+ assert.equal((await h.adapter.skyjoSeat(gameCode,h.identities.cara,{readOnly:true})).error,'NOT_A_PARTICIPANT');
+ assert.equal(documentReads,1,'outsiders never gain access from the shared cache');
+ await h.adapter.skyjoSeat(gameCode,h.identities.alice,{readOnly:true});
+ assert.equal(documentReads,1,'repeat GET checks within the TTL use RAM');
+ const fresh=await h.adapter.skyjoSeat(gameCode,h.identities.alice);
+ assert.equal(fresh.uid,h.identities.alice.uid);
+ assert.equal(documentReads,2,'state-changing requests still perform fresh Firestore authorization');
+ h.advance(3001);
+ await h.adapter.skyjoSeat(gameCode,h.identities.bob,{readOnly:true});
+ assert.equal(documentReads,3,'read-only cache expires after three seconds');
+ const canceled=await h.api('POST','/api/hub/rooms/'+code+'/cancel','alice');
+ assert.equal(canceled.room.phase,'lobby');
+ const rejected=await h.adapter.skyjoSeat(gameCode,h.identities.alice);
+ assert.equal(rejected.error,'MATCH_NOT_FOUND','mutating requests immediately reject ended matches');
+ h.advance(3001);
+ assert.equal((await h.adapter.skyjoSeat(gameCode,h.identities.alice,{readOnly:true})).error,'MATCH_NOT_FOUND');
+});
