@@ -23,11 +23,3 @@ export function newCasePackBonusEvents(before,after,command){
   (type==='ack-batch'||before.pending?.eventId===event.eventId));
 }
 
-// Use the SAME 40% normal / 50% gold / 10% premium odds as the
-// existing 1-cent rule. Random draw happens exactly once in the game
-// transaction; receiving clients do not draw or credit anything.
-export function drawCasePackBonus(randomInt){
- const roll=randomInt(100);
- if(!Number.isInteger(roll)||roll<0||roll>=100)throw Error('INVALID_CASE_BONUS_ROLL');
- return roll<10?'premium':roll<60?'large':'small';
-}
