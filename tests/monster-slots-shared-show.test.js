@@ -183,3 +183,79 @@ test('new finale: runner-up gets two prizes then champion six, with server-stamp
  assert.equal(h.writes.length,writes,'no prize can be credited twice');
  assert.equal(h.docs.has('deal_monster_slots_receipts_v1/'+h.game.id+'_vanessa'),false);
 });
+
+
+test('1-cent case opens exactly one shared three-reel slot; spectator cannot start it',async()=>{
+ const h=harness({modern:true});
+ const current=h.current(),now=Date.now(),eventId='cent-reveal-1';
+ current.phase='open';
+ current.caseSlotRewardVersion=1;
+ current.events.push({type:'opened',case:2,amount:1,playerId:'chris',eventId});
+ current.caseSlotShow={
+  phase:'ready',turn:'case',uid:'chris',eventId,amount:1,reels:3,
+  activatedAt:now,showAt:now-100,startedAt:null,prizes:[]
+ };
+ const path='/api/deal-or-no-deal/:code/monster-slots/case-show';
+ const params={gameId:h.game.id,expectedUid:'chris',expectedEventId:eventId};
+ const spectator=await h.call(path,'david',{...params,operation:'spin'});
+ assert.equal(spectator.body.error,'SLOT_SHOW_NOT_YOUR_TURN');
+ const first=await h.call(path,'chris',{...params,operation:'spin'});
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.equal(first.body.game.caseSlotShow.phase,'rolling');
+ assert.equal(first.body.game.caseSlotShow.prizes.length,3);
+ const receipt='deal_case_slots_receipts_v1/'+h.game.id+'_'+eventId+'_chris';
+ assert.equal(h.docs.get(receipt)?.result?.prizes?.length,3);
+ assert.equal(h.docs.has('deal_case_slots_receipts_v1/'+h.game.id+'_'+eventId+'_david'),false);
+ const replay=await h.call(path,'chris',{...params,operation:'spin'});
+ assert.equal(replay.body.error,'SLOT_SHOW_ALREADY_STARTED');
+ assert.equal(h.docs.get(receipt)?.result?.prizes?.length,3);
+ const tooSoon=await h.call(path,'chris',{...params,operation:'confirm',expectedStartedAt:h.current().caseSlotShow.startedAt});
+ assert.equal(tooSoon.body.error,'SLOT_SHOW_STILL_ROLLING');
+ h.current().caseSlotShow.startedAt=Date.now()-8000;
+ const finished=await h.call(path,'chris',{...params,operation:'confirm',expectedStartedAt:h.current().caseSlotShow.startedAt});
+ assert.equal(finished.statusCode,200,JSON.stringify(finished.body));
+ assert.equal(finished.body.game.caseSlotShow,null);
+ assert.deepEqual(finished.body.game.caseSlotQueue,[]);
+});
+
+test('1-cent and 50-million batch bonuses are shown one after another, to their own players',async()=>{
+ const h=harness({modern:true});
+ const now=Date.now(),game=h.current();
+ const a='batch-1cent',b='batch-50m';
+ game.phase='decision';
+ game.caseSlotRewardVersion=1;
+ game.events.push(
+  {type:'opened',case:3,amount:1,playerId:'chris',eventId:a},
+  {type:'opened',case:4,amount:5_000_000_000,playerId:'david',eventId:b}
+ );
+ game.caseSlotShow={turn:'case',phase:'ready',uid:'chris',eventId:a,amount:1,reels:3,
+  activatedAt:now,showAt:now-100,startedAt:null,prizes:[]};
+ game.caseSlotQueue=[{uid:'david',eventId:b,amount:5_000_000_000}];
+ const path='/api/deal-or-no-deal/:code/monster-slots/case-show';
+ const send=(uid,operation,eventId,startedAt)=>h.call(path,uid,{
+  gameId:h.game.id,expectedEventId:eventId,expectedUid:uid,operation,
+  ...(startedAt===undefined?{}:{expectedStartedAt:startedAt})
+ });
+ const first=await send('chris','spin',a);
+ assert.equal(first.statusCode,200,JSON.stringify(first.body));
+ assert.equal(first.body.game.caseSlotShow.prizes.length,3);
+ game.caseSlotShow.startedAt=Date.now()-8000;
+ const next=await send('chris','confirm',a,game.caseSlotShow.startedAt);
+ assert.equal(next.statusCode,200,JSON.stringify(next.body));
+ assert.equal(next.body.game.caseSlotShow.uid,'david');
+ assert.equal(next.body.game.caseSlotShow.amount,5_000_000_000);
+ assert.equal(next.body.game.caseSlotQueue.length,0);
+ assert.equal((await send('chris','spin',a)).body.error,'SLOT_SHOW_STALE_STAGE');
+ assert.equal((await send('david','spin',b)).body.error,'SLOT_SHOW_PREPARING');
+ game.caseSlotShow.showAt=Date.now()-1;
+ const second=await send('david','spin',b);
+ assert.equal(second.statusCode,200,JSON.stringify(second.body));
+ assert.equal(second.body.game.caseSlotShow.prizes.length,3);
+ const receipt='deal_case_slots_receipts_v1/'+h.game.id+'_'+b+'_david';
+ assert.equal(h.docs.get(receipt)?.result?.prizes.length,3);
+ assert.equal(h.docs.has('deal_case_slots_receipts_v1/'+h.game.id+'_'+b+'_chris'),false);
+ game.caseSlotShow.startedAt=Date.now()-8000;
+ const finished=await send('david','confirm',b,game.caseSlotShow.startedAt);
+ assert.equal(finished.statusCode,200,JSON.stringify(finished.body));
+ assert.equal(finished.body.game.caseSlotShow,null);
+});
