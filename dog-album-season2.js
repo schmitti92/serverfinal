@@ -219,6 +219,32 @@ export function dogS2OpenGrantedPacks(packId,quantity,previous={},rand=randomInt
  }
  return {cards,openedPacks};
 }
+// Batch purchases/voucher redemptions behave like consecutive single-pack opens.
+// Board resets, Super-Slot tickets and tournament points must be awarded per
+// pack, even when several collections are completed within a single request.
+export const DOG_S2_PACK_BATCH_MAX=10;
+export function dogS2OpenBatch(pack,quantity,previousCards={},previousState={},now=Date.now(),rand=randomInt){
+ if(!DOG_S2_PACKS.some(p=>p.id===pack?.id)||!Number.isSafeInteger(quantity)||quantity<1||quantity>DOG_S2_PACK_BATCH_MAX)
+  throw Error('INVALID_PACK_QUANTITY');
+ let cards={...previousCards},state={...previousState},pointsAdded=0;
+ const revealed=[],completedBoards=[];
+ for(let index=0;index<quantity;index++){
+  const next={...cards};
+  const drawn=dogS2Discoveries(dogS2Draw(pack,rand),cycleCounts(cards,state.cycleBase));
+  for(const card of drawn)next[card.id]=positive(next[card.id])+1;
+  const cycles=dogS2AdvanceCycles(cards,next,state,now);
+  cards=next;state={...state,...cycles.updates};
+  revealed.push(...drawn);
+  completedBoards.push(...cycles.finished);
+  pointsAdded+=cycles.pointsAdded;
+ }
+ const {cycleBase,cycleCompletions,superSlotTickets,tournamentMonth,
+  tournamentPoints,tournamentLifetimePoints,tournamentMonthCompleted}=state;
+ return {cards,revealed,completedBoards,pointsAdded,
+  progress:dogS2CycleProgress(cards,state,now),
+  updates:{cycleBase,cycleCompletions,superSlotTickets,tournamentMonth,
+   tournamentPoints,tournamentLifetimePoints,tournamentMonthCompleted}};
+}
 // Slot packs are drawn, marked NEW, and credited as part of the same
 // idempotent game-settlement transaction. This is pure so the caller can
 // handle Firestore reads/writes once per player, even for several packs.
@@ -281,6 +307,9 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    const pack=DOG_S2_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');
    const requestId=String(req.body?.requestId||'');
    if(!/^[A-Za-z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');
+   const quantity=req.body?.quantity===undefined?1:req.body.quantity;
+   if(!Number.isSafeInteger(quantity)||quantity<1||quantity>DOG_S2_PACK_BATCH_MAX)throw Error('INVALID_PACK_QUANTITY');
+   const vouchersOnly=req.body?.vouchersOnly===true;
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
    const uid=req.dealIdentity.uid,now=Date.now();
    const sRef=db.collection(DOG_S2_COLLECTION).doc(uid),wRef=db.collection(wallet).doc(uid),
@@ -288,41 +317,46 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail}){
    const result=await db.runTransaction(async tx=>{
     const [s,w,old,r,economySnap]=await Promise.all([tx.get(sRef),tx.get(wRef),tx.get(oldRef),tx.get(receipt),tx.get(dealEconomyRef(db))]);
     if(r.exists){
-     if(r.data().packId!==pack.id)throw Error('INVALID_REQUEST_ID');
-     return {...r.data().result,replayed:true};
+     const past=r.data()||{};
+     if(past.packId!==pack.id||(past.quantity??1)!==quantity||Boolean(past.vouchersOnly)!==vouchersOnly)
+      throw Error('INVALID_REQUEST_ID');
+     return {...past.result,replayed:true};
     }
     const prev=s.exists?s.data():{},legacyData=old.exists?old.data():{};
     const balance=Number(w.data()?.balance)||0;
     if(!Number.isSafeInteger(balance)||balance<0)throw Error('INVALID_WALLET_BALANCE');
     const vouchers={...(legacyData.freeChristmasPacks||{})};
-    const free=positive(vouchers[pack.id])>0;
+    const ownedVouchers=positive(vouchers[pack.id]);
+    if(vouchersOnly&&ownedVouchers<quantity)throw Error('INSUFFICIENT_PACK_VOUCHERS');
+    const freeCount=Math.min(ownedVouchers,quantity),paidCount=quantity-freeCount;
     const economy=normalizeDealEconomy(economySnap.data());
-    if(!free&&!economy.packsEnabled)throw Error('PACK_PURCHASES_DISABLED');
+    if(paidCount&&!economy.packsEnabled)throw Error('PACK_PURCHASES_DISABLED');
     const price=dogPackPrice(economy,pack.id);
-    if(!free&&Number.isSafeInteger(req.body?.expectedPrice)&&req.body.expectedPrice!==price)throw Error('PRICE_CHANGED');
-    if(!free&&balance<price)throw Error('INSUFFICIENT_FUNDS');
-    if(free)vouchers[pack.id]-=1;
-    const cards={...(prev.cards||{})};
-    const revealed=dogS2Discoveries(dogS2Draw(pack),cycleCounts(cards,prev.cycleBase));
-    for(const card of revealed)cards[card.id]=positive(cards[card.id])+1;
-    const remaining=free?balance:balance-price;
-    const cycles=dogS2AdvanceCycles(prev.cards||{},cards,prev,now);
+    if(paidCount&&Number.isSafeInteger(req.body?.expectedPrice)&&req.body.expectedPrice!==price)throw Error('PRICE_CHANGED');
+    const chargedPrice=price*paidCount;
+    if(!Number.isSafeInteger(chargedPrice)||chargedPrice<0)throw Error('INVALID_PACK_PRICE');
+    if(balance<chargedPrice)throw Error('INSUFFICIENT_FUNDS');
+    if(freeCount)vouchers[pack.id]=ownedVouchers-freeCount;
+    const opened=dogS2OpenBatch(pack,quantity,prev.cards||{},prev,now);
+    const remaining=balance-chargedPrice;
     const freePacks=Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(vouchers[p.id])]));
-    const result={season:2,packId:pack.id,chargedPrice:free?0:price,opened:positive(prev.opened)+1,balance:remaining,cards,revealed,
-     usedFreePack:free,freePacks,progress:cycles.progress,lifetimeProgress:dogS2Progress(cards),
-     completedBoards:cycles.finished,pointsAdded:cycles.pointsAdded,
-     rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,prev.bingoRewardsClaimed,prev.bingoRewardsHistory),
-     duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)};
-    if(!free)tx.set(wRef,{balance:remaining,updatedAt:now},{merge:true});
-    else tx.set(oldRef,{freeChristmasPacks:vouchers,updatedAt:now},{merge:true});
-    tx.set(sRef,{season:2,cards,...cycles.updates,
+    const result={season:2,packId:pack.id,quantity,chargedPrice,
+     opened:positive(prev.opened)+quantity,balance:remaining,cards:opened.cards,revealed:opened.revealed,
+     usedFreePack:freeCount>0,freePacksOpened:freeCount,paidPacksOpened:paidCount,
+     freePacks,progress:opened.progress,lifetimeProgress:dogS2Progress(opened.cards),
+     completedBoards:opened.completedBoards,pointsAdded:opened.pointsAdded,
+     rewards:dogS2RewardStatus(dogS2Progress(opened.cards).bingos,prev.bingoRewardsClaimed,prev.bingoRewardsHistory),
+     duplicates:dogS2Duplicates(opened.cards,legacyData.monsterWheelTickets||0)};
+    if(paidCount)tx.set(wRef,{balance:remaining,updatedAt:now},{merge:true});
+    if(freeCount)tx.set(oldRef,{freeChristmasPacks:vouchers,updatedAt:now},{merge:true});
+    tx.set(sRef,{season:2,cards:opened.cards,...opened.updates,
      tournamentName:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),
      opened:result.opened,updatedAt:now},{merge:true});
-    if(cycles.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+cycles.progress.tournament.month).doc(uid),{
-     uid,points:cycles.progress.tournament.points,completed:cycles.progress.tournament.monthCompleted,
+    if(opened.pointsAdded)tx.set(db.collection(DOG_S2_TOURNAMENT_COLLECTION+'_'+opened.progress.tournament.month).doc(uid),{
+     uid,points:opened.progress.tournament.points,completed:opened.progress.tournament.monthCompleted,
      name:String(req.dealIdentity?.displayName||req.dealIdentity?.name||('Spieler '+uid.slice(0,5))).slice(0,32),updatedAt:now
     },{merge:true});
-    tx.create(receipt,{uid,packId:pack.id,result,createdAt:now});
+    tx.create(receipt,{uid,packId:pack.id,quantity,vouchersOnly,result,createdAt:now});
     return result;
    });
    res.set('Cache-Control','no-store');res.json({ok:true,...result});
