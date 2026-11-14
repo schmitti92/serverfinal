@@ -16,8 +16,13 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true,clo
   const PROFILE_NAME_TTL_MS=60_000;
   const PROFILE_NAME_CACHE_MAX=1000;
   const identityProfiles=new Map();
+  const identityCacheCounters={hits:0,sharedReads:0,documentReads:0,invalidations:0};
+  function identityCacheStats(){
+    // Aggregate RAM-only counters: no Firestore query, no user identifier.
+    return {...identityCacheCounters,entries:identityProfiles.size,ttlMs:PROFILE_NAME_TTL_MS};
+  }
   function invalidateIdentity(uid){
-    if(validUid(uid))identityProfiles.delete(uid);
+    if(validUid(uid)&&identityProfiles.delete(uid))identityCacheCounters.invalidations++;
   }
   function trimIdentityCache(now){
     if(identityProfiles.size<PROFILE_NAME_CACHE_MAX)return;
@@ -35,13 +40,18 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true,clo
       const store=db();if(!store)return null;
       const uid=decoded.uid,now=clock();
       const cached=identityProfiles.get(uid);
-      if(cached?.name&&cached.expires>now)return {uid,name:cached.name};
+      if(cached?.name&&cached.expires>now){
+        identityCacheCounters.hits++;
+        return {uid,name:cached.name};
+      }
       if(cached?.pending){
+        identityCacheCounters.sharedReads++;
         const name=await cached.pending;
         return name?{uid,name}:null;
       }
       // Singleflight: simultaneous SKYJO/Hub requests for one profile do
       // one Firestore document get(), not one get() per connected client call.
+      identityCacheCounters.documentReads++;
       const pending=(async()=>{
         const snap=await store.collection(PROFILES).doc(uid).get();
         if(!snap.exists||snap.data()?.setupComplete===false)return null;
@@ -140,5 +150,5 @@ export function installProfileStats(app,{admin,getFirestore,isReady=()=>true,clo
       return res.json({ok:true,stats:{games:count(d.games),wins:count(d.wins),losses:count(d.losses),draws:count(d.draws),byGame},matches,verifiedGames:['barikade','kreuz'],pendingGames:['skyjo','business']});
     }catch(e){console.error('[profile/stats]',e?.message||e);return res.status(500).json({ok:false,error:'STATS_READ_FAILED'});}
   });
-  return {identity,invalidateIdentity,book};
+  return {identity,invalidateIdentity,identityCacheStats,book};
 }
