@@ -13,22 +13,35 @@ function roundGame({round=1,phase='betweenRounds',progress={0:fullProgress(),1:f
   ]}
  };
 }
-test('Each special round has exactly one easy, medium and hard mission',()=>{
- assert.equal(SKYJO_SPECIAL_MISSIONS.length,22);
- for(let round=1;round<=100;round++){
+test('Every new round offers four different and balanced missions with 1–10 slots',()=>{
+ assert.equal(SKYJO_SPECIAL_MISSIONS.length,31);
+ assert.deepEqual([...new Set(SKYJO_SPECIAL_MISSIONS.map(m=>m.slots))].sort((a,b)=>a-b),[1,2,3,4,5,6,7,8,9,10]);
+ for(let round=1;round<=400;round++){
   const chosen=skyjoSpecialMissions(MATCH,round);
-  assert.deepEqual(chosen.map(m=>m.tier),['easy','medium','hard']);
+  assert.equal(chosen.length,4);
+  assert.deepEqual(chosen.map(m=>m.tier),['easy','medium','medium','hard']);
+  assert.equal(new Set(chosen.map(m=>m.id)).size,4);
+  assert.equal(new Set(chosen.map(m=>m.field)).size,4);
   assert.deepEqual(skyjoSpecialMissions(MATCH,round),chosen);
+  assert.ok(chosen.reduce((n,m)=>n+m.slots,0)+4<=32);
  }
+});
+test('Existing three-mission rounds keep their original deterministic selection',()=>{
+ const chosen=skyjoSpecialMissions(MATCH,1,{legacy:true});
+ assert.deepEqual(chosen.map(m=>m.tier),['easy','medium','hard']);
+ const game=roundGame({missionIds:chosen.map(m=>m.id)});
+ const awarded=skyjoSpecialAwardRows(game,MATCH,1);
+ assert.equal(awarded.missions.length,3);
+ assert.deepEqual(awarded.players[0].missionIds,chosen.filter(m=>m.field!=='score'||-11<=m.at).map(m=>m.id));
 });
 test('Server awards missions plus a two-reel round-winner bonus',()=>{
  const game=roundGame(),out=skyjoSpecialAwardRows(game,MATCH,1);
  assert.equal(out.players.length,3);
  assert.deepEqual(out.missions.map(m=>m.id),game.skyjoSpecial.missions);
  assert.equal(out.players[0].winner,true);
- assert.equal(out.players[0].slots,out.missions.reduce((n,m)=>n+m.slots,0)+2);
+ assert.equal(out.players[0].slots,out.players[0].missionSlots+2);
  assert.equal(out.players[1].slots,out.missions.filter(m=>m.field!=='score').reduce((n,m)=>n+m.slots,0));
- assert.ok(out.players[0].slots>12);
+ assert.ok(out.players[0].slots>=2);
 });
 test('Without board missions, the winner receives two reels plus any score-based mission',()=>{
  const game=roundGame({progress:{}});
