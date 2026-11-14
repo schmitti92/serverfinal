@@ -9,6 +9,7 @@ import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestT
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
 import {drawMonsterSlot,drawMonsterSlots,monsterSlotPlacements,MONSTER_SLOTS_WEIGHTS,slotCashChance} from './monster-slots.js';
 import {skyjoSpecialAwardRows} from './skyjo-special-engine.js';
+import {creditSkyjoPackVouchers} from './skyjo-pack-vouchers.js';
 import {addDealRecord,addSlotMoneyRecords,viewPrizeRecord} from './deal-player-records.js';
 import {dogGateProgress,DOG_GATE_PROGRESS_COLLECTION,DOG_GATE_PROGRESS_ID} from './dog-gates.js';
 import {DOG_BOSS_TEAM_COLLECTION,DOG_BOSS_TEAM_ID} from './dog-boss.js';
@@ -361,7 +362,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
   const inventories=await Promise.all(prepared.map(p=>Promise.all([
    p.needed.has('chest')?tx.get(p.materialsRef):null,
    p.needed.has('cash')?tx.get(p.walletRef):null,
-   p.needed.has('monster')?tx.get(p.albumRef):null,
+   (p.needed.has('monster')||mode==='skyjo'&&p.needed.has('pack'))?tx.get(p.albumRef):null,
    p.needed.has('hammer')?tx.get(p.iceRef):null,
    p.needed.has('joker')?tx.get(p.jokerRef):null,
    p.needed.has('minigame')?tx.get(p.hatsRef):null,
@@ -389,6 +390,12 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
       version:4,stage:dogChestStage(p.gate),tier:prize.id,count
      });
     }else if(prize.kind==='pack'){
+     if(mode==='skyjo'){
+      // In SKYJO this is a real free DOG pack voucher, NOT an immediate draw.
+      // It is redeemed later by the existing season-2 /open endpoint.
+      settledPrizes.push({...prize,voucher:true});
+      continue;
+     }
      const opened=dogS2OpenGrantedPacks(prize.id,prize.quantity,dogCards,randomInt,dogOld.cycleBase||{});
      dogCards=opened.cards;openedDogPacks+=opened.openedPacks.length;
      settledPrizes.push({...prize,openedPacks:opened.openedPacks});
@@ -416,9 +423,16 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
      name:String(dogOld.tournamentName||('Spieler '+p.uid.slice(0,5))).slice(0,32),updatedAt:now
     },{merge:true});
    }
-   if(monsterTickets){
-    const ticketCount=checkMonsterBalance(Number(oldAlbum.monsterWheelTickets||0),monsterTickets,1000000);
-    tx.set(p.albumRef,{monsterWheelTickets:ticketCount,updatedAt:now},{merge:true});
+   if(monsterTickets||mode==='skyjo'&&p.needed.has('pack')){
+    // The legacy Christmas document is also where DOG season 2 already keeps
+    // its free-pack vouchers. Merge both prizes into one read/write.
+    const albumUpdate={updatedAt:now};
+    if(monsterTickets)albumUpdate.monsterWheelTickets=checkMonsterBalance(
+      Number(oldAlbum.monsterWheelTickets||0),monsterTickets,1000000);
+    if(mode==='skyjo'&&p.needed.has('pack'))
+     albumUpdate.freeChristmasPacks=creditSkyjoPackVouchers(
+      oldAlbum.freeChristmasPacks||{},p.prizes);
+    tx.set(p.albumRef,albumUpdate,{merge:true});
    }
    if(Object.keys(hammers).length){
     const ice=iceSnap.exists?normalizeIceState(iceSnap.data()):newIceState();
@@ -453,7 +467,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    if(mode==='skyjo'){
     const pending=Array.isArray(inboxSnap?.data()?.items)?inboxSnap.data().items:[];
     const summary=settledPrizes.map(prize=>({kind:prize.kind,id:prize.id,quantity:prize.quantity,
-     label:prize.label,rarity:prize.rarity,...(prize.amountCents!=null?{amountCents:prize.amountCents}:{})}));
+     label:prize.label,rarity:prize.rarity,...(prize.voucher?{voucher:true}:{}),
+     ...(prize.amountCents!=null?{amountCents:prize.amountCents}:{})}));
     if(pending.length>=60)throw Error('SKYJO_INBOX_FULL');
     tx.set(p.inboxRef,{items:[...pending,{id:gameId,round:Number(gameId.split('_r').at(-1)),slots:p.reels,prizes:summary,createdAt:now}],updatedAt:now},{merge:true});
    }
