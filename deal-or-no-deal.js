@@ -161,7 +161,18 @@ function bankerOfferFor(g,uid){
  const personal=g.individualBankerOffers===true?current?.offersByPlayer?.[String(uid)]:undefined;
  return Number.isSafeInteger(personal)&&personal>=1&&personal<=MAX_MATCH_CREDIT_CENTS?personal:g.offer;
 }
-function rollPersonalBankerOffers(g,participants,random){
+// A better remaining board deserves a visibly stronger follow-up bid.
+// Only compare server-persisted rounds; losing a major high case can reduce the offer.
+function bankerProgressFloor(previousAmount,previousExpectedValue,newExpectedValue){
+ if(!Number.isSafeInteger(previousAmount)||previousAmount<1||
+  !Number.isFinite(previousExpectedValue)||previousExpectedValue<=0||
+  !Number.isFinite(newExpectedValue)||newExpectedValue<=0)return null;
+ const relative=newExpectedValue/previousExpectedValue;
+ if(relative<.985)return null; // A materially worse board can justify a lower bid.
+ const rise=Math.min(.16,.065+Math.max(0,relative-1)*.18);
+ return Math.min(MAX_MATCH_CREDIT_CENTS,Math.max(previousAmount+1,Math.round(previousAmount*(1+rise))));
+}
+function rollPersonalBankerOffers(g,participants,random,newExpectedValue){
  const offersByPlayer={},megaOfferUids=[],used=new Set();
  for(const uid of participants){
   // Rare 2.5% mega offer, otherwise independent poor / normal / good pricing.
@@ -173,6 +184,13 @@ function rollPersonalBankerOffers(g,participants,random){
   else if(bucket<470)multiplier=.42+.38*fraction;
   else multiplier=.81+.43*fraction;
   let amount=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(g.offer*multiplier)));
+  // After a favorable round, each continuing player's ordinary offer rises.
+  // A previous one-off mega jackpot is deliberately NOT made a permanent floor.
+  const prior=g.history.at(-1);
+  if(!prior?.megaOfferUids?.includes(uid)){
+   const floor=bankerProgressFloor(prior?.offersByPlayer?.[uid],prior?.expectedValue,newExpectedValue);
+   if(floor!==null)amount=Math.max(amount,floor);
+  }
   // Never show matching amounts, including when several bids hit the 50m cap.
   // A meaningful small percentage step keeps capped "mega" offers distinct.
   const initial=amount,gap=Math.max(1,Math.round(g.offer*.045));
@@ -222,7 +240,11 @@ function offer(g,random){
  // Fair expected value remains the anchor: cap extreme luck and large jackpots.
  factor=Math.max(.18,Math.min(1.25,factor));
  // Even an unusually generous offer cannot exceed the match's 50-million cap.
- g.offer=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(avg*factor)));
+ const fairMax=Math.max(1,Math.min(MAX_MATCH_CREDIT_CENTS,Math.round(avg*1.25)));
+ const proposed=Math.max(1,Math.min(fairMax,Math.round(avg*factor)));
+ const floor=bankerProgressFloor(g.history.at(-1)?.offer,previousAvg,avg);
+ // Do not violate the 125%-of-expected-value cap just to maintain an increase.
+ g.offer=floor===null?proposed:Math.min(fairMax,Math.max(proposed,floor));
  const bonusPack=drawBankerPack(random);
  // Independent 7% hammer chance; the type still comes from the 12-field wheel.
  const bonusHammer=drawBankerHammer(random);
@@ -230,7 +252,7 @@ function offer(g,random){
  // Rewards are separately drawn and remain server-authoritative.
  const bonusSpecial=drawBankerSpecial(random);
  const participants=active(g).map(p=>p.id);
- const personal=g.individualBankerOffers===true?rollPersonalBankerOffers(g,participants,random):null;
+ const personal=g.individualBankerOffers===true?rollPersonalBankerOffers(g,participants,random,avg):null;
  g.history.push({round:g.round+1,offer:g.offer,expectedValue:avg,bonusPack,bonusHammer,bonusSpecial,participants,
   ...(personal||{}),decisions:[]});
  g.phase='decision';
