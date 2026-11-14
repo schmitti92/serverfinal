@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {
  ONE_CENT_CASE,FIFTY_MILLION_CASE,isCasePackBonusAmount,
- newCasePackBonusEvents,drawCasePackBonus
+ newCasePackBonusEvents
 } from '../deal-case-pack-bonus.js';
 import {create,apply,free} from '../deal-or-no-deal.js';
+import {drawMonsterSlots} from '../monster-slots.js';
 
 test('1 cent and EUR 50 million are the only special suitcase rewards',()=>{
  assert.equal(ONE_CENT_CASE,1);
@@ -14,15 +15,10 @@ test('1 cent and EUR 50 million are the only special suitcase rewards',()=>{
  for(const value of [0,100,50_000_000,500_000_000,1_000_000_000,undefined])assert.equal(isCasePackBonusAmount(value),false);
 });
 
-test('same 40/50/10 pack chances as existing cent rule',()=>{
- const outcomes=Array.from({length:100},(_,i)=>drawCasePackBonus(max=>{
-  assert.equal(max,100);
-  return i;
- }));
- assert.equal(outcomes.filter(p=>p==='small').length,40);
- assert.equal(outcomes.filter(p=>p==='large').length,50);
- assert.equal(outcomes.filter(p=>p==='premium').length,10);
- assert.throws(()=>drawCasePackBonus(()=>100),/INVALID_CASE_BONUS_ROLL/);
+test('special-case turns use the existing three real Monster Slot prizes',()=>{
+ const outcomes=drawMonsterSlots(1,()=>0);
+ assert.equal(outcomes.length,3);
+ assert.ok(outcomes.every(prize=>prize.kind==='chest'&&prize.id==='wood'));
 });
 
 test('one revealed 50m suitcase rewards its opener, never another actor or replay',()=>{
