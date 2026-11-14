@@ -668,6 +668,11 @@ function finishEisstock(ch,members){
     hubStreamReadCounts.invalidations++;
   }
   async function readRoomForSync(code){
+    // The seven-second match-completion check can reuse the same fresh
+    // WebSocket snapshot for its read-only preflight. A real finish still
+    // revalidates inside Firestore's authoritative transaction.
+    const streamed=recentHubStreamRoom(code);
+    if(streamed)return streamed;
     const now=clock(),cached=syncRoomReads.get(code);
     if(cached?.room&&cached.expiresAt>now)return cached.room;
     if(cached?.pending)return cached.pending;
