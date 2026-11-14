@@ -145,16 +145,17 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  // from overwriting a newly committed state.
  // In-process diagnostic counters: no Firestore writes, no personal identifiers.
  // These count application read attempts, not Firebase's billed document reads.
- const firestoreUsage={startedAt:Date.now(),gameReads:0,gameCacheHits:0,roomReads:0,roomCacheHits:0,gameActions:0,avatarReads:0,avatarCacheHits:0,settlementRuns:0,settlementCacheHits:0,walletReads:0,christmasReads:0,rewardReads:0};
+ const firestoreUsage={startedAt:Date.now(),gameReads:0,gameCacheHits:0,roomReads:0,roomCacheHits:0,gameActions:0,avatarReads:0,avatarCacheHits:0,settlementRuns:0,settlementCacheHits:0};
  const usageTimer=setInterval(()=>{
   const elapsedMinutes=Math.max(1,(Date.now()-firestoreUsage.startedAt)/60000);
   console.info('[deal-firestore-usage]',JSON.stringify({
    minutes:Number(elapsedMinutes.toFixed(1)),
    gameReads:firestoreUsage.gameReads,gameCacheHits:firestoreUsage.gameCacheHits,
    roomReads:firestoreUsage.roomReads,roomCacheHits:firestoreUsage.roomCacheHits,
-   gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,walletReads:firestoreUsage.walletReads,christmasReads:firestoreUsage.christmasReads,rewardReads:firestoreUsage.rewardReads,
+   gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,
    economyReadCache:economyReadCache.stats(),walletReadCoordinator:walletReadCoordinator.stats(),
-   dealReadDiagnostics:dealReadDiagnostics.snapshot().lastMinutes
+   dealReadDiagnostics:dealReadDiagnostics.snapshot().lastMinutes,
+   measurementScope:'server_get_attempts_not_firebase_billing'
   }));
  },60000);
  usageTimer.unref?.();
