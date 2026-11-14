@@ -2,7 +2,7 @@
  * Counts application-level Firestore get() attempts, NOT billed Firebase reads.
  * Fixed source categories only; no room codes, account IDs or player data.
  */
-const SOURCES=Object.freeze(['httpGame','websocketSubscribe','websocketReconcile','scoreboard','rewardStatus','other']);
+const SOURCES=Object.freeze(['httpGame','slotRecovery','websocketSubscribe','websocketReconcile','scoreboard','rewardStatus','other']);
 const KINDS=Object.freeze(['game','room']);
 const EVENTS=Object.freeze(['request','firestoreGet','cacheHit']);
 const createCounters=()=>Object.fromEntries(KINDS.map(k=>[k,Object.fromEntries(SOURCES.map(s=>[s,{request:0,firestoreGet:0,cacheHit:0}]))]));
