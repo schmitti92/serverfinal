@@ -744,6 +744,12 @@ function finishEisstock(ch,members){
         if(!p)throw error(409,'ROOM_ALREADY_PLAYING');
         return r;
       }
+      // A returning member with unchanged name/avatar is already in the room.
+      // Avoid a needless room rewrite (and all onSnapshot billable fan-out).
+      // Still refresh the 24-hour room TTL when less than six hours remain.
+      if(p&&p.name===identity.name&&
+         (!validDogAvatar(req.body?.dogAvatar)||p.dogAvatar===req.body.dogAvatar)&&
+         r.expiresAt-clock()>=6*60*60*1000)return r;
       if(!p){if(r.players.length>=6)throw error(409,'ROOM_FULL');
         // A full game may still have spectators in the central room.
         const seatAvailable=!!r.game&&r.players.filter(x=>x.participating).length<HUB_GAMES[r.game].max;
