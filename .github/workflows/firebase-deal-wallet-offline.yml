@@ -1,0 +1,29 @@
+name: Firebase personal wallet read savings (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deal-wallet-read-coordinator.js'
+      - 'deal-or-no-deal-api.js'
+      - 'dog-album-season2.js'
+      - 'tests/deal-wallet-read-coordinator-offline.test.js'
+      - '.github/workflows/firebase-deal-wallet-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wallet-read-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check server module syntax
+        run: |
+          node --check deal-wallet-read-coordinator.js
+          node --check deal-or-no-deal-api.js
+          node --check dog-album-season2.js
+      - name: Verify personal balances using mock Firestore only
+        run: node --test tests/deal-wallet-read-coordinator-offline.test.js
