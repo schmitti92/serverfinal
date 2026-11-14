@@ -7,6 +7,7 @@ import {dealEconomyRef,normalizeDealEconomy,validateDealEconomy,goldPackPrice} f
 import {createDealEconomyReadCache} from './deal-economy-read-cache.js';
 import {createDealWalletReadCoordinator} from './deal-wallet-read-coordinator.js';
 import {createDealReadDiagnostics} from './deal-read-diagnostics.js';
+import {createDealRewardReadCoordinator} from './deal-reward-read-coordinator.js';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
@@ -75,9 +76,13 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  // There is NO wallet value TTL; all writes/credits still use transactions.
  const walletReadCoordinator=createDealWalletReadCoordinator();
  const dealReadDiagnostics=createDealReadDiagnostics();
+ const rewardReadCoordinator=createDealRewardReadCoordinator();
  const readDisplayWallet=(db,uid)=>walletReadCoordinator.read(db,uid);
  const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
  const broadcastGame=(code,game)=>{
+  // A committed game update can create a reward receipt. New display requests
+  // must not join a Firestore get() started before that commit.
+  rewardReadCoordinator.invalidateAll();
   const listeners=dealSockets.get(code);if(!listeners?.size)return;
   const view=publicView(game);
   for(const ws of listeners)sendSocket(ws,{type:'deal-state',game:view});
@@ -154,6 +159,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    roomReads:firestoreUsage.roomReads,roomCacheHits:firestoreUsage.roomCacheHits,
    gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,
    economyReadCache:economyReadCache.stats(),walletReadCoordinator:walletReadCoordinator.stats(),
+   rewardReadCoordinator:rewardReadCoordinator.snapshot(),
    dealReadDiagnostics:dealReadDiagnostics.snapshot().lastMinutes,
    measurementScope:'server_get_attempts_not_firebase_billing'
   }));
@@ -1174,7 +1180,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
   const code=String(req.params.code||'').toUpperCase();if(!CODE.test(code))throw Error('INVALID_CODE');
   const db=getFirestore();await check(db,code,req.dealIdentity.uid,true);
   const game=await readGame(db,code,'rewardStatus');if(!game||game.phase!=='final')return res.json({ok:true,reward:null});
-  const snap=await db.collection('deal_christmas_final_rewards_v1').doc(game.id).get();
+  const snap=await rewardReadCoordinator.read(db,db.collection('deal_christmas_final_rewards_v1').doc(game.id));
   if(!snap.exists)return res.json({ok:true,reward:null});
   const data=snap.data();
   const payouts=(game.finalValues||[]).map(p=>p.payout);
@@ -1208,7 +1214,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  // Read only rewards for accepted deals, never unrevealed/declined offers.
  const accepted=(game.history||[]).flatMap(h=>h.bonusPack&&h.decisions?.length===h.participants?.length?(h.decisions||[]).filter(d=>d.deal===true).map(d=>({round:h.round,uid:d.id})):[]);
  const rewards=await Promise.all(accepted.map(async item=>{
-  const doc=await db.collection('deal_christmas_banker_rewards_v1').doc(game.id+'_'+item.round+'_'+item.uid).get();
+  const doc=await rewardReadCoordinator.read(db,db.collection('deal_christmas_banker_rewards_v1').doc(game.id+'_'+item.round+'_'+item.uid));
   if(!doc.exists)return null;
   const data=doc.data();
   return {id:doc.id,gameId:data.gameId,round:data.round,uid:data.uid,playerName:game.players.find(p=>p.id===data.uid)?.name||'Spieler',packId:data.packId,packName:data.packName,revealed:data.revealed,createdAt:data.createdAt};
@@ -1228,7 +1234,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    !game.christmasWheelClosed?.['cent:'+game.id+'_'+e.eventId]);
   if(!events.length)return res.json({ok:true,reward:null,rewards:[]});
   const snaps=await Promise.all(events.map(e=>
-   db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+e.eventId).get()));
+   rewardReadCoordinator.read(db,db.collection('deal_christmas_cent_rewards_v1').doc(game.id+'_'+e.eventId))));
   const rewards=snaps.flatMap((snap,i)=>{
    if(!snap.exists)return [];
    const data=snap.data(),event=events[i];
@@ -1540,5 +1546,5 @@ const after=apply(before,req.dealIdentity.uid,req.body||{});if(after!==before){
  const elapsed=Date.now()-actionStarted;
  if(elapsed>=2500)console.warn('[deal-slow-action]',JSON.stringify({type:String(req.body?.type||'').slice(0,24),ms:elapsed,ok:false,error:String(e?.message||'ERROR').slice(0,64)}));
  return fail(res,e)}});
- return {collection,attachSocket,readDiagnostics:()=>dealReadDiagnostics.snapshot(),notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
+ return {collection,attachSocket,readDiagnostics:()=>dealReadDiagnostics.snapshot(),rewardReadStats:()=>rewardReadCoordinator.snapshot(),notifyGameChanged:(code,game)=>{invalidateGame(code);broadcastGame(code,game)}};
 }
