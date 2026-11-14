@@ -1,0 +1,31 @@
+name: Firebase DOG shared reads (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-shared-read-coordinator.js'
+      - 'dog-gates.js'
+      - 'dog-materials.js'
+      - 'server.js'
+      - 'tests/dog-shared-read-coordinator-offline.test.js'
+      - '.github/workflows/firebase-dog-shared-reads-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dog-shared-read-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check module syntax
+        run: |
+          node --check dog-shared-read-coordinator.js
+          node --check dog-gates.js
+          node --check dog-materials.js
+          node --check server.js
+      - name: Run DOG team-progress fake Firestore regression
+        run: node --test tests/dog-shared-read-coordinator-offline.test.js
