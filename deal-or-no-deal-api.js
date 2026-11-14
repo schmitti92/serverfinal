@@ -4,6 +4,7 @@ import {newIceState,normalizeIceState} from './christmas-ice-engine.js';
 import {CHRISTMAS_CARDS,christmasDraw,hammerBingoProgress,markChristmasDiscoveries,settleHammerBingoCycle,christmasDuplicateStock,redeemChristmasDuplicates,christmasHammerDuplicatesSaved,NORTH_POLE_MILESTONES,classicChristmasProgress as christmasProgress} from './christmas-card-engine.js';
 import {FieldValue} from 'firebase-admin/firestore';
 import {dealEconomyRef,normalizeDealEconomy,validateDealEconomy,goldPackPrice} from './deal-economy.js';
+import {createDealEconomyReadCache} from './deal-economy-read-cache.js';
 import {DOG_S2_COLLECTION,DOG_S2_PACKS,dogS2Draw,dogS2Discoveries,dogS2OpenGrantedPacks,dogS2AdvanceCycles,DOG_S2_TOURNAMENT_COLLECTION,installDogAlbumSeason2} from './dog-album-season2.js';
 import {DOG_MATERIALS_COLLECTION,addVerifiedChestToInventory,addExpeditionChestToInventory} from './dog-materials.js';
 import {dogChestOffer,dogChestStage,DOG_CHEST_TYPES} from './dog-balance.js';
@@ -64,6 +65,10 @@ const CODE=/^(?:\d{3}|[A-HJ-NP-Z2-9]{6})$/;
 export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoState=async()=>null}){
  const collection='deal_or_no_deal_matches_v1';
  const dealSockets=new Map();
+ // Global display prices and slot odds are identical for all players.
+ // Render shares their short read-only cache; economy-changing transactions
+ // and all prize/purchase transactions still fetch authoritative Firestore docs.
+ const economyReadCache=createDealEconomyReadCache();
  const sendSocket=(ws,message)=>{if(ws.readyState===1)try{ws.send(JSON.stringify(message))}catch{}};
  const broadcastGame=(code,game)=>{
   const listeners=dealSockets.get(code);if(!listeners?.size)return;
@@ -140,7 +145,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    minutes:Number(elapsedMinutes.toFixed(1)),
    gameReads:firestoreUsage.gameReads,gameCacheHits:firestoreUsage.gameCacheHits,
    roomReads:firestoreUsage.roomReads,roomCacheHits:firestoreUsage.roomCacheHits,
-   gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,walletReads:firestoreUsage.walletReads,christmasReads:firestoreUsage.christmasReads,rewardReads:firestoreUsage.rewardReads
+   gameActions:firestoreUsage.gameActions,avatarReads:firestoreUsage.avatarReads,avatarCacheHits:firestoreUsage.avatarCacheHits,settlementRuns:firestoreUsage.settlementRuns,settlementCacheHits:firestoreUsage.settlementCacheHits,walletReads:firestoreUsage.walletReads,christmasReads:firestoreUsage.christmasReads,rewardReads:firestoreUsage.rewardReads,
+   economyReadCache:economyReadCache.stats()
   }));
  },60000);
  usageTimer.unref?.();
@@ -266,7 +272,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  app.get('/api/deal-or-no-deal/monster-slots/catalog',auth,async(_req,res)=>{
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
-   const economy=normalizeDealEconomy((await dealEconomyRef(db).get()).data());
+   const economy=await economyReadCache.read(db);
    res.set('Cache-Control','no-store');
    return res.json({ok:true,reels:6,runnerUpReels:2,superSlotReels:5,
     categoryWeights:economy.slotWeights,cashChance:slotCashChance(economy.slotWeights),
@@ -756,7 +762,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
  app.get('/api/deal-or-no-deal/shop/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,inventory]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(inventoryCollection).doc(uid).get()]);return res.json({ok:true,balance:wallet.exists?wallet.data().balance||0:0,games:wallet.exists?wallet.data().games||0:0,owned:inventory.exists?inventory.data().owned||[]:[],items:SHOP_ITEMS})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/shop/buy',auth,async(req,res)=>{try{const item=SHOP_ITEMS.find(x=>x.id===req.body?.itemId);if(!item)throw Error('INVALID_ITEM');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),inventoryRef=db.collection(inventoryCollection).doc(uid);
  const result=await db.runTransaction(async tx=>{const [wallet,inventory]=await Promise.all([tx.get(walletRef),tx.get(inventoryRef)]);const balance=wallet.exists?wallet.data().balance||0:0;const owned=inventory.exists?inventory.data().owned||[]:[];if(owned.includes(item.id))throw Error('ALREADY_OWNED');if(balance<item.price)throw Error('INSUFFICIENT_FUNDS');const remaining=balance-item.price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});tx.set(inventoryRef,{owned:[...owned,item.id],updatedAt:Date.now()},{merge:true});return {balance:remaining,owned:[...owned,item.id]}});return res.json({ok:true,...result,itemId:item.id})}catch(e){return fail(res,e)}});
- app.get('/api/deal-or-no-deal/cards/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap,economySnap]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CARD_COLLECTION).doc(uid).get(),dealEconomyRef(db).get()]);const inventory=snap.exists?snap.data():{},economy=normalizeDealEconomy(economySnap.data());return res.json({ok:true,purchasesEnabled:economy.packsEnabled,balance:wallet.exists?wallet.data().balance||0:0,cards:inventory.cards||{},opened:inventory.opened||0,definitions:CARD_DEFINITIONS,packs:CARD_PACKS.map(({weights,...p})=>({...p,price:goldPackPrice(economy,p.id),probabilities:Object.fromEntries(rarities.map(r=>[r,Math.round(10000*CARD_DEFINITIONS.filter(c=>c.rarity===r).length*weights[r]/CARD_DEFINITIONS.reduce((sum,c)=>sum+weights[c.rarity],0))/100]))}))})}catch(e){return fail(res,e)}});
+ app.get('/api/deal-or-no-deal/cards/me',auth,async(req,res)=>{try{const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const [wallet,snap,economy]=await Promise.all([db.collection(walletCollection).doc(uid).get(),db.collection(CARD_COLLECTION).doc(uid).get(),economyReadCache.read(db)]);const inventory=snap.exists?snap.data():{};return res.json({ok:true,purchasesEnabled:economy.packsEnabled,balance:wallet.exists?wallet.data().balance||0:0,cards:inventory.cards||{},opened:inventory.opened||0,definitions:CARD_DEFINITIONS,packs:CARD_PACKS.map(({weights,...p})=>({...p,price:goldPackPrice(economy,p.id),probabilities:Object.fromEntries(rarities.map(r=>[r,Math.round(10000*CARD_DEFINITIONS.filter(c=>c.rarity===r).length*weights[r]/CARD_DEFINITIONS.reduce((sum,c)=>sum+weights[c.rarity],0))/100]))}))})}catch(e){return fail(res,e)}});
  app.post('/api/deal-or-no-deal/cards/open',auth,async(req,res)=>{try{const pack=CARD_PACKS.find(p=>p.id===req.body?.packId);if(!pack)throw Error('INVALID_PACK');const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9_-]{12,90}$/.test(requestId))throw Error('INVALID_REQUEST_ID');const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');const uid=req.dealIdentity.uid;const walletRef=db.collection(walletCollection).doc(uid),cardsRef=db.collection(CARD_COLLECTION).doc(uid),economyRef=dealEconomyRef(db);
  const result=await db.runTransaction(async tx=>{const [wallet,snap,economySnap]=await Promise.all([tx.get(walletRef),tx.get(cardsRef),tx.get(economyRef)]);const previous=snap.exists?snap.data():{};if(previous.lastPurchase?.requestId===requestId){if(previous.lastPurchase.packId!==pack.id)throw Error('INVALID_REQUEST_ID');return {...previous.lastPurchase.result,replayed:true}}const economy=normalizeDealEconomy(economySnap.data());if(!economy.packsEnabled)throw Error('PACK_PURCHASES_DISABLED');const price=goldPackPrice(economy,pack.id);if(Number.isSafeInteger(req.body?.expectedPrice)&&req.body.expectedPrice!==price)throw Error('PRICE_CHANGED');const balance=wallet.exists?wallet.data().balance||0:0;if(!Number.isSafeInteger(balance)||balance<price)throw Error('INSUFFICIENT_FUNDS');const owned={...(previous.cards||{})};const cards=openPack(pack);for(const card of cards)owned[card.id]=(owned[card.id]||0)+1;const remaining=balance-price;tx.set(walletRef,{balance:remaining,updatedAt:Date.now()},{merge:true});const purchaseResult={balance:remaining,chargedPrice:price,cards:owned,opened:(previous.opened||0)+1,revealed:cards.map(({id,name,rarity,emoji,series})=>({id,name,rarity,emoji,series}))};tx.set(cardsRef,{cards:owned,opened:purchaseResult.opened,lastPurchase:{requestId,packId:pack.id,result:purchaseResult},updatedAt:Date.now()},{merge:true});return purchaseResult});return res.json({ok:true,...result})}catch(e){return fail(res,e)}});
 
@@ -1272,9 +1278,9 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    const code=String(req.params.code||'').toUpperCase();
    if(!CODE.test(code))throw Error('INVALID_CODE');
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
-   const [room,snap]=await Promise.all([check(db,code,req.dealIdentity.uid,true),dealEconomyRef(db).get()]);
+   const [room,economy]=await Promise.all([check(db,code,req.dealIdentity.uid,true),economyReadCache.read(db)]);
    res.set('Cache-Control','no-store');
-   return res.json({ok:true,isHost:room.hostUid===req.dealIdentity.uid,economy:normalizeDealEconomy(snap.data())});
+   return res.json({ok:true,isHost:room.hostUid===req.dealIdentity.uid,economy});
   }catch(e){return fail(res,e)}
  });
  app.post('/api/deal-or-no-deal/:code/economy',auth,async(req,res)=>{
@@ -1296,6 +1302,8 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
     tx.set(ref,next);
     return normalizeDealEconomy(next);
    });
+   // The confirmed host change must immediately invalidate all cached prices.
+   economyReadCache.invalidate();
    for(const sockets of dealSockets.values())for(const ws of sockets)sendSocket(ws,{type:'deal-economy',economy});
    res.set('Cache-Control','no-store');
    return res.json({ok:true,economy,isHost:true});
