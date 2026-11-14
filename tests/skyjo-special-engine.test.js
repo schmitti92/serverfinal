@@ -26,6 +26,13 @@ test('Every new round offers four different and balanced missions with 1–10 sl
   assert.ok(chosen.reduce((n,m)=>n+m.slots,0)+4<=32);
  }
 });
+test('Server mission order matches the browser snapshot for specific multiplayer rounds',()=>{
+ const expected={1:['low-five','two-rows','two-columns','double-twelve'],
+  2:['two-groups','two-jokers','zero-trio','three-streets'],
+  7:['finish-ten','zero-trio','two-columns','three-rows']};
+ for(const [round,ids] of Object.entries(expected))
+  assert.deepEqual(skyjoSpecialMissions(MATCH,Number(round)).map(m=>m.id),ids);
+});
 test('Existing three-mission rounds keep their original deterministic selection',()=>{
  const chosen=skyjoSpecialMissions(MATCH,1,{legacy:true});
  assert.deepEqual(chosen.map(m=>m.tier),['easy','medium','hard']);
