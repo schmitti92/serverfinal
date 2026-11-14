@@ -6,6 +6,23 @@ import {randomInt} from 'node:crypto';
 export const MONSTER_SLOTS_WEIGHTS=Object.freeze({
  chest:35,pack:30,hammer:20,joker:4,minigame:3,monster:3,cash:190
 });
+// SKYJO 100 Tore Special: 50% of all reel prizes are money, 50% are items.
+// Keep the host's relative NON-cash weights (packs, hammers, etc.), without
+// letting a host setting change this particular special's 50/50 promise.
+// For a 100%-cash global configuration, restore default item weights rather
+// than silently turning the SKYJO special into a money-only machine.
+export function skyjoMonsterSlotWeights(categoryWeights=MONSTER_SLOTS_WEIGHTS){
+ const itemKeys=Object.keys(MONSTER_SLOTS_WEIGHTS).filter(key=>key!=='cash');
+ const items=Object.fromEntries(itemKeys.map(key=>[
+  key,Number.isSafeInteger(categoryWeights?.[key])&&categoryWeights[key]>=0?categoryWeights[key]:MONSTER_SLOTS_WEIGHTS[key]
+ ]));
+ let itemTotal=Object.values(items).reduce((sum,weight)=>sum+weight,0);
+ if(itemTotal===0){
+  for(const key of itemKeys)items[key]=MONSTER_SLOTS_WEIGHTS[key];
+  itemTotal=Object.values(items).reduce((sum,weight)=>sum+weight,0);
+ }
+ return Object.freeze({...items,cash:itemTotal});
+}
 export const MONSTER_SLOTS_COUNT=3;
 // Exactly one wildcard in 3,000 non-cash prize rolls.
 // With the standard 2:1 cash/item weighting: 1 in 9,000 reels.
