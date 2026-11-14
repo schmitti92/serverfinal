@@ -107,6 +107,34 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     }
     return null;
   }
+  // SKYJO GET polling must not re-read the hub document on every frame.
+  // This cache is ONLY used for read-only game-state requests. Actions,
+  // payouts and room mutations still re-check the authoritative Firestore room.
+  const SKYJO_READ_CACHE_MS=3000;
+  const SKYJO_READ_CACHE_MAX=128;
+  const skyjoReadRooms=new Map();
+  async function readOnlySkyjoRoom(store,gameCode){
+    const now=clock(),cached=skyjoReadRooms.get(gameCode);
+    if(cached?.room&&cached.expiresAt>now)return cached.room;
+    if(cached?.pending)return cached.pending;
+    const pending=roomByGameCode(store,gameCode);
+    skyjoReadRooms.set(gameCode,{pending});
+    try{
+      const room=await pending;
+      if(skyjoReadRooms.get(gameCode)?.pending===pending){
+        skyjoReadRooms.delete(gameCode);
+        if(room?.phase==='playing'&&room.expiresAt>clock()&&room.match?.gameCode===gameCode){
+          skyjoReadRooms.set(gameCode,{room,expiresAt:clock()+SKYJO_READ_CACHE_MS});
+          if(skyjoReadRooms.size>SKYJO_READ_CACHE_MAX)
+            skyjoReadRooms.delete(skyjoReadRooms.keys().next().value);
+        }
+      }
+      return room;
+    }catch(error){
+      if(skyjoReadRooms.get(gameCode)?.pending===pending)skyjoReadRooms.delete(gameCode);
+      throw error;
+    }
+  }
   function startBarikade(room){
     if(room.game!=='barikade')throw error(409,'GAME_NOT_CONNECTED');
     if(!room.players.some(p=>p.uid===room.hostUid&&p.participating))throw error(409,'HOST_MUST_PLAY');
@@ -1809,11 +1837,11 @@ function finishEisstock(ch,members){
       members:room.match.members.map(({uid,name})=>({uid,name}))};
   }
   // Separate game match ID and six-character lobby code. Only participating Firebase users get a SKYJO seat.
-  async function skyjoSeat(gameCode,profile){
+  async function skyjoSeat(gameCode,profile,{readOnly=false}={}){
     if(!HUB_SKYJO_CODE.test(String(gameCode||'')))return {legacy:true};
     if(!profile?.uid)return {error:'LOGIN_REQUIRED'};
     const store=db();if(!store)return {error:'DATABASE_UNAVAILABLE'};
-    const room=await roomByGameCode(store,gameCode);
+    const room=readOnly?await readOnlySkyjoRoom(store,gameCode):await roomByGameCode(store,gameCode);
     if(!room||room.expiresAt<=clock()||room.phase!=='playing'||room.match?.game!=='skyjo'||room.match.gameCode!==gameCode)
       return {error:'MATCH_NOT_FOUND'};
     const member=room.match.members.find(m=>m.uid===profile.uid);
