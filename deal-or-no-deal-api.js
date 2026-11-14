@@ -301,7 +301,7 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
    // Only these exact legacy receipts may be repaired. Determine standings
    // from the authoritative payout ledger, never from client-submitted rank.
    const needsLegacy=payouts.some(snap=>snap.exists&&snap.data()?.slotEligible===true&&
-    snap.data()?.slotVersion!==2&&snap.data()?.slotReels==null);
+    ![2,3].includes(snap.data()?.slotVersion)&&snap.data()?.slotReels==null);
    let legacyRanks=null;
    if(needsLegacy){
     const all=await tx.get(db.collection(payoutCollection).where('gameId','==',gameId));
@@ -319,14 +319,14 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
     const data=payouts[i].data();
     if(data?.gameId!==gameId||data?.uid!==missing[i].uid)throw Error('GAME_REWARD_INVALID');
     let reels=Number(data.slotReels||0),rank=data.slotRank,legacyRepair=false;
-    if(reels===0&&data.slotEligible===true&&data.slotVersion!==2&&data.slotReels==null){
+    if(reels===0&&data.slotEligible===true&&![2,3].includes(data.slotVersion)&&data.slotReels==null){
      const verified=legacyRanks?.get(data.uid);
      if(verified?.reels>0){reels=verified.reels;rank=verified.rank;legacyRepair=true;}
     }
     if(!Number.isSafeInteger(reels)||![0,1,2,3,6].includes(reels))throw Error('GAME_REWARD_INVALID');
     if(reels===0){
      if(skipIneligible)continue;
-     throw Error(data.slotTiedTop===true||data.slotEligible===false&&data.slotVersion!==2?
+     throw Error(data.slotTiedTop===true||data.slotEligible===false&&![2,3].includes(data.slotVersion)?
       'TIED_GAME_NO_SLOTS':'SLOT_NOT_ELIGIBLE');
     }
     if(data.slotEligible!==true)throw Error('GAME_REWARD_INVALID');
