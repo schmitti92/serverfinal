@@ -534,7 +534,69 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore}){
   }catch(error){return fail(res,error)}
  });
 
- // Each completed DOG 16-card board earns ONE five-reel Super Slot.
+ 
+  // A special suitcase gives its opener exactly one three-reel turn.
+  // Prizes settle on the server and all players see the same show via game push.
+  app.post('/api/deal-or-no-deal/:code/monster-slots/case-show',auth,async(req,res)=>{
+   try{
+    const code=String(req.params.code||'').toUpperCase();
+    if(!CODE.test(code))throw Error('INVALID_CODE');
+    const operation=String(req.body?.operation||'');
+    if(!['spin','confirm'].includes(operation))throw Error('INVALID_SLOT_SHOW_ACTION');
+    const gameId=String(req.body?.gameId||'');
+    if(!/^[a-f0-9-]{36}$/.test(gameId))throw Error('INVALID_GAME_ID');
+    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
+    const actor=req.dealIdentity.uid;
+    await check(db,code,actor);
+    const ref=db.collection(collection).doc(code);
+    const next=await db.runTransaction(async tx=>{
+     const snap=await tx.get(ref),game=snap.exists?snap.data().game:null;
+     if(!game||game.id!==gameId)throw Error('SLOT_SHOW_GAME_CHANGED');
+     const stage=game.caseSlotShow;
+     if(!stage||stage.turn!=='case'||!isCasePackBonusAmount(stage.amount))
+      throw Error('CASE_SLOT_NOT_AVAILABLE');
+     if(!game.events?.some(e=>e.eventId===stage.eventId&&e.playerId===stage.uid&&e.amount===stage.amount&&e.type==='opened'))
+      throw Error('CASE_SLOT_INVALID_EVENT');
+     if(req.body?.expectedEventId!==stage.eventId||
+        req.body?.expectedUid!==stage.uid||
+        (operation==='confirm'&&Number(req.body?.expectedStartedAt||0)!==Number(stage.startedAt||0)))
+      throw Error('SLOT_SHOW_STALE_STAGE');
+     const now=Date.now();
+     const roomRecovery=game.players.some(p=>p.id===actor)&&now-Number(stage.activatedAt||0)>=30000;
+     if(stage.uid!==actor&&!roomRecovery)throw Error('SLOT_SHOW_NOT_YOUR_TURN');
+     let updated;
+     if(operation==='spin'){
+      if(stage.phase!=='ready')throw Error('SLOT_SHOW_ALREADY_STARTED');
+      if(now<Number(stage.showAt||0))throw Error('SLOT_SHOW_PREPARING');
+      const receiptKey=game.id+'_'+stage.eventId;
+      const settled=(await settleMonsterSlotsBatch(tx,db,receiptKey,[stage.uid],'case')).get(stage.uid);
+      if(!settled||settled.prizes?.length!==3)throw Error('CASE_SLOT_REWARD_INVALID');
+      updated={...stage,phase:'rolling',startedAt:now+3200,prizes:settled.prizes};
+     }else{
+      if(stage.phase!=='rolling')throw Error('SLOT_SHOW_NOT_STARTED');
+      if(now-Number(stage.startedAt||0)<7800)throw Error('SLOT_SHOW_STILL_ROLLING');
+      updated=null;
+     }
+     const queue=Array.isArray(game.caseSlotQueue)?game.caseSlotQueue:[];
+     const nextQueue=operation==='confirm'?queue.slice(1):queue;
+     if(operation==='confirm'&&queue.length){
+      const queued=queue[0];
+      updated={...queued,phase:'ready',turn:'case',reels:3,
+       activatedAt:now,showAt:now+2200,startedAt:null,prizes:[]};
+     }
+     const result={...game,caseSlotShow:updated,caseSlotQueue:nextQueue,revision:(game.revision||0)+1};
+     tx.update(ref,{game:result,updatedAt:now});
+     return result;
+    });
+    invalidateGame(code);
+    if(operation==='spin')balanceReadCache.clear();
+    broadcastGame(code,next);
+    res.set('Cache-Control','no-store');
+    return res.json({ok:true,game:publicView(next)});
+   }catch(error){return fail(res,error)}
+  });
+
+  // Each completed DOG 16-card board earns ONE five-reel Super Slot.
  // The album ticket is consumed in the same transaction as all five prizes,
  // and the request-id receipt prevents double payment on retries.
  app.post('/api/deal-or-no-deal/christmas/season2/super-slot/play',auth,async(req,res)=>{
