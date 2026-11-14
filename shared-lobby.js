@@ -791,7 +791,9 @@ function finishEisstock(ch,members){
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(!validDogAvatar(avatar))throw error(400,'INVALID_DOG_AVATAR');
     return {room:await mutate(code,identity,room=>{
-      if(room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
+      // The picker is available before DOG is selected in the shared lobby.
+      // Never interrupt an unrelated running game with an avatar-only update.
+      if(room.phase==='playing'&&room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
       const me=room.players.find(p=>p.uid===identity.uid);
       if(!me)throw error(403,'NOT_A_MEMBER');
       if(me.dogAvatar===avatar)return {unchanged:true};
