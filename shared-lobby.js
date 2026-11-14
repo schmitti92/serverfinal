@@ -1993,6 +1993,11 @@ function finishEisstock(ch,members){
   // One Firestore watch per room per server instance. Each socket still gets
   // independently validated and independently filtered room data.
   const roomStreams=new Map();
+  // DOG emoji reactions travel over already-authenticated room sockets.
+  // They are ephemeral: 0 additional Firestore writes and no new listeners.
+  const dogEmojiClients=new Map();
+  const dogEmojiCooldown=new Map();
+  const DOG_STARTER_EMOJIS=new Set(['emoji_01','emoji_02','emoji_03']);
   function watchRoom(code,store,subscriber){
     let stream=roomStreams.get(code);
     if(!stream){
@@ -2029,7 +2034,7 @@ function finishEisstock(ch,members){
     };
   }
   function attachSocket(ws){
-    let unwatch=null,closed=false,authenticated=false;
+    let unwatch=null,closed=false,authenticated=false,emojiIdentity=null,emojiRoomCode=null,emojiRoom=null,emojiClient=null;
     // Suppress duplicate room payloads on reconnect/metadata-only snapshots.
     // Authentication and membership checks still run for every snapshot.
     let lastRoomPayload='';
@@ -2042,7 +2047,16 @@ function finishEisstock(ch,members){
         if(payload?.type==='room')lastRoomPayload=serialized;
       }catch(_e){}
     };
-    const teardown=()=>{closed=true;try{unwatch?.();}catch(_e){}unwatch=null;clearTimeout(authTimeout);clearTimeout(renewTimeout);};
+    const teardown=()=>{
+      closed=true;try{unwatch?.();}catch(_e){}unwatch=null;
+      if(emojiClient&&emojiRoomCode){
+        const clients=dogEmojiClients.get(emojiRoomCode);
+        clients?.delete(emojiClient);
+        if(clients?.size===0)dogEmojiClients.delete(emojiRoomCode);
+      }
+      emojiClient=null;emojiRoom=null;
+      clearTimeout(authTimeout);clearTimeout(renewTimeout);
+    };
     const authTimeout=setTimeout(()=>{if(!authenticated)try{ws.close(4003,'HUB_AUTH_TIMEOUT');}catch(_e){}},12000);
     const renewTimeout=setTimeout(()=>{try{ws.close(4001,'HUB_TOKEN_RENEW');}catch(_e){}},50*60*1000);
     ws.on('message',async bytes=>{
@@ -2050,6 +2064,33 @@ function finishEisstock(ch,members){
       if(String(bytes).length>9000){try{ws.close(1009,'HUB_MESSAGE_TOO_LARGE');}catch(_e){}return;}
       let msg;try{msg=JSON.parse(String(bytes));}catch(_e){return;}
       if(msg?.type==='ping'){send({type:'pong'});return;}
+      if(msg?.type==='dog_emoji'){
+        const id=msg.emojiId,room=emojiRoom,identity=emojiIdentity;
+        const reject=reason=>send({type:'dog_emoji_error',reason});
+        if(!emojiClient||!room||!identity){reject('NOT_CONNECTED');return;}
+        try{validateRead(room,identity);}catch(_e){reject('NOT_A_MEMBER');return;}
+        if(room.phase!=='playing'||room.match?.game!=='dog'||room.match?.id!==msg.matchId){
+          reject('NO_DOG_MATCH');return;
+        }
+        if(!DOG_STARTER_EMOJIS.has(id)){reject('EMOJI_LOCKED');return;}
+        const seat=room.match.dogRoster?.find(p=>p.uid===identity.uid&&!p.bot)?.seat;
+        if(!Number.isInteger(seat)){reject('NOT_A_PARTICIPANT');return;}
+        const now=clock(),cooldownKey=emojiRoomCode+':'+identity.uid;
+        if(now-(dogEmojiCooldown.get(cooldownKey)??-Infinity)<5000){reject('COOLDOWN');return;}
+        dogEmojiCooldown.set(cooldownKey,now);
+        if(dogEmojiCooldown.size>500)for(const [key,at] of dogEmojiCooldown)if(now-at>60000)dogEmojiCooldown.delete(key);
+        const event={type:'dog_emoji',code:emojiRoomCode,matchId:room.match.id,emojiId:id,
+          seat,senderName:room.players.find(p=>p.uid===identity.uid)?.name||'Spieler',
+          eventId:randomUUID(),sentAt:now};
+        // Broadcast through the existing socket group without modifying the game.
+        for(const peer of dogEmojiClients.get(emojiRoomCode)||[]){
+          try{
+            validateRead(peer.room(),{uid:peer.uid});
+            if(peer.room()?.match?.id===event.matchId)peer.send(event);
+          }catch(_e){}
+        }
+        return;
+      }
       if(msg?.type!=='subscribe'||authenticated)return;
       authenticated=true;
       const code=validCode(msg.code),token=String(msg.profileIdToken||'');
@@ -2059,11 +2100,17 @@ function finishEisstock(ch,members){
         if(!identity?.uid)throw error(401,'LOGIN_REQUIRED');
         const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
         if(closed)return;
+        emojiIdentity={uid:identity.uid,name:cleanName(identity.name)};
+        emojiRoomCode=code;
+        emojiClient={uid:identity.uid,send,room:()=>emojiRoom};
+        if(!dogEmojiClients.has(code))dogEmojiClients.set(code,new Set());
+        dogEmojiClients.get(code).add(emojiClient);
         unwatch=watchRoom(code,store,(room,streamError)=>{
           if(closed)return;
           if(streamError){send({type:'error',error:'STREAM_UNAVAILABLE'});try{ws.close(1011);}catch(_e){}return;}
           try{
             validateRead(room,identity);
+            emojiRoom=room;
             send({type:'room',room:expose(room,identity)});
           }catch(_e){send({type:'error',error:'NOT_A_MEMBER'});try{ws.close(4003);}catch(_e){}}
         });
