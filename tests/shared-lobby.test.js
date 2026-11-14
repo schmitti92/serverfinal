@@ -350,7 +350,7 @@ test('SKYJO creates one hub match with settings, seat authentication, and no sec
  assert.equal(active.match.gameCode.slice(1,7),code);
  const alice=await h.adapter.skyjoSeat(active.match.gameCode,h.identities.alice);
  assert.equal(alice.host,true);assert.equal(alice.hostUid,h.identities.alice.uid);
- assert.deepEqual(alice.settings,{...settings,layoutMode:'classic'});assert.equal(alice.members.length,2);
+ assert.deepEqual(alice.settings,{...settings,layoutMode:'classic',toreSpecialEnabled:false});assert.equal(alice.members.length,2);
  assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,h.identities.cara)).error,'NOT_A_PARTICIPANT');
  assert.equal((await h.adapter.skyjoSeat(active.match.gameCode,null)).error,'LOGIN_REQUIRED');
  const boot=await h.api('POST',`/api/hub/rooms/${code}/skyjo-bootstrap`,'bob',{matchId:active.match.id});
