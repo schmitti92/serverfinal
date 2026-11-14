@@ -510,11 +510,19 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
    for(const member of members){
     const row=awards.players.find((p,i)=>members[i]?.uid===member.uid);
     if(!row)throw Error('SKYJO_PLAYERS_INVALID');
-    if(row.slots===0){results.push({uid:member.uid,name:member.name,slots:0,prizes:[],missionIds:row.missionIds,winner:row.winner});continue}
+    if(row.slots===0){results.push({uid:member.uid,name:member.name,slots:0,prizes:[],
+     missionIds:row.missionIds,winner:row.winner,missionSlots:row.missionSlots,
+     winnerSlots:row.winnerSlots,bonusSlots:row.bonusSlots,bonusIndex:row.bonusIndex,
+     bonusAchieved:row.bonusAchieved});continue}
     const settled=await db.runTransaction(async tx=>
       (await settleMonsterSlotsBatch(tx,db,gameId,[member.uid],'skyjo',false,new Map([[member.uid,row.slots]]))).get(member.uid)
     );
+    if(!Array.isArray(settled?.prizes)||settled.prizes.length!==row.slots||
+       row.slots!==row.missionSlots+row.winnerSlots+row.bonusSlots)
+      throw Error('SKYJO_SLOT_TOTAL_MISMATCH');
     results.push({uid:member.uid,name:member.name,slots:row.slots,prizes:settled.prizes,missionIds:row.missionIds,
+     missionSlots:row.missionSlots,winnerSlots:row.winnerSlots,bonusSlots:row.bonusSlots,
+     bonusIndex:row.bonusIndex,bonusAchieved:row.bonusAchieved,
      winner:row.winner,replayed:settled.replayed});
    }
    balanceReadCache.clear();
