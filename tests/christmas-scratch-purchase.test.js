@@ -166,3 +166,34 @@ test('free tickets and unlocks are included in progress statistics',()=>{
  assert.equal(p.byVariant[result.result.board.variantId].free,1);
  assert.equal(p.unlocks,result.result.winnings.filter(x=>x.type==='unlock').length);
 });
+
+test('explicit card selection yields exactly that scratch variant, without altering tier prices',()=>{
+ const variants={simple:['gifts','snow_collect'],medium:['elf'],premium:['premium_27']};
+ for(const [tier,ids] of Object.entries(variants)){
+  for(const variantId of ids){
+   for(let i=0;i<12;i++){
+    const id='choose-'+variantId+'-'+i;
+    const request={tier,variantId,commandId:id,free:false};
+    const {result,wallet}=buyScratchTicket(fresh(),null,request);
+    assert.equal(result.board.variantId,variantId);
+    assert.equal(result.tier,tier);
+    assert.equal(result.price,DOG_SCRATCH_TIERS[tier].price);
+    assert.ok(verifyScratchPrizes(result.board));
+    const repeat=buyScratchTicket(wallet,null,request);
+    assert.equal(repeat.unchanged,true);
+    assert.deepEqual(repeat.result,result);
+   }
+  }
+ }
+});
+test('variants from other price classes and unknown variants are rejected before payout',()=>{
+ for(const [tier,variantId] of [
+  ['simple','elf'],['simple','premium_27'],
+  ['medium','gifts'],['premium','snow_collect'],
+  ['simple','__proto__'],['simple',''],['simple',null],['medium',100]
+ ]){
+  assert.throws(()=>buyScratchTicket(fresh(),null,{
+   tier,variantId,commandId:'bad-variant-'+tier+'-1234'
+  }),/SCRATCH_INVALID_VARIANT/);
+ }
+});
