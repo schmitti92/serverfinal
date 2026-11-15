@@ -863,7 +863,8 @@ function finishEisstock(ch,members){
     validateRead(room,identity);
     const snap=await dogVillageFor(store,room.hostUid).get();
     return {village:dogVillagePublic(snap.exists?snap.data():null,room.hostUid),
-      host:room.hostUid===identity.uid,enabled:room.settings?.dog?.christmasEnabled===true,
+      host:room.hostUid===identity.uid,canSetMode:room.phase==='preparing'&&room.game==='dog',
+      enabled:room.settings?.dog?.christmasEnabled===true,
       matchEnabled:room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
   }));
   app.post('/api/hub/rooms/:code/dog/christmas-mode',handler(async req=>{
