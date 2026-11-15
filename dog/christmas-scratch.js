@@ -589,7 +589,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&winnings[0]?.type==='unlock';
  const rareRoll=rareEligible?random(config.weights.unlock):-1;
  const doubleMain=rareRoll===0&&awardMain();
- const rareMainMultiplier=rareRoll===1&&awardMain();
+ const rareMainMultiplier=rareRoll===1&&
+  (awardMain(winnings[0]?.prize?.category)||awardMain());
 
  // Normal x2: 109/799 of all *other* winning tickets.
  // Since 1/1000 of tickets is reserved for rare cosmetic x2, total
