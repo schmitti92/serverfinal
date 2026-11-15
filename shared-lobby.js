@@ -12,6 +12,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
+import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket} from './dog/christmas-scratch.js';
@@ -832,6 +833,14 @@ function finishEisstock(ch,members){
     const snap=await ref.get();
     return {stats:dogPlayerStats(snap.exists?snap.data():null,uid),
       tracking:'from-2026-11-15',scope:'completed-dog-online-matches'};
+  }));
+  // Personal 1–10 level progress: read-only, separate from the village and
+  // from the shared Christmas tree. Opens only when the user views their level.
+  app.get('/api/hub/dog/level',authentication,handler(async req=>{
+    const store=db();
+    const snap=await store.collection(DOG_PLAYER_STATS_COLLECTION).doc(req.hubIdentity.uid).get();
+    return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
+      scope:'verified-dog-online-matches',rewardsConfigured:false};
   }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
     const store=db(),snap=await dogVillageFor(store).get();
