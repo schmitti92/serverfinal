@@ -10,7 +10,7 @@ import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-sym
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
 import {generatePremium27} from './christmas-premium27.js';
-import {normalizeScratchSettings} from './christmas-scratch-settings.js';
+import {normalizeScratchSettings,pickWeightedScratchSymbol} from './christmas-scratch-settings.js';
 export const DOG_SCRATCH_COLLECTION='dog_christmas_scratch_wallet_v1';
 export const DOG_SCRATCH_START_COINS=1000;
 export const DOG_SCRATCH_TIERS=Object.freeze({
@@ -593,23 +593,26 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   if(winnings.length>=visiblePrizeLimit)return false;
   const choices=remaining.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
   if(!choices.length)return false;
+  // Each gift has an independent host-set chance, normalized across
+  // gift symbols not already used on the visible board.
+  const availableGiftIndices=SCRATCH_GIFT_SYMBOLS.map((icon,i)=>i)
+   .filter(i=>!winnings.some(w=>w.type==='unlock'&&w.symbol===SCRATCH_GIFT_SYMBOLS[i]));
+  const giftIndex=pickWeightedScratchSymbol(config.giftSymbolWeights,random,availableGiftIndices);
+  if(giftIndex<0)return false;
   const prize=choices[random(choices.length)];
+  const symbol=SCRATCH_GIFT_SYMBOLS[giftIndex];
   owned.add(prize.unlockId);
   newUnlocks.push(prize.unlockId);
-  // Two unlocks on one ticket use distinct gift glyphs, so each valid
-  // three-of-a-kind has its own unambiguous reward.
-  const giftOptions=SCRATCH_GIFT_SYMBOLS.filter(icon=>!winnings.some(w=>w.type==='unlock'&&w.symbol===icon));
-  const symbol=giftOptions[random(giftOptions.length)];
   winnings.push({type:'unlock',symbol,prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
   return true;
  };
  const awardCoin=()=>{
   if(winnings.length>=visiblePrizeLimit)return false;
-  const unused=config.coinAmounts.map((amount,i)=>({amount,symbol:SCRATCH_PAYOUT_ORDER[i]}))
-   .filter(option=>!winnings.some(w=>w.type==='coins'&&w.symbol===option.symbol));
-  if(!unused.length)return false;
-  const option=unused[random(unused.length)];
-  winnings.push({type:'coins',...option});
+  const remainingMoneyIndices=config.coinAmounts.map((amount,i)=>i)
+   .filter(i=>!winnings.some(w=>w.type==='coins'&&w.symbol===SCRATCH_PAYOUT_ORDER[i]));
+  const index=pickWeightedScratchSymbol(config.moneySymbolWeights,random,remainingMoneyIndices);
+  if(index<0)return false;
+  winnings.push({type:'coins',amount:config.coinAmounts[index],symbol:SCRATCH_PAYOUT_ORDER[index]});
   return true;
  };
  if(baseCategory==='coins')awardCoin();
@@ -681,7 +684,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
    const sourceWin=random(board.wins.length);
-   const coinIndex=random(config.coinAmounts.length);
+   const coinIndex=pickWeightedScratchSymbol(config.moneySymbolWeights,random);
    bonusWinnings.push({type:'coins',symbol:SCRATCH_PAYOUT_ORDER[coinIndex],
     amount:config.coinAmounts[coinIndex],bonus:true,sourceWin});
   }
@@ -703,6 +706,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   // Fix the advertised payouts on this exact receipt. A later host edit
   // must never change the legend of an already purchased scratch ticket.
   coinAmounts:[...config.coinAmounts],
+  moneySymbolWeights:[...config.moneySymbolWeights],
+  giftSymbolWeights:[...config.giftSymbolWeights],
   winnings:allWinnings,totalCoins,board,
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free,at:stamped,balance:w.coins
