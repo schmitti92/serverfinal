@@ -10,6 +10,7 @@ import {SCRATCH_PAYOUT_ORDER} from './christmas-scratch-symbols.js';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
 import {generatePremium27} from './christmas-premium27.js';
+import {normalizeScratchSettings} from './christmas-scratch-settings.js';
 export const DOG_SCRATCH_COLLECTION='dog_christmas_scratch_wallet_v1';
 export const DOG_SCRATCH_START_COINS=1000;
 export const DOG_SCRATCH_TIERS=Object.freeze({
@@ -537,7 +538,7 @@ const treeOwned=tree=>new Set(Object.values(tree?.claims||{}).map(c=>c?.unlockId
 const tierPool=tier=>tier==='premium'?DOG_SCRATCH_PREMIUM_POOL:
  tier==='medium'?DOG_SCRATCH_MEDIUM_POOL:
  [...DOG_SCRATCH_BASIC_EMOJIS,...DOG_SCRATCH_BLOCK_COLORS];
-export function dogScratchStatus(raw,tree=null,now=Date.now()){
+export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
  const w=normalizedScratchWallet(raw);
  const owned=[...new Set([...Object.keys(w.owned),...treeOwned(tree)])];
  const pools=Object.fromEntries(Object.keys(DOG_SCRATCH_TIERS).map(id=>
@@ -545,6 +546,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now()){
  return {coins:w.coins,starterCoins:DOG_SCRATCH_START_COINS,
   dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
+  settings:normalizeScratchSettings(settings),
   purchased:w.purchased,lastResult:w.lastResult};
 }
 // Exact probabilities per 1,000 full tickets, provided at least two unowned
@@ -553,19 +555,21 @@ export function dogScratchStatus(raw,tree=null,now=Date.now()){
 export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
  doubleMainPer1000:1,mainMultiplierPer1000:1,multiplierPer1000:110
 });
-export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}={}){
+export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null}={}){
+ const liveSettings=normalizeScratchSettings(settings);
  const tier=request?.tier;
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
  const commandId=request?.commandId;
  if(typeof commandId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(commandId))throw Error('SCRATCH_INVALID_COMMAND');
  const w=normalizedScratchWallet(raw);
  const replay=w.recent.find(r=>r.commandId===commandId);
- if(replay)return {unchanged:true,wallet:w,result:replay.result,status:dogScratchStatus(w,tree,now())};
+ if(replay)return {unchanged:true,wallet:w,result:replay.result,status:dogScratchStatus(w,tree,now(),liveSettings)};
  const free=request?.free===true;
- if(free&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
+ const hostFree=free&&liveSettings.freeEnabled;
+ if(free&&!hostFree&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
  const today=dogScratchToday(now());
- if(free&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
- const config=DOG_SCRATCH_TIERS[tier],price=free?0:config.price;
+ if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
+ const price=free?0:DOG_SCRATCH_TIERS[tier].price;
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
  const random=max=>{
   const value=draw(max);
@@ -573,11 +577,17 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
   return value;
  };
  const categoryRoll=random(1000);
- const baseCategory=categoryRoll<200?'none':categoryRoll<200+config.weights.coins?'coins':'unlock';
+ // Pick the displayed card before applying its separately configured odds.
+ const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
+ const variantId=availableVariants.length===1?availableVariants[0]:availableVariants[random(availableVariants.length)];
+ const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
+ const baseCategory=categoryRoll<config.weights.none?'none':
+  categoryRoll<config.weights.none+config.weights.coins?'coins':'unlock';
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
  const remaining=tierPool(tier).filter(p=>!owned.has(p.unlockId));
  const winnings=[],newUnlocks=[];
  const awardMain=category=>{
+  if(winnings.length>=config.maxPrizes)return false;
   const choices=remaining.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
   if(!choices.length)return false;
   const prize=choices[random(choices.length)];
@@ -587,6 +597,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
   return true;
  };
  const awardCoin=()=>{
+  if(winnings.length>=config.maxPrizes)return false;
   const unused=DOG_SCRATCH_COIN_AMOUNTS[tier].map((amount,i)=>({amount,symbol:SCRATCH_PAYOUT_ORDER[i]}))
    .filter(option=>!winnings.some(w=>w.type==='coins'&&w.symbol===option.symbol));
   if(!unused.length)return false;
@@ -600,7 +611,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  // Each of the two rare events is 1/1000 of all tickets, conditional
  // on the BASE UNLOCK bucket: P(unlock)=unlockWeight/1000, P(rare|unlock)=1/unlockWeight.
  // Their two distinct roll values ensure they never overlap.
- const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&winnings[0]?.type==='unlock';
+ const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&
+  config.maxPrizes>=3&&config.weights.unlock>=2&&winnings[0]?.type==='unlock';
  const rareRoll=rareEligible?random(config.weights.unlock):-1;
  const doubleMain=rareRoll===0&&awardMain();
  const rareMainMultiplier=rareRoll===1&&
@@ -623,7 +635,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  if(ordinaryMultiplier){
   // Every visible x2 must apply to a visible money prize. If this ticket
   // only contains cosmetics, add a monetary prize before doubling it.
-  if(!winnings.some(x=>x.type==='coins')&&winnings.length<3)awardCoin();
+  if(!winnings.some(x=>x.type==='coins')&&winnings.length<config.maxPrizes)awardCoin();
   for(const item of winnings)if(item.type==='coins'){
    item.baseAmount=item.amount;item.amount*=2;item.x2=true;
   }
@@ -633,14 +645,12 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  // On 20% of successful bonus rolls, add a third visible money hit where
  // capacity permits. Never create more than three symbol combinations.
  if(baseCategory!=='none'&&random(100)<config.extraCoinChance){
-  if(winnings.length<3)awardCoin();
-  if(winnings.length<3&&random(100)<20)awardCoin();
+  if(winnings.length<config.maxPrizes)awardCoin();
+  if(winnings.length<config.maxPrizes&&random(100)<20)awardCoin();
  }
 
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
- const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
- const variantId=availableVariants[random(availableVariants.length)];
  const board=variantId==='premium_27'?
   generatePremium27(winnings,{draw:random}):
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
@@ -656,7 +666,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  const totalCoins=winnings.filter(x=>x.type==='coins').reduce((sum,x)=>sum+x.amount,0);
  w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
  w.purchased++;
- if(free)w.daily=today;
+ if(free&&!hostFree)w.daily=today;
  const first=baseCategory==='unlock'?
    winnings.find(w=>w.type==='unlock')||winnings[0]:winnings[0];
  const result={
@@ -669,5 +679,5 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  };
  w.lastResult=result;
  w.recent=[...w.recent,{commandId,result}].slice(-40);
- return {unchanged:false,wallet:w,result,status:dogScratchStatus(w,tree,now())};
+ return {unchanged:false,wallet:w,result,status:dogScratchStatus(w,tree,now(),liveSettings)};
 }
