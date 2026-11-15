@@ -5,6 +5,7 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
+import { installChristmasScratchApi } from "./christmas-scratch-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installDogMaterialsApi } from "./dog-materials.js";
 import { installDogForgeApi } from "./dog-forge.js";
@@ -4307,6 +4308,7 @@ const clients = new Map(); // clientId -> {ws, room, name, sessionToken}
 const rooms = new Map();   // code -> room
 
 const app = express();
+installChristmasScratchApi(app,{getFirestore:()=>firestore,admin});
 
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
