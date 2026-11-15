@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol} from '../dog/christmas-scratch-settings.js';
 import {buyScratchTicket} from '../dog/christmas-scratch.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
@@ -272,4 +273,24 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
    assert.deepEqual(replay.result.moneySymbolWeights,[0,0,1000],'already purchased odds unchanged');
   }
  }
+});
+
+test('global host scratch settings are available to any authenticated player without a room',()=>{
+ const server=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ const getStart=server.indexOf("app.get('/api/hub/scratch',authentication");
+ const writeStart=server.indexOf("app.post('/api/hub/scratch/settings',authentication");
+ const buyStart=server.indexOf("app.post('/api/hub/scratch/buy',authentication");
+ assert.ok(getStart>=0&&writeStart>getStart&&buyStart>writeStart);
+ const readRoute=server.slice(getStart,writeStart);
+ const writeRoute=server.slice(writeStart,buyStart);
+ assert.match(readRoute,/canManageScratch:true/,'signed-in users can open the controls');
+ assert.doesNotMatch(readRoute,/documentFor\(store,roomCode\)/,'reading status must not fetch a lobby room');
+ assert.doesNotMatch(writeRoute,/HOST_ONLY|room\.hostUid|validCode\(req\.body\?\.room\)/,
+  'global settings must never depend on lobby host or room membership');
+ assert.match(writeRoute,/validateScratchSettings\(req\.body\?\.settings\)/,
+  'every update must be validated server-side');
+ assert.match(writeRoute,/updatedBy:identity\.uid/,
+  'record the authenticated editor for accountability');
+ assert.match(writeRoute,/await ref\.set\(/,
+  'accepted global settings must be persisted');
 });
