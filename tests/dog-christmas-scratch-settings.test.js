@@ -110,3 +110,88 @@ test('zero bonus chance does not invent a 4th through 10th visible hit',()=>{
  assert.equal(result.result.winnings.length,result.result.board.wins.length);
  assert.ok(result.result.winnings.length<=3);
 });
+
+
+test('legacy host settings gain original per-tier payout values on read',()=>{
+ const legacy=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ for(const variant of Object.values(legacy.variants))delete variant.coinAmounts;
+ legacy.freeEnabled=true;legacy.variants.elf.maxPrizes=8;
+ const migrated=normalizeScratchSettings(legacy);
+ assert.deepEqual(migrated.variants.gifts.coinAmounts,[10,40,100]);
+ assert.deepEqual(migrated.variants.snow_collect.coinAmounts,[10,40,100]);
+ assert.deepEqual(migrated.variants.elf.coinAmounts,[100,300,800]);
+ assert.deepEqual(migrated.variants.premium_27.coinAmounts,[200,800,2000]);
+ assert.equal(migrated.freeEnabled,true);
+ assert.equal(migrated.variants.elf.maxPrizes,8);
+ assert.deepEqual(validateScratchSettings(legacy),migrated);
+});
+test('host can set different three rising money amounts for every ticket variant',()=>{
+ const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ const sets={
+  gifts:[2,25,140],
+  snow_collect:[3,60,900],
+  elf:[100,1000,4000],
+  premium_27:[500,5000,50000000]
+ };
+ for(const [id,amounts] of Object.entries(sets)){
+  config.variants[id].coinAmounts=amounts;
+ }
+ const saved=validateScratchSettings(config);
+ for(const [id,amounts] of Object.entries(sets)){
+  assert.deepEqual(saved.variants[id].coinAmounts,amounts);
+ }
+ const invalid=[
+  [0,20,30],[1,1,30],[1,30,29],[10,100,50000001],
+  [1,2.5,3],[1,2],[1,'10',20],[-3,10,25]
+ ];
+ for(const amounts of invalid){
+  const altered=clone(config);altered.variants.gifts.coinAmounts=amounts;
+  assert.throws(()=>validateScratchSettings(altered),/SCRATCH_SETTINGS_INVALID/,String(amounts));
+ }
+});
+test('each coin, banknote and briefcase pays configured amounts including bonus payouts',()=>{
+ const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ const perVariant={
+  gifts:[13,33,333],
+  snow_collect:[17,77,777],
+  elf:[109,1099,10999],
+  premium_27:[119,1199,11999]
+ };
+ for(const [id,cfg] of Object.entries(config.variants)){
+  cfg.coinAmounts=perVariant[id];
+  cfg.weights={none:0,coins:1000,unlock:0};
+  cfg.extraCoinChance=100;cfg.maxPrizes=10;
+ }
+ const seedDraw=(variantIndex=0)=>{
+  let count=0,seed=67439;
+  return max=>{
+   if(++count===2&&max===2)return variantIndex;
+   seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+   return Math.floor(seed/4294967296*max);
+  };
+ };
+ const moneySymbols=['🪙','💵','💼'];
+ for(const [tier,id,index] of [
+  ['simple','gifts',0],['simple','snow_collect',1],
+  ['medium','elf',0],['premium','premium_27',0]
+ ]){
+  const purchase=buyScratchTicket({coins:100000},null,
+   {tier,commandId:'scratch-config-money-'+id},
+   {settings:config,draw:seedDraw(index)});
+  const ticket=purchase.result;
+  assert.equal(ticket.board.variantId,id);
+  assert.deepEqual(ticket.coinAmounts,perVariant[id]);
+  assert.equal(ticket.winnings.length,10);
+  for(const prize of ticket.winnings.filter(x=>x.type==='coins')){
+   const expected=perVariant[id][moneySymbols.indexOf(prize.symbol)];
+   assert.equal(prize.amount,expected*(prize.x2?2:1),id+' '+prize.symbol);
+  }
+  assert.equal(ticket.totalCoins,ticket.winnings.filter(x=>x.type==='coins').reduce((a,b)=>a+b.amount,0));
+  const changed=clone(config);changed.variants[id].coinAmounts=[1,2,3];
+  const replay=buyScratchTicket(purchase.wallet,null,
+   {tier,commandId:'scratch-config-money-'+id},{settings:changed});
+  assert.equal(replay.unchanged,true);
+  assert.deepEqual(replay.result.coinAmounts,perVariant[id],'old ticket must keep original payout legend');
+  assert.equal(replay.result.totalCoins,ticket.totalCoins,'old ticket payout must not change');
+ }
+});
