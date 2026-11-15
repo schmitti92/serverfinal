@@ -24,7 +24,7 @@ const defaults=Object.freeze({
  gifts:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.gifts,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  snow_collect:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.snow_collect,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  elf:Object.freeze({weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40,maxPrizes:3,coinAmounts:defaultCoins.elf,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
- premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:3,coinAmounts:defaultCoins.premium_27,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS})
+ premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:6,coinAmounts:defaultCoins.premium_27,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS})
 });
 export const DOG_SCRATCH_DEFAULT_SETTINGS=Object.freeze({
  version:1,freeEnabled:false,variants:defaults
@@ -78,7 +78,7 @@ export function normalizeScratchSettings(raw){
   const candidate=raw?.variants?.[id];
   const v=validVariant(candidate,id)?candidate:defaults[id];
   variants[id]={weights:{none:v.weights.none,coins:v.weights.coins,unlock:v.weights.unlock},
-   extraCoinChance:v.extraCoinChance,maxPrizes:v.maxPrizes,
+   extraCoinChance:v.extraCoinChance,maxPrizes:id==='premium_27'?Math.max(6,v.maxPrizes):v.maxPrizes,
    coinAmounts:[...(v.coinAmounts??defaultCoins[id])],
    moneySymbolWeights:[...(v.moneySymbolWeights??DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS)],
    giftSymbolWeights:[...(v.giftSymbolWeights??DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS)]};
