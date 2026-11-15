@@ -15,6 +15,7 @@ import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPla
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket} from './dog/christmas-scratch.js';
+import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -768,12 +769,31 @@ function finishEisstock(ch,members){
   // A read never writes or grants a prize. Payouts happen in a transaction
   // and share the existing 10 tree entitlements to avoid duplicated art.
   app.get('/api/hub/scratch',authentication,handler(async req=>{
-    const identity=req.hubIdentity,store=db();
-    const [snap,tree]=await Promise.all([
+    const identity=req.hubIdentity,store=db(),roomCode=validCode(req.query?.room);
+    const [snap,tree,settingsSnap,roomSnap]=await Promise.all([
       store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
-      store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
+      store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
+      store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
+      roomCode?documentFor(store,roomCode).get():Promise.resolve(null)
     ]);
-    return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,clock())};
+    const room=roomSnap?.exists?roomSnap.data():null;
+    const canManageScratch=Boolean(room&&room.expiresAt>clock()&&room.hostUid===identity.uid);
+    return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,
+      clock(),settingsSnap.exists?settingsSnap.data():null),canManageScratch};
+  }));
+  // Authorize against the shared lobby document, not a client-controlled host flag.
+  app.post('/api/hub/scratch/settings',authentication,handler(async req=>{
+    const identity=req.hubIdentity,store=db(),roomCode=validCode(req.body?.room);
+    if(!roomCode)throw error(403,'HOST_ONLY');
+    const roomSnap=await documentFor(store,roomCode).get();
+    const room=roomSnap.exists?roomSnap.data():null;
+    if(!room||room.expiresAt<=clock()||room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+    let settings;
+    try{settings=validateScratchSettings(req.body?.settings);}
+    catch(e){throw error(400,e.message);}
+    const ref=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
+    return {settings};
   }));
   app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
@@ -784,14 +804,16 @@ function finishEisstock(ch,members){
       throw error(400,'SCRATCH_INVALID_REQUEST');
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
+    const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap]=await Promise.all([tx.get(accountRef),tx.get(treeRef)]);
+      const [walletSnap,treeSnap,settingsSnap]=await Promise.all([tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef)]);
+      const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
       let result;
       try{
         result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,
           treeSnap.exists?treeSnap.data():null,
           {tier:body.tier,commandId:body.commandId,free:body.free===true},
-          {clock:()=>clock(),now:()=>clock()});
+          {clock:()=>clock(),now:()=>clock(),settings});
       }catch(e){
         throw error(e.message==='SCRATCH_NOT_ENOUGH_COINS'||e.message==='SCRATCH_DAILY_ALREADY_USED'?409:400,e.message);
       }
