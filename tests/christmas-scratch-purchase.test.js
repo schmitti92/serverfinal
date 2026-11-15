@@ -46,7 +46,8 @@ test('all tiers produce exactly one visible board for a ticket',()=>{
    assert.equal(new Set(unlocked.map(x=>x.prize.unlockId)).size,unlocked.length);
    assert.equal(t.status.lastResult.commandId,result.commandId);
   }
-  assert.equal(seen.size,2,'both tier-specific game variants sampled');
+  assert.deepEqual([...seen].sort(),[...SCRATCH_VARIANT_IDS_BY_TIER[tier]].sort(),
+   'each tier must sample exactly its permitted scratch games (two simple, one medium, one premium)');
  }
 });
 test('no wins and x2 obey the server-defined baseline roll',()=>{
