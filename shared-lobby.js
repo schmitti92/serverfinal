@@ -786,6 +786,66 @@ function finishEisstock(ch,members){
     });
     return award;
   }));
+  // One authenticated, room-independent DOG Christmas village for every player.
+  app.get('/api/hub/christmas-village',authentication,handler(async req=>{
+    const store=db(),snap=await dogVillageFor(store).get();
+    return {village:dogVillagePublic(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID),
+      shared:true,canUpgrade:christmasActive(),enabled:christmasActive()};
+  }));
+  // Import each old host-owned village at most once, without resetting progress.
+  app.post('/api/hub/christmas-village/import',authentication,handler(async req=>{
+    const identity=req.hubIdentity,store=db(),sharedRef=dogVillageFor(store),
+      oldRef=legacyDogVillageFor(store,identity.uid);
+    const result=await store.runTransaction(async tx=>{
+      const [oldSnap,sharedSnap]=await Promise.all([tx.get(oldRef),tx.get(sharedRef)]);
+      const shared=sharedSnap.exists?sharedSnap.data():null;
+      if(!oldSnap.exists||oldSnap.data()?.mergedToGlobal===DOG_GLOBAL_VILLAGE_ID)
+        return {imported:false,village:dogVillagePublic(shared,DOG_GLOBAL_VILLAGE_ID)};
+      const merged=mergeLegacyDogVillage(shared,oldSnap.data(),identity.uid);
+      if(merged.changed){
+        tx.set(sharedRef,merged.village);
+        tx.update(oldRef,{mergedToGlobal:DOG_GLOBAL_VILLAGE_ID,mergedAt:clock()});
+      }
+      return {imported:merged.changed,village:dogVillagePublic(merged.village,DOG_GLOBAL_VILLAGE_ID)};
+    });
+    return {...result,shared:true,canUpgrade:christmasActive(),enabled:christmasActive()};
+  }));
+  app.post('/api/hub/christmas-village/upgrade',authentication,handler(async req=>{
+    if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
+    const {building,expectedLevel,commandId}=req.body||{},store=db();
+    const village=await store.runTransaction(async tx=>{
+      const ref=dogVillageFor(store),snap=await tx.get(ref);
+      let result;
+      try{result=buyDogVillageUpgrade(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID,building,expectedLevel,commandId);}
+      catch(e){throw error(['NOT_ENOUGH_CHRISTMAS_LIGHTS','STALE_BUILDING_LEVEL'].includes(e.message)?409:400,e.message);}
+      if(!result.unchanged)tx.set(ref,result.village);
+      return dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID);
+    });
+    return {village,shared:true,canUpgrade:true,enabled:true};
+  }));
+  // The common tree unlocks ten *personal* fixed prizes, one claim per player.
+  app.get('/api/hub/christmas-tree-rewards',authentication,handler(async req=>{
+    const store=db(),accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(req.hubIdentity.uid);
+    const [villageSnap,accountSnap]=await Promise.all([dogVillageFor(store).get(),accountRef.get()]);
+    return {treeRewards:dogTreeRewardStatus(
+      villageSnap.exists?villageSnap.data():null,accountSnap.exists?accountSnap.data():null)};
+  }));
+  app.post('/api/hub/christmas-tree-rewards/claim',authentication,handler(async req=>{
+    const level=req.body?.level,store=db();
+    if(!Number.isInteger(level)||level<1||level>10)throw error(400,'INVALID_TREE_LEVEL');
+    const accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(req.hubIdentity.uid);
+    const result=await store.runTransaction(async tx=>{
+      const [villageSnap,accountSnap]=await Promise.all([tx.get(dogVillageFor(store)),tx.get(accountRef)]);
+      let granted;
+      try{granted=claimDogTreeReward(
+        accountSnap.exists?accountSnap.data():null,
+        villageSnap.exists?villageSnap.data():null,level);}
+      catch(e){throw error(e.message==='TREE_LEVEL_NOT_REACHED'?409:400,e.message);}
+      if(!granted.unchanged)tx.set(accountRef,granted.document);
+      return {prize:granted.prize,replayed:granted.unchanged,treeRewards:granted.status};
+    });
+    return result;
+  }));
   app.use('/api/hub/rooms',authentication);
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
