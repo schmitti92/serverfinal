@@ -108,6 +108,27 @@ export function createDogChristmasMatch(village,enabled,draw=randomInt,round=1){
   claimedFields:[],claimedScratchFields:[],roundGiftCollected:0,roundScratchCollected:0,
   giftCount:0,scratchCount:0,bonusGiftCount:0,earnedTenths:0,innCredited:false,activity:[]};
 }
+/** Add an inn upgrade to an active match without reshuffling existing
+ * hidden fields or allowing players to collect any space twice.
+ * Called only after an authoritative village purchase, not by clients.
+ */
+export function applyDogInnUpgradeToMatch(match,newInnLevel,draw=randomInt){
+ if(!match?.enabled)return 0;
+ const current=Number.isInteger(match.levels?.inn)?match.levels.inn:1;
+ const target=dogInnScratchFieldCount(newInnLevel);
+ if(target<=dogInnScratchFieldCount(current))return 0;
+ if(!Array.isArray(match.giftFields)||!Array.isArray(match.scratchFields))throw Error('INVALID_CHRISTMAS_MATCH');
+ const occupied=new Set([...match.giftFields,...match.scratchFields]);
+ const available=eligibleDogTrackFields.filter(field=>!occupied.has(field));
+ for(let i=available.length-1;i>0;i--){
+  const j=draw(i+1);[available[i],available[j]]=[available[j],available[i]];
+ }
+ const needed=Math.max(0,target-match.scratchFields.length);
+ if(needed>available.length)throw Error('NOT_ENOUGH_HIDDEN_FIELDS');
+ match.scratchFields.push(...available.slice(0,needed));
+ match.levels.inn=newInnLevel;
+ return needed;
+}
 /** Replaces both secret maps once, exactly when fresh cards are dealt. */
 export function refreshDogChristmasDeal(match,round,draw=randomInt){
  if(!match?.enabled||!Number.isInteger(round)||round<1||round===match.round)return false;
