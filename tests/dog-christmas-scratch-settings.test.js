@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings} from '../dog/christmas-scratch-settings.js';
+import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol} from '../dog/christmas-scratch-settings.js';
 import {buyScratchTicket} from '../dog/christmas-scratch.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
 const draw=(roll)=>{let first=true;return max=>{if(first){first=false;return roll}return 0}};
@@ -193,5 +193,83 @@ test('each coin, banknote and briefcase pays configured amounts including bonus 
   assert.equal(replay.unchanged,true);
   assert.deepEqual(replay.result.coinAmounts,perVariant[id],'old ticket must keep original payout legend');
   assert.equal(replay.result.totalCoins,ticket.totalCoins,'old ticket payout must not change');
+ }
+});
+
+test('money icons and four gift icons each form their own validated 100% distribution',()=>{
+ const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ for(const variant of Object.values(config.variants)){
+  variant.moneySymbolWeights=[10,90,900];
+  variant.giftSymbolWeights=[20,80,200,700];
+ }
+ assert.deepEqual(validateScratchSettings(config).variants.elf.moneySymbolWeights,[10,90,900]);
+ assert.deepEqual(validateScratchSettings(config).variants.elf.giftSymbolWeights,[20,80,200,700]);
+ const invalidMoney=[[100,100,100],[0,0,0],[1.2,100,899],[0,1001,-1],[1,999]];
+ for(const values of invalidMoney){
+  const altered=clone(config);altered.variants.elf.moneySymbolWeights=values;
+  assert.throws(()=>validateScratchSettings(altered),/SCRATCH_SETTINGS_INVALID/);
+ }
+ const invalidGifts=[[250,250,250,251],[1000,0,0],[1001,0,0,-1]];
+ for(const values of invalidGifts){
+  const altered=clone(config);altered.variants.gifts.giftSymbolWeights=values;
+  assert.throws(()=>validateScratchSettings(altered),/SCRATCH_SETTINGS_INVALID/);
+ }
+ const old=clone(config);
+ for(const variant of Object.values(old.variants)){
+  delete variant.moneySymbolWeights;delete variant.giftSymbolWeights;
+ }
+ const migrated=normalizeScratchSettings(old);
+ assert.deepEqual(migrated.variants.elf.moneySymbolWeights,[334,333,333]);
+ assert.deepEqual(migrated.variants.elf.giftSymbolWeights,[250,250,250,250]);
+ assert.deepEqual(migrated.variants.elf.coinAmounts,config.variants.elf.coinAmounts);
+});
+test('weighted money and gift selection honours zero and 100% exactly',()=>{
+ assert.equal(pickWeightedScratchSymbol([0,0,1000],max=>0),2);
+ assert.equal(pickWeightedScratchSymbol([100,600,300],max=>99),0);
+ assert.equal(pickWeightedScratchSymbol([100,600,300],max=>100),1);
+ assert.equal(pickWeightedScratchSymbol([100,600,300],max=>699),1);
+ assert.equal(pickWeightedScratchSymbol([100,600,300],max=>700),2);
+ assert.equal(pickWeightedScratchSymbol([0,0,1000],max=>0,[0,1]),-1);
+ assert.equal(pickWeightedScratchSymbol([500,500,0],max=>0,[1,2]),1);
+ assert.throws(()=>pickWeightedScratchSymbol([1000,0,0],max=>max),/SCRATCH_INVALID_RANDOM/);
+});
+test('all four cards apply individual symbol weights to real money, gifts and bonuses',()=>{
+ const variants=[['simple','gifts',0],['simple','snow_collect',1],
+  ['medium','elf',0],['premium','premium_27',0]];
+ function seeded(index){
+  let calls=0,seed=67439;
+  return max=>{
+   if(++calls===2&&max===2)return index;
+   seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+   return Math.floor(seed/4294967296*max);
+  };
+ }
+ for(const group of ['money','gifts']){
+  for(const [tier,id,index] of variants){
+   const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+   const v=config.variants[id];
+   v.weights=group==='money'?{none:0,coins:1000,unlock:0}:{none:0,coins:0,unlock:1000};
+   v.moneySymbolWeights=[0,0,1000];v.giftSymbolWeights=[0,0,0,1000];
+   v.maxPrizes=10;v.extraCoinChance=100;
+   const purchase=buyScratchTicket({coins:100000},null,
+    {tier,commandId:'scratch-symbol-odds-'+group+'-'+id},
+    {settings:config,draw:seeded(index)});
+   const prizes=purchase.result.winnings;
+   assert.equal(purchase.result.board.variantId,id);
+   assert.equal(prizes.length,10,id+' reward count');
+   assert.ok(prizes.filter(x=>x.type==='coins').every(x=>x.symbol==='💼'),id+' briefcases only');
+   if(group==='gifts'){
+    assert.ok(prizes.some(x=>x.type==='unlock'),id+' must show at least one unlock');
+    assert.ok(prizes.filter(x=>x.type==='unlock').every(x=>x.symbol==='🧧'),id+' red envelope only');
+   }else assert.ok(prizes.every(x=>x.type==='coins'),id+' money only');
+   assert.deepEqual(purchase.result.moneySymbolWeights,[0,0,1000]);
+   assert.deepEqual(purchase.result.giftSymbolWeights,[0,0,0,1000]);
+   const changed=clone(config);changed.variants[id].moneySymbolWeights=[1000,0,0];
+   const replay=buyScratchTicket(purchase.wallet,null,
+    {tier,commandId:'scratch-symbol-odds-'+group+'-'+id},
+    {settings:changed});
+   assert.equal(replay.unchanged,true);
+   assert.deepEqual(replay.result.moneySymbolWeights,[0,0,1000],'already purchased odds unchanged');
+  }
  }
 });
