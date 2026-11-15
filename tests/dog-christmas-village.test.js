@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_TOWER_FIELDS,DOG_GIFT_FIELD_ORDER,isDogChristmasEventActive,normalizedDogVillage,dogVillagePublic,
+ DOG_TOWER_FIELDS,DOG_GIFT_FIELD_ORDER,DOG_SCRATCH_FIELDS_PER_DEAL,DOG_FIELD_SCRATCH_TIER_ODDS,drawHiddenDogChristmasFields,drawDogScratchTier,refreshDogChristmasDeal,publicDogChristmasMatch,claimDogChristmasScratch,isDogChristmasEventActive,normalizedDogVillage,dogVillagePublic,
  buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,
  finishDogChristmasMatch,creditDogVillage
 } from '../dog/christmas-village.js';
@@ -32,14 +32,15 @@ test('workshop and bakery pay from a verified landing, and each field is single-
  const village=normalizedDogVillage({levels:{tower:5,workshop:3,bakery:4,inn:5}},host);
  const match=createDogChristmasMatch(village,true);
  assert.equal(match.giftFields.length,20);
- const before={pieces:[{id:0,owner:0,place:'track',pos:63}]};
- const after={pieces:[{id:0,owner:0,place:'track',pos:3}]};
+ const field=match.giftFields[0];
+ const before={pieces:[{id:0,owner:0,place:'track',pos:(field+63)%64}]};
+ const after={pieces:[{id:0,owner:0,place:'track',pos:field}]};
  const move={type:'move',pieceId:0};
  const gained=claimDogChristmasGift(match,before,after,move,0,()=>0);
  assert.equal(gained,26,'2 gifts × 1.3 lights');
  assert.equal(match.bonusGiftCount,1);
  assert.equal(match.giftCount,1);
- assert.deepEqual(match.claimedFields,[3]);
+ assert.deepEqual(match.claimedFields,[field]);
  assert.equal(claimDogChristmasGift(match,before,after,move,0,()=>0),0);
  assert.equal(claimDogChristmasGift(match,before,after,{type:'swap',pieceId:0},0,()=>0),0);
  const earned=creditDogVillage(village,host,match,gained,1,1);
@@ -81,4 +82,68 @@ test('disabled Christmas mode never awards gifts or inn bonuses',()=>{
  assert.equal(createDogChristmasMatch(null,false),null);
  assert.equal(claimDogChristmasGift(null,{pieces:[]},{pieces:[]},{type:'move',pieceId:0},0),0);
  assert.equal(finishDogChristmasMatch(null,{phase:'finished'}),0);
+});
+
+test('every card deal has 10–20 hidden random gift spaces and eight separate scratch spaces',()=>{
+ assert.equal(DOG_SCRATCH_FIELDS_PER_DEAL,8);
+ assert.deepEqual(DOG_FIELD_SCRATCH_TIER_ODDS,{simple:88,medium:10,premium:2});
+ for(let level=1;level<=5;level++){
+  let seed=123*level;
+  const draw=max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor(seed/4294967296*max)};
+  const m=createDogChristmasMatch({levels:{tower:level}},true,draw);
+  assert.equal(m.giftFields.length,DOG_TOWER_FIELDS[level-1]);
+  assert.equal(m.scratchFields.length,8);
+  assert.equal(new Set([...m.giftFields,...m.scratchFields]).size,m.giftFields.length+8);
+  assert.ok([...m.giftFields,...m.scratchFields].every(i=>i>=0&&i<64&&i%16!==0));
+  const publicData=publicDogChristmasMatch(m);
+  assert.ok(!Object.hasOwn(publicData,'giftFields'));
+  assert.ok(!Object.hasOwn(publicData,'scratchFields'));
+  assert.ok(!Object.hasOwn(publicData,'claimedFields'));
+  assert.ok(!Object.hasOwn(publicData,'claimedScratchFields'));
+  assert.equal(publicData.giftFieldCount,m.giftFields.length);
+  assert.equal(publicData.scratchFieldCount,8);
+  const old=JSON.stringify([m.giftFields,m.scratchFields]);
+  assert.equal(refreshDogChristmasDeal(m,1,draw),false);
+  assert.equal(JSON.stringify([m.giftFields,m.scratchFields]),old);
+  assert.equal(refreshDogChristmasDeal(m,2,draw),true);
+  assert.notEqual(JSON.stringify([m.giftFields,m.scratchFields]),old);
+  assert.equal(m.round,2);
+  assert.equal(m.roundGiftCollected,0);
+  assert.equal(m.roundScratchCollected,0);
+ }
+});
+test('verified scratch landing is single-use per deal and gives exact 88/10/2 tiers',()=>{
+ let seed=9876;
+ const draw=max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor(seed/4294967296*max)};
+ const match=createDogChristmasMatch(null,true,draw);
+ const field=match.scratchFields[0];
+ const before={pieces:[{id:0,owner:0,place:'track',pos:(field+63)%64}]};
+ const after={pieces:[{id:0,owner:0,place:'track',pos:field}]};
+ const action={type:'move',pieceId:0};
+ assert.equal(claimDogChristmasScratch(match,before,after,action,0,()=>0),'premium');
+ assert.equal(claimDogChristmasScratch(match,before,after,action,0,()=>99),null);
+ assert.equal(match.scratchCount,1);
+ assert.equal(match.roundScratchCollected,1);
+ assert.equal(claimDogChristmasScratch(match,before,after,{type:'swap',pieceId:0},0,()=>0),null);
+ const count={simple:0,medium:0,premium:0};
+ for(let roll=0;roll<100;roll++)count[drawDogScratchTier(()=>roll)]++;
+ assert.deepEqual(count,{simple:88,medium:10,premium:2});
+ refreshDogChristmasDeal(match,2,draw);
+ assert.equal(match.roundScratchCollected,0);
+ assert.equal(match.scratchCount,1);
+ assert.ok(!publicDogChristmasMatch(match).scratchFields);
+});
+test('claimed gift and scratch cells are reset after the next card deal, not every action',()=>{
+ const match=createDogChristmasMatch(null,true,()=>0);
+ const gift=match.giftFields[0],scratch=match.scratchFields[0];
+ const before=field=>({pieces:[{id:1,place:'track',pos:(field+63)%64}]});
+ const after=field=>({pieces:[{id:1,place:'track',pos:field}]});
+ assert.ok(claimDogChristmasGift(match,before(gift),after(gift),{type:'move',pieceId:1},0,()=>99)>0);
+ assert.equal(claimDogChristmasScratch(match,before(scratch),after(scratch),{type:'move',pieceId:1},0,()=>20),'simple');
+ assert.equal(match.roundGiftCollected,1);assert.equal(match.roundScratchCollected,1);
+ assert.equal(refreshDogChristmasDeal(match,1,()=>0),false);
+ assert.equal(match.roundGiftCollected,1);assert.equal(match.roundScratchCollected,1);
+ assert.equal(refreshDogChristmasDeal(match,2,()=>0),true);
+ assert.equal(match.roundGiftCollected,0);assert.equal(match.roundScratchCollected,0);
+ assert.equal(match.giftCount,1);assert.equal(match.scratchCount,1);
 });
