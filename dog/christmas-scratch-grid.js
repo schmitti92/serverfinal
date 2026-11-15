@@ -297,9 +297,18 @@ export function attachScratchPrizes(board,prizes){
 export function verifyScratchPrizes(board){
  try{
   const verified=evaluateScratchGrid(board);
+  const unlockIds=new Set();
   return Array.isArray(board.wins)&&board.wins.length===verified.length&&
-   board.wins.every((listed,i)=>arrayEq(listed.indices,verified[i].indices)&&
-    listed.symbol===verified[i].symbol&&listed.rule===verified[i].rule&&
-    listed.prize&&['coins','unlock'].includes(listed.prize.type));
+   board.wins.every((listed,i)=>{
+    if(!arrayEq(listed.indices,verified[i].indices)||
+      listed.symbol!==verified[i].symbol||listed.rule!==verified[i].rule)return false;
+    const reward=listed.prize;
+    if(reward?.type==='coins')return Number.isSafeInteger(reward.amount)&&reward.amount>0;
+    if(reward?.type!=='unlock'||typeof reward.prize?.unlockId!=='string'||
+      !reward.prize.unlockId||typeof reward.prize?.name!=='string'||
+      !reward.prize.name||unlockIds.has(reward.prize.unlockId))return false;
+    unlockIds.add(reward.prize.unlockId);
+    return true;
+   });
  }catch{return false}
 }
