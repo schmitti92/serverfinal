@@ -100,7 +100,13 @@ test('Only authorized GET reward views share receipts; settlement still uses tra
  const api=readFileSync(new URL('../deal-or-no-deal-api.js',import.meta.url),'utf8');
  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  assert.match(api,/createDealRewardReadCoordinator\(\)/);
- assert.match(api,/rewardReadCoordinator\.invalidateAll\(\);\s*const listeners=dealSockets\.get\(code\)/);
+ const broadcast=api.slice(api.indexOf('const broadcastGame='),api.indexOf('const attachSocket='));
+ assert.match(broadcast,/rewardReadCoordinator\.invalidateAll\(\)/);
+ assert.match(broadcast,/seedCommittedGameView\(code,game,view\)/);
+ assert.match(broadcast,/const listeners=dealSockets\.get\(code\)/);
+ assert.ok(broadcast.indexOf('rewardReadCoordinator.invalidateAll()')<
+  broadcast.indexOf('const listeners=dealSockets.get(code)'),
+  'confirmed writes invalidate the display cache before notifying spectators');
  for(const coll of COLLECTIONS)assert.ok(api.includes("rewardReadCoordinator.read(db,db.collection('"+coll+"')"),'reward GET not wired: '+coll);
  assert.match(api,/rewardReadStats:\(\)=>rewardReadCoordinator\.snapshot\(\)/);
  assert.match(server,/dealRewardReadCache:dealOrNoDealOnline\.rewardReadStats\(\)/);
