@@ -215,7 +215,7 @@ function settle(s,rng=Math.random){
   if(guard>=30)throw Error('TURN_LOOP');
 }
 function cardFor(s,seat,id){const c=s.hands[seat].find(x=>x.id===id);if(!c)throw Error('CARD_NOT_HELD');return c;}
-function discardCard(s,seat,id){const index=s.hands[seat].findIndex(x=>x.id===id);if(index<0)throw Error('CARD_NOT_HELD');s.discard.push(s.hands[seat].splice(index,1)[0]);}
+function discardCard(s,seat,id){const index=s.hands[seat].findIndex(x=>x.id===id);if(index<0)throw Error('CARD_NOT_HELD');const card=s.hands[seat].splice(index,1)[0];s.discard.push(card);s.lastPlayedCard={type:card.type,seat};}
 export function takeAction(original,seat,action,rng=Math.random){
   const s=clone(original);
   if(s.phase==='exchange')return exchangeCard(s,seat,action.cardId,rng);
@@ -292,7 +292,7 @@ export function botAction(s,seat=s.current){
   return [...opts].sort((a,b)=>score(s,b,seat)-score(s,a,seat))[0];
 }
 export function publicState(s,seat=null){
-  const t=clone(s);t.deckCount=t.deck.length;delete t.deck;t.discardCount=t.discard.length;delete t.discard;
+  const t=clone(s);t.deckCount=t.deck.length;delete t.deck;t.discardCount=t.discard.length;delete t.discard; // lastPlayedCard remains public: only the last played card, never a hidden hand.
   t.hands=t.hands.map((hand,i)=>i===seat?hand:{count:hand.length});
   t.exchanges=t.exchanges.map(x=>x?true:false);
   if(t.seven)delete t.seven.snapshot;
