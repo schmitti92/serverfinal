@@ -34,7 +34,7 @@ export function dogPlayerLevelStatus(raw){
 export function creditDogMatchXp(raw,{won=false,knockedOut=0,matchId,now=Date.now()}={}){
  const old=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
  // A complete DOG match must always have a real, server-generated match ID.
- if(typeof matchId!=='string'||matchId.length<4||matchId.length>128)throw Error('DOG_LEVEL_INVALID_MATCH');
+ if(typeof matchId!=='string'||!matchId.trim()||matchId.length>128)throw Error('DOG_LEVEL_INVALID_MATCH');
  if(old.xpLastMatchId===matchId)return {...old,credited:false,xp:safeXp(old.xp),lastEarnedXp:0};
  const earned=dogMatchXp({won,knockedOut});
  return {...old,xp:Math.min(1000000000,safeXp(old.xp)+earned),
