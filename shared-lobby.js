@@ -11,6 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
+import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket} from './dog/christmas-scratch.js';
@@ -537,11 +538,11 @@ function finishEisstock(ch,members){
       const player=players[seat];
       return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
     });
-    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
     // No host or room switch: the active seasonal event is automatic for DOG.
     room.match.christmas=createDogChristmasMatch(village,christmasActive());
     room.phase='playing';
-    advanceDogBots(room.match);
+    advanceDogBots(room.match,(before,after,action,seat)=>countDogKnockouts(room.match,before,after,seat));
   }
 
   function startGame(room,village=null){
@@ -800,6 +801,16 @@ function finishEisstock(ch,members){
     return award;
   }));
   // One authenticated, room-independent DOG Christmas village for every player.
+  // Private DOG statistics; a single read only when a player opens the dialog.
+  app.get('/api/hub/dog/stats',authentication,handler(async req=>{
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const uid=req.hubIdentity.uid;
+    const ref=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
+    const snap=await ref.get();
+    return {stats:dogPlayerStats(snap.exists?snap.data():null,uid),
+      tracking:'from-2026-11-15',scope:'completed-dog-online-matches'};
+  }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
     const store=db(),snap=await dogVillageFor(store).get();
     return {village:dogVillagePublic(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID),
@@ -1074,6 +1085,9 @@ function finishEisstock(ch,members){
       const hadInn=event?.innCredited===true;
       let creditedTenths=0;
       const collect=(before,after,move,playerSeat)=>{
+        // Every human and bot move is checked against authoritative board
+        // transitions. No client-supplied knockout numbers are trusted.
+        countDogKnockouts(match,before,after,playerSeat);
         if(!event?.enabled)return;
         creditedTenths+=claimDogChristmasGift(event,before,after,move,playerSeat);
         creditedTenths+=finishDogChristmasMatch(event,after);
@@ -1090,6 +1104,21 @@ function finishEisstock(ch,members){
       }catch(e){throw error(409,e.message||'DOG_RULE_REJECTED');}
       match.dogCommands=[...(match.dogCommands||[]).slice(-90),actionId];
       advanceDogBots(match,collect);
+      // On the single winning transaction, persist each human player's
+      // counters once. Do not write to Firestore for normal move updates.
+      let completedDogStats=[];
+      if(match.dog.phase==='finished'&&!match.dogCounters?.recorded){
+        if(!match.dogCounters)match.dogCounters=newDogMatchCounters();
+        const humans=match.dogRoster.filter(p=>!p.bot);
+        const docs=humans.map(p=>store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid));
+        const snapshots=await Promise.all(docs.map(ref=>tx.get(ref)));
+        completedDogStats=humans.map((p,i)=>({
+          ref:docs[i],data:dogCompletedPlayerStats(
+            snapshots[i].exists?snapshots[i].data():null,
+            p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock())
+        }));
+        match.dogCounters.recorded=true;
+      }
       if(event?.enabled){
         creditedTenths+=finishDogChristmasMatch(event,match.dog);
         const completedNow=!hadInn&&event.innCredited===true;
@@ -1100,6 +1129,7 @@ function finishEisstock(ch,members){
           tx.set(ref,wallet);
         }
       }
+      for(const item of completedDogStats)tx.set(item.ref,item.data);
     });
     return {room};
   }));
