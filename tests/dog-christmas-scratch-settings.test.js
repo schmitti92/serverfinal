@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol} from '../dog/christmas-scratch-settings.js';
-import {buyScratchTicket} from '../dog/christmas-scratch.js';
+import {buyScratchTicket,grantDogScratchVoucher,normalizedScratchWallet,dogScratchStatus} from '../dog/christmas-scratch.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
 const draw=(roll)=>{let first=true;return max=>{if(first){first=false;return roll}return 0}};
 test('four scratch variants have independent defaults and validated percentages',()=>{
@@ -293,4 +293,30 @@ test('global host scratch settings are available to any authenticated player wit
   'record the authenticated editor for accountability');
  assert.match(writeRoute,/await ref\.set\(/,
   'accepted global settings must be persisted');
+});
+
+test('earned DOG field tickets enter the personal voucher wallet, not the daily-free limit',()=>{
+ const seeded=grantDogScratchVoucher(null,'simple');
+ const gift=grantDogScratchVoucher(seeded,'premium');
+ assert.deepEqual(gift.vouchers,{simple:1,medium:0,premium:1});
+ assert.equal(gift.coins,1000);
+ assert.deepEqual(dogScratchStatus(gift).vouchers,gift.vouchers);
+ const purchase=buyScratchTicket(gift,null,
+  {tier:'premium',voucher:true,variantId:'premium_27',commandId:'dog-hidden-voucher-01'},
+  {draw:()=>0});
+ assert.equal(purchase.result.price,0);
+ assert.equal(purchase.result.voucher,true);
+ assert.equal(purchase.wallet.vouchers.premium,0);
+ assert.equal(purchase.wallet.vouchers.simple,1);
+ assert.equal(purchase.wallet.coins,1000+purchase.result.totalCoins);
+ assert.equal(purchase.wallet.daily,'');
+ const repeat=buyScratchTicket(purchase.wallet,null,
+  {tier:'premium',voucher:true,variantId:'premium_27',commandId:'dog-hidden-voucher-01'},
+  {draw:()=>{throw Error('VOUCHER_REPLAY_MUST_NOT_DRAW')}});
+ assert.equal(repeat.unchanged,true);
+ assert.deepEqual(repeat.wallet.vouchers,purchase.wallet.vouchers);
+ assert.throws(()=>buyScratchTicket(purchase.wallet,null,
+  {tier:'premium',voucher:true,variantId:'premium_27',commandId:'dog-hidden-voucher-02'}),/SCRATCH_NO_VOUCHER/);
+ assert.throws(()=>grantDogScratchVoucher(null,'unexpected'),/SCRATCH_INVALID_TIER/);
+ assert.deepEqual(normalizedScratchWallet({coins:5}).vouchers,{simple:0,medium:0,premium:0});
 });
