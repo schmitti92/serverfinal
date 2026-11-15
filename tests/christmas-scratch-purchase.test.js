@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomInt} from 'node:crypto';
 import {buyScratchTicket,DOG_SCRATCH_TIERS,DOG_SCRATCH_BONUS_ODDS} from '../dog/christmas-scratch.js';
-import {SCRATCH_VARIANT_IDS,verifyScratchPrizes,evaluateScratchGrid} from '../dog/christmas-scratch-grid.js';
+import {SCRATCH_VARIANT_IDS,SCRATCH_VARIANT_IDS_BY_TIER,verifyScratchPrizes,evaluateScratchGrid} from '../dog/christmas-scratch-grid.js';
 
 const fresh=()=>({coins:100000000,owned:{},recent:[],daily:'',purchased:0});
 const req=(tier,id,free=false)=>({tier,commandId:'scratch-test-'+id,free});
@@ -31,6 +31,7 @@ test('all tiers produce exactly one visible board for a ticket',()=>{
    const {result}=t;
    const {board,winnings}=result;
    assert.ok(SCRATCH_VARIANT_IDS.includes(board.variantId));
+   assert.ok(SCRATCH_VARIANT_IDS_BY_TIER[tier].includes(board.variantId));
    seen.add(board.variantId);
    assert.ok(verifyScratchPrizes(board));
    assert.equal(evaluateScratchGrid(board).length,winnings.length);
@@ -45,7 +46,7 @@ test('all tiers produce exactly one visible board for a ticket',()=>{
    assert.equal(new Set(unlocked.map(x=>x.prize.unlockId)).size,unlocked.length);
    assert.equal(t.status.lastResult.commandId,result.commandId);
   }
-  assert.equal(seen.size,6,'all 6 active game variants sampled');
+  assert.equal(seen.size,2,'both tier-specific game variants sampled');
  }
 });
 test('no wins and x2 obey the server-defined baseline roll',()=>{
