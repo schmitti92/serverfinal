@@ -869,7 +869,7 @@ function finishEisstock(ch,members){
       host:room.hostUid===identity.uid,
       canUpgrade:christmasActive()&&!(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished'),
       enabled:christmasActive(),
-      matchEnabled:christmasActive()&&room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
+      matchEnabled:christmasActive()&&room.phase==='playing'&&room.match?.game==='dog'};
   }));
   // Read-only reward progress, fetched only when opening the tree tab.
   // A room code alone is not proof of membership; enforce Firebase identity.
