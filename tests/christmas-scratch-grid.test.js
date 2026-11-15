@@ -41,6 +41,36 @@ test('new snow bingo wins with ANY three matching symbols, not lines, and ice bl
  const oldBoard=generateScratchGrid('snow',1);
  assert.equal(evaluateScratchGrid(oldBoard).length,1,'legacy four-in-a-row rule remains intact');
 });
+test('premium elf paths join only orthogonal neighbors and may wind across rows',()=>{
+ const alternating=Array.from({length:20},(_,i)=>i%5%2===0?'🎁':'⭐');
+ const zigzag=[0,1,6,7,12,13,14];
+ for(const index of zigzag)alternating[index]='🍪';
+ const revealed=evaluateScratchGrid({variantId:'elf',cells:alternating});
+ assert.equal(revealed.length,1);
+ assert.equal(revealed[0].symbol,'🍪');
+ assert.deepEqual(revealed[0].indices,zigzag);
+ assert.equal(revealed[0].indices[0]%5,0);
+ assert.equal(revealed[0].indices.at(-1)%5,4);
+ const diagonal=Array.from({length:20},(_,i)=>i%5%2===0?'🎁':'⭐');
+ for(const index of [0,6,12,18,19])diagonal[index]='🍪';
+ assert.equal(evaluateScratchGrid({variantId:'elf',cells:diagonal}).length,0,
+  'diagonally touching symbols cannot complete a path');
+ let curved=0;
+ for(let n=0;n<150;n++){
+  const board=generateScratchGrid('elf',1);
+  const win=evaluateScratchGrid(board)[0];
+  assert.equal(win.indices[0]%5,0);
+  assert.equal(win.indices.at(-1)%5,4);
+  for(let j=1;j<win.indices.length;j++){
+   const a=win.indices[j-1],b=win.indices[j];
+   assert.equal(Math.abs(Math.floor(a/5)-Math.floor(b/5))+
+    Math.abs(a%5-b%5),1,'each path step uses a directly neighboring cell');
+  }
+  if(new Set(win.indices.map(i=>Math.floor(i/5))).size>1)curved++;
+ }
+ assert.ok(curved>0,'premium generator must create winding paths, not only straight rows');
+});
+
 for(const [id,cellCount] of fixtures){
  for(let expected=0;expected<=3;expected++){
   test(id+': '+expected+' visible winning combination(s)',()=>{
