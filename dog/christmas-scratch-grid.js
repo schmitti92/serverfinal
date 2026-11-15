@@ -38,13 +38,13 @@ export const SCRATCH_GRID_VARIANTS=Object.freeze({
  diamond:Object.freeze({id:'diamond',name:MODE_NAMES.diamond,rows:3,cols:3,cellCount:9,rule:'Drei Diamanten beliebig auf dem Feld; jede Dreiergruppe gewinnt'}),
  bells:Object.freeze({id:'bells',name:MODE_NAMES.bells,rows:4,cols:5,cellCount:20,rule:'Fünf gleiche Symbole waagerecht oder fünf Glocken im Diamantmuster'})
 });
-// Four new-sale cards: two normal, two premium. Old IDs remain readable.
-// The retired medium ticket tier uses normal boards until the planned UI migration.
+// Four new-sale cards: two simple (200), one medium (500), one premium (1000).
+// Old IDs remain readable for previously purchased tickets.
 export const SCRATCH_VARIANT_IDS=Object.freeze(['gifts','snow_collect','elf','tree']);
 export const SCRATCH_VARIANT_IDS_BY_TIER=Object.freeze({
  simple:Object.freeze(['gifts','snow_collect']),
- medium:Object.freeze(['gifts','snow_collect']),
- premium:Object.freeze(['elf','tree'])
+ medium:Object.freeze(['elf']),
+ premium:Object.freeze(['tree'])
 });
 export const SCRATCH_ARCHIVED_VARIANT_IDS=Object.freeze(
  Object.keys(SCRATCH_GRID_VARIANTS).filter(id=>!SCRATCH_VARIANT_IDS.includes(id))
@@ -222,7 +222,7 @@ function elfBoard(desired,draw){
  for(let p=0;p<chosen.length;p++){
   const row=chosen[p],symbol=symbols[p];
   const neighbors=[row-1,row+1].filter(r=>spareRows.has(r));
-  // A premium elf path should sometimes bend between rows rather than
+  // The medium elf path should sometimes bend between rows rather than
   // always being a normal line bingo. Each detour consumes a spare lane.
   if(neighbors.length&&random(100,draw)<80){
    const nextRow=sample(neighbors,draw);
