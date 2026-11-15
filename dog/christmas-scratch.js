@@ -815,9 +815,11 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
    prizeSymbols:winnings.map(w=>w.symbol)}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
- // The row and milestone order is canonical. Keep the receipt's rewards in
- // exactly that order so the displayed symbols and prize list always match.
- if(variantId==='premium_27')winnings.splice(0,winnings.length,...board.wins.map(w=>w.prize));
+ // Every ticket's receipt must follow the server-verified visible winning
+ // combinations. Non-premium variants can reorder symbols when a board is
+ // generated (rows, paths or arbitrary three-of-a-kind groups). Preserve
+ // each prize exactly once, but show it beside its actual matching cells.
+ winnings.splice(0,winnings.length,...board.wins.map(w=>w.prize));
 
  // Beyond the visible matches, independent bonus money rolls can pay up
  // to the host's chosen total of 10. Each bonus cites a verified match.
