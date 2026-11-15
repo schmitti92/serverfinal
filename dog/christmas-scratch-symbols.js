@@ -43,7 +43,7 @@ function elfNeighbors(i){
   .filter(([r,c])=>r>=0&&r<4&&c>=0&&c<5)
   .map(([r,c])=>r*5+c);
 }
-function elfPayoutPaths(cells){
+function elfPayoutPaths(cells,version){
  const wins=[];
  for(const symbol of SCRATCH_PAYOUT_ORDER){
   const seen=new Set();
@@ -56,6 +56,13 @@ function elfPayoutPaths(cells){
       seen.add(next);component.push(next);
      }
     }
+   }
+   // On new tickets a gift needs only three identical, orthogonally
+   // connected icons. Money still uses the full left-to-right elf path.
+   // Historical v2 gift paths remain unchanged.
+   if(version>=3&&SCRATCH_GIFT_SYMBOLS.includes(symbol)){
+    if(component.length>=3)wins.push(match(component.slice(0,3),symbol,'gift-three-connected'));
+    continue;
    }
    const starts=component.filter(i=>i%5===0);
    if(!starts.length||!component.some(i=>i%5===4))continue;
@@ -99,7 +106,7 @@ export function evaluatePayoutGrid(board){
     return Array.from({length:count},(_,i)=>match(
      locations.slice(i*3,i*3+3),symbol,'three-anywhere'));
    });
-  case 'elf':return elfPayoutPaths(cells);
+  case 'elf':return elfPayoutPaths(cells,board.symbolVersion);
   case 'tree':
    return [0,3,6,9,12].filter(i=>
     cells[i]==='⭐'&&cells[i+1]==='🎄'&&SCRATCH_PAYOUT_ORDER.includes(cells[i+2]))
