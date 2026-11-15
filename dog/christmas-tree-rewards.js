@@ -1,14 +1,8 @@
-/**
- * Official Lichtertal Christmas tree, one signed-in cosmetic prize per level.
- * Server-authoritative village levels determine eligibility.
- * Rewards are assigned with cryptographically secure randomInt on a one-time
- * Firestore transaction, so retries, page refreshes and repeated room joins
- * never reroll, spend currency or grant duplicate cosmetics.
- *
- * Level 1 is a welcome gift when a member first claims it from DOG Lichtertal.
- * For levels 2–10, the village must reach that stage via real upgrades.
+/** Official Lichtertal Christmas tree: ten fixed prizes, one each per player.
+ * Rewards depend only on the server-verified village stage and signed-in user.
+ * Successful claims are persisted transactionally; opening this page performs
+ * no write and never changes an already-collected prize.
  */
-import {randomInt} from 'node:crypto';
 import {DOG_VILLAGE_DEFAULT_LEVELS} from './christmas-village.js';
 export const DOG_TREE_REWARDS_COLLECTION='dog_christmas_tree_rewards_v1';
 export const DOG_TREE_THRESHOLDS=Object.freeze([4,5,7,9,11,13,15,17,19,20]);
@@ -372,14 +366,34 @@ export const DOG_TREE_PRIZE_POOL=Object.freeze([
  }
 ]
  .map(p=>Object.freeze(p)));
-export const DOG_TREE_FIXED_CATEGORIES=Object.freeze(['backgrounds','avatars','cards','boards']);
-export const DOG_TREE_REWARD_SCHEDULE=Object.freeze(
- Array.from({length:10},(_,i)=>Object.freeze({
-  level:i+1,category:DOG_TREE_FIXED_CATEGORIES[i]||'random',
-  title:i<4?DOG_TREE_PRIZE_POOL.find(p=>p.category===DOG_TREE_FIXED_CATEGORIES[i]).label:'Zufällige Weihnachtsüberraschung',
-  icon:i<4?DOG_TREE_PRIZE_POOL.find(p=>p.category===DOG_TREE_FIXED_CATEGORIES[i]).icon:'🎁'
- }))
+/** Ten announced, permanent prizes – no client/server random draw at claim.
+ * The catalogue is the source of truth for categories, names and icons.
+ * If a user claimed a conflicting item under the old random system, preserve
+ * that receipt and choose a deterministic, not-yet-owned alternative.
+ */
+export const DOG_TREE_FIXED_PRIZE_IDS=Object.freeze([
+ "christmas2026:scene:01",
+ "christmas2026:avatar:01",
+ "christmas2026:cards:kartendesign-02",
+ "christmas2026:board:weihnachtsdorf",
+ "christmas2026:emoji:05",
+ "christmas2026:nameframe:01",
+ "christmas2026:activeicon:02",
+ "christmas2026:cards:kartendesign-03",
+ "christmas2026:scene:05",
+ "christmas2026:board:polarlichtpalast"
+]);
+export const DOG_TREE_FIXED_CATEGORIES=Object.freeze(
+ DOG_TREE_FIXED_PRIZE_IDS.map(id=>DOG_TREE_PRIZE_POOL.find(p=>p.unlockId===id)?.category)
 );
+export const DOG_TREE_REWARD_SCHEDULE=Object.freeze(
+ DOG_TREE_FIXED_PRIZE_IDS.map((unlockId,index)=>{
+  const prize=DOG_TREE_PRIZE_POOL.find(p=>p.unlockId===unlockId);
+  if(!prize)throw Error('TREE_PRIZE_MISSING_FROM_CATALOG');
+  return Object.freeze({level:index+1,unlockId,category:prize.category,title:prize.name,icon:prize.icon});
+ })
+);
+if(new Set(DOG_TREE_FIXED_PRIZE_IDS).size!==10)throw Error('TREE_FIXED_PRIZE_DUPLICATE');
 export function dogTreeLevelFromLevels(input){
  const levels=input&&typeof input==='object'&&input.levels?input.levels:input;
  const safe=levels&&typeof levels==='object'?levels:DOG_VILLAGE_DEFAULT_LEVELS;
@@ -407,36 +421,31 @@ export function dogTreeRewardStatus(village,profileDoc){
  return {treeLevel,maxLevel:10,collected:rewards.filter(x=>x.state==='collected').length,
   available:rewards.filter(x=>x.state==='ready').length,ownedUnlockIds,rewards};
 }
-/** Apply a single stage. Caller must authenticate member + transact document.
- * `draw(max)` uses crypto.randomInt by default and must return integer in [0,max).
+/** One claimed level = one immutable account entitlement.
+ * No random choices are made after the rewards are announced.
+ * Previously collected prizes remain exactly as they were recorded.
  */
-export function claimDogTreeReward(profileDoc,village,requestedLevel,{draw=randomInt,clock=Date.now}={}){
+export function claimDogTreeReward(profileDoc,village,requestedLevel,{clock=Date.now}={}){
  if(!Number.isInteger(requestedLevel)||requestedLevel<1||requestedLevel>10)throw Error('INVALID_TREE_LEVEL');
- const stage=dogTreeLevelFromLevels(village);
- if(requestedLevel>stage)throw Error('TREE_LEVEL_NOT_REACHED');
  const claims=cleanClaims(profileDoc?.claims);
  if(claims[String(requestedLevel)]){
-  return {unchanged:true,document:{claims},prize:DOG_TREE_PRIZE_POOL.find(p=>p.unlockId===claims[String(requestedLevel)].unlockId),
+  return {unchanged:true,document:{claims},
+   prize:DOG_TREE_PRIZE_POOL.find(p=>p.unlockId===claims[String(requestedLevel)].unlockId),
    status:dogTreeRewardStatus(village,{claims})};
  }
+ if(requestedLevel>dogTreeLevelFromLevels(village))throw Error('TREE_LEVEL_NOT_REACHED');
  const owned=new Set(Object.values(claims).map(p=>p.unlockId));
- const category=DOG_TREE_FIXED_CATEGORIES[requestedLevel-1];
- let candidates=DOG_TREE_PRIZE_POOL.filter(item=>!owned.has(item.unlockId));
- // After level four, draw the category first: avatars must not overwhelm
- // rare card/board/frame/icon gifts simply due to their catalogue size.
- if(category)candidates=candidates.filter(p=>p.category===category);
- else {
-  const categories=[...new Set(candidates.map(p=>p.category))];
-  const categoryDraw=draw(categories.length);
-  if(!Number.isInteger(categoryDraw)||categoryDraw<0||categoryDraw>=categories.length)
-   throw Error('INVALID_PRIZE_DRAW');
-  candidates=candidates.filter(p=>p.category===categories[categoryDraw]);
+ const planned=DOG_TREE_REWARD_SCHEDULE[requestedLevel-1];
+ let prize=DOG_TREE_PRIZE_POOL.find(p=>p.unlockId===planned.unlockId);
+ if(owned.has(prize.unlockId)){
+  // Backward-compatible collision rule for pre-existing randomly won items.
+  // Prefer the same category; only use another category if all are owned.
+  prize=DOG_TREE_PRIZE_POOL.find(p=>p.category===planned.category&&!owned.has(p.unlockId))
+   || DOG_TREE_PRIZE_POOL.find(p=>!owned.has(p.unlockId));
  }
- if(!candidates.length)throw Error('TREE_PRIZE_POOL_EXHAUSTED');
- const index=draw(candidates.length);
- if(!Number.isInteger(index)||index<0||index>=candidates.length)throw Error('INVALID_PRIZE_DRAW');
- const prize=candidates[index];
- const receipt={unlockId:prize.unlockId,category:prize.category,claimedAt:clock()};
- const next={claims:{...claims,[String(requestedLevel)]:receipt},version:1,updatedAt:clock()};
+ if(!prize)throw Error('TREE_PRIZE_POOL_EXHAUSTED');
+ const now=clock();
+ const receipt={unlockId:prize.unlockId,category:prize.category,claimedAt:now};
+ const next={claims:{...claims,[String(requestedLevel)]:receipt},version:2,updatedAt:now};
  return {unchanged:false,document:next,prize,status:dogTreeRewardStatus(village,next)};
 }
