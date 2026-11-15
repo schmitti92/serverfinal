@@ -236,8 +236,10 @@ function generatePremium27V5(prizes,{draw,maxAttempts}){
  // Money icons are part of the actual premium scratch field, not merely
  // the prize legend. Guarantee all three icons on every NEW ticket, even if
  // none forms a paid triple. A three-of-a-kind is still validated server-side.
- const filler=[...PREMIUM_27_SYMBOLS.filter(s=>s!=='🎁'),
-  ...SCRATCH_GIFT_SYMBOLS,...P27_MONEY,...P27_MONEY];
+ // Only non-prize decorations fill leftover squares. This prevents
+ // accidentally adding a fifth cash row and works even for deterministic
+ // draws used by older integrations (draw(max) always returning zero).
+ const filler=PREMIUM_27_SYMBOLS.filter(symbol=>symbol!=='🎁');
  for(let attempt=0;attempt<maxAttempts;attempt++){
   const cells=Array(27).fill(PREMIUM_27_DUD);
   const rows=randomOrder(Array.from({length:9},(_,r)=>r),draw).slice(0,fixedRows.length);
