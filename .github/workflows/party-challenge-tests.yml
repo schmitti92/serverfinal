@@ -2,9 +2,24 @@ name: Multiplayer regression tests
 on:
   push:
     branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'server.js'
+      - 'engine2/**'
+      - 'minigames-v2/**'
+      - 'tests/shared-lobby.test.js'
+      - 'tests/minigame-readiness.test.js'
+      - 'tests/minigames-v2-*.test.js'
+      - 'tests/business-hub.test.js'
+      - 'tests/kreuz-hub.test.js'
+      - '.github/workflows/party-challenge-tests.yml'
   pull_request:
     branches: [main]
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
   node-tests:
     runs-on: ubuntu-latest
