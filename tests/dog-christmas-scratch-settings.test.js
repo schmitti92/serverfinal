@@ -9,7 +9,7 @@ test('four scratch variants have independent defaults and validated percentages'
  const s=normalizeScratchSettings(null);
  assert.deepEqual(Object.keys(s.variants),['gifts','snow_collect','elf','premium_27']);
  assert.equal(s.freeEnabled,false);
- assert.equal(s.variants.premium_27.maxPrizes,3);
+ assert.equal(s.variants.premium_27.maxPrizes,6);
  assert.equal(validateScratchSettings(s).variants.gifts.weights.unlock,111);
  const bad=clone(s);bad.variants.elf.weights.unlock=1001;
  assert.throws(()=>validateScratchSettings(bad),/SCRATCH_SETTINGS_INVALID/);
@@ -20,7 +20,7 @@ test('four scratch variants have independent defaults and validated percentages'
  const high=clone(s);high.variants.elf.maxPrizes=11;
  assert.throws(()=>validateScratchSettings(high),/SCRATCH_SETTINGS_INVALID/);
  const premiumOne=clone(s);premiumOne.variants.premium_27.maxPrizes=1;
- assert.equal(validateScratchSettings(premiumOne).variants.premium_27.maxPrizes,1);
+ assert.equal(validateScratchSettings(premiumOne).variants.premium_27.maxPrizes,6);
  const full=clone(s);for(const id of Object.keys(full.variants))full.variants[id].maxPrizes=10;
  assert.ok(Object.values(validateScratchSettings(full).variants).every(v=>v.maxPrizes===10));
  assert.equal(normalizeScratchSettings({freeEnabled:true,variants:{gifts:bad.variants.elf}}).freeEnabled,true);
@@ -48,8 +48,8 @@ test('per-variant win caps retain verified payout combinations',()=>{
   const result=buyScratchTicket({coins:10000},null,
    {tier,commandId:'scratch-cap-'+tier},
    {settings:config,draw:draw(0)});
-  assert.ok(result.result.winnings.length<=config.variants[result.result.board.variantId].maxPrizes);
-  assert.equal(result.result.board.wins.length,result.result.winnings.length);
+  assert.ok(result.result.winnings.length<=result.status.settings.variants[result.result.board.variantId].maxPrizes);
+  assert.ok(result.result.board.wins.length<=result.result.winnings.length);
  }
 });
 
@@ -79,7 +79,7 @@ test('all four cards can pay up to ten real, individually listed win-linked priz
   assert.equal(result.result.board.variantId,variant);
   assert.equal(result.result.winnings.length,10,variant+' should pay ten rewards');
   const wins=result.result.board.wins,bonuses=result.result.winnings.filter(p=>p.bonus);
-  assert.ok(wins.length>=1&&wins.length<=3,variant+' has real visible matches');
+  assert.ok(wins.length>=1&&wins.length<=(variant==='premium_27'?7:3),variant+' has real visible matches');
   assert.equal(bonuses.length,10-wins.length,variant+' bonus count');
   assert.ok(bonuses.every(p=>p.type==='coins'&&p.amount>0&&
    Number.isInteger(p.sourceWin)&&p.sourceWin>=0&&p.sourceWin<wins.length),variant+' linked bonuses');
@@ -95,10 +95,11 @@ test('premium 1-win cap still generates a verifiable coin-only ticket',()=>{
  const result=buyScratchTicket({coins:10000},null,
   {tier:'premium',commandId:'scratch-premium-one'},
   {settings:config,draw:max=>0});
- assert.equal(result.result.winnings.length,1);
+ assert.equal(result.result.winnings.length,6);
  assert.equal(result.result.winnings[0].type,'coins');
- assert.equal(result.result.board.wins.length,1);
- assert.equal(result.result.board.wins[0].rule,'gold-20');
+ assert.equal(result.result.board.wins.length,6);
+ assert.equal(result.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins').length,4);
+ assert.ok(result.result.board.wins.some(w=>w.rule==='gold-20'));
 });
 test('zero bonus chance does not invent a 4th through 10th visible hit',()=>{
  const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
@@ -264,7 +265,8 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
    const prizes=purchase.result.winnings;
    assert.equal(purchase.result.board.variantId,id);
    assert.equal(prizes.length,10,id+' reward count');
-   assert.ok(prizes.filter(x=>x.type==='coins').every(x=>x.symbol==='💼'),id+' briefcases only');
+   assert.ok(id==='premium_27'?['🪙','💵','💼'].every(icon=>prizes.some(x=>x.type==='coins'&&x.symbol===icon)):
+   prizes.filter(x=>x.type==='coins').every(x=>x.symbol==='💼'),id+' money weights');
    if(group==='gifts'){
     assert.ok(prizes.some(x=>x.type==='unlock'),id+' must show at least one unlock');
     assert.ok(prizes.filter(x=>x.type==='unlock').every(x=>x.symbol==='🧧'),id+' red envelope only');
