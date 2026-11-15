@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_TOWER_FIELDS,DOG_GIFT_FIELD_ORDER,normalizedDogVillage,dogVillagePublic,
+ DOG_TOWER_FIELDS,DOG_GIFT_FIELD_ORDER,isDogChristmasEventActive,normalizedDogVillage,dogVillagePublic,
  buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,
  finishDogChristmasMatch,creditDogVillage
 } from '../dog/christmas-village.js';
 
 const host='user_alice123';
+test('Christmas event is globally active by default, never a room or host setting',()=>{
+ assert.equal(isDogChristmasEventActive({}),true);
+ assert.equal(isDogChristmasEventActive({DOG_CHRISTMAS_EVENT_ENABLED:'true'}),true);
+ for(const value of ['false','0','off','ended','FALSE',' Off ']){
+  assert.equal(isDogChristmasEventActive({DOG_CHRISTMAS_EVENT_ENABLED:value}),false,value);
+ }
+});
+
 test('Christmas village starts at level 1, with 10 real gift fields and empty shared balance',()=>{
  const initial=dogVillagePublic(null,host);
  assert.equal(initial.lightsTenths,0);
