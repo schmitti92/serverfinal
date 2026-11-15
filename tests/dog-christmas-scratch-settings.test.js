@@ -184,6 +184,12 @@ test('each coin, banknote and briefcase pays configured amounts including bonus 
   assert.deepEqual(ticket.coinAmounts,perVariant[id]);
   assert.equal(ticket.winnings.length,10);
   for(const prize of ticket.winnings.filter(x=>x.type==='coins')){
+   if(prize.milestone==='gold-20'){
+    assert.equal(id,'premium_27');
+    assert.equal(prize.amount,1000,'20-symbol prize stays fixed even if money rows are customized');
+    assert.ok(!prize.x2);
+    continue;
+   }
    const expected=perVariant[id][moneySymbols.indexOf(prize.symbol)];
    assert.equal(prize.amount,expected*(prize.x2?2:1),id+' '+prize.symbol);
   }
