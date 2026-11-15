@@ -5,6 +5,16 @@ on:
       - feature/gemeinsame-lobby-v1
       - feature/barikade-chat-v10
       - main
+    paths:
+      - 'shared-lobby.js'
+      - 'hub-*.js'
+      - 'dog/player-levels.js'
+      - 'dog/christmas-scratch*.js'
+      - 'dog/christmas-tree-rewards.js'
+      - 'tests/shared-lobby.test.js'
+      - 'tests/dog-christmas-scratch*.test.js'
+      - 'tests/dog-christmas-tree-rewards.test.js'
+      - '.github/workflows/hub-feature-tests.yml'
   workflow_dispatch:
 
 permissions:
@@ -23,6 +33,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm test
