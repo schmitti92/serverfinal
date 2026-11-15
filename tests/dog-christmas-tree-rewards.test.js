@@ -80,5 +80,5 @@ test('server checks member, stores one account receipt only when claimed',()=>{
  assert.match(text,/dogTreeRewardStatus/);
  assert.match(text,/claimDogTreeReward/);
  assert.match(text,/validateRead\(room,identity\)/);
- assert.match(text,/tx\.set\(accountRef,result\.document\)/);
+ assert.match(text,/tx\.set\(accountRef,granted\.document\)/);
 });
