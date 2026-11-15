@@ -72,6 +72,19 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
   const dogVillageFor=store=>store.collection(DOG_VILLAGE_COLLECTION).doc(DOG_GLOBAL_VILLAGE_ID);
   const legacyDogVillageFor=(store,uid)=>store.collection(DOG_VILLAGE_COLLECTION).doc(uid);
+  // Preserve old host-village balances on the next DOG game started by that
+  // host, even if they have never opened the new meta-village page.
+  async function sharedVillageForMatchStart(tx,store,hostUid){
+    const sharedRef=dogVillageFor(store),oldRef=legacyDogVillageFor(store,hostUid);
+    const [sharedSnap,oldSnap]=await Promise.all([tx.get(sharedRef),tx.get(oldRef)]);
+    const shared=sharedSnap.exists?sharedSnap.data():null;
+    if(!oldSnap.exists||oldSnap.data()?.mergedToGlobal===DOG_GLOBAL_VILLAGE_ID)return shared;
+    const merged=mergeLegacyDogVillage(shared,oldSnap.data(),hostUid);
+    if(!merged.changed)return shared;
+    tx.set(sharedRef,merged.village);
+    tx.update(oldRef,{mergedToGlobal:DOG_GLOBAL_VILLAGE_ID,mergedAt:clock()});
+    return merged.village;
+  }
   const validCode=s=>typeof s==='string'&&CODE_PATTERN.test(s.toUpperCase())?s.toUpperCase():null;
   async function authentication(req,res,next){
     if(!db())return res.status(503).json({ok:false,error:'DATABASE_UNAVAILABLE'});
@@ -1246,7 +1259,7 @@ function finishEisstock(ch,members){
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
         const village=room.game==='dog'&&christmasActive()
-         ?(await tx.get(dogVillageFor(store))).data():null;
+         ?await sharedVillageForMatchStart(tx,store,room.hostUid):null;
         startGame(room,village);
       }
     })};
@@ -1263,7 +1276,7 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       const village=room.game==='dog'&&christmasActive()
-        ?(await tx.get(dogVillageFor(store))).data():null;
+        ?await sharedVillageForMatchStart(tx,store,room.hostUid):null;
       startGame(room,village);
     })};
   }));
