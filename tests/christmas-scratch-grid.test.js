@@ -8,20 +8,20 @@ import {
 
 const fixtures=Object.freeze([
  ['gifts',9],['snow',16],['snow_collect',16],['stars',12],['elf',20],['reindeer',12],
- ['candy',6],['tree',15],['cookie',16],['diamond',9],['bells',20]
+ ['candy',6],['tree',15],['premium_27',27],['cookie',16],['diamond',9],['bells',20]
 ]);
 
 test('four active scratch games by tier; previous ten remain valid for old tickets',()=>{
- assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','tree']);
+ assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','premium_27']);
  assert.equal(new Set(SCRATCH_VARIANT_IDS).size,4);
- assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,11);
+ assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,12);
  assert.deepEqual(SCRATCH_VARIANT_IDS_BY_TIER,{
   simple:['gifts','snow_collect'],
   medium:['elf'],
-  premium:['tree']
+  premium:['premium_27']
  });
  assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,
-  ['snow','stars','reindeer','candy','cookie','diamond','bells']);
+  ['snow','stars','reindeer','candy','tree','cookie','diamond','bells']);
  for(const [id,count] of fixtures){
   assert.equal(SCRATCH_GRID_VARIANTS[id].cellCount,count);
   assert.ok(SCRATCH_GRID_VARIANTS[id].rule.length>15);
@@ -71,6 +71,21 @@ test('medium elf paths join only orthogonal neighbors and may wind across rows',
  assert.ok(curved>0,'medium generator must create winding paths, not only straight rows');
 });
 
+test('premium card is 9 rows by 3, and 24 symbols count for both milestones',()=>{
+ const twenty=Array(27).fill('🧊');
+ for(let i=0;i<20;i++)twenty[i]=i%3===2?'⭐':'🎁';
+ const gold=evaluateScratchGrid({variantId:'premium_27',cells:twenty});
+ assert.ok(gold.some(w=>w.rule==='gold-20'));
+ assert.ok(!gold.some(w=>w.rule==='premium-24'));
+ const twentyFour=Array(27).fill('🧊');
+ for(let i=0;i<24;i++)twentyFour[i]=i%3===2?'⭐':'🎁';
+ const premium=evaluateScratchGrid({variantId:'premium_27',cells:twentyFour});
+ assert.equal(premium.length,2);
+ assert.deepEqual(premium.map(w=>w.rule),['gold-20','premium-24']);
+ const row=Array(27).fill('🧊');row[3]='🎁';row[4]='🎁';row[5]='🎁';
+ assert.deepEqual(evaluateScratchGrid({variantId:'premium_27',cells:row}).map(w=>w.rule),['row-3']);
+ assert.equal(evaluateScratchGrid({variantId:'premium_27',cells:Array(27).fill('🧊')}).length,0);
+});
 for(const [id,cellCount] of fixtures){
  for(let expected=0;expected<=3;expected++){
   test(id+': '+expected+' visible winning combination(s)',()=>{
