@@ -17,8 +17,8 @@ test('four active scratch games by tier; previous ten remain valid for old ticke
  assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,11);
  assert.deepEqual(SCRATCH_VARIANT_IDS_BY_TIER,{
   simple:['gifts','snow_collect'],
-  medium:['gifts','snow_collect'],
-  premium:['elf','tree']
+  medium:['elf'],
+  premium:['tree']
  });
  assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,
   ['snow','stars','reindeer','candy','cookie','diamond','bells']);
@@ -41,7 +41,7 @@ test('new snow bingo wins with ANY three matching symbols, not lines, and ice bl
  const oldBoard=generateScratchGrid('snow',1);
  assert.equal(evaluateScratchGrid(oldBoard).length,1,'legacy four-in-a-row rule remains intact');
 });
-test('premium elf paths join only orthogonal neighbors and may wind across rows',()=>{
+test('medium elf paths join only orthogonal neighbors and may wind across rows',()=>{
  const alternating=Array.from({length:20},(_,i)=>i%5%2===0?'🎁':'⭐');
  const zigzag=[0,1,6,7,12,13,14];
  for(const index of zigzag)alternating[index]='🍪';
@@ -68,7 +68,7 @@ test('premium elf paths join only orthogonal neighbors and may wind across rows'
   }
   if(new Set(win.indices.map(i=>Math.floor(i/5))).size>1)curved++;
  }
- assert.ok(curved>0,'premium generator must create winding paths, not only straight rows');
+ assert.ok(curved>0,'medium generator must create winding paths, not only straight rows');
 });
 
 for(const [id,cellCount] of fixtures){
