@@ -14,8 +14,14 @@ test('four scratch variants have independent defaults and validated percentages'
  assert.throws(()=>validateScratchSettings(bad),/SCRATCH_SETTINGS_INVALID/);
  const notHundred=clone(s);notHundred.variants.gifts.weights.coins=10;
  assert.throws(()=>validateScratchSettings(notHundred),/SCRATCH_SETTINGS_INVALID/);
- const wrongPremium=clone(s);wrongPremium.variants.premium_27.maxPrizes=1;
- assert.throws(()=>validateScratchSettings(wrongPremium),/SCRATCH_SETTINGS_INVALID/);
+ const low=clone(s);low.variants.premium_27.maxPrizes=0;
+ assert.throws(()=>validateScratchSettings(low),/SCRATCH_SETTINGS_INVALID/);
+ const high=clone(s);high.variants.elf.maxPrizes=11;
+ assert.throws(()=>validateScratchSettings(high),/SCRATCH_SETTINGS_INVALID/);
+ const premiumOne=clone(s);premiumOne.variants.premium_27.maxPrizes=1;
+ assert.equal(validateScratchSettings(premiumOne).variants.premium_27.maxPrizes,1);
+ const full=clone(s);for(const id of Object.keys(full.variants))full.variants[id].maxPrizes=10;
+ assert.ok(Object.values(validateScratchSettings(full).variants).every(v=>v.maxPrizes===10));
  assert.equal(normalizeScratchSettings({freeEnabled:true,variants:{gifts:bad.variants.elf}}).freeEnabled,true);
  assert.deepEqual(normalizeScratchSettings({}).variants.premium_27.weights,DOG_SCRATCH_DEFAULT_SETTINGS.variants.premium_27.weights);
 });
@@ -44,4 +50,63 @@ test('per-variant win caps retain verified payout combinations',()=>{
   assert.ok(result.result.winnings.length<=config.variants[result.result.board.variantId].maxPrizes);
   assert.equal(result.result.board.wins.length,result.result.winnings.length);
  }
+});
+
+test('all four cards can pay up to ten real, individually listed win-linked prizes',()=>{
+ const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ for(const item of Object.values(config.variants)){
+  item.weights={none:0,coins:1000,unlock:0};
+  item.maxPrizes=10;
+  item.extraCoinChance=100;
+ }
+ const seeded=(seed,secondDraw=0)=>{
+  let state=seed>>>0,calls=0;
+  return max=>{
+   calls++;
+   if(calls===2&&max===2)return secondDraw; // simple: gifts or snow_collect
+   state=(Math.imul(state,1664525)+1013904223)>>>0;
+   return Math.floor(state/4294967296*max);
+  };
+ };
+ for(const [tier,variant,variantIndex] of [
+  ['simple','gifts',0],['simple','snow_collect',1],
+  ['medium','elf',0],['premium','premium_27',0]
+ ]){
+  const result=buyScratchTicket({coins:20000},null,
+   {tier,commandId:'scratch-ten-'+variant},
+   {settings:config,draw:seeded(67439,variantIndex)});
+  assert.equal(result.result.board.variantId,variant);
+  assert.equal(result.result.winnings.length,10,variant+' should pay ten rewards');
+  const wins=result.result.board.wins,bonuses=result.result.winnings.filter(p=>p.bonus);
+  assert.ok(wins.length>=1&&wins.length<=3,variant+' has real visible matches');
+  assert.equal(bonuses.length,10-wins.length,variant+' bonus count');
+  assert.ok(bonuses.every(p=>p.type==='coins'&&p.amount>0&&
+   Number.isInteger(p.sourceWin)&&p.sourceWin>=0&&p.sourceWin<wins.length),variant+' linked bonuses');
+  assert.equal(result.result.totalCoins,result.result.winnings.filter(p=>p.type==='coins').reduce((n,p)=>n+p.amount,0));
+  assert.equal(result.result.balance,20000-(tier==='premium'?1000:tier==='medium'?500:200)+result.result.totalCoins);
+ }
+});
+test('premium 1-win cap still generates a verifiable coin-only ticket',()=>{
+ const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ config.variants.premium_27.maxPrizes=1;
+ config.variants.premium_27.weights={none:0,coins:0,unlock:1000};
+ config.variants.premium_27.extraCoinChance=100;
+ const result=buyScratchTicket({coins:10000},null,
+  {tier:'premium',commandId:'scratch-premium-one'},
+  {settings:config,draw:max=>0});
+ assert.equal(result.result.winnings.length,1);
+ assert.equal(result.result.winnings[0].type,'coins');
+ assert.equal(result.result.board.wins.length,1);
+ assert.equal(result.result.board.wins[0].rule,'gold-20');
+});
+test('zero bonus chance does not invent a 4th through 10th visible hit',()=>{
+ const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ config.variants.elf.weights={none:0,coins:1000,unlock:0};
+ config.variants.elf.maxPrizes=10;
+ config.variants.elf.extraCoinChance=0;
+ const result=buyScratchTicket({coins:10000},null,
+  {tier:'medium',commandId:'scratch-ten-no-bonus'},
+  {settings:config,draw:max=>0});
+ assert.equal(result.result.winnings.length,result.result.board.wins.length);
+ assert.ok(result.result.winnings.length<=3);
 });
