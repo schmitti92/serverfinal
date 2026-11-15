@@ -12,6 +12,8 @@ export const SCRATCH_GIFT_SYMBOLS=Object.freeze(['🎁','💝','🎀','🧧']);
 export const SCRATCH_PAYOUT_ORDER=Object.freeze([...Object.values(SCRATCH_PAYOUT_SYMBOLS).slice(0,3),...SCRATCH_GIFT_SYMBOLS]);
 export const SCRATCH_PAYOUT_VERSION=3;
 const DECOR=Object.freeze(['❄️','🔔','⭐','🍪','🦌','🎄','🍬','🌙','🧤','🕯️']);
+// All four wrapped-gift icons may be harmless filler. Only a valid match wins.
+const GIFT_FILL=Object.freeze([...DECOR,...SCRATCH_GIFT_SYMBOLS]);
 const ICE='🧊';
 const TYPES=Object.freeze({gifts:9,snow_collect:16,elf:20,tree:15});
 
@@ -108,7 +110,7 @@ export function evaluatePayoutGrid(board){
 const identicalBag=(a,b)=>a.length===b.length&&
  [...a].sort().every((symbol,i)=>symbol===[...b].sort()[i]);
 function buildGiftLines(symbols,draw){
- const cells=Array.from({length:9},()=>sample(DECOR,draw));
+ const cells=Array.from({length:9},()=>sample(GIFT_FILL,draw));
  const rows=shuffle([0,1,2],draw).slice(0,symbols.length);
  symbols.forEach((symbol,k)=>{for(let c=0;c<3;c++)cells[rows[k]*3+c]=symbol});
  return cells;
@@ -117,11 +119,11 @@ function buildSnowCollect(symbols,draw){
  const cells=symbols.flatMap(symbol=>[symbol,symbol,symbol]);
  const duds=4+randint(3,draw);
  for(let i=0;i<duds;i++)cells.push(ICE);
- while(cells.length<16)cells.push(sample(DECOR,draw));
+ while(cells.length<16)cells.push(sample(GIFT_FILL,draw));
  return shuffle(cells,draw);
 }
 function buildElf(symbols,draw){
- const cells=Array.from({length:20},()=>sample(DECOR,draw));
+ const cells=Array.from({length:20},()=>sample(GIFT_FILL,draw));
  const gifts=symbols.filter(s=>SCRATCH_GIFT_SYMBOLS.includes(s)).length;
  let rows;
  if(gifts>=2){
