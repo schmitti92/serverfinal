@@ -8,7 +8,7 @@
  * This is a pure rules module. Buying a ticket / granting prizes is separate.
  */
 import {randomInt} from 'node:crypto';
-import {SCRATCH_PAYOUT_ORDER,SCRATCH_PAYOUT_VERSION,evaluatePayoutGrid,generatePayoutGrid} from './christmas-scratch-symbols.js';
+import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS,SCRATCH_PAYOUT_VERSION,evaluatePayoutGrid,generatePayoutGrid} from './christmas-scratch-symbols.js';
 import {PREMIUM_27_SPEC,evaluatePremium27,generatePremium27,verifyPremium27} from './christmas-premium27.js';
 
 const MAIN_SYMBOLS=Object.freeze(['🎁','❄️','🔔','⭐','🍪','🦌','🎄','🍬','🌙','🎅','🧤','🕯️']);
@@ -108,7 +108,7 @@ export function evaluateScratchGrid(board){
  if(!spec||!Array.isArray(board.cells)||board.cells.length!==spec.cellCount)
   throw Error('SCRATCH_GRID_INVALID');
  if(board.variantId==='premium_27')return evaluatePremium27(board);
- if(board.symbolVersion===SCRATCH_PAYOUT_VERSION)return evaluatePayoutGrid(board);
+ if(board.symbolVersion===2||board.symbolVersion===SCRATCH_PAYOUT_VERSION)return evaluatePayoutGrid(board);
  if(board.symbolVersion!==undefined)throw Error('SCRATCH_GRID_VERSION_INVALID');
  const cells=board.cells;
  const permitted=board.variantId==='snow_collect'?[...SNOW_COLLECT_SYMBOLS,SNOW_DUD]:
@@ -356,7 +356,7 @@ export function attachScratchPrizes(board,prizes){
  const lines=wins.map((win,index)=>{
   // New tickets must match the actual revealed icon, never a randomly
   // assigned prize index. Old receipts keep their original mapping.
-  const prizeIndex=board.symbolVersion===SCRATCH_PAYOUT_VERSION?
+  const prizeIndex=(board.symbolVersion===2||board.symbolVersion===SCRATCH_PAYOUT_VERSION)?
    prizes.findIndex((p,i)=>!used.has(i)&&p?.symbol===win.symbol):index;
   if(prizeIndex<0)throw Error('SCRATCH_PAYOUT_SYMBOL_MISMATCH');
   used.add(prizeIndex);
@@ -370,10 +370,10 @@ export function attachScratchPrizes(board,prizes){
   if(prize.type==='unlock'&&
    (typeof prize.prize?.unlockId!=='string'||typeof prize.prize?.name!=='string'))
    throw Error('SCRATCH_PRIZE_UNLOCK_INVALID');
-  if(board.symbolVersion===SCRATCH_PAYOUT_VERSION&&
+  if((board.symbolVersion===2||board.symbolVersion===SCRATCH_PAYOUT_VERSION)&&
    (prize.symbol!==win.symbol||
     (prize.type==='coins'&&!SCRATCH_PAYOUT_ORDER.slice(0,3).includes(prize.symbol))||
-    (prize.type==='unlock'&&prize.symbol!=='🎁')))
+    (prize.type==='unlock'&&!(board.symbolVersion===2?prize.symbol==='🎁':SCRATCH_GIFT_SYMBOLS.includes(prize.symbol)))))
    throw Error('SCRATCH_PRIZE_SYMBOL_INVALID');
   return {...win,prize};
  });
@@ -389,10 +389,10 @@ export function verifyScratchPrizes(board){
     if(!arrayEq(listed.indices,verified[i].indices)||
       listed.symbol!==verified[i].symbol||listed.rule!==verified[i].rule)return false;
     const reward=listed.prize;
-    if(board.symbolVersion===SCRATCH_PAYOUT_VERSION&&
+    if((board.symbolVersion===2||board.symbolVersion===SCRATCH_PAYOUT_VERSION)&&
      (reward?.symbol!==listed.symbol||
       (reward?.type==='coins'&&!SCRATCH_PAYOUT_ORDER.slice(0,3).includes(reward.symbol))||
-      (reward?.type==='unlock'&&reward.symbol!=='🎁')))return false;
+      (reward?.type==='unlock'&&!(board.symbolVersion===2?reward.symbol==='🎁':SCRATCH_GIFT_SYMBOLS.includes(reward.symbol)))))return false;
     if(reward?.type==='coins')return Number.isSafeInteger(reward.amount)&&reward.amount>0;
     if(reward?.type!=='unlock'||typeof reward.prize?.unlockId!=='string'||
       !reward.prize.unlockId||typeof reward.prize?.name!=='string'||
