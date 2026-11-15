@@ -285,16 +285,17 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail,readDisplayEc
  const legacy='deal_or_no_deal_christmas_v1';
  const wallet='deal_or_no_deal_wallets_v1';
  const receipts='deal_dog_album_season2_receipts_v1';
- // Read-only: one signed-in player's existing DOG album doc, zero writes.
- // A preview in the GitHub Pages album can never grant a picture by itself.
+ // The DOG Christmas Lichtertal page currently has PREVIEW sliders only.
+ // Read an official server-maintained *highest level ever reached* document;
+ // it will be populated by trusted event upgrade actions when they go live.
+ // This GET performs one read, no writes, and NEVER trusts browser levels.
  app.get(base+'/meta-album',auth,async(req,res)=>{
   try{
    const db=getFirestore();if(!db)throw Error('STORAGE_UNAVAILABLE');
-   const snap=await db.collection(DOG_S2_COLLECTION).doc(req.dealIdentity.uid).get();
-   const state=snap.exists?snap.data()||{}:{};
-   const bingos=dogS2Progress(state.cards||{}).bingos;
+   const snap=await db.collection('dog_lichtertal_world_v1').doc('main').get();
+   const progress=snap.exists?snap.data()||{}:{};
    res.set('Cache-Control','private, no-store');
-   return res.json({ok:true,metaAlbum:dogMetaAlbumStatus(bingos,state.bingoRewardsClaimed)});
+   return res.json({ok:true,metaAlbum:dogMetaAlbumStatus(progress)});
   }catch(e){return fail(res,e)}
  });
  app.get(base+'/me',auth,async(req,res)=>{
@@ -311,7 +312,6 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail,readDisplayEc
     missingWildcardCards:dogS2MissingWildcardCards(cards,data).map(c=>c.id),
     progress:dogS2CycleProgress(cards,data),lifetimeProgress:dogS2Progress(cards),
     rewards:dogS2RewardStatus(dogS2Progress(cards).bingos,data.bingoRewardsClaimed,data.bingoRewardsHistory),
-    metaAlbum:dogMetaAlbumStatus(dogS2Progress(cards).bingos,data.bingoRewardsClaimed),
     freePacks:Object.fromEntries(DOG_S2_PACKS.map(p=>[p.id,positive(legacyData.freeChristmasPacks?.[p.id])])),
     duplicates:dogS2Duplicates(cards,legacyData.monsterWheelTickets||0)});
   }catch(e){return fail(res,e)}
@@ -502,7 +502,7 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail,readDisplayEc
     const {awards,lastKind}=dogS2PlanBingoClaims(progress,priorClaims,old.bingoRewardsLastBonus||'');
     if(!awards.length)return {awarded:[],progress:dogS2CycleProgress(old.cards||{},old),lifetimeProgress:progress,
      rewards:dogS2RewardStatus(progress.bingos,priorClaims,history),
-     metaAlbum:dogMetaAlbumStatus(progress.bingos,priorClaims),replayed:true};
+     replayed:true};
     const bonuses=awards.flatMap(a=>a.bonuses);
     const needed=new Set(bonuses.map(b=>b.kind));
     const [materialSnap,walletSnap,legacySnap,iceSnap,jokerSnap,hatsSnap]=await Promise.all([
@@ -566,7 +566,6 @@ export function installDogAlbumSeason2(app,{auth,getFirestore,fail,readDisplayEc
     },{merge:true});
     return {awarded:awards,progress:dogS2CycleProgress(old.cards||{},old),lifetimeProgress:progress,
      rewards:dogS2RewardStatus(progress.bingos,claimed,newHistory),
-     metaAlbum:dogMetaAlbumStatus(progress.bingos,claimed),
      ...(balance!==undefined?{balance}:{}),replayed:false};
    });
    res.set('Cache-Control','no-store');return res.json({ok:true,...result});
