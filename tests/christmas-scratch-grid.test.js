@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- SCRATCH_GRID_VARIANTS,SCRATCH_VARIANT_IDS,
+ SCRATCH_GRID_VARIANTS,SCRATCH_VARIANT_IDS,SCRATCH_ARCHIVED_VARIANT_IDS,
  evaluateScratchGrid,generateScratchGrid,validateScratchGrid,
  attachScratchPrizes,verifyScratchPrizes
 } from '../dog/christmas-scratch-grid.js';
@@ -11,9 +11,12 @@ const fixtures=Object.freeze([
  ['candy',6],['tree',15],['cookie',16],['diamond',9],['bells',20]
 ]);
 
-test('all ten unique scratch game variants are registered with their sizes and rules',()=>{
- assert.equal(SCRATCH_VARIANT_IDS.length,10);
- assert.equal(new Set(SCRATCH_VARIANT_IDS).size,10);
+test('only six scratch games are offered; all ten old rules remain readable',()=>{
+ assert.equal(SCRATCH_VARIANT_IDS.length,6);
+ assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow','stars','elf','candy','tree']);
+ assert.equal(new Set(SCRATCH_VARIANT_IDS).size,6);
+ assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,10);
+ assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,['reindeer','cookie','diamond','bells']);
  for(const [id,count] of fixtures){
   assert.equal(SCRATCH_GRID_VARIANTS[id].cellCount,count);
   assert.ok(SCRATCH_GRID_VARIANTS[id].rule.length>15);
