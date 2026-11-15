@@ -7,7 +7,7 @@
  */
 import {randomInt} from 'node:crypto';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
-import {SCRATCH_VARIANT_IDS,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
+import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
 export const DOG_SCRATCH_COLLECTION='dog_christmas_scratch_wallet_v1';
 export const DOG_SCRATCH_START_COINS=1000;
 export const DOG_SCRATCH_TIERS=Object.freeze({
@@ -617,7 +617,10 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
   if(winnings.length<3&&random(100)<20)awardCoin();
  }
 
- const variantId=SCRATCH_VARIANT_IDS[random(SCRATCH_VARIANT_IDS.length)];
+ // The two normal ticket types share one pool; premium gets its own pair.
+ // Older medium-priced tickets still use normal game types until shop migration.
+ const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
+ const variantId=availableVariants[random(availableVariants.length)];
  const board=attachScratchPrizes(
   generateScratchGrid(variantId,winnings.length,{draw:random}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
