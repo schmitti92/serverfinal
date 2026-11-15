@@ -20,15 +20,22 @@ export const DOG_GLOBAL_VILLAGE_ID='lichtertal_2026_shared';
 export const DOG_GIFT_FIELD_ORDER=Object.freeze([3,9,15,21,27,33,39,45,51,57,6,12,19,25,31,38,44,50,56,62]);
 export const DOG_TOWER_FIELDS=Object.freeze([10,12,15,18,20]);
 export const DOG_SCRATCH_FIELDS_PER_DEAL=8;
+export const DOG_SCRATCH_FIELDS_PER_INN_LEVEL=2;
+/** The inn grants two more hidden scratch spaces for each completed upgrade. */
+export function dogInnScratchFieldCount(level=1){
+ if(!Number.isInteger(level)||level<1||level>CHRISTMAS_BUILDING_MAX_LEVEL)throw Error('INVALID_INN_LEVEL');
+ return DOG_SCRATCH_FIELDS_PER_DEAL+(level-1)*DOG_SCRATCH_FIELDS_PER_INN_LEVEL;
+}
 export const DOG_FIELD_SCRATCH_TIER_ODDS=Object.freeze({simple:88,medium:10,premium:2});
 const eligibleDogTrackFields=Object.freeze(Array.from({length:64},(_,i)=>i).filter(i=>i%16!==0));
 /** Random, disjoint, unmarked spaces. The server never publishes the placement. */
-export function drawHiddenDogChristmasFields(giftCount,draw=randomInt){
+export function drawHiddenDogChristmasFields(giftCount,draw=randomInt,scratchCount=DOG_SCRATCH_FIELDS_PER_DEAL){
  if(!Number.isInteger(giftCount)||giftCount<0||giftCount>20)throw Error('INVALID_GIFT_FIELD_COUNT');
+ if(!Number.isInteger(scratchCount)||scratchCount<0||scratchCount>eligibleDogTrackFields.length-giftCount)throw Error('INVALID_SCRATCH_FIELD_COUNT');
  const fields=[...eligibleDogTrackFields];
  for(let i=fields.length-1;i>0;i--){const j=draw(i+1);[fields[i],fields[j]]=[fields[j],fields[i]];}
  return {giftFields:fields.slice(0,giftCount),
-  scratchFields:fields.slice(giftCount,giftCount+DOG_SCRATCH_FIELDS_PER_DEAL)};
+  scratchFields:fields.slice(giftCount,giftCount+scratchCount)};
 }
 export function drawDogScratchTier(draw=randomInt){
  const roll=draw(100);
@@ -71,7 +78,8 @@ export function dogVillagePublic(raw,hostUid){
    towerFields:DOG_TOWER_FIELDS[v.levels.tower-1],
    workshopExtraChancePercent:5*v.levels.workshop,
    bakeryExtraPercent:10*(v.levels.bakery-1),
-   innPerFinishedGame:v.levels.inn-1
+   innPerFinishedGame:v.levels.inn-1,
+   innScratchFields:dogInnScratchFieldCount(v.levels.inn)
   }
  };
 }
@@ -95,7 +103,7 @@ export function buyDogVillageUpgrade(raw,hostUid,building,expectedLevel,commandI
 export function createDogChristmasMatch(village,enabled,draw=randomInt,round=1){
  if(!enabled)return null;
  const levels={...normalizedDogVillage(village,village?.hostUid||'').levels};
- const positions=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[levels.tower-1],draw);
+ const positions=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[levels.tower-1],draw,dogInnScratchFieldCount(levels.inn));
  return {enabled:true,levels,round,...positions,
   claimedFields:[],claimedScratchFields:[],roundGiftCollected:0,roundScratchCollected:0,
   giftCount:0,scratchCount:0,bonusGiftCount:0,earnedTenths:0,innCredited:false,activity:[]};
@@ -104,7 +112,7 @@ export function createDogChristmasMatch(village,enabled,draw=randomInt,round=1){
 export function refreshDogChristmasDeal(match,round,draw=randomInt){
  if(!match?.enabled||!Number.isInteger(round)||round<1||round===match.round)return false;
  if(round<match.round)return false;
- const newFields=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[match.levels.tower-1],draw);
+ const newFields=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[match.levels.tower-1],draw,dogInnScratchFieldCount(match.levels.inn||1));
  Object.assign(match,newFields,{round,claimedFields:[],claimedScratchFields:[],
   roundGiftCollected:0,roundScratchCollected:0});
  return true;
@@ -115,7 +123,7 @@ export function publicDogChristmasMatch(match){
  const {enabled,levels,round,giftCount,scratchCount,roundGiftCollected,
   roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,activity}=match;
  return {enabled,levels,round,giftFieldCount:DOG_TOWER_FIELDS[levels.tower-1],
-  scratchFieldCount:DOG_SCRATCH_FIELDS_PER_DEAL,giftCount,scratchCount,
+  scratchFieldCount:Array.isArray(match.scratchFields)?match.scratchFields.length:DOG_SCRATCH_FIELDS_PER_DEAL,giftCount,scratchCount,
   roundGiftCollected,roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,
   activity:(activity||[]).slice(-12)};
 }
@@ -147,7 +155,7 @@ export function claimDogChristmasGift(match,before,after,action,seat,draw=random
  match.activity=[...match.activity.slice(-11),{type:'gift',field,seat,gifts,bonus,earnedTenths:tenths}];
  return tenths;
 }
-/** Server-verified, one-use landing on one of eight hidden scratch fields. */
+/** Server-verified, one-use landing on a hidden scratch field. */
 export function claimDogChristmasScratch(match,before,after,action,seat,draw=randomInt){
  if(!match?.enabled)return null;
  const field=landedDogTrackField(before,after,action);
