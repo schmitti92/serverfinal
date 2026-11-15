@@ -819,6 +819,8 @@ function finishEisstock(ch,members){
     if(!['simple','medium','premium'].includes(body.tier)||
       typeof body.commandId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(body.commandId)||
       (body.free!==undefined&&typeof body.free!=='boolean')||
+      (body.voucher!==undefined&&typeof body.voucher!=='boolean')||
+      (body.voucher===true&&body.free===true)||
       (body.variantId!==undefined&&
        !({simple:['gifts','snow_collect'],medium:['elf'],premium:['premium_27']}[body.tier]||[])
         .includes(body.variantId)))
@@ -833,7 +835,7 @@ function finishEisstock(ch,members){
       try{
         result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,
           treeSnap.exists?treeSnap.data():null,
-          {tier:body.tier,variantId:body.variantId,commandId:body.commandId,free:body.free===true},
+          {tier:body.tier,variantId:body.variantId,commandId:body.commandId,free:body.free===true,voucher:body.voucher===true},
           {clock:()=>clock(),now:()=>clock(),settings});
       }catch(e){
         throw error(e.message==='SCRATCH_NOT_ENOUGH_COINS'||e.message==='SCRATCH_DAILY_ALREADY_USED'?409:400,e.message);
