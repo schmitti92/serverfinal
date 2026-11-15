@@ -6,7 +6,7 @@
  * Daily: one free simple ticket. New players start with 1000 event coins.
  */
 import {randomInt} from 'node:crypto';
-import {SCRATCH_PAYOUT_ORDER} from './christmas-scratch-symbols.js';
+import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-symbols.js';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
 import {generatePremium27} from './christmas-premium27.js';
@@ -596,7 +596,11 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const prize=choices[random(choices.length)];
   owned.add(prize.unlockId);
   newUnlocks.push(prize.unlockId);
-  winnings.push({type:'unlock',symbol:'🎁',prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
+  // Two unlocks on one ticket use distinct gift glyphs, so each valid
+  // three-of-a-kind has its own unambiguous reward.
+  const giftOptions=SCRATCH_GIFT_SYMBOLS.filter(icon=>!winnings.some(w=>w.type==='unlock'&&w.symbol===icon));
+  const symbol=giftOptions[random(giftOptions.length)];
+  winnings.push({type:'unlock',symbol,prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
   return true;
  };
  const awardCoin=()=>{
