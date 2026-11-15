@@ -40,6 +40,25 @@ export function validScratchSymbolWeights(weights,expectedCount){
   weights.every(weight=>integer(weight,0,1000))&&
   weights.reduce((sum,weight)=>sum+weight,0)===1000;
 }
+/**
+ * Draws one exact weighted icon (0.1% resolution). Excluded icons are not
+ * silently reintroduced when all their remaining weights are zero.
+ * The caller can then stop creating additional visual matches.
+ */
+export function pickWeightedScratchSymbol(weights,draw,allowedIndices=null){
+ const eligible=(allowedIndices??weights.map((_,index)=>index))
+  .filter(index=>Number.isInteger(index)&&index>=0&&index<weights.length&&weights[index]>0);
+ const total=eligible.reduce((sum,index)=>sum+weights[index],0);
+ if(!total)return -1;
+ const roll=draw(total);
+ if(!Number.isInteger(roll)||roll<0||roll>=total)throw Error('SCRATCH_INVALID_RANDOM');
+ let remaining=roll;
+ for(const index of eligible){
+  if(remaining<weights[index])return index;
+  remaining-=weights[index];
+ }
+ throw Error('SCRATCH_SYMBOL_WEIGHT_ERROR');
+}
 function validVariant(config,id){
  const w=config?.weights;
  return config&&typeof config==='object'&&!Array.isArray(config)&&w&&typeof w==='object'&&
