@@ -4,10 +4,11 @@ import {buyScratchTicket,DOG_SCRATCH_COIN_AMOUNTS} from '../dog/christmas-scratc
 import {generateScratchGrid,attachScratchPrizes,verifyScratchPrizes,evaluateScratchGrid}
  from '../dog/christmas-scratch-grid.js';
 import {generatePremium27} from '../dog/christmas-premium27.js';
+import {SCRATCH_GIFT_SYMBOLS} from '../dog/christmas-scratch-symbols.js';
 
 const icons=['🪙','💵','💼'];
 const coins=icons.map((symbol,i)=>({type:'coins',symbol,amount:[10,40,100][i]}));
-const gift=n=>({type:'unlock',symbol:'🎁',prize:{unlockId:'unlock-'+n,name:'Unique '+n}});
+const gift=(n,symbol='🎁')=>({type:'unlock',symbol,prize:{unlockId:'unlock-'+n,name:'Unique '+n}});
 const fresh=()=>({coins:100000000,owned:{},recent:[],daily:'',purchased:0});
 
 test('three money denominations per class and gift means unlock',()=>{
@@ -19,20 +20,20 @@ test('every visible win on the first three cards matches its actual prize icon',
  for(const variantId of ['gifts','snow_collect','elf']){
   const groups=[
    [],[coins[0]],[coins[1],gift(1)],
-   [...coins],[coins[0],gift(2),gift(3)]
+   [...coins],[coins[0],gift(2),gift(3,'💝')]
   ];
   for(const prizes of groups)for(let turn=0;turn<30;turn++){
    const board=generateScratchGrid(variantId,prizes.length,{
     prizeSymbols:prizes.map(p=>p.symbol)
    });
-   assert.equal(board.symbolVersion,2);
+   assert.equal(board.symbolVersion,3);
    const paid=attachScratchPrizes(board,prizes);
    assert.ok(verifyScratchPrizes(paid),variantId+' '+prizes.map(p=>p.symbol));
    assert.deepEqual(paid.wins.map(w=>w.symbol).sort(),prizes.map(p=>p.symbol).sort());
    assert.equal(evaluateScratchGrid(paid).length,prizes.length);
    for(const w of paid.wins){
     assert.equal(w.symbol,w.prize.symbol);
-    assert.equal(w.symbol==='🎁',w.prize.type==='unlock');
+    assert.equal(SCRATCH_GIFT_SYMBOLS.includes(w.symbol),w.prize.type==='unlock');
    }
    if(variantId==='snow_collect')
     assert.ok(paid.cells.filter(s=>s==='🧊').length>=4);
@@ -41,16 +42,16 @@ test('every visible win on the first three cards matches its actual prize icon',
 });
 test('27-field premium still pays correct 20/24 thresholds with payout symbols',()=>{
  const groups=[[],[coins[0]],[coins[1],coins[2]],
-  [coins[0],gift(1)],[coins[0],gift(2),gift(3)]];
+  [coins[0],gift(1)],[coins[0],gift(2),gift(3,'💝')]];
  for(const prizes of groups)for(let turn=0;turn<40;turn++){
   const board=generatePremium27(prizes);
-  assert.equal(board.symbolVersion,2);
+  assert.equal(board.symbolVersion,3);
   assert.equal(board.cells.length,27);
   assert.ok(verifyScratchPrizes(board));
   assert.equal(board.wins.length,prizes.length);
   for(const w of board.wins){
    assert.equal(w.prize.symbol,w.symbol);
-   assert.equal(w.symbol==='🎁',w.prize.type==='unlock');
+   assert.equal(SCRATCH_GIFT_SYMBOLS.includes(w.symbol),w.prize.type==='unlock');
    assert.ok(w.rule!=='gold-20'||w.prize.type==='coins');
    assert.ok(w.rule!=='premium-24'||w.prize.type==='unlock');
   }
@@ -74,7 +75,7 @@ test('purchases of all classes pay only the three published amounts per icon',()
    assert.ok(verifyScratchPrizes(result.board));
    assert.equal(result.board.symbolVersion,2);
    for(const prize of result.winnings){
-    if(prize.type==='unlock')assert.equal(prize.symbol,'🎁');
+    if(prize.type==='unlock')assert.ok(SCRATCH_GIFT_SYMBOLS.includes(prize.symbol));
     else{
      const position=icons.indexOf(prize.symbol);
      assert.notEqual(position,-1);
@@ -85,4 +86,30 @@ test('purchases of all classes pay only the three published amounts per icon',()
    }
   }
  }
+});
+
+test('four gift appearances unlock only on three identical symbols, never mixed',()=>{
+ assert.deepEqual(SCRATCH_GIFT_SYMBOLS,['🎁','💝','🎀','🧧']);
+ for(const glyph of SCRATCH_GIFT_SYMBOLS){
+  for(const variantId of ['gifts','snow_collect','elf']){
+   const board=generateScratchGrid(variantId,1,{prizeSymbols:[glyph]});
+   const paid=attachScratchPrizes(board,[gift(glyph,glyph)]);
+   assert.ok(verifyScratchPrizes(paid));
+   assert.equal(paid.wins.length,1);
+   assert.equal(paid.wins[0].symbol,glyph);
+   assert.ok(paid.wins[0].indices.every(index=>paid.cells[index]===glyph));
+  }
+  const premium=generatePremium27([coins[0],gift(glyph,glyph)]);
+  assert.ok(verifyScratchPrizes(premium));
+  const milestone=premium.wins.find(w=>w.rule==='premium-24');
+  assert.equal(milestone.symbol,glyph);
+  assert.equal(milestone.indices.length,3);
+  assert.ok(milestone.indices.every(i=>premium.cells[i]===glyph));
+ }
+ const mixed=Array.from({length:16},()=> '🧊');
+ mixed.splice(0,3,...SCRATCH_GIFT_SYMBOLS.slice(0,3));
+ const mixedBoard={variantId:'snow_collect',symbolVersion:3,cells:mixed};
+ assert.equal(evaluateScratchGrid(mixedBoard).length,0);
+ const old=generateScratchGrid('gifts',1,{prizeSymbols:['🎁']});
+ assert.ok(verifyScratchPrizes(attachScratchPrizes(old,[gift('legacy')])));
 });
