@@ -79,3 +79,37 @@ test('no purchase with insufficient coins, duplicate free daily tickets forbidde
  assert.equal(one.status.dailyFreeAvailable,false);
  assert.throws(()=>buyScratchTicket(one.wallet,null,req('simple','gift-again',true)),/SCRATCH_DAILY_ALREADY_USED/);
 });
+
+test('27-cell premium purchase always displays both milestone prizes at 24 symbols',()=>{
+ for(let i=0;i<300;i++){
+  const firstRoll=999;let rolled=false;
+  const draw=max=>{
+   if(!rolled&&max===1000){rolled=true;return firstRoll}
+   return randomInt(max);
+  };
+  const t=buyScratchTicket(fresh(),null,req('premium','27unlock'+i),{draw});
+  const {board,winnings}=t.result;
+  assert.equal(board.variantId,'premium_27');
+  assert.equal(board.cells.length,27);
+  assert.equal(board.cells.filter(v=>v!=='🧊').length>=24,true);
+  assert.ok(board.wins.some(w=>w.rule==='gold-20'&&w.prize.type==='coins'));
+  assert.ok(board.wins.some(w=>w.rule==='premium-24'&&w.prize.type==='unlock'));
+  assert.ok(verifyScratchPrizes(board));
+  assert.deepEqual(winnings,board.wins.map(w=>w.prize));
+ }
+});
+test('27-cell premium losing cards never accidentally award threshold or row prizes',()=>{
+ for(let i=0;i<200;i++){
+  let rolled=false;
+  const draw=max=>{
+   if(!rolled&&max===1000){rolled=true;return 0}
+   return randomInt(max);
+  };
+  const {result}=buyScratchTicket(fresh(),null,req('premium','27blank'+i),{draw});
+  assert.equal(result.board.variantId,'premium_27');
+  assert.equal(result.board.cells.length,27);
+  assert.ok(result.board.cells.filter(v=>v!=='🧊').length<20);
+  assert.equal(result.board.wins.length,0);
+  assert.ok(verifyScratchPrizes(result.board));
+ }
+});
