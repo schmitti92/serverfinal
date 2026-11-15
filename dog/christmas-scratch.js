@@ -13,6 +13,10 @@ import {generatePremium27} from './christmas-premium27.js';
 import {normalizeScratchSettings,pickWeightedScratchSymbol} from './christmas-scratch-settings.js';
 export const DOG_SCRATCH_COLLECTION='dog_christmas_scratch_wallet_v1';
 export const DOG_SCRATCH_START_COINS=1000;
+// Share of newly issued premium tickets which reach the 20-symbol milestone
+// at the default configured category odds (includes 24-symbol unlocks).
+export const PREMIUM_20_MILESTONE_PER_1000=300;
+export const PREMIUM_20_MILESTONE_COINS=1000;
 export const DOG_SCRATCH_TIERS=Object.freeze({
  simple:Object.freeze({label:'Einfach',price:200,icon:'🟤',coinMax:100,weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30}),
  medium:Object.freeze({label:'Mittel',price:500,icon:'🔵',coinMax:800,weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40}),
@@ -666,9 +670,21 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const visiblePrizeLimit=Math.min(config.maxPrizes,3);
  const baseCategory=categoryRoll<config.weights.none?'none':
   categoryRoll<config.weights.none+config.weights.coins?'coins':'unlock';
+ // Premium money rows are independent of the 20-symbol threshold.
+ // At default odds: 4% premium unlocks (all 24+), plus 26% from the
+ // 76% coin category = exactly 30% of ALL premium tickets at 20+.
+ // If host overrides category odds, never silently change their none or
+ // unlock percentages: the achievable milestone share may be bounded.
+ const premiumMilestone=variantId==='premium_27'&&(
+  baseCategory==='unlock'||(baseCategory==='coins'&&
+   random(config.weights.coins)<Math.min(config.weights.coins,
+    Math.max(0,PREMIUM_20_MILESTONE_PER_1000-config.weights.unlock))));
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
  const remaining=tierPool(tier).filter(p=>!owned.has(p.unlockId));
  const winnings=[],newUnlocks=[];
+ if(premiumMilestone)winnings.push({
+  type:'coins',symbol:'🪙',amount:PREMIUM_20_MILESTONE_COINS,milestone:'gold-20'
+ });
  const awardMain=category=>{
   if(winnings.length>=visiblePrizeLimit)return false;
   const choices=remaining.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
@@ -689,7 +705,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const awardCoin=()=>{
   if(winnings.length>=visiblePrizeLimit)return false;
   const remainingMoneyIndices=config.coinAmounts.map((amount,i)=>i)
-   .filter(i=>!winnings.some(w=>w.type==='coins'&&w.symbol===SCRATCH_PAYOUT_ORDER[i]));
+   // The 1,000-coin milestone is not a row and does not consume 🪙.
+   .filter(i=>!winnings.some(w=>w.type==='coins'&&w.milestone!=='gold-20'&&
+    w.symbol===SCRATCH_PAYOUT_ORDER[i]));
   const index=pickWeightedScratchSymbol(config.moneySymbolWeights,random,remainingMoneyIndices);
   if(index<0)return false;
   winnings.push({type:'coins',amount:config.coinAmounts[index],symbol:SCRATCH_PAYOUT_ORDER[index]});
@@ -697,27 +715,30 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  };
  if(baseCategory==='coins')awardCoin();
  if(baseCategory==='unlock'){
-  // A 24-field premium unlock also requires its 20-field coin milestone.
-  // At a one-prize cap, use a visible coin reward instead.
-  if(tier==='premium'&&visiblePrizeLimit===1)awardCoin();
-  else if(!awardMain())awardCoin();
+  // The 24-symbol premium gift remains rare and always includes the 1,000
+  // milestone. At a one-prize cap the milestone itself is the only award.
+  if(tier==='premium'&&visiblePrizeLimit===1){
+   if(!premiumMilestone)awardCoin();
+  }else if(!awardMain())awardCoin();
+ }
+ if(variantId==='premium_27'){
+  const mainUnlock=winnings.find(p=>p.type==='unlock');
+  if(mainUnlock)mainUnlock.milestone='premium-24';
  }
 
  // Each of the two rare events is 1/1000 of all tickets, conditional
  // on the BASE UNLOCK bucket: P(unlock)=unlockWeight/1000, P(rare|unlock)=1/unlockWeight.
  // Their two distinct roll values ensure they never overlap.
+ const mainUnlock=winnings.find(p=>p.type==='unlock');
  const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&
-  visiblePrizeLimit>=3&&config.weights.unlock>=2&&winnings[0]?.type==='unlock';
+  visiblePrizeLimit>=3&&config.weights.unlock>=2&&Boolean(mainUnlock);
  const rareRoll=rareEligible?random(config.weights.unlock):-1;
  const doubleMain=rareRoll===0&&awardMain();
  const rareMainMultiplier=rareRoll===1&&
-  (awardMain(winnings[0]?.prize?.category)||awardMain());
+  (awardMain(mainUnlock?.prize?.category)||awardMain());
 
- // On the 27-field premium ticket 24 actual symbols also satisfy the 20-symbol
- // gold milestone. Every premium unlock must therefore carry a visible coin
- // prize for the lower milestone; this never turns a dud ticket into a win.
- if(tier==='premium'&&winnings.some(p=>p.type==='unlock')&&
-    !winnings.some(p=>p.type==='coins'))awardCoin();
+ // The independent premium milestone was already assigned above, before
+ // adding row prizes. Do not substitute a money-row hit for the 1,000 bonus.
 
  // Normal x2: 109/799 of all *other* winning tickets.
  // Since 1/1000 of tickets is reserved for rare cosmetic x2, total
@@ -728,11 +749,12 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   (rarePossible?random(799)<109:random(800)<110);
  // Never show a misleading ×2 if a one-prize cosmetic-only card has no
  // room for the required visible coin prize.
- if(ordinaryRoll&&!winnings.some(x=>x.type==='coins'))awardCoin();
- const ordinaryMultiplier=ordinaryRoll&&winnings.some(x=>x.type==='coins');
+ const canMultiplyMoney=()=>winnings.some(x=>x.type==='coins'&&x.milestone!=='gold-20');
+ if(ordinaryRoll&&!canMultiplyMoney())awardCoin();
+ const ordinaryMultiplier=ordinaryRoll&&canMultiplyMoney();
  const multiplier=(rareMainMultiplier||ordinaryMultiplier)?2:1;
  if(ordinaryMultiplier){
-  for(const item of winnings)if(item.type==='coins'){
+  for(const item of winnings)if(item.type==='coins'&&item.milestone!=='gold-20'){
    item.baseAmount=item.amount;item.amount*=2;item.x2=true;
   }
  }
@@ -748,7 +770,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
-  generatePremium27(winnings,{draw:random}):
+  generatePremium27(winnings,{draw:random,version:4}):
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
    prizeSymbols:winnings.map(w=>w.symbol)}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
