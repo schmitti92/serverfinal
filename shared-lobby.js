@@ -11,7 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
-import {DOG_VILLAGE_COLLECTION,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 
 export const HUB_GAMES = Object.freeze({
@@ -63,8 +63,9 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
+  const christmasActive=()=>christmasEventActive()===true;
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
@@ -522,7 +523,8 @@ function finishEisstock(ch,members){
       return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
     });
     room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
-    room.match.christmas=createDogChristmasMatch(village,room.settings?.dog?.christmasEnabled===true);
+    // No host or room switch: the active seasonal event is automatic for DOG.
+    room.match.christmas=createDogChristmasMatch(village,christmasActive());
     room.phase='playing';
     advanceDogBots(room.match);
   }
@@ -581,7 +583,7 @@ function finishEisstock(ch,members){
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='dog'?{christmasEnabled:room.settings?.dog?.christmasEnabled===true}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='dog'?{christmasActive:christmasActive()}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,dogAvatar:validDogAvatar(p.dogAvatar)?p.dogAvatar:0,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -597,7 +599,7 @@ function finishEisstock(ch,members){
         treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,revealHistory:room.match.treasureHistory||[],myReady:!!room.match.engine2.match.ready[identity.uid],engine:(()=>{const m=projectEngine2(room.match.engine2,identity.uid).match;return m?.phase==='countdown'&&clock()>=m.startedAt?{...m,phase:'playing'}:m;})()}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
-        christmas:room.match.game==='dog'&&room.match.christmas?{...room.match.christmas}:null,
+        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?{...room.match.christmas}:null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
         playerCount:room.match.members.length,
@@ -864,10 +866,10 @@ function finishEisstock(ch,members){
     validateRead(room,identity);
     const snap=await dogVillageFor(store,room.hostUid).get();
     return {village:dogVillagePublic(snap.exists?snap.data():null,room.hostUid),
-      host:room.hostUid===identity.uid,canSetMode:room.phase==='preparing'&&room.game==='dog',
-      canUpgrade:!(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished'),
-      enabled:room.settings?.dog?.christmasEnabled===true,
-      matchEnabled:room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
+      host:room.hostUid===identity.uid,
+      canUpgrade:christmasActive()&&!(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished'),
+      enabled:christmasActive(),
+      matchEnabled:christmasActive()&&room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
   }));
   // Read-only reward progress, fetched only when opening the tree tab.
   // A room code alone is not proof of membership; enforce Firebase identity.
@@ -911,18 +913,6 @@ function finishEisstock(ch,members){
     });
     return result;
   }));
-  app.post('/api/hub/rooms/:code/dog/christmas-mode',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity,enabled=req.body?.enabled;
-    if(!code||typeof enabled!=='boolean')throw error(400,'INVALID_DOG_EVENT_SETTING');
-    const room=await mutate(code,identity,room=>{
-      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
-      if(room.phase!=='preparing'||room.game!=='dog')throw error(409,'DOG_NOT_PREPARING');
-      if((room.settings?.dog?.christmasEnabled===true)===enabled)return {unchanged:true};
-      room.settings={...room.settings,dog:{...room.settings?.dog,christmasEnabled:enabled}};
-      room.players.forEach(p=>p.ready=false);
-    });
-    return {room};
-  }));
   // No client may choose its own reward amount. Only a successful, atomic
   // server-side purchase deducts lights from the host's persistent village.
   app.post('/api/hub/rooms/:code/dog/village/upgrade',handler(async req=>{
@@ -934,6 +924,7 @@ function finishEisstock(ch,members){
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
       if(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished')throw error(409,'DOG_MATCH_IN_PROGRESS');
       const ref=dogVillageFor(store,room.hostUid),prior=await tx.get(ref);
       let result;
@@ -958,7 +949,16 @@ function finishEisstock(ch,members){
       if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
       if(match.dog.revision!==expectedRevision)throw error(409,'DOG_STALE_REVISION');
-      const event=match.christmas;
+      // Upgrade old in-progress DOG rooms to the automatic event on their next
+      // verified move. Already completed moves do not receive retroactive gifts.
+      const seasonal=christmasActive();
+      if(seasonal&&!match.christmas){
+        const villageSnap=await tx.get(dogVillageFor(store,room.hostUid));
+        match.christmas=createDogChristmasMatch(villageSnap.exists?villageSnap.data():null,true);
+      }
+      // After the event ends, persisted snapshots remain for history only;
+      // neither gifts nor end-of-match credits may be paid out.
+      const event=seasonal?match.christmas:null;
       const initialGifts=event?.giftCount||0,initialBonus=event?.bonusGiftCount||0;
       const hadInn=event?.innCredited===true;
       let creditedTenths=0;
@@ -1147,7 +1147,7 @@ function finishEisstock(ch,members){
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
-        const village=room.game==='dog'&&room.settings?.dog?.christmasEnabled===true
+        const village=room.game==='dog'&&christmasActive()
          ?(await tx.get(dogVillageFor(store,room.hostUid))).data():null;
         startGame(room,village);
       }
@@ -1164,7 +1164,7 @@ function finishEisstock(ch,members){
       const active=room.players.filter(p=>p.participating);
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
-      const village=room.game==='dog'&&room.settings?.dog?.christmasEnabled===true
+      const village=room.game==='dog'&&christmasActive()
         ?(await tx.get(dogVillageFor(store,room.hostUid))).data():null;
       startGame(room,village);
     })};
