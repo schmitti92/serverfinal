@@ -14,16 +14,21 @@ const STARS=Object.freeze(['⭐','🌟','✨','💫']);
 const DEER=Object.freeze(['🦌','🦌🔴','🦌🔵','🦌🟡']);
 const FILLERS=Object.freeze(['🍪','🎄','🧤','🍬','🔔','❄️','🎁','🕯️']);
 const TREE_SEQUENCE=Object.freeze(['⭐','🎄','🎁']);
+// This second normal ticket is NOT line bingo: 3 identical prizes anywhere.
+// 🧊 is a non-winning blank even when it appears 3+ times.
+const SNOW_COLLECT_SYMBOLS=Object.freeze(['❄️','🎁','⭐','🔔','🍬','🎄']);
+const SNOW_DUD='🧊';
 const BELL_DIAMOND=Object.freeze([2,6,8,11,13]);
 const MODE_NAMES=Object.freeze({
- gifts:'Geschenkelinie',snow:'Schneeflocken-Bingo',stars:'Sternensammler',
+ gifts:'Geschenkelinie',snow:'Schneeflocken-Bingo (alt)',snow_collect:'Schneeflocken-Bingo',stars:'Sternensammler',
  elf:'Wichtelpfad',reindeer:'Rentierglück',candy:'Zuckerstangen-Duell',
  tree:'Weihnachtsbaum-Los',cookie:'Lebkuchen-Memory',
  diamond:'Diamantenjagd',bells:'Glocken-Jackpot'
 });
 export const SCRATCH_GRID_VARIANTS=Object.freeze({
  gifts:Object.freeze({id:'gifts',name:MODE_NAMES.gifts,rows:3,cols:3,size:3,winLength:3,cellCount:9,rule:'Drei gleiche Symbole in einer Reihe, Spalte oder Diagonale'}),
- snow:Object.freeze({id:'snow',name:MODE_NAMES.snow,rows:4,cols:4,size:4,winLength:4,cellCount:16,rule:'Vier gleiche Symbole in einer Reihe, Spalte oder Diagonale'}),
+ snow:Object.freeze({id:'snow',name:MODE_NAMES.snow,rows:4,cols:4,size:4,winLength:4,cellCount:16,rule:'Vier gleiche Symbole in einer Reihe, Spalte oder Diagonale (altes Los)'}),
+ snow_collect:Object.freeze({id:'snow_collect',name:MODE_NAMES.snow_collect,rows:4,cols:4,cellCount:16,winLength:3,rule:'Drei gleiche Gewinnsymbole irgendwo auf der Karte; pro Symbolart maximal ein Gewinn; Eiswürfel sind Nietenfelder'}),
  stars:Object.freeze({id:'stars',name:MODE_NAMES.stars,rows:3,cols:4,cellCount:12,rule:'Vier Sterne derselben Art sammeln; jede Vierergruppe zählt einmal'}),
  elf:Object.freeze({id:'elf',name:MODE_NAMES.elf,rows:4,cols:5,cellCount:20,rule:'Ein zusammenhängender Weg gleicher Symbole von links bis rechts'}),
  reindeer:Object.freeze({id:'reindeer',name:MODE_NAMES.reindeer,rows:3,cols:4,cellCount:12,rule:'Drei gleiche Rentiere beliebig auf dem Los; jede Dreiergruppe zählt einmal'}),
@@ -33,11 +38,14 @@ export const SCRATCH_GRID_VARIANTS=Object.freeze({
  diamond:Object.freeze({id:'diamond',name:MODE_NAMES.diamond,rows:3,cols:3,cellCount:9,rule:'Drei Diamanten beliebig auf dem Feld; jede Dreiergruppe gewinnt'}),
  bells:Object.freeze({id:'bells',name:MODE_NAMES.bells,rows:4,cols:5,cellCount:20,rule:'Fünf gleiche Symbole waagerecht oder fünf Glocken im Diamantmuster'})
 });
-// Six distinct active games. Four earlier rule evaluators remain readable for
-// previously purchased tickets, but new tickets are never assigned to them.
-export const SCRATCH_VARIANT_IDS=Object.freeze([
- 'gifts','snow','stars','elf','candy','tree'
-]);
+// Four new-sale cards: two normal, two premium. Old IDs remain readable.
+// The retired medium ticket tier uses normal boards until the planned UI migration.
+export const SCRATCH_VARIANT_IDS=Object.freeze(['gifts','snow_collect','elf','tree']);
+export const SCRATCH_VARIANT_IDS_BY_TIER=Object.freeze({
+ simple:Object.freeze(['gifts','snow_collect']),
+ medium:Object.freeze(['gifts','snow_collect']),
+ premium:Object.freeze(['elf','tree'])
+});
 export const SCRATCH_ARCHIVED_VARIANT_IDS=Object.freeze(
  Object.keys(SCRATCH_GRID_VARIANTS).filter(id=>!SCRATCH_VARIANT_IDS.includes(id))
 );
@@ -97,7 +105,8 @@ export function evaluateScratchGrid(board){
  if(!spec||!Array.isArray(board.cells)||board.cells.length!==spec.cellCount)
   throw Error('SCRATCH_GRID_INVALID');
  const cells=board.cells;
- const permitted=board.variantId==='stars'?[...MAIN_SYMBOLS,...STARS]:
+ const permitted=board.variantId==='snow_collect'?[...SNOW_COLLECT_SYMBOLS,SNOW_DUD]:
+  board.variantId==='stars'?[...MAIN_SYMBOLS,...STARS]:
   board.variantId==='reindeer'?[...MAIN_SYMBOLS,...DEER]:
   board.variantId==='diamond'?[...MAIN_SYMBOLS,'💎']:
   MAIN_SYMBOLS;
@@ -107,6 +116,12 @@ export function evaluateScratchGrid(board){
   case 'gifts':case 'snow':
    return scratchLines(spec.size).filter(line=>line.every(i=>cells[i]===cells[line[0]]))
     .map(line=>match(line,cells[line[0]],'line'));
+  case 'snow_collect':
+   // One winning group per *symbol type*, never one group per extra trio.
+   return SNOW_COLLECT_SYMBOLS.flatMap(symbol=>{
+    const found=cells.flatMap((s,i)=>s===symbol?[i]:[]);
+    return found.length>=3?[match(found.slice(0,3),symbol,'three-anywhere')]:[];
+   });
   case 'stars':return groups(cells,STARS,4,'four-stars');
   case 'elf':return elfPaths(cells);
   case 'reindeer':return groups(cells,DEER,3,'three-reindeer');
@@ -156,6 +171,24 @@ function linesBoard(spec,desired,draw){
  const symbol=sample(MAIN_SYMBOLS,draw);
  for(const line of chosen)for(const i of line)cells[i]=symbol;
  return cells;
+}
+function snowCollectBoard(desired,draw){
+ // Exactly desired distinct triples; other symbols occur at most twice.
+ // Four to six dud cells can occur on winning cards AND on actual blanks.
+ const chosen=shuffle(SNOW_COLLECT_SYMBOLS,draw).slice(0,desired);
+ const cells=chosen.flatMap(symbol=>[symbol,symbol,symbol]);
+ const dudCount=4+random(3,draw);
+ for(let i=0;i<dudCount;i++)cells.push(SNOW_DUD);
+ const fillSymbols=shuffle(SNOW_COLLECT_SYMBOLS.filter(s=>!chosen.includes(s)),draw);
+ let remain=16-cells.length;
+ for(const symbol of fillSymbols){
+  const count=Math.min(remain,2);
+  for(let i=0;i<count;i++)cells.push(symbol);
+  remain-=count;
+  if(remain===0)break;
+ }
+ if(cells.length!==16)throw Error('SCRATCH_SNOW_COLLECT_FILL_ERROR');
+ return shuffle(cells,draw);
 }
 function starBoard(desired,draw){
  const cells=[];
@@ -247,7 +280,7 @@ function bellsBoard(desired,draw){
  return cells;
 }
 const builders=Object.freeze({
- gifts:linesBoard,snow:linesBoard,stars:starBoard,elf:elfBoard,
+ gifts:linesBoard,snow:linesBoard,snow_collect:snowCollectBoard,stars:starBoard,elf:elfBoard,
  reindeer:reindeerBoard,candy:candyBoard,tree:treeBoard,
  cookie:cookieBoard,diamond:diamondBoard,bells:bellsBoard
 });
