@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomInt} from 'node:crypto';
-import {buyScratchTicket,DOG_SCRATCH_TIERS,DOG_SCRATCH_BONUS_ODDS,normalizedScratchWallet,dogScratchStatus} from '../dog/christmas-scratch.js';
+import {buyScratchTicket,DOG_SCRATCH_TIERS,DOG_SCRATCH_BONUS_ODDS,normalizedScratchWallet,dogScratchStatus,PREMIUM_20_MILESTONE_PER_1000,PREMIUM_20_MILESTONE_COINS} from '../dog/christmas-scratch.js';
+import {generatePremium27,verifyPremium27} from '../dog/christmas-premium27.js';
 import {SCRATCH_VARIANT_IDS,SCRATCH_VARIANT_IDS_BY_TIER,verifyScratchPrizes,evaluateScratchGrid} from '../dog/christmas-scratch-grid.js';
 
 const fresh=()=>({coins:100000000,owned:{},recent:[],daily:'',purchased:0});
@@ -196,4 +197,71 @@ test('variants from other price classes and unknown variants are rejected before
    tier,variantId,commandId:'bad-variant-'+tier+'-1234'
   }),/SCRATCH_INVALID_VARIANT/);
  }
+});
+
+test('premium v4 money symbols form actual paid horizontal rows independently of 20 threshold',()=>{
+ const prizes=[
+  {type:'coins',symbol:'🪙',amount:200},
+  {type:'coins',symbol:'💵',amount:800},
+  {type:'coins',symbol:'💼',amount:2000}
+ ];
+ for(const symbol of ['🪙','💵','💼']){
+  for(let k=0;k<8;k++){
+   const board=generatePremium27([prizes.find(p=>p.symbol===symbol)],{version:4});
+   assert.equal(board.symbolVersion,4);
+   assert.equal(board.cells.filter(x=>x!=='🧊').length<20,true);
+   assert.equal(board.wins.length,1);
+   assert.equal(board.wins[0].rule,'row-3');
+   assert.equal(board.wins[0].symbol,symbol);
+   assert.ok(board.wins[0].indices.every(i=>board.cells[i]===symbol));
+   assert.equal(board.wins[0].prize.amount,prizes.find(p=>p.symbol===symbol).amount);
+   assert.ok(verifyPremium27(board));
+  }
+ }
+ // Even if the milestone and a row both use 🪙, they are two DIFFERENT
+ // payouts: fixed 1,000 vs configurable 200.
+ const withMilestone=generatePremium27([
+  {type:'coins',symbol:'🪙',amount:1000,milestone:'gold-20'},
+  {type:'coins',symbol:'🪙',amount:200}
+ ],{version:4});
+ assert.ok(verifyPremium27(withMilestone));
+ assert.equal(withMilestone.wins.length,2);
+ assert.deepEqual(withMilestone.wins.map(w=>w.rule),['gold-20','row-3']);
+ assert.deepEqual(withMilestone.wins.map(w=>w.prize.amount),[1000,200]);
+});
+test('premium 20-symbol bonus awards exactly 1000 coins and stays at 30 percent base odds',()=>{
+ assert.equal(PREMIUM_20_MILESTONE_PER_1000,300);
+ assert.equal(PREMIUM_20_MILESTONE_COINS,1000);
+ // Reproducible pseudorandom sample, no flaky dependence on crypto randomness.
+ let seed=818710;const draw=max=>{
+  seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+  return Math.floor(seed/4294967296*max);
+ };
+ let threshold=0,unlock=0,coinRowTickets=0;
+ for(let i=0;i<800;i++){
+  const {result}=buyScratchTicket(fresh(),null,req('premium','v4-distribution-'+i),{draw});
+  const real=result.board.cells.filter(x=>x!=='🧊').length;
+  const milestones=result.board.wins.filter(w=>w.rule==='gold-20');
+  const coins=result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins');
+  const gifts=result.board.wins.filter(w=>w.rule==='premium-24');
+  assert.equal(result.board.symbolVersion,4);
+  assert.equal(real>=20,milestones.length===1);
+  assert.ok(verifyPremium27(result.board));
+  assert.equal(milestones.length,gifts.length>0?1:milestones.length);
+  if(milestones.length){
+   threshold++;
+   const prize=milestones[0].prize;
+   assert.equal(prize.amount,1000);
+   assert.equal(prize.symbol,'🪙');
+   assert.equal(prize.milestone,'gold-20');
+   assert.ok(!prize.x2);
+   assert.ok(result.totalCoins>=1000);
+  }
+  if(gifts.length){unlock++;assert.ok(real>=24)}
+  if(coins.length)coinRowTickets++;
+  assert.ok(result.board.wins.length<=3);
+ }
+ assert.ok(threshold>=205&&threshold<=285,'milestone share should be near 30%: '+threshold+'/800');
+ assert.ok(unlock>=15&&unlock<=55,'unlock share should remain near 4%: '+unlock+'/800');
+ assert.ok(coinRowTickets>=350,'money rows should remain a normal premium outcome');
 });
