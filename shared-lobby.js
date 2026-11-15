@@ -580,7 +580,7 @@ function finishEisstock(ch,members){
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='dog'?{christmasEnabled:room.settings?.dog?.christmasEnabled===true}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,dogAvatar:validDogAvatar(p.dogAvatar)?p.dogAvatar:0,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -852,6 +852,52 @@ function finishEisstock(ch,members){
       if(me.dogAvatar===avatar)return {unchanged:true};
       me.dogAvatar=avatar;
     })};
+  }));
+
+  // The authenticated host owns one persistent Christmas village across hub
+  // room codes. Reading the event screen never writes to Firestore.
+  app.get('/api/hub/rooms/:code/dog/village',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const store=db(),roomSnap=await documentFor(store,code).get(),room=roomSnap.exists?roomSnap.data():null;
+    validateRead(room,identity);
+    const snap=await dogVillageFor(store,room.hostUid).get();
+    return {village:dogVillagePublic(snap.exists?snap.data():null,room.hostUid),
+      host:room.hostUid===identity.uid,enabled:room.settings?.dog?.christmasEnabled===true,
+      matchEnabled:room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
+  }));
+  app.post('/api/hub/rooms/:code/dog/christmas-mode',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,enabled=req.body?.enabled;
+    if(!code||typeof enabled!=='boolean')throw error(400,'INVALID_DOG_EVENT_SETTING');
+    const room=await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase!=='preparing'||room.game!=='dog')throw error(409,'DOG_NOT_PREPARING');
+      if((room.settings?.dog?.christmasEnabled===true)===enabled)return {unchanged:true};
+      room.settings={...room.settings,dog:{...room.settings?.dog,christmasEnabled:enabled}};
+      room.players.forEach(p=>p.ready=false);
+    });
+    return {room};
+  }));
+  // No client may choose its own reward amount. Only a successful, atomic
+  // server-side purchase deducts lights from the host's persistent village.
+  app.post('/api/hub/rooms/:code/dog/village/upgrade',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const {building,expectedLevel,commandId}=req.body||{};
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const store=db(),roomRef=documentFor(store,code);
+    const village=await store.runTransaction(async tx=>{
+      const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
+      validateRead(room,identity);
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase==='playing'&&room.match?.game==='dog')throw error(409,'DOG_MATCH_IN_PROGRESS');
+      const ref=dogVillageFor(store,room.hostUid),prior=await tx.get(ref);
+      let result;
+      try{result=buyDogVillageUpgrade(prior.exists?prior.data():null,room.hostUid,building,expectedLevel,commandId);}
+      catch(e){throw error(e.message==='NOT_ENOUGH_CHRISTMAS_LIGHTS'?409:400,e.message);}
+      if(!result.unchanged)tx.set(ref,result.village);
+      return dogVillagePublic(result.village,room.hostUid);
+    });
+    return {village};
   }));
 
   // DOG Classic: room membership and authoritative rules in the same Firestore transaction.
