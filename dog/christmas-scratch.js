@@ -7,52 +7,13 @@
  */
 import {randomInt} from 'node:crypto';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
+import {SCRATCH_VARIANT_IDS,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
 export const DOG_SCRATCH_COLLECTION='dog_christmas_scratch_wallet_v1';
 export const DOG_SCRATCH_START_COINS=1000;
 export const DOG_SCRATCH_TIERS=Object.freeze({
- "simple": {
-  "label": "Einfach",
-  "price": 200,
-  "icon": "🟤",
-  "coinMax": 100,
-  "weights": {
-   "none": 35,
-   "coins": 50,
-   "emoji": 9,
-   "tone": 6
-  }
- },
- "medium": {
-  "label": "Mittel",
-  "price": 500,
-  "icon": "🔵",
-  "coinMax": 800,
-  "weights": {
-   "none": 25,
-   "coins": 45,
-   "avatars": 14,
-   "emojis": 9,
-   "frames": 3,
-   "emblems": 3,
-   "boards": 1
-  }
- },
- "premium": {
-  "label": "Premium",
-  "price": 1000,
-  "icon": "🟡",
-  "coinMax": 2000,
-  "weights": {
-   "none": 15,
-   "coins": 45,
-   "avatars": 14,
-   "emojis": 8,
-   "backgrounds": 6,
-   "frames": 5,
-   "emblems": 4,
-   "boards": 3
-  }
- }
+ simple:Object.freeze({label:'Einfach',price:200,icon:'🟤',coinMax:100,weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30}),
+ medium:Object.freeze({label:'Mittel',price:500,icon:'🔵',coinMax:800,weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40}),
+ premium:Object.freeze({label:'Premium',price:1000,icon:'🟡',coinMax:2000,weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50})
 });
 export const DOG_SCRATCH_PREMIUM_IDS=Object.freeze([
  "christmas2026:activeicon:01",
@@ -579,11 +540,11 @@ export function dogScratchStatus(raw,tree=null,now=Date.now()){
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   purchased:w.purchased,lastResult:w.lastResult};
 }
-// Exact per-ticket bonus odds: 1% two unique main prizes; 8% x2;
-// of those, 0.1 percentage points are the ultra-rare main-prize x2.
-// Normal x2 affects coin wins only. Bonuses do not multiply prices.
+// Exact probabilities per 1,000 full tickets, provided at least two unowned
+// cosmetic prizes remain for the exclusive rare unlock events.
+// The 0.1% rare unlock x2 is INCLUDED in the 11% total x2 chance.
 export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
- doubleMainPer10000:100, multiplierPer10000:800, mainMultiplierPer10000:10
+ doubleMainPer1000:1,mainMultiplierPer1000:1,multiplierPer1000:110
 });
 export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}={}){
  const tier=request?.tier;
@@ -591,91 +552,87 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  const commandId=request?.commandId;
  if(typeof commandId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(commandId))throw Error('SCRATCH_INVALID_COMMAND');
  const w=normalizedScratchWallet(raw);
- const repeated=w.recent.find(r=>r.commandId===commandId);
- if(repeated)return {unchanged:true,wallet:w,result:repeated.result,status:dogScratchStatus(w,tree,now())};
+ const replay=w.recent.find(r=>r.commandId===commandId);
+ if(replay)return {unchanged:true,wallet:w,result:replay.result,status:dogScratchStatus(w,tree,now())};
  const free=request?.free===true;
  if(free&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
- const day=dogScratchToday(now());
- if(free&&w.daily===day)throw Error('SCRATCH_DAILY_ALREADY_USED');
- const price=free?0:DOG_SCRATCH_TIERS[tier].price;
+ const today=dogScratchToday(now());
+ if(free&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
+ const config=DOG_SCRATCH_TIERS[tier],price=free?0:config.price;
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
  const random=max=>{
   const value=draw(max);
   if(!Number.isInteger(value)||value<0||value>=max)throw Error('SCRATCH_INVALID_RANDOM');
   return value;
  };
- const pool=tierPool(tier);
+ const categoryRoll=random(1000);
+ const baseCategory=categoryRoll<200?'none':categoryRoll<200+config.weights.coins?'coins':'unlock';
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
- const winnings=[];
- const addMain=category=>{
-  const options=pool.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
-  if(!options.length)return false;
-  const prize=options[random(options.length)];
+ const remaining=tierPool(tier).filter(p=>!owned.has(p.unlockId));
+ const winnings=[],newUnlocks=[];
+ const awardMain=category=>{
+  const choices=remaining.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
+  if(!choices.length)return false;
+  const prize=choices[random(choices.length)];
   owned.add(prize.unlockId);
-  w.owned[prize.unlockId]=now();
+  newUnlocks.push(prize.unlockId);
   winnings.push({type:'unlock',prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
   return true;
  };
- const addCoins=()=>{
-  const amount=1+random(DOG_SCRATCH_TIERS[tier].coinMax);
-  winnings.push({type:'coins',amount});
- };
- const weights=DOG_SCRATCH_TIERS[tier].weights;
- const roll=random(100);
- let slot='none',position=0;
- for(const [category,weight] of Object.entries(weights)){
-  position+=weight;if(roll<position){slot=category;break}
+ const awardCoin=()=>winnings.push({type:'coins',amount:1+random(config.coinMax)});
+ if(baseCategory==='coins')awardCoin();
+ if(baseCategory==='unlock'&&!awardMain())awardCoin(); // sold-out pool: preserve the 80% win probability
+
+ // Each of the two rare events is 1/1000 of all tickets, conditional
+ // on the BASE UNLOCK bucket: P(unlock)=unlockWeight/1000, P(rare|unlock)=1/unlockWeight.
+ // Their two distinct roll values ensure they never overlap.
+ const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&winnings[0]?.type==='unlock';
+ const rareRoll=rareEligible?random(config.weights.unlock):-1;
+ const doubleMain=rareRoll===0&&awardMain();
+ const rareMainMultiplier=rareRoll===1&&awardMain();
+
+ // Normal x2: 109/799 of all *other* winning tickets.
+ // Since 1/1000 of tickets is reserved for rare cosmetic x2, total
+ // is exactly 1/1000+(799/1000)*(109/799)=110/1000 = 11%.
+ // When cosmetics are exhausted, use 110/800 to retain 11% overall.
+ const ordinaryMultiplier=baseCategory!=='none'&&!rareMainMultiplier&&
+  (rareEligible?random(799)<109:random(800)<110);
+ const multiplier=(rareMainMultiplier||ordinaryMultiplier)?2:1;
+ if(ordinaryMultiplier){
+  // Every visible x2 must apply to a visible money prize. If this ticket
+  // only contains cosmetics, add a monetary prize before doubling it.
+  if(!winnings.some(x=>x.type==='coins')&&winnings.length<3)awardCoin();
+  for(const item of winnings)if(item.type==='coins')item.amount*=2;
  }
- if(slot==='coins')addCoins();
- else if(slot!=='none'&&!addMain(slot))addCoins();
- // Independent 1% chance of a two-main-prize ticket, if two unique
- // rewards remain. This replaces a lone cosmetic prize where necessary.
- const doubleMain=random(10000)<DOG_SCRATCH_BONUS_ODDS.doubleMainPer10000;
- if(doubleMain){
-  const existing=winnings.filter(p=>p.type==='unlock').length;
-  const needed=2-existing;
-  if(pool.filter(p=>!owned.has(p.unlockId)).length>=needed){
-   for(let i=0;i<needed;i++)addMain();
-  }
+
+ // A bonus money hit can occur on either a coin or cosmetic ticket.
+ // On 20% of successful bonus rolls, add a third visible money hit where
+ // capacity permits. Never create more than three symbol combinations.
+ if(baseCategory!=='none'&&random(100)<config.extraCoinChance){
+  if(winnings.length<3)awardCoin();
+  if(winnings.length<3&&random(100)<20)awardCoin();
  }
- // 8% total x2, including exactly 0.1% ultra-rare main-prize x2.
- const bonusRoll=random(10000);
- const ultraRare=bonusRoll<DOG_SCRATCH_BONUS_ODDS.mainMultiplierPer10000;
- const multiplier=bonusRoll<DOG_SCRATCH_BONUS_ODDS.multiplierPer10000;
- if(multiplier){
-  if(ultraRare&&winnings.some(p=>p.type==='unlock')){
-   const main=winnings.find(p=>p.type==='unlock');
-   // One additional DIFFERENT cosmetic in the same category if available.
-   if(!addMain(main.prize.category)&&!winnings.some(p=>p.type==='coins'))addCoins();
-  }else if(winnings.some(p=>p.type==='coins')){
-   for(const entry of winnings)if(entry.type==='coins')entry.amount*=2;
-  }else if(winnings.some(p=>p.type==='unlock')){
-   // Normal x2 is only a monetary multiplier. Add a coin bonus to a
-   // cosmetic-only card rather than silently dropping the advertised x2.
-   addCoins();
-   winnings[winnings.length-1].amount*=2;
-  }
- }
- // Additional independent money lines: more common than extra cosmetics.
- // They do not change the main-category odds or special bonus percentages.
- if(winnings.length&&random(100)<(tier==='premium'?35:tier==='medium'?25:15))addCoins();
- if(winnings.length&&random(100)<(tier==='premium'?12:tier==='medium'?8:4))addCoins();
- let totalCoins=winnings.filter(p=>p.type==='coins').reduce((sum,p)=>sum+p.amount,0);
- w.coins=Math.min(1000000000,w.coins+totalCoins)-price;
+
+ const variantId=SCRATCH_VARIANT_IDS[random(SCRATCH_VARIANT_IDS.length)];
+ const board=attachScratchPrizes(
+  generateScratchGrid(variantId,winnings.length,{draw:random}),winnings);
+ if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
+
+ // Only after generating and verifying the exact visible card, grant awards.
+ const stamped=now();
+ for(const unlockId of newUnlocks)w.owned[unlockId]=stamped;
+ const totalCoins=winnings.filter(x=>x.type==='coins').reduce((sum,x)=>sum+x.amount,0);
+ w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
  w.purchased++;
- if(free)w.daily=day;
+ if(free)w.daily=today;
  const first=winnings[0];
  const result={
-  type:!first?'none':first.type,
-  tier,
-  ...(first?.type==='unlock'?{prize:first.prize}:{}),
+  type:first?.type||'none',tier,
   ...(first?.type==='coins'?{amount:first.amount}:{}),
-  winnings,
-  totalCoins,
-  doubleMain:doubleMain&&winnings.filter(p=>p.type==='unlock').length>=2,
-  multiplier:multiplier&&winnings.length>0?2:1,
-  rareMainMultiplier:ultraRare&&winnings.filter(p=>p.type==='unlock').length>=2,
-  commandId,price,free,at:now(),balance:w.coins
+  ...(first?.type==='unlock'?{prize:first.prize}:{}),
+  winnings,totalCoins,board,
+  doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
+  multiplier,commandId,price,free,at:stamped,balance:w.coins
  };
  w.lastResult=result;
  w.recent=[...w.recent,{commandId,result}].slice(-40);
