@@ -581,13 +581,16 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
  const variantId=availableVariants.length===1?availableVariants[0]:availableVariants[random(availableVariants.length)];
  const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
+ // The visual card supports three canonical matches. Host caps above three
+ // permit extra coin payouts tied to genuine matching symbols, not fake rows.
+ const visiblePrizeLimit=Math.min(config.maxPrizes,3);
  const baseCategory=categoryRoll<config.weights.none?'none':
   categoryRoll<config.weights.none+config.weights.coins?'coins':'unlock';
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
  const remaining=tierPool(tier).filter(p=>!owned.has(p.unlockId));
  const winnings=[],newUnlocks=[];
  const awardMain=category=>{
-  if(winnings.length>=config.maxPrizes)return false;
+  if(winnings.length>=visiblePrizeLimit)return false;
   const choices=remaining.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
   if(!choices.length)return false;
   const prize=choices[random(choices.length)];
@@ -597,7 +600,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   return true;
  };
  const awardCoin=()=>{
-  if(winnings.length>=config.maxPrizes)return false;
+  if(winnings.length>=visiblePrizeLimit)return false;
   const unused=DOG_SCRATCH_COIN_AMOUNTS[tier].map((amount,i)=>({amount,symbol:SCRATCH_PAYOUT_ORDER[i]}))
    .filter(option=>!winnings.some(w=>w.type==='coins'&&w.symbol===option.symbol));
   if(!unused.length)return false;
@@ -606,13 +609,18 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   return true;
  };
  if(baseCategory==='coins')awardCoin();
- if(baseCategory==='unlock'&&!awardMain())awardCoin(); // sold-out pool: preserve the 80% win probability
+ if(baseCategory==='unlock'){
+  // A 24-field premium unlock also requires its 20-field coin milestone.
+  // At a one-prize cap, use a visible coin reward instead.
+  if(tier==='premium'&&visiblePrizeLimit===1)awardCoin();
+  else if(!awardMain())awardCoin();
+ }
 
  // Each of the two rare events is 1/1000 of all tickets, conditional
  // on the BASE UNLOCK bucket: P(unlock)=unlockWeight/1000, P(rare|unlock)=1/unlockWeight.
  // Their two distinct roll values ensure they never overlap.
  const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&
-  config.maxPrizes>=3&&config.weights.unlock>=2&&winnings[0]?.type==='unlock';
+  visiblePrizeLimit>=3&&config.weights.unlock>=2&&winnings[0]?.type==='unlock';
  const rareRoll=rareEligible?random(config.weights.unlock):-1;
  const doubleMain=rareRoll===0&&awardMain();
  const rareMainMultiplier=rareRoll===1&&
@@ -646,8 +654,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // On 20% of successful bonus rolls, add a third visible money hit where
  // capacity permits. Never create more than three symbol combinations.
  if(baseCategory!=='none'&&random(100)<config.extraCoinChance){
-  if(winnings.length<config.maxPrizes)awardCoin();
-  if(winnings.length<config.maxPrizes&&random(100)<20)awardCoin();
+  if(winnings.length<visiblePrizeLimit)awardCoin();
+  if(winnings.length<visiblePrizeLimit&&random(100)<20)awardCoin();
  }
 
  // The two normal ticket types share one pool; premium gets its own pair.
@@ -661,10 +669,24 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // exactly that order so the displayed symbols and prize list always match.
  if(variantId==='premium_27')winnings.splice(0,winnings.length,...board.wins.map(w=>w.prize));
 
+ // Beyond the visible matches, independent bonus money rolls can pay up
+ // to the host's chosen total of 10. Each bonus cites a verified match.
+ // The three original coin symbols remain the money denominations.
+ const bonusWinnings=[];
+ if(config.maxPrizes>3&&board.wins.length>0){
+  for(let slot=winnings.length;slot<config.maxPrizes;slot++){
+   if(random(100)>=config.extraCoinChance)continue;
+   const sourceWin=random(board.wins.length);
+   const coinIndex=random(DOG_SCRATCH_COIN_AMOUNTS[tier].length);
+   bonusWinnings.push({type:'coins',symbol:SCRATCH_PAYOUT_ORDER[coinIndex],
+    amount:DOG_SCRATCH_COIN_AMOUNTS[tier][coinIndex],bonus:true,sourceWin});
+  }
+ }
+ const allWinnings=[...winnings,...bonusWinnings];
  // Only after generating and verifying the exact visible card, grant awards.
  const stamped=now();
  for(const unlockId of newUnlocks)w.owned[unlockId]=stamped;
- const totalCoins=winnings.filter(x=>x.type==='coins').reduce((sum,x)=>sum+x.amount,0);
+ const totalCoins=allWinnings.filter(x=>x.type==='coins').reduce((sum,x)=>sum+x.amount,0);
  w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
  w.purchased++;
  if(free&&!hostFree)w.daily=today;
@@ -674,7 +696,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   type:first?.type||'none',tier,
   ...(first?.type==='coins'?{amount:first.amount}:{}),
   ...(first?.type==='unlock'?{prize:first.prize}:{}),
-  winnings,totalCoins,board,
+  winnings:allWinnings,totalCoins,board,
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free,at:stamped,balance:w.coins
  };
