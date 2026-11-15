@@ -8,6 +8,7 @@
  * This is a pure rules module. Buying a ticket / granting prizes is separate.
  */
 import {randomInt} from 'node:crypto';
+import {PREMIUM_27_SPEC,evaluatePremium27,generatePremium27,verifyPremium27} from './christmas-premium27.js';
 
 const MAIN_SYMBOLS=Object.freeze(['🎁','❄️','🔔','⭐','🍪','🦌','🎄','🍬','🌙','🎅','🧤','🕯️']);
 const STARS=Object.freeze(['⭐','🌟','✨','💫']);
@@ -26,6 +27,7 @@ const MODE_NAMES=Object.freeze({
  diamond:'Diamantenjagd',bells:'Glocken-Jackpot'
 });
 export const SCRATCH_GRID_VARIANTS=Object.freeze({
+ premium_27:PREMIUM_27_SPEC,
  gifts:Object.freeze({id:'gifts',name:MODE_NAMES.gifts,rows:3,cols:3,size:3,winLength:3,cellCount:9,rule:'Drei gleiche Symbole in einer Reihe, Spalte oder Diagonale'}),
  snow:Object.freeze({id:'snow',name:MODE_NAMES.snow,rows:4,cols:4,size:4,winLength:4,cellCount:16,rule:'Vier gleiche Symbole in einer Reihe, Spalte oder Diagonale (altes Los)'}),
  snow_collect:Object.freeze({id:'snow_collect',name:MODE_NAMES.snow_collect,rows:4,cols:4,cellCount:16,winLength:3,rule:'Drei gleiche Gewinnsymbole irgendwo auf der Karte; pro Symbolart maximal ein Gewinn; Eiswürfel sind Nietenfelder'}),
@@ -38,13 +40,13 @@ export const SCRATCH_GRID_VARIANTS=Object.freeze({
  diamond:Object.freeze({id:'diamond',name:MODE_NAMES.diamond,rows:3,cols:3,cellCount:9,rule:'Drei Diamanten beliebig auf dem Feld; jede Dreiergruppe gewinnt'}),
  bells:Object.freeze({id:'bells',name:MODE_NAMES.bells,rows:4,cols:5,cellCount:20,rule:'Fünf gleiche Symbole waagerecht oder fünf Glocken im Diamantmuster'})
 });
-// Four new-sale cards: two simple (200), one medium (500), one premium (1000).
+// Four new-sale cards: two simple (200), one medium (500), one 27-cell premium (1000).
 // Old IDs remain readable for previously purchased tickets.
-export const SCRATCH_VARIANT_IDS=Object.freeze(['gifts','snow_collect','elf','tree']);
+export const SCRATCH_VARIANT_IDS=Object.freeze(['gifts','snow_collect','elf','premium_27']);
 export const SCRATCH_VARIANT_IDS_BY_TIER=Object.freeze({
  simple:Object.freeze(['gifts','snow_collect']),
  medium:Object.freeze(['elf']),
- premium:Object.freeze(['tree'])
+ premium:Object.freeze(['premium_27'])
 });
 export const SCRATCH_ARCHIVED_VARIANT_IDS=Object.freeze(
  Object.keys(SCRATCH_GRID_VARIANTS).filter(id=>!SCRATCH_VARIANT_IDS.includes(id))
@@ -104,6 +106,7 @@ export function evaluateScratchGrid(board){
  const spec=SCRATCH_GRID_VARIANTS[board?.variantId];
  if(!spec||!Array.isArray(board.cells)||board.cells.length!==spec.cellCount)
   throw Error('SCRATCH_GRID_INVALID');
+ if(board.variantId==='premium_27')return evaluatePremium27(board);
  const cells=board.cells;
  const permitted=board.variantId==='snow_collect'?[...SNOW_COLLECT_SYMBOLS,SNOW_DUD]:
   board.variantId==='stars'?[...MAIN_SYMBOLS,...STARS]:
@@ -308,6 +311,11 @@ export function generateScratchGrid(variantId,desiredLines,{draw=randomInt,maxAt
  if(!spec||!Number.isInteger(desiredLines)||desiredLines<0||desiredLines>3||
   typeof draw!=='function'||!Number.isInteger(maxAttempts)||maxAttempts<1)
   throw Error('SCRATCH_GRID_REQUEST_INVALID');
+ if(variantId==='premium_27'){
+  const dummy=Array.from({length:desiredLines},(_,i)=>({type:'coins',amount:i+1}));
+  const paid=generatePremium27(dummy,{draw,maxAttempts});
+  return {...paid,wins:paid.wins.map(({prize,...win})=>win)};
+ }
  for(let attempt=0;attempt<maxAttempts;attempt++){
   const candidate=builders[variantId](
    variantId==='gifts'||variantId==='snow'?spec:desiredLines,
@@ -337,6 +345,8 @@ export function attachScratchPrizes(board,prizes){
  const wins=evaluateScratchGrid(board);
  const lines=wins.map((win,index)=>{
   const prize=prizes[index];
+  if(board.variantId==='premium_27' && ((win.rule==='gold-20'&&prize?.type!=='coins')||(win.rule==='premium-24'&&prize?.type!=='unlock')))
+   throw Error('PREMIUM27_PRIZE_RULE_MISMATCH');
   if(!prize||typeof prize!=='object'||!['coins','unlock'].includes(prize.type))
    throw Error('SCRATCH_PRIZE_INVALID');
   if(prize.type==='coins'&&(!Number.isSafeInteger(prize.amount)||prize.amount<1))
@@ -349,6 +359,7 @@ export function attachScratchPrizes(board,prizes){
  return {...board,wins:lines};
 }
 export function verifyScratchPrizes(board){
+ if(board?.variantId==='premium_27')return verifyPremium27(board);
  try{
   const verified=evaluateScratchGrid(board);
   const unlockIds=new Set();
