@@ -106,7 +106,8 @@ function generatePremium27V3(prizes,{draw,maxAttempts}){
  const extras=prizes.filter(p=>p!==baseMoney&&p!==baseUnlock);
  const fixedRows=[...(baseUnlock?[baseUnlock]:[]),...extras];
  const targetReal=(baseUnlock?24:baseMoney?20:13)+choose(baseUnlock?4:baseMoney?4:7,draw);
- const filler=PREMIUM_27_SYMBOLS.filter(s=>s!=='🎁');
+ // Even losing tiles can display a gift; the evaluator disallows false trios.
+ const filler=[...PREMIUM_27_SYMBOLS.filter(s=>s!=='🎁'),...SCRATCH_GIFT_SYMBOLS];
  for(let attempt=0;attempt<maxAttempts;attempt++){
   const cells=Array(27).fill(PREMIUM_27_DUD);
   const rows=randomOrder(Array.from({length:9},(_,r)=>r),draw).slice(0,fixedRows.length);
