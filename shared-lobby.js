@@ -770,26 +770,22 @@ function finishEisstock(ch,members){
   // A read never writes or grants a prize. Payouts happen in a transaction
   // and share the existing 10 tree entitlements to avoid duplicated art.
   app.get('/api/hub/scratch',authentication,handler(async req=>{
-    const identity=req.hubIdentity,store=db(),roomCode=validCode(req.query?.room);
-    const [snap,tree,settingsSnap,roomSnap]=await Promise.all([
-      store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
-      store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
-      store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
-      roomCode?documentFor(store,roomCode).get():Promise.resolve(null)
-    ]);
-    const room=roomSnap?.exists?roomSnap.data():null;
-    const canManageScratch=Boolean(room&&room.expiresAt>clock()&&room.hostUid===identity.uid);
-    return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,
-      clock(),settingsSnap.exists?settingsSnap.data():null),canManageScratch};
-  }));
-  // Authorize against the shared lobby document, not a client-controlled host flag.
-  app.post('/api/hub/scratch/settings',authentication,handler(async req=>{
-    const identity=req.hubIdentity,store=db(),roomCode=validCode(req.body?.room);
-    if(!roomCode)throw error(403,'HOST_ONLY');
-    const roomSnap=await documentFor(store,roomCode).get();
-    const room=roomSnap.exists?roomSnap.data():null;
-    if(!room||room.expiresAt<=clock()||room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
-    let settings;
+     const identity=req.hubIdentity,store=db();
+     const [snap,tree,settingsSnap]=await Promise.all([
+       store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
+       store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
+       store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get()
+     ]);
+     // The event odds are global, and every authenticated player may edit them
+     // even if they did not open a shared room. No room document read needed.
+     return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,
+       clock(),settingsSnap.exists?settingsSnap.data():null),canManageScratch:true};
+   }));
+   // Authenticate all writes, but do not require host/room membership:
+   // DOG Christmas settings are intentionally shared by all online players.
+   app.post('/api/hub/scratch/settings',authentication,handler(async req=>{
+     const identity=req.hubIdentity,store=db();
+     let settings;
     try{settings=validateScratchSettings(req.body?.settings);}
     catch(e){throw error(400,e.message);}
     const ref=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
