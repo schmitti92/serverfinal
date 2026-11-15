@@ -212,19 +212,33 @@ function reindeerBoard(desired,draw){
  return shuffle(cells,draw);
 }
 function elfBoard(desired,draw){
- const cells=Array.from({length:20},()=>sample(MAIN_SYMBOLS,draw));
- const chosen=shuffle([0,1,2,3],draw).slice(0,desired);
- const colors=shuffle(MAIN_SYMBOLS,draw).slice(0,desired);
+ const rows=[0,1,2,3];
+ const chosen=shuffle(rows,draw).slice(0,desired);
+ const symbols=shuffle(MAIN_SYMBOLS,draw).slice(0,desired);
+ // Never let filler fields extend a prize path or create a secret extra prize.
+ const fillers=MAIN_SYMBOLS.filter(s=>!symbols.includes(s));
+ const cells=Array.from({length:20},()=>sample(fillers,draw));
+ const spareRows=new Set(rows.filter(r=>!chosen.includes(r)));
  for(let p=0;p<chosen.length;p++){
-  const row=chosen[p],symbol=colors[p];
-  for(let c=0;c<5;c++)cells[row*5+c]=symbol;
- }
- // Keep the winning symbols out of filler rows so each continuous route
- // remains an independent, visibly identified prize.
- for(let i=0;i<20;i++){
-  if(chosen.includes(Math.floor(i/5)))continue;
-  const others=MAIN_SYMBOLS.filter(s=>!colors.includes(s));
-  cells[i]=sample(others,draw);
+  const row=chosen[p],symbol=symbols[p];
+  const neighbors=[row-1,row+1].filter(r=>spareRows.has(r));
+  // A premium elf path should sometimes bend between rows rather than
+  // always being a normal line bingo. Each detour consumes a spare lane.
+  if(neighbors.length&&random(100,draw)<80){
+   const nextRow=sample(neighbors,draw);
+   spareRows.delete(nextRow);
+   if(random(2,draw)===0){
+    // Start on the adjacent row; turn into the selected row at column 3.
+    for(let col=0;col<3;col++)cells[nextRow*5+col]=symbol;
+    for(let col=2;col<5;col++)cells[row*5+col]=symbol;
+   }else{
+    // Start on the selected row; turn into the adjacent row at column 3.
+    for(let col=0;col<3;col++)cells[row*5+col]=symbol;
+    for(let col=2;col<5;col++)cells[nextRow*5+col]=symbol;
+   }
+  }else{
+   for(let col=0;col<5;col++)cells[row*5+col]=symbol;
+  }
  }
  return cells;
 }
