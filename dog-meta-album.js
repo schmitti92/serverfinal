@@ -1,32 +1,38 @@
-/**
- * Meta-Sammelalbum · Weihnachtskapitel 1 (aktive DOG-Sammelsaison 2).
- *
- * The nine pictures are non-consumable cosmetics automatically owned when
- * the EXISTING server-authoritative 2,4,...,18-Bingo rewards have been CLAIMED.
- * Uses the durable bingoRewardsClaimed map in the DOG season-2 profile.
- * Reading this catalogue never modifies Firestore and cannot issue a reward.
+/** DOG Lichtertal meta-album rewards, authenticated read-only status.
+ * IMPORTANT: the Lichtertal event is still a visual preview. Its local sliders
+ * are never evidence of ownership and must NOT be sent to this endpoint.
+ * A future trusted event upgrade transaction must maintain monotonically
+ * increasing highestBuildingLevels and highestTreeLevel on the server.
  */
-export const DOG_META_ALBUM_MILESTONES=Object.freeze(Array.from({length:9},(_,index)=>{
- const number=index+1;
- return Object.freeze({
-  id:'meta-christmas1-'+String(number).padStart(2,'0'),
-  unlockId:'meta:christmas1:picture:'+String(number).padStart(2,'0'),
-  at:number*2
- });
-}));
-const validClaimedAt=value=>Number.isSafeInteger(value)&&value>0?value:0;
-export function dogMetaAlbumStatus(bingos=0,claimed={}){
- const count=Number.isSafeInteger(bingos)&&bingos>=0?Math.min(60,bingos):0;
- const receipts=claimed&&typeof claimed==='object'&&!Array.isArray(claimed)?claimed:{};
+export const DOG_META_ALBUM_MILESTONES=Object.freeze([
+ Object.freeze({id:'meta-christmas1-01',unlockId:'meta:christmas1:picture:01',name:'Weihnachtsbaum',kind:'tree',requiredLevel:10}),
+ Object.freeze({id:'meta-christmas1-02',unlockId:'meta:christmas1:picture:02',name:'Weihnachtsbäckerei',kind:'building',buildingId:'bakery',requiredLevel:5}),
+ Object.freeze({id:'meta-christmas1-03',unlockId:'meta:christmas1:picture:03',name:'Wichtelwerkstatt',kind:'building',buildingId:'workshop',requiredLevel:5}),
+ Object.freeze({id:'meta-christmas1-04',unlockId:'meta:christmas1:picture:04',name:'Weihnachtslichter-Turm',kind:'building',buildingId:'tower',requiredLevel:5}),
+ Object.freeze({id:'meta-christmas1-05',unlockId:'meta:christmas1:picture:05',name:'Friedensherberge',kind:'building',buildingId:'inn',requiredLevel:5}),
+ Object.freeze({id:'meta-christmas1-06',unlockId:'meta:christmas1:picture:06',name:'Geschenkefabrik',kind:'planned',requiredLevel:null}),
+ Object.freeze({id:'meta-christmas1-07',unlockId:'meta:christmas1:picture:07',name:'Weihnachtsmarkt',kind:'planned',requiredLevel:null}),
+ Object.freeze({id:'meta-christmas1-08',unlockId:'meta:christmas1:picture:08',name:'Lebkuchenhaus',kind:'planned',requiredLevel:null}),
+ Object.freeze({id:'meta-christmas1-09',unlockId:'meta:christmas1:picture:09',name:'Rentierstall',kind:'planned',requiredLevel:null}),
+ Object.freeze({id:'meta-christmas1-10',unlockId:'meta:christmas1:picture:10',name:'Schneemannplatz',kind:'planned',requiredLevel:null}),
+ Object.freeze({id:'meta-christmas1-11',unlockId:'meta:christmas1:picture:11',name:'Schlittenwerkstatt',kind:'planned',requiredLevel:null}),
+ Object.freeze({id:'meta-christmas1-12',unlockId:'meta:christmas1:picture:12',name:'Weihnachtspostamt',kind:'planned',requiredLevel:null})
+]);
+const positiveLevel=n=>Number.isSafeInteger(n)&&n>=0?Math.min(n,10):0;
+export function dogMetaAlbumStatus(officialProgress={}){
+ const levels=officialProgress&&typeof officialProgress==='object'&&!Array.isArray(officialProgress)?officialProgress:{};
+ const buildings=levels.highestBuildingLevels&&typeof levels.highestBuildingLevels==='object'&&!Array.isArray(levels.highestBuildingLevels)?levels.highestBuildingLevels:{};
+ const tree=positiveLevel(levels.highestTreeLevel);
  const milestones=DOG_META_ALBUM_MILESTONES.map(m=>{
-  const claimedAt=validClaimedAt(receipts[String(m.at)]);
-  const state=claimedAt?'unlocked':count>=m.at?'ready':'locked';
-  return {...m,state,claimedAt};
+  const level=m.kind==='tree'?tree:m.kind==='building'?positiveLevel(buildings[m.buildingId]):0;
+  const unlocked=m.requiredLevel!==null&&level>=m.requiredLevel;
+  return {...m,level,state:unlocked?'unlocked':'locked'};
  });
  const unlocked=milestones.filter(m=>m.state==='unlocked');
- const next=milestones.find(m=>m.state!=='unlocked');
- return {version:1,eventId:'weihnachtsevent-1',source:'dog-season-2-bingo-rewards',
+ return {
+  version:2,eventId:'weihnachtsevent-1',source:'dog-lichtertal-event',
   total:milestones.length,unlockedCount:unlocked.length,
   unlockedIds:unlocked.map(m=>m.unlockId),
-  bingos:count,nextAt:next?.at??null,milestones};
+  milestones
+ };
 }
