@@ -12,6 +12,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_VILLAGE_COLLECTION,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage} from './dog/christmas-village.js';
+import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -867,6 +868,48 @@ function finishEisstock(ch,members){
       canUpgrade:!(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished'),
       enabled:room.settings?.dog?.christmasEnabled===true,
       matchEnabled:room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
+  }));
+  // Read-only reward progress, fetched only when opening the tree tab.
+  // A room code alone is not proof of membership; enforce Firebase identity.
+  app.get('/api/hub/rooms/:code/dog/tree-rewards',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const roomSnap=await documentFor(store,code).get(),room=roomSnap.exists?roomSnap.data():null;
+    validateRead(room,identity);
+    const [villageSnap,accountSnap]=await Promise.all([
+      dogVillageFor(store,room.hostUid).get(),
+      store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
+    ]);
+    return {treeRewards:dogTreeRewardStatus(
+      villageSnap.exists?villageSnap.data():null,
+      accountSnap.exists?accountSnap.data():null
+    )};
+  }));
+  // Each prize is assigned only once for this player. The server draws it
+  // after verifying that the shared village really reached the tree level.
+  app.post('/api/hub/rooms/:code/dog/tree-rewards/claim',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const level=req.body?.level,store=db();
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(!Number.isInteger(level)||level<1||level>10)throw error(400,'INVALID_TREE_LEVEL');
+    const roomRef=documentFor(store,code);
+    const accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
+    const result=await store.runTransaction(async tx=>{
+      const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
+      validateRead(room,identity);
+      if(room.game!=='dog'&&room.match?.game!=='dog')throw error(409,'DOG_NOT_SELECTED');
+      const player=room.players.find(p=>p.uid===identity.uid);
+      if(!player?.participating)throw error(403,'JOIN_DOG_FIRST');
+      const villageRef=dogVillageFor(store,room.hostUid);
+      const [villageSnap,accountSnap]=await Promise.all([tx.get(villageRef),tx.get(accountRef)]);
+      const village=villageSnap.exists?villageSnap.data():null;
+      let granted;
+      try{granted=claimDogTreeReward(accountSnap.exists?accountSnap.data():null,village,level);}
+      catch(e){throw error(e.message==='TREE_LEVEL_NOT_REACHED'?409:400,e.message);}
+      if(!granted.unchanged)tx.set(accountRef,granted.document);
+      return {prize:granted.prize,replayed:granted.unchanged,treeRewards:granted.status};
+    });
+    return result;
   }));
   app.post('/api/hub/rooms/:code/dog/christmas-mode',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,enabled=req.body?.enabled;
