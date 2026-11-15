@@ -864,6 +864,7 @@ function finishEisstock(ch,members){
     const snap=await dogVillageFor(store,room.hostUid).get();
     return {village:dogVillagePublic(snap.exists?snap.data():null,room.hostUid),
       host:room.hostUid===identity.uid,canSetMode:room.phase==='preparing'&&room.game==='dog',
+      canUpgrade:!(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished'),
       enabled:room.settings?.dog?.christmasEnabled===true,
       matchEnabled:room.phase==='playing'&&room.match?.game==='dog'&&room.match.christmas?.enabled===true};
   }));
@@ -890,7 +891,7 @@ function finishEisstock(ch,members){
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
-      if(room.phase==='playing'&&room.match?.game==='dog')throw error(409,'DOG_MATCH_IN_PROGRESS');
+      if(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished')throw error(409,'DOG_MATCH_IN_PROGRESS');
       const ref=dogVillageFor(store,room.hostUid),prior=await tx.get(ref);
       let result;
       try{result=buyDogVillageUpgrade(prior.exists?prior.data():null,room.hostUid,building,expectedLevel,commandId);}
