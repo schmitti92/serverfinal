@@ -906,23 +906,44 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),identity=req.hubIdentity;
     const {matchId,action,expectedRevision,actionId}=req.body||{};
     if(!code||typeof matchId!=='string'||!Number.isInteger(expectedRevision)||typeof actionId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(actionId)||!action||typeof action!=='object')throw error(400,'INVALID_DOG_ACTION');
-    const room=await mutate(code,identity,room=>{
+    const room=await mutate(code,identity,async(room,tx,store)=>{
       const match=room.match;
       if(room.phase!=='playing'||match?.game!=='dog'||match.id!==matchId)throw error(409,'DOG_MATCH_MISMATCH');
       const seat=match.dogRoster.find(r=>r.uid===identity.uid)?.seat;
       if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
       if(match.dog.revision!==expectedRevision)throw error(409,'DOG_STALE_REVISION');
+      const event=match.christmas;
+      const initialGifts=event?.giftCount||0,initialBonus=event?.bonusGiftCount||0;
+      const hadInn=event?.innCredited===true;
+      let creditedTenths=0;
+      const collect=(before,after,move,playerSeat)=>{
+        if(!event?.enabled)return;
+        creditedTenths+=claimDogChristmasGift(event,before,after,move,playerSeat);
+        creditedTenths+=finishDogChristmasMatch(event,after);
+      };
       try{
         if(action.type==='exchange'){
           match.dog=dogExchangeCard(match.dog,seat,action.cardId);
         }else{
           // Cancellation is intentionally disallowed online until it is implemented atomically.
+          const before=match.dog;
           match.dog=dogTakeAction(match.dog,seat,action);
+          collect(before,match.dog,action,seat);
         }
       }catch(e){throw error(409,e.message||'DOG_RULE_REJECTED');}
       match.dogCommands=[...(match.dogCommands||[]).slice(-90),actionId];
-      advanceDogBots(match);
+      advanceDogBots(match,collect);
+      if(event?.enabled){
+        creditedTenths+=finishDogChristmasMatch(event,match.dog);
+        const completedNow=!hadInn&&event.innCredited===true;
+        if(creditedTenths||completedNow){
+          const ref=dogVillageFor(store,room.hostUid),snap=await tx.get(ref);
+          const wallet=creditDogVillage(snap.exists?snap.data():null,room.hostUid,event,creditedTenths,
+            event.giftCount-initialGifts,event.bonusGiftCount-initialBonus,completedNow);
+          tx.set(ref,wallet);
+        }
+      }
     });
     return {room};
   }));
