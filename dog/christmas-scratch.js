@@ -14,22 +14,26 @@ export const DOG_SCRATCH_TIERS=Object.freeze({
   "label": "Einfach",
   "price": 200,
   "icon": "🟤",
+  "coinMax": 100,
   "weights": {
-   "coins": 90,
-   "emoji": 6,
-   "tone": 4
+   "none": 35,
+   "coins": 50,
+   "emoji": 9,
+   "tone": 6
   }
  },
  "medium": {
   "label": "Mittel",
   "price": 500,
   "icon": "🔵",
+  "coinMax": 800,
   "weights": {
-   "coins": 60,
-   "avatars": 19,
-   "emojis": 12,
-   "frames": 4,
-   "emblems": 4,
+   "none": 25,
+   "coins": 45,
+   "avatars": 14,
+   "emojis": 9,
+   "frames": 3,
+   "emblems": 3,
    "boards": 1
   }
  },
@@ -37,14 +41,16 @@ export const DOG_SCRATCH_TIERS=Object.freeze({
   "label": "Premium",
   "price": 1000,
   "icon": "🟡",
+  "coinMax": 2000,
   "weights": {
-   "coins": 35,
-   "avatars": 22,
-   "emojis": 12,
-   "backgrounds": 10,
-   "frames": 8,
-   "emblems": 8,
-   "boards": 5
+   "none": 15,
+   "coins": 45,
+   "avatars": 14,
+   "emojis": 8,
+   "backgrounds": 6,
+   "frames": 5,
+   "emblems": 4,
+   "boards": 3
   }
  }
 });
@@ -573,6 +579,12 @@ export function dogScratchStatus(raw,tree=null,now=Date.now()){
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   purchased:w.purchased,lastResult:w.lastResult};
 }
+// Exact per-ticket bonus odds: 1% two unique main prizes; 8% x2;
+// of those, 0.1 percentage points are the ultra-rare main-prize x2.
+// Normal x2 affects coin wins only. Bonuses do not multiply prices.
+export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
+ doubleMainPer10000:100, multiplierPer10000:800, mainMultiplierPer10000:10
+});
 export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}={}){
  const tier=request?.tier;
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
@@ -587,39 +599,84 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  if(free&&w.daily===day)throw Error('SCRATCH_DAILY_ALREADY_USED');
  const price=free?0:DOG_SCRATCH_TIERS[tier].price;
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
+ const random=max=>{
+  const value=draw(max);
+  if(!Number.isInteger(value)||value<0||value>=max)throw Error('SCRATCH_INVALID_RANDOM');
+  return value;
+ };
+ const pool=tierPool(tier);
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
+ const winnings=[];
+ const addMain=category=>{
+  const options=pool.filter(p=>!owned.has(p.unlockId)&&(!category||p.category===category));
+  if(!options.length)return false;
+  const prize=options[random(options.length)];
+  owned.add(prize.unlockId);
+  w.owned[prize.unlockId]=now();
+  winnings.push({type:'unlock',prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
+  return true;
+ };
+ const addCoins=()=>{
+  const amount=1+random(DOG_SCRATCH_TIERS[tier].coinMax);
+  winnings.push({type:'coins',amount});
+ };
  const weights=DOG_SCRATCH_TIERS[tier].weights;
- const number=draw(100);
- if(!Number.isInteger(number)||number<0||number>99)throw Error('SCRATCH_INVALID_RANDOM');
- let slot='coins',position=0;
+ const roll=random(100);
+ let slot='none',position=0;
  for(const [category,weight] of Object.entries(weights)){
-  position+=weight;if(number<position){slot=category;break}
+  position+=weight;if(roll<position){slot=category;break}
  }
- let prize=null;
- if(slot!=='coins'){
-  const options=tierPool(tier).filter(p=>!owned.has(p.unlockId)&&
-   (tier!=='simple'||p.category===slot)&&
-   (tier==='simple'||p.category===slot));
-  if(options.length){
-   const pick=draw(options.length);
-   if(!Number.isInteger(pick)||pick<0||pick>=options.length)throw Error('SCRATCH_INVALID_RANDOM');
-   prize=options[pick];
+ if(slot==='coins')addCoins();
+ else if(slot!=='none'&&!addMain(slot))addCoins();
+ // Independent 1% chance of a two-main-prize ticket, if two unique
+ // rewards remain. This replaces a lone cosmetic prize where necessary.
+ const doubleMain=random(10000)<DOG_SCRATCH_BONUS_ODDS.doubleMainPer10000;
+ if(doubleMain){
+  const existing=winnings.filter(p=>p.type==='unlock').length;
+  const needed=2-existing;
+  if(pool.filter(p=>!owned.has(p.unlockId)).length>=needed){
+   for(let i=0;i<needed;i++)addMain();
   }
  }
- let result;
- if(prize){
-  w.owned[prize.unlockId]=now();
-  result={type:'unlock',tier,prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}};
- }else{
-  const amount=1+draw(100);
-  if(!Number.isInteger(amount)||amount<1||amount>100)throw Error('SCRATCH_INVALID_RANDOM');
-  w.coins=Math.min(1000000000,w.coins+amount);
-  result={type:'coins',tier,amount};
+ // 8% total x2, including exactly 0.1% ultra-rare main-prize x2.
+ const bonusRoll=random(10000);
+ const ultraRare=bonusRoll<DOG_SCRATCH_BONUS_ODDS.mainMultiplierPer10000;
+ const multiplier=bonusRoll<DOG_SCRATCH_BONUS_ODDS.multiplierPer10000;
+ if(multiplier){
+  if(ultraRare&&winnings.some(p=>p.type==='unlock')){
+   const main=winnings.find(p=>p.type==='unlock');
+   // One additional DIFFERENT cosmetic in the same category if available.
+   if(!addMain(main.prize.category)&&!winnings.some(p=>p.type==='coins'))addCoins();
+  }else if(winnings.some(p=>p.type==='coins')){
+   for(const entry of winnings)if(entry.type==='coins')entry.amount*=2;
+  }else if(winnings.some(p=>p.type==='unlock')){
+   // Normal x2 is only a monetary multiplier. Add a coin bonus to a
+   // cosmetic-only card rather than silently dropping the advertised x2.
+   addCoins();
+   winnings[winnings.length-1].amount*=2;
+  }
  }
- w.coins-=price;
+ // Additional independent money lines: more common than extra cosmetics.
+ // They do not change the main-category odds or special bonus percentages.
+ if(winnings.length&&random(100)<(tier==='premium'?35:tier==='medium'?25:15))addCoins();
+ if(winnings.length&&random(100)<(tier==='premium'?12:tier==='medium'?8:4))addCoins();
+ let totalCoins=winnings.filter(p=>p.type==='coins').reduce((sum,p)=>sum+p.amount,0);
+ w.coins=Math.min(1000000000,w.coins+totalCoins)-price;
  w.purchased++;
  if(free)w.daily=day;
- result={...result,commandId,price,free,at:now(),balance:w.coins};
+ const first=winnings[0];
+ const result={
+  type:!first?'none':first.type,
+  tier,
+  ...(first?.type==='unlock'?{prize:first.prize}:{}),
+  ...(first?.type==='coins'?{amount:first.amount}:{}),
+  winnings,
+  totalCoins,
+  doubleMain:doubleMain&&winnings.filter(p=>p.type==='unlock').length>=2,
+  multiplier:multiplier&&winnings.length>0?2:1,
+  rareMainMultiplier:ultraRare&&winnings.filter(p=>p.type==='unlock').length>=2,
+  commandId,price,free,at:now(),balance:w.coins
+ };
  w.lastResult=result;
  w.recent=[...w.recent,{commandId,result}].slice(-40);
  return {unchanged:false,wallet:w,result,status:dogScratchStatus(w,tree,now())};
