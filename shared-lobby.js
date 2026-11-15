@@ -13,7 +13,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {dogPlayerLevelStatus} from './dog/player-levels.js';
-import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher} from './dog/christmas-scratch.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
@@ -890,14 +890,33 @@ function finishEisstock(ch,members){
   app.post('/api/hub/christmas-village/upgrade',authentication,handler(async req=>{
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const {building,expectedLevel,commandId}=req.body||{},store=db();
+    // A linked DOG room gets the two new hidden fields immediately. Unlinked
+    // rooms keep their current maps until a fresh match is started.
+    const linkedCode=validCode(req.body?.roomCode),linkedRef=linkedCode?documentFor(store,linkedCode):null;
     const village=await store.runTransaction(async tx=>{
-      const ref=dogVillageFor(store),snap=await tx.get(ref);
+      const ref=dogVillageFor(store);
+      const [snap,roomSnap]=await Promise.all([tx.get(ref),linkedRef?tx.get(linkedRef):Promise.resolve(null)]);
       let result;
       try{result=buyDogVillageUpgrade(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID,building,expectedLevel,commandId);}
       catch(e){throw error(['NOT_ENOUGH_CHRISTMAS_LIGHTS','STALE_BUILDING_LEVEL'].includes(e.message)?409:400,e.message);}
-      if(!result.unchanged)tx.set(ref,result.village);
+      if(!result.unchanged){
+        tx.set(ref,result.village);
+        if(building==='inn'&&roomSnap?.exists){
+          const room=roomSnap.data();
+          if(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.christmas?.enabled&&
+             room.players?.some(p=>p.uid===req.hubIdentity.uid)){
+            const added=applyDogInnUpgradeToMatch(room.match.christmas,result.village.levels.inn);
+            if(added){
+              room.revision=(Number(room.revision)||0)+1;
+              room.updatedAt=clock();
+              tx.set(linkedRef,room);
+            }
+          }
+        }
+      }
       return dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID);
     });
+    if(linkedCode)invalidateHubReadCache(linkedCode);
     return {village,shared:true,canUpgrade:true,enabled:true};
   }));
   // The common tree unlocks ten *personal* fixed prizes, one claim per player.
@@ -1105,9 +1124,20 @@ function finishEisstock(ch,members){
       let result;
       try{result=buyDogVillageUpgrade(prior.exists?prior.data():null,DOG_GLOBAL_VILLAGE_ID,building,expectedLevel,commandId);}
       catch(e){throw error(e.message==='NOT_ENOUGH_CHRISTMAS_LIGHTS'?409:400,e.message);}
-      if(!result.unchanged)tx.set(ref,result.village);
+      if(!result.unchanged){
+        tx.set(ref,result.village);
+        if(building==='inn'&&room.phase==='playing'&&room.match?.game==='dog'&&room.match?.christmas?.enabled){
+          const added=applyDogInnUpgradeToMatch(room.match.christmas,result.village.levels.inn);
+          if(added){
+            room.revision=(Number(room.revision)||0)+1;
+            room.updatedAt=clock();
+            tx.set(roomRef,room);
+          }
+        }
+      }
       return dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID);
     });
+    invalidateHubReadCache(code);
     return {village};
   }));
 
