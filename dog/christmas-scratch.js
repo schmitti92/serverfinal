@@ -519,14 +519,70 @@ const safeClaims=raw=>{
 const safeReceipts=raw=>Array.isArray(raw)?raw.filter(x=>
  x&&typeof x.commandId==='string'&&/^[-\w:]{8,90}$/.test(x.commandId)&&
  x.result&&typeof x.result.type==='string').slice(-40):[];
+// A single per-player counter, stored in the existing wallet document.
+// No additional Firebase write is required while scratching or viewing stats.
+// Historic receipts are kept only for the latest 40 tickets; older category
+// splits are honestly reported as unknown rather than fabricated.
+const SCRATCH_PROGRESS_VARIANTS=Object.freeze(Object.values(SCRATCH_VARIANT_IDS_BY_TIER).flat());
+const progressCount=value=>Number.isSafeInteger(value)&&value>=0?value:0;
+const emptyScratchProgressRow=()=>({opened:0,winTickets:0,duds:0,free:0,coinsWon:0,unlocks:0});
+const emptyScratchProgress=()=>({
+ tracked:0,winTickets:0,duds:0,free:0,coinsWon:0,unlocks:0,
+ byVariant:Object.fromEntries(SCRATCH_PROGRESS_VARIANTS.map(id=>[id,emptyScratchProgressRow()])),
+ other:emptyScratchProgressRow()
+});
+const SCRATCH_PROGRESS_COUNTS=['tracked','winTickets','duds','free','coinsWon','unlocks'];
+const SCRATCH_PROGRESS_ROW_COUNTS=['opened','winTickets','duds','free','coinsWon','unlocks'];
+function validScratchProgress(value){
+ if(!value||typeof value!=='object'||Array.isArray(value)||!value.byVariant||
+   SCRATCH_PROGRESS_COUNTS.some(key=>!Number.isSafeInteger(value[key])||value[key]<0)||
+   SCRATCH_PROGRESS_ROW_COUNTS.some(key=>!Number.isSafeInteger(value.other?.[key])||value.other[key]<0)||
+   SCRATCH_PROGRESS_VARIANTS.some(id=>SCRATCH_PROGRESS_ROW_COUNTS.some(key=>
+    !Number.isSafeInteger(value.byVariant[id]?.[key])||value.byVariant[id][key]<0)))return false;
+ const rows=[...SCRATCH_PROGRESS_VARIANTS.map(id=>value.byVariant[id]),value.other];
+ return rows.reduce((n,row)=>n+row.opened,0)===value.tracked&&
+  rows.reduce((n,row)=>n+row.winTickets,0)===value.winTickets&&
+  rows.reduce((n,row)=>n+row.duds,0)===value.duds&&
+  value.winTickets+value.duds===value.tracked;
+}
+function addScratchProgress(progress,result){
+ if(!result||typeof result!=='object')return;
+ const variant=result.board?.variantId;
+ const row=SCRATCH_PROGRESS_VARIANTS.includes(variant)?progress.byVariant[variant]:progress.other;
+ const prizes=Array.isArray(result.winnings)?result.winnings:
+  result.type==='none'?[]:[{type:result.type,amount:result.amount,prize:result.prize}];
+ const won=prizes.length>0;
+ const freebies=result.free===true?1:0;
+ const unlocks=prizes.filter(prize=>prize?.type==='unlock').length;
+ const amount=Number.isSafeInteger(result.totalCoins)&&result.totalCoins>=0?
+  result.totalCoins:prizes.filter(prize=>prize?.type==='coins').reduce((sum,prize)=>
+   sum+progressCount(prize?.amount),0);
+ for(const target of [progress,row]){
+  if(target===progress)target.tracked++;
+  else target.opened++;
+  target.winTickets+=Number(won);
+  target.duds+=Number(!won);
+  target.free+=freebies;
+  target.coinsWon+=amount;
+  target.unlocks+=unlocks;
+ }
+}
+function normalizeScratchProgress(raw,recent){
+ if(validScratchProgress(raw))return raw;
+ const progress=emptyScratchProgress();
+ for(const receipt of recent)addScratchProgress(progress,receipt.result);
+ return progress;
+}
 export function normalizedScratchWallet(raw){
  const absent=!raw||typeof raw!=='object'||Array.isArray(raw);
+ const recent=safeReceipts(raw?.recent);
  return {
   coins:absent?DOG_SCRATCH_START_COINS:capCoins(raw.coins),
   owned:safeClaims(raw?.owned),
-  recent:safeReceipts(raw?.recent),
+  recent,
   daily:typeof raw?.daily==='string'?raw.daily:'',
   purchased:Number.isSafeInteger(raw?.purchased)&&raw.purchased>=0?raw.purchased:0,
+  progress:normalizeScratchProgress(raw?.progress,recent),
   lastResult:raw?.lastResult&&typeof raw.lastResult==='object'?raw.lastResult:null,
   version:1
  };
@@ -547,7 +603,10 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
   dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   settings:normalizeScratchSettings(settings),
-  purchased:w.purchased,lastResult:w.lastResult};
+  purchased:w.purchased,
+  progress:{...w.progress,opened:w.purchased,
+   olderUnclassified:Math.max(0,w.purchased-w.progress.tracked)},
+  lastResult:w.lastResult};
 }
 // Exact probabilities per 1,000 full tickets, provided at least two unowned
 // cosmetic prizes remain for the exclusive rare unlock events.
@@ -712,6 +771,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free,at:stamped,balance:w.coins
  };
+ // Count the server-issued ticket exactly once, in the same wallet transaction.
+ // Replayed command IDs returned earlier and never reach this update.
+ addScratchProgress(w.progress,result);
  w.lastResult=result;
  w.recent=[...w.recent,{commandId,result}].slice(-40);
  return {unchanged:false,wallet:w,result,status:dogScratchStatus(w,tree,now(),liveSettings)};
