@@ -13,9 +13,9 @@ import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {dogPlayerLevelStatus} from './dog/player-levels.js';
-import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
-import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket} from './dog/christmas-scratch.js';
+import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher} from './dog/christmas-scratch.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
 export const HUB_GAMES = Object.freeze({
@@ -511,7 +511,7 @@ function finishEisstock(ch,members){
       applyKniffel(state,uid,choice);
     }
   }
-  function advanceDogBots(match,onVerifiedMove=()=>{}){
+  function advanceDogBots(match,onVerifiedMove=()=>{},onNewDeal=()=>{}){
     let s=match.dog;
     let guard=0;
     while(s.phase!=='finished' && ++guard<300){
@@ -520,13 +520,16 @@ function finishEisstock(ch,members){
         if(seat<0)break;
         const move=dogBotAction(s,seat);
         if(!move)throw Error('DOG_BOT_EXCHANGE_FAILED');
+        const prior=s;
         s=dogExchangeCard(s,seat,move.cardId);
+        if(s.round!==prior.round)onNewDeal(s.round);
       }else if((s.phase==='play'||s.phase==='seven')&&s.players[s.current]?.bot){
         const move=dogBotAction(s,s.current);
         if(!move)throw Error('DOG_BOT_MOVE_FAILED');
         const before=s,seat=s.current;
         s=dogTakeAction(s,seat,move);
         onVerifiedMove(before,s,move,seat);
+        if(s.round!==before.round)onNewDeal(s.round);
       }else break;
     }
     if(guard>=300)throw Error('DOG_BOT_LOOP');
@@ -542,9 +545,11 @@ function finishEisstock(ch,members){
     });
     room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
     // No host or room switch: the active seasonal event is automatic for DOG.
-    room.match.christmas=createDogChristmasMatch(village,christmasActive());
     room.phase='playing';
+    // Bots finish their opening exchanges before the first hidden map is
+    // generated, so both real players receive the same first card-deal map.
     advanceDogBots(room.match,(before,after,action,seat)=>countDogKnockouts(room.match,before,after,seat));
+    room.match.christmas=createDogChristmasMatch(village,christmasActive(),randomInt,room.match.dog.round);
   }
 
   function startGame(room,village=null){
@@ -617,7 +622,7 @@ function finishEisstock(ch,members){
         treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,revealHistory:room.match.treasureHistory||[],myReady:!!room.match.engine2.match.ready[identity.uid],engine:(()=>{const m=projectEngine2(room.match.engine2,identity.uid).match;return m?.phase==='countdown'&&clock()>=m.startedAt?{...m,phase:'playing'}:m;})()}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
-        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?{...room.match.christmas}:null,
+        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?publicDogChristmasMatch(room.match.christmas):null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
         playerCount:room.match.members.length,
@@ -1122,7 +1127,7 @@ function finishEisstock(ch,members){
       const seasonal=christmasActive();
       if(seasonal&&!match.christmas){
         const villageSnap=await tx.get(dogVillageFor(store));
-        match.christmas=createDogChristmasMatch(villageSnap.exists?villageSnap.data():null,true);
+        match.christmas=createDogChristmasMatch(villageSnap.exists?villageSnap.data():null,true,randomInt,match.dog.round);
       }
       // After the event ends, persisted snapshots remain for history only;
       // neither gifts nor end-of-match credits may be paid out.
@@ -1130,26 +1135,38 @@ function finishEisstock(ch,members){
       const initialGifts=event?.giftCount||0,initialBonus=event?.bonusGiftCount||0;
       const hadInn=event?.innCredited===true;
       let creditedTenths=0;
+      const vouchersEarned=[];
+      const newDeal=round=>{if(event?.enabled)refreshDogChristmasDeal(event,round);};
       const collect=(before,after,move,playerSeat)=>{
         // Every human and bot move is checked against authoritative board
         // transitions. No client-supplied knockout numbers are trusted.
         countDogKnockouts(match,before,after,playerSeat);
         if(!event?.enabled)return;
         creditedTenths+=claimDogChristmasGift(event,before,after,move,playerSeat);
+        const recipient=match.dogRoster.find(p=>p.seat===playerSeat);
+        // Only real participants get personal scratch vouchers. Bot traffic
+        // never creates a wallet or extra Firestore reads.
+        if(recipient&&!recipient.bot){
+          const tier=claimDogChristmasScratch(event,before,after,move,playerSeat);
+          if(tier)vouchersEarned.push({uid:recipient.uid,tier});
+        }
         creditedTenths+=finishDogChristmasMatch(event,after);
       };
       try{
         if(action.type==='exchange'){
+          const prior=match.dog;
           match.dog=dogExchangeCard(match.dog,seat,action.cardId);
+          if(prior.round!==match.dog.round)newDeal(match.dog.round);
         }else{
           // Cancellation is intentionally disallowed online until it is implemented atomically.
           const before=match.dog;
           match.dog=dogTakeAction(match.dog,seat,action);
           collect(before,match.dog,action,seat);
+          if(before.round!==match.dog.round)newDeal(match.dog.round);
         }
       }catch(e){throw error(409,e.message||'DOG_RULE_REJECTED');}
       match.dogCommands=[...(match.dogCommands||[]).slice(-90),actionId];
-      advanceDogBots(match,collect);
+      advanceDogBots(match,collect,newDeal);
       // On the single winning transaction, persist each human player's
       // counters once. Do not write to Firestore for normal move updates.
       let completedDogStats=[];
@@ -1165,6 +1182,18 @@ function finishEisstock(ch,members){
         }));
         match.dogCounters.recorded=true;
       }
+      // Read all earned-voucher wallets BEFORE the first transaction write.
+      // Group by human account so a 7-step turn still needs only one wallet
+      // document write. Retried actions cannot grant the same field twice.
+      const voucherUpdates=[];
+      for(const uid of [...new Set(vouchersEarned.map(x=>x.uid))]){
+        const ref=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
+        const snap=await tx.get(ref);
+        let wallet=snap.exists?snap.data():null;
+        for(const {tier} of vouchersEarned.filter(x=>x.uid===uid))
+          wallet=grantDogScratchVoucher(wallet,tier);
+        voucherUpdates.push({ref,wallet});
+      }
       if(event?.enabled){
         creditedTenths+=finishDogChristmasMatch(event,match.dog);
         const completedNow=!hadInn&&event.innCredited===true;
@@ -1175,6 +1204,7 @@ function finishEisstock(ch,members){
           tx.set(ref,wallet);
         }
       }
+      for(const item of voucherUpdates)tx.set(item.ref,item.wallet);
       for(const item of completedDogStats)tx.set(item.ref,item.data);
     });
     return {room};
