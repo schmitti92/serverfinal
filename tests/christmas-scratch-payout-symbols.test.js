@@ -73,12 +73,21 @@ test('purchases of all classes pay only the three published amounts per icon',()
     tier,commandId:'coin-symbol-'+tier+'-'+i,free:false
    });
    assert.ok(verifyScratchPrizes(result.board));
-   assert.equal(result.board.symbolVersion,3);
+   assert.equal(result.board.symbolVersion,tier==='premium'?4:3);
    for(const prize of result.winnings){
     if(prize.type==='unlock')assert.ok(SCRATCH_GIFT_SYMBOLS.includes(prize.symbol));
     else{
      const position=icons.indexOf(prize.symbol);
      assert.notEqual(position,-1);
+     // The new premium 20-symbol award is a FIXED 1,000 coins,
+     // independent of the three editable money-row denominations.
+     if(prize.milestone==='gold-20'){
+      assert.equal(tier,'premium');
+      assert.equal(prize.amount,1000);
+      assert.equal(prize.symbol,'🪙');
+      assert.equal(prize.x2,undefined);
+      continue;
+     }
      const expected=DOG_SCRATCH_COIN_AMOUNTS[tier][position];
      assert.equal(prize.x2?prize.baseAmount:prize.amount,expected);
      assert.equal(prize.amount,prize.x2?expected*2:expected);
