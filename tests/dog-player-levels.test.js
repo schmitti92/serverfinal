@@ -12,8 +12,10 @@ test('all ten levels are monotonic, with accurate XP progression',()=>{
   if(i<9)assert.equal(dogLevelFromXp(DOG_LEVEL_THRESHOLDS[i+1]-1).level,i+1);
  }
  assert.equal(dogLevelFromXp(999999999).level,10);
- assert.deepEqual(DOG_LEVEL_REWARDS.map(x=>x.configured),Array(10).fill(false));
- assert.ok(DOG_LEVEL_REWARDS.every(x=>x.reward===null));
+ assert.equal(DOG_LEVEL_REWARDS.length,10);
+ assert.equal(DOG_LEVEL_REWARDS[1].configured,true);
+ assert.deepEqual(DOG_LEVEL_REWARDS[1].reward,{type:'feature',id:'dog-design-studio',title:'Brettdesigner'});
+ assert.ok(DOG_LEVEL_REWARDS.filter(x=>x.level!==2).every(x=>!x.configured&&x.reward===null));
 });
 test('one completed DOG match gives 50 XP, victory bonus and capped knockouts',()=>{
  assert.equal(dogMatchXp(),50);
