@@ -1,26 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- SCRATCH_GRID_VARIANTS,SCRATCH_VARIANT_IDS,SCRATCH_ARCHIVED_VARIANT_IDS,
+ SCRATCH_GRID_VARIANTS,SCRATCH_VARIANT_IDS,SCRATCH_ARCHIVED_VARIANT_IDS,SCRATCH_VARIANT_IDS_BY_TIER,
  evaluateScratchGrid,generateScratchGrid,validateScratchGrid,
  attachScratchPrizes,verifyScratchPrizes
 } from '../dog/christmas-scratch-grid.js';
 
 const fixtures=Object.freeze([
- ['gifts',9],['snow',16],['stars',12],['elf',20],['reindeer',12],
+ ['gifts',9],['snow',16],['snow_collect',16],['stars',12],['elf',20],['reindeer',12],
  ['candy',6],['tree',15],['cookie',16],['diamond',9],['bells',20]
 ]);
 
-test('only six scratch games are offered; all ten old rules remain readable',()=>{
- assert.equal(SCRATCH_VARIANT_IDS.length,6);
- assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow','stars','elf','candy','tree']);
- assert.equal(new Set(SCRATCH_VARIANT_IDS).size,6);
- assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,10);
- assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,['reindeer','cookie','diamond','bells']);
+test('four active scratch games by tier; previous ten remain valid for old tickets',()=>{
+ assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','tree']);
+ assert.equal(new Set(SCRATCH_VARIANT_IDS).size,4);
+ assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,11);
+ assert.deepEqual(SCRATCH_VARIANT_IDS_BY_TIER,{
+  simple:['gifts','snow_collect'],
+  medium:['gifts','snow_collect'],
+  premium:['elf','tree']
+ });
+ assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,
+  ['snow','stars','reindeer','candy','cookie','diamond','bells']);
  for(const [id,count] of fixtures){
   assert.equal(SCRATCH_GRID_VARIANTS[id].cellCount,count);
   assert.ok(SCRATCH_GRID_VARIANTS[id].rule.length>15);
  }
+});
+test('new snow bingo wins with ANY three matching symbols, not lines, and ice blanks never count',()=>{
+ const cells=['❄️','🧊','🎁','🎄',
+  '🔔','❄️','🧊','⭐',
+  '🎄','🧊','❄️','🎁',
+  '🧊','⭐','🎄','🔔'];
+ const wins=evaluateScratchGrid({variantId:'snow_collect',cells});
+ assert.equal(wins.length,2); // three ❄️ and three 🎄, anywhere
+ assert.deepEqual(new Set(wins.map(w=>w.symbol)),new Set(['❄️','🎄']));
+ assert.ok(wins.every(w=>w.rule==='three-anywhere'&&w.indices.length===3));
+ const ice=Array.from({length:16},()=> '🧊');
+ assert.equal(evaluateScratchGrid({variantId:'snow_collect',cells:ice}).length,0);
+ const oldBoard=generateScratchGrid('snow',1);
+ assert.equal(evaluateScratchGrid(oldBoard).length,1,'legacy four-in-a-row rule remains intact');
 });
 for(const [id,cellCount] of fixtures){
  for(let expected=0;expected<=3;expected++){
