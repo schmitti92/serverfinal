@@ -8,6 +8,7 @@
 import {randomInt} from 'node:crypto';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
+import {generatePremium27} from './christmas-premium27.js';
 export const DOG_SCRATCH_COLLECTION='dog_christmas_scratch_wallet_v1';
 export const DOG_SCRATCH_START_COINS=1000;
 export const DOG_SCRATCH_TIERS=Object.freeze({
@@ -592,6 +593,12 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  const rareMainMultiplier=rareRoll===1&&
   (awardMain(winnings[0]?.prize?.category)||awardMain());
 
+ // On the 27-field premium ticket 24 actual symbols also satisfy the 20-symbol
+ // gold milestone. Every premium unlock must therefore carry a visible coin
+ // prize for the lower milestone; this never turns a dud ticket into a win.
+ if(tier==='premium'&&winnings.some(p=>p.type==='unlock')&&
+    !winnings.some(p=>p.type==='coins'))awardCoin();
+
  // Normal x2: 109/799 of all *other* winning tickets.
  // Since 1/1000 of tickets is reserved for rare cosmetic x2, total
  // is exactly 1/1000+(799/1000)*(109/799)=110/1000 = 11%.
@@ -621,9 +628,13 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  // Older medium-priced tickets still use normal game types until shop migration.
  const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
  const variantId=availableVariants[random(availableVariants.length)];
- const board=attachScratchPrizes(
-  generateScratchGrid(variantId,winnings.length,{draw:random}),winnings);
+ const board=variantId==='premium_27'?
+  generatePremium27(winnings,{draw:random}):
+  attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
+ // The row and milestone order is canonical. Keep the receipt's rewards in
+ // exactly that order so the displayed symbols and prize list always match.
+ if(variantId==='premium_27')winnings.splice(0,winnings.length,...board.wins.map(w=>w.prize));
 
  // Only after generating and verifying the exact visible card, grant awards.
  const stamped=now();
@@ -632,7 +643,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
  w.purchased++;
  if(free)w.daily=today;
- const first=winnings[0];
+ const first=baseCategory==='unlock'?
+   winnings.find(w=>w.type==='unlock')||winnings[0]:winnings[0];
  const result={
   type:first?.type||'none',tier,
   ...(first?.type==='coins'?{amount:first.amount}:{}),
