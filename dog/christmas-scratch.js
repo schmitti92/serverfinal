@@ -510,6 +510,17 @@ export const DOG_SCRATCH_MEDIUM_POOL=Object.freeze(DOG_SCRATCH_MEDIUM_IDS.map(id
 if([...DOG_SCRATCH_PREMIUM_POOL,...DOG_SCRATCH_MEDIUM_POOL].some(p=>!p)||
  new Set([...DOG_SCRATCH_PREMIUM_IDS,...DOG_SCRATCH_MEDIUM_IDS]).size!==33)throw Error('SCRATCH_POOL_INVALID');
 const capCoins=n=>Number.isSafeInteger(n)&&n>=0?Math.min(n,1000000000):0;
+const cleanScratchVouchers=raw=>Object.fromEntries(
+ ['simple','medium','premium'].map(tier=>[tier,
+  Number.isSafeInteger(raw?.[tier])&&raw[tier]>=0?Math.min(raw[tier],10000):0]));
+/** Call only after a server-verified hidden-field hit, within the move's transaction. */
+export function grantDogScratchVoucher(raw,tier){
+ if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
+ const wallet=normalizedScratchWallet(raw);
+ if(wallet.vouchers[tier]>=10000)throw Error('SCRATCH_VOUCHER_LIMIT');
+ wallet.vouchers[tier]++;
+ return wallet;
+}
 const safeClaims=raw=>{
  const data=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
  return Object.fromEntries(Object.entries(data).filter(([id,when])=>
@@ -582,6 +593,7 @@ export function normalizedScratchWallet(raw){
   recent,
   daily:typeof raw?.daily==='string'?raw.daily:'',
   purchased:Number.isSafeInteger(raw?.purchased)&&raw.purchased>=0?raw.purchased:0,
+  vouchers:cleanScratchVouchers(raw?.vouchers),
   progress:normalizeScratchProgress(raw?.progress,recent),
   lastResult:raw?.lastResult&&typeof raw.lastResult==='object'?raw.lastResult:null,
   version:1
@@ -599,7 +611,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
  const owned=[...new Set([...Object.keys(w.owned),...treeOwned(tree)])];
  const pools=Object.fromEntries(Object.keys(DOG_SCRATCH_TIERS).map(id=>
   [id,{total:tierPool(id).length,remaining:tierPool(id).filter(p=>!owned.includes(p.unlockId)).length}]));
- return {coins:w.coins,starterCoins:DOG_SCRATCH_START_COINS,
+ return {coins:w.coins,vouchers:{...w.vouchers},starterCoins:DOG_SCRATCH_START_COINS,
   dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   settings:normalizeScratchSettings(settings),
@@ -623,12 +635,15 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const w=normalizedScratchWallet(raw);
  const replay=w.recent.find(r=>r.commandId===commandId);
  if(replay)return {unchanged:true,wallet:w,result:replay.result,status:dogScratchStatus(w,tree,now(),liveSettings)};
+ const voucher=request?.voucher===true;
  const free=request?.free===true;
+ if(voucher&&free)throw Error('SCRATCH_INVALID_PAYMENT');
  const hostFree=free&&liveSettings.freeEnabled;
+ if(voucher&&w.vouchers[tier]<=0)throw Error('SCRATCH_NO_VOUCHER');
  if(free&&!hostFree&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
  const today=dogScratchToday(now());
  if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
- const price=free?0:DOG_SCRATCH_TIERS[tier].price;
+ const price=free||voucher?0:DOG_SCRATCH_TIERS[tier].price;
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
  const random=max=>{
   const value=draw(max);
@@ -761,6 +776,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const totalCoins=allWinnings.filter(x=>x.type==='coins').reduce((sum,x)=>sum+x.amount,0);
  w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
  w.purchased++;
+ if(voucher)w.vouchers[tier]--;
  if(free&&!hostFree)w.daily=today;
  const first=baseCategory==='unlock'?
    winnings.find(w=>w.type==='unlock')||winnings[0]:winnings[0];
@@ -775,7 +791,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   giftSymbolWeights:[...config.giftSymbolWeights],
   winnings:allWinnings,totalCoins,board,
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
-  multiplier,commandId,price,free,at:stamped,balance:w.coins
+  multiplier,commandId,price,free:free||voucher,voucher,at:stamped,balance:w.coins
  };
  // Count the server-issued ticket exactly once, in the same wallet transaction.
  // Replayed command IDs returned earlier and never reach this update.
