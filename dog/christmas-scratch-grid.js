@@ -33,7 +33,14 @@ export const SCRATCH_GRID_VARIANTS=Object.freeze({
  diamond:Object.freeze({id:'diamond',name:MODE_NAMES.diamond,rows:3,cols:3,cellCount:9,rule:'Drei Diamanten beliebig auf dem Feld; jede Dreiergruppe gewinnt'}),
  bells:Object.freeze({id:'bells',name:MODE_NAMES.bells,rows:4,cols:5,cellCount:20,rule:'Fünf gleiche Symbole waagerecht oder fünf Glocken im Diamantmuster'})
 });
-export const SCRATCH_VARIANT_IDS=Object.freeze(Object.keys(SCRATCH_GRID_VARIANTS));
+// Six distinct active games. Four earlier rule evaluators remain readable for
+// previously purchased tickets, but new tickets are never assigned to them.
+export const SCRATCH_VARIANT_IDS=Object.freeze([
+ 'gifts','snow','stars','elf','candy','tree'
+]);
+export const SCRATCH_ARCHIVED_VARIANT_IDS=Object.freeze(
+ Object.keys(SCRATCH_GRID_VARIANTS).filter(id=>!SCRATCH_VARIANT_IDS.includes(id))
+);
 const random=(max,draw)=>{
  if(!Number.isSafeInteger(max)||max<1)throw Error('SCRATCH_RANDOM_RANGE');
  const value=draw(max);
