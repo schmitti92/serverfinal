@@ -33,6 +33,11 @@ on:
       - 'tests/dog-christmas-scratch.test.js'
       - 'tests/dog-official-rules.test.js'
   workflow_dispatch:
+# Keep CI for the newest change instead of piling up redundant runs on main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
   official-rules:
     runs-on: ubuntu-latest
