@@ -421,7 +421,17 @@ export function claimDogTreeReward(profileDoc,village,requestedLevel,{draw=rando
  }
  const owned=new Set(Object.values(claims).map(p=>p.unlockId));
  const category=DOG_TREE_FIXED_CATEGORIES[requestedLevel-1];
- const candidates=DOG_TREE_PRIZE_POOL.filter(item=>!owned.has(item.unlockId)&&(!category||item.category===category));
+ let candidates=DOG_TREE_PRIZE_POOL.filter(item=>!owned.has(item.unlockId));
+ // After level four, draw the category first: avatars must not overwhelm
+ // rare card/board/frame/icon gifts simply due to their catalogue size.
+ if(category)candidates=candidates.filter(p=>p.category===category);
+ else {
+  const categories=[...new Set(candidates.map(p=>p.category))];
+  const categoryDraw=draw(categories.length);
+  if(!Number.isInteger(categoryDraw)||categoryDraw<0||categoryDraw>=categories.length)
+   throw Error('INVALID_PRIZE_DRAW');
+  candidates=candidates.filter(p=>p.category===categories[categoryDraw]);
+ }
  if(!candidates.length)throw Error('TREE_PRIZE_POOL_EXHAUSTED');
  const index=draw(candidates.length);
  if(!Number.isInteger(index)||index<0||index>=candidates.length)throw Error('INVALID_PRIZE_DRAW');
