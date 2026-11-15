@@ -146,6 +146,22 @@ test('invalid or player-supplied prizes, balances and command IDs are rejected',
  assert.equal(buyScratchTicket(null,null,{tier:'simple',commandId:'scratch-mystery-01',free:'yes'},
   {...args,draw:n=>0}).result.free,false,'invalid free flag must never grant a free ticket');
 });
+test('only one authoritative scratch API is installed (no legacy shadow routes)',()=>{
+ const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const hub=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ assert.doesNotMatch(server,/installChristmasScratchApi\s*\(/,
+  'the old handler would intercept /api/hub/scratch before the verified hub route');
+ assert.match(server,/installSharedLobby\(app,/);
+ for(const route of [
+  "app.get('/api/hub/scratch',authentication",
+  "app.post('/api/hub/scratch/settings',authentication",
+  "app.post('/api/hub/scratch/buy',authentication"
+ ])assert.ok(hub.includes(route),route);
+ const purchase=hub.slice(hub.indexOf("app.post('/api/hub/scratch/buy'"));
+ assert.match(purchase,/const treeRef=store\.collection\(DOG_TREE_REWARDS_COLLECTION\)/);
+ assert.match(purchase,/treeSnap\.exists\?treeSnap\.data\(\):null/);
+ assert.match(purchase,/if\(!christmasActive\(\)\)throw error\(409,'DOG_CHRISTMAS_EVENT_ENDED'\)/);
+});
 test('server scratch actions require auth and commit exactly one account document',()=>{
  const main=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
  assert.match(main,/app\.get\('\/api\/hub\/scratch',authentication/);
