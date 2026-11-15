@@ -667,7 +667,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
  // The visual card supports three canonical matches. Host caps above three
  // permit extra coin payouts tied to genuine matching symbols, not fake rows.
- const visiblePrizeLimit=Math.min(config.maxPrizes,3);
+ const visiblePrizeLimit=variantId==='premium_27'?config.maxPrizes:Math.min(config.maxPrizes,3);
  const baseCategory=categoryRoll<config.weights.none?'none':
   categoryRoll<config.weights.none+config.weights.coins?'coins':'unlock';
  // Premium money rows are independent of the 20-symbol threshold.
@@ -682,6 +682,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
  const remaining=tierPool(tier).filter(p=>!owned.has(p.unlockId));
  const winnings=[],newUnlocks=[];
+ let doubleMain=false,rareMainMultiplier=false,multiplier=1;
  if(premiumMilestone)winnings.push({
   type:'coins',symbol:'🪙',amount:PREMIUM_20_MILESTONE_COINS,milestone:'gold-20'
  });
@@ -713,6 +714,45 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   winnings.push({type:'coins',amount:config.coinAmounts[index],symbol:SCRATCH_PAYOUT_ORDER[index]});
   return true;
  };
+ if(variantId==='premium_27'){
+  // Every NEW Premiumlos pays FOUR real horizontal money triples.
+  // All three denominations occur at least once; a weighted fourth
+  // can repeat any money icon. Three matching glyphs on DIFFERENT rows
+  // remain separate prizes, credited exactly once each.
+  const fourth=pickWeightedScratchSymbol(config.moneySymbolWeights,random);
+  if(fourth<0)throw Error('SCRATCH_PREMIUM_MONEY_ODDS_INVALID');
+  const moneyRows=[0,1,2,fourth];
+  for(let i=moneyRows.length-1;i>0;i--){
+   const j=random(i+1);[moneyRows[i],moneyRows[j]]=[moneyRows[j],moneyRows[i]];
+  }
+  for(const i of moneyRows)winnings.push({
+   type:'coins',symbol:SCRATCH_PAYOUT_ORDER[i],amount:config.coinAmounts[i]
+  });
+  // The 20-field milestone remains an independent 30% lottery
+  // worth exactly 1,000 coins, not an extra money row.
+  if(baseCategory==='unlock'&&awardMain()){
+   const gift=winnings.find(w=>w.type==='unlock');
+   if(gift)gift.milestone='premium-24';
+  }
+  const mainGift=winnings.find(w=>w.type==='unlock');
+  if(mainGift&&remaining.length>=2&&config.maxPrizes>=7&&config.weights.unlock>=2){
+   const rareRoll=random(config.weights.unlock);
+   if(rareRoll===0)doubleMain=awardMain();
+   else if(rareRoll===1)
+    rareMainMultiplier=Boolean(awardMain(mainGift.prize?.category)||awardMain());
+  }
+  // No dummy matching rows are created. The normal ×2 only applies to
+  // the actual money-row amounts; the 1,000-coin milestone stays fixed.
+  const rarePossible=remaining.length>=2;
+  const ordinaryRoll=baseCategory!=='none'&&!rareMainMultiplier&&
+   (rarePossible?random(799)<109:random(800)<110);
+  if(ordinaryRoll)for(const row of winnings){
+   if(row.type==='coins'&&!row.milestone){
+    row.baseAmount=row.amount;row.amount*=2;row.x2=true;
+   }
+  }
+  multiplier=(rareMainMultiplier||ordinaryRoll)?2:1;
+ }else{
  if(baseCategory==='coins')awardCoin();
  if(baseCategory==='unlock'){
   // The 24-symbol premium gift remains rare and always includes the 1,000
@@ -733,8 +773,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const rareEligible=baseCategory==='unlock'&&remaining.length>=2&&
   visiblePrizeLimit>=3&&config.weights.unlock>=2&&Boolean(mainUnlock);
  const rareRoll=rareEligible?random(config.weights.unlock):-1;
- const doubleMain=rareRoll===0&&awardMain();
- const rareMainMultiplier=rareRoll===1&&
+ doubleMain=rareRoll===0&&awardMain();
+ rareMainMultiplier=rareRoll===1&&
   (awardMain(mainUnlock?.prize?.category)||awardMain());
 
  // The independent premium milestone was already assigned above, before
@@ -752,7 +792,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const canMultiplyMoney=()=>winnings.some(x=>x.type==='coins'&&x.milestone!=='gold-20');
  if(ordinaryRoll&&!canMultiplyMoney())awardCoin();
  const ordinaryMultiplier=ordinaryRoll&&canMultiplyMoney();
- const multiplier=(rareMainMultiplier||ordinaryMultiplier)?2:1;
+ multiplier=(rareMainMultiplier||ordinaryMultiplier)?2:1;
  if(ordinaryMultiplier){
   for(const item of winnings)if(item.type==='coins'&&item.milestone!=='gold-20'){
    item.baseAmount=item.amount;item.amount*=2;item.x2=true;
@@ -767,10 +807,11 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   if(winnings.length<visiblePrizeLimit&&random(100)<20)awardCoin();
  }
 
+ }
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
-  generatePremium27(winnings,{draw:random,version:4}):
+  generatePremium27(winnings,{draw:random,version:5}):
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
    prizeSymbols:winnings.map(w=>w.symbol)}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
@@ -782,7 +823,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // to the host's chosen total of 10. Each bonus cites a verified match.
  // The three original coin symbols remain the money denominations.
  const bonusWinnings=[];
- if(config.maxPrizes>3&&board.wins.length>0){
+ if(config.maxPrizes>3&&board.wins.length>0&&
+    (variantId!=='premium_27'||baseCategory!=='none')){
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
    const sourceWin=random(board.wins.length);
