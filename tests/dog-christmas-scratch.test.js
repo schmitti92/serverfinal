@@ -37,7 +37,8 @@ test('three ticket costs and exact non-overlapping holiday collections',()=>{
 test('each of the 1,000 weighted draw positions has the correct ticket category',()=>{
  for(const [tier,id] of [['simple','gifts'],['medium','elf'],['premium','premium_27']]){
   const weights=DOG_SCRATCH_DEFAULT_SETTINGS.variants[id].weights;
-  const expected={none:weights.none,coins:weights.coins,unlock:weights.unlock};
+  const expected=tier==='premium'?{none:0,coins:weights.none+weights.coins,unlock:weights.unlock}:
+   {none:weights.none,coins:weights.coins,unlock:weights.unlock};
   const count={none:0,coins:0,unlock:0};
   for(let roll=0;roll<1000;roll++){
    const x=receipt(tier,tier+'-'+roll,roll);
@@ -47,9 +48,14 @@ test('each of the 1,000 weighted draw positions has the correct ticket category'
    assert.ok(verifyScratchPrizes(x.result.board),'all granted symbols must match the visible board');
    assert.equal(x.result.totalCoins,x.result.winnings.filter(w=>w.type==='coins').reduce((sum,w)=>sum+w.amount,0));
    if(roll<weights.none){
-    assert.equal(x.result.type,'none');
-    assert.equal(x.result.totalCoins,0);
-    assert.equal(x.result.winnings.length,0);
+    if(tier==='premium'){
+     assert.equal(x.result.type,'coins');
+     assert.equal(x.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins').length,4);
+    }else{
+     assert.equal(x.result.type,'none');
+     assert.equal(x.result.totalCoins,0);
+     assert.equal(x.result.winnings.length,0);
+    }
    }else if(roll<weights.none+weights.coins){
     assert.equal(x.result.type,'coins');
     assert.ok(x.result.amount>0);
