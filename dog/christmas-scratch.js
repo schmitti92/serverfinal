@@ -6,6 +6,7 @@
  * Daily: one free simple ticket. New players start with 1000 event coins.
  */
 import {randomInt} from 'node:crypto';
+import {SCRATCH_PAYOUT_ORDER} from './christmas-scratch-symbols.js';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
 import {generatePremium27} from './christmas-premium27.js';
@@ -15,6 +16,11 @@ export const DOG_SCRATCH_TIERS=Object.freeze({
  simple:Object.freeze({label:'Einfach',price:200,icon:'🟤',coinMax:100,weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30}),
  medium:Object.freeze({label:'Mittel',price:500,icon:'🔵',coinMax:800,weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40}),
  premium:Object.freeze({label:'Premium',price:1000,icon:'🟡',coinMax:2000,weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50})
+});
+export const DOG_SCRATCH_COIN_AMOUNTS=Object.freeze({
+ simple:Object.freeze([10,40,100]),
+ medium:Object.freeze([100,300,800]),
+ premium:Object.freeze([200,800,2000])
 });
 export const DOG_SCRATCH_PREMIUM_IDS=Object.freeze([
  "christmas2026:activeicon:01",
@@ -577,10 +583,17 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
   const prize=choices[random(choices.length)];
   owned.add(prize.unlockId);
   newUnlocks.push(prize.unlockId);
-  winnings.push({type:'unlock',prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
+  winnings.push({type:'unlock',symbol:'🎁',prize:{unlockId:prize.unlockId,category:prize.category,name:prize.name,icon:prize.icon}});
   return true;
  };
- const awardCoin=()=>winnings.push({type:'coins',amount:1+random(config.coinMax)});
+ const awardCoin=()=>{
+  const unused=DOG_SCRATCH_COIN_AMOUNTS[tier].map((amount,i)=>({amount,symbol:SCRATCH_PAYOUT_ORDER[i]}))
+   .filter(option=>!winnings.some(w=>w.type==='coins'&&w.symbol===option.symbol));
+  if(!unused.length)return false;
+  const option=unused[random(unused.length)];
+  winnings.push({type:'coins',...option});
+  return true;
+ };
  if(baseCategory==='coins')awardCoin();
  if(baseCategory==='unlock'&&!awardMain())awardCoin(); // sold-out pool: preserve the 80% win probability
 
@@ -630,7 +643,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now}=
  const variantId=availableVariants[random(availableVariants.length)];
  const board=variantId==='premium_27'?
   generatePremium27(winnings,{draw:random}):
-  attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random}),winnings);
+  attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
+   prizeSymbols:winnings.map(w=>w.symbol)}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
  // The row and milestone order is canonical. Keep the receipt's rewards in
  // exactly that order so the displayed symbols and prize list always match.
