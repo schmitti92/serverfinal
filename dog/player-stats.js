@@ -1,3 +1,4 @@
+import {creditDogMatchXp} from './player-levels.js';
 // Personal DOG Classic lifetime statistics. All counters are server-owned.
 // Moves are collected in the existing room document and committed to personal
 // profiles once per finished match; no additional Firestore writes per move.
@@ -33,7 +34,10 @@ export function dogCompletedPlayerStats(raw,uid,displayName,seat,counters,winner
  const old=dogPlayerStats(raw,uid);
  const v=counters?.seats?.[seat]||{};
  const win=winner===seat%2?1:0;
- return {...old,name:String(displayName||'Spieler').slice(0,48),
+ // XP shares this verified end-of-match document write; no per-move write.
+ const {credited:_credited,...xp}=creditDogMatchXp(raw,{
+  won:win===1,knockedOut:nonnegative(v.knockedOut),matchId,now});
+ return {...xp,...old,name:String(displayName||'Spieler').slice(0,48),
   played:old.played+1,wins:old.wins+win,
   knockedOut:old.knockedOut+nonnegative(v.knockedOut),
   wasKnockedOut:old.wasKnockedOut+nonnegative(v.wasKnockedOut),
