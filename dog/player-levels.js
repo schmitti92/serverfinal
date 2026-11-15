@@ -1,13 +1,15 @@
 /**
  * Personal DOG player progression (levels 1–10).
  * Progress is awarded only on an authoritative, completed online DOG match.
- * No rewards are granted yet: reward slots are intentionally unconfigured.
+ * Level 2 opens the DOG Design-Studio; other reward slots remain unconfigured.
  */
 export const DOG_LEVEL_MAX=10;
 export const DOG_LEVEL_THRESHOLDS=Object.freeze([0,100,250,450,700,1000,1350,1750,2200,2700]);
 export const DOG_LEVEL_XP=Object.freeze({complete:50,win:50,knockout:10,maxCountedKnockouts:5});
 export const DOG_LEVEL_REWARDS=Object.freeze(Array.from({length:DOG_LEVEL_MAX},(_,i)=>
- Object.freeze({level:i+1,id:'dog-player-level-'+(i+1),configured:false,reward:null})));
+ Object.freeze({level:i+1,id:'dog-player-level-'+(i+1),
+  configured:i===1,
+  reward:i===1?Object.freeze({type:'feature',id:'dog-design-studio',title:'Brettdesigner'}):null})));
 const safeXp=value=>Number.isSafeInteger(value)&&value>=0?Math.min(value,1000000000):0;
 export function dogLevelFromXp(totalXp){
  const xp=safeXp(totalXp);
