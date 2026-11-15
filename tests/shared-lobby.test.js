@@ -1501,7 +1501,7 @@ test('DOG emojis use one authenticated hub stream, reject locked or spammed IDs,
 });
 
 
-test('DOG Christmas event: host activates it, upgrades deduct shared lights once, and levels survive new rooms',async()=>{
+test('DOG Christmas event is automatically active; upgrades deduct shared lights once and survive new rooms',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
  const path='/api/hub/rooms/'+code+'/dog';
  assert.equal((await h.api('GET',path+'/village','bob')).status,403,'outsiders cannot view another village');
@@ -1512,11 +1512,11 @@ test('DOG Christmas event: host activates it, upgrades deduct shared lights once
  assert.equal((await h.api('POST',path+'/village/upgrade','alice',{building:'tower',expectedLevel:1,commandId:'christmas-buy-denied-01'})).status,409);
  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
- assert.equal((await h.api('POST',path+'/christmas-mode','bob',{enabled:true})).status,403);
- assert.equal((await h.api('POST',path+'/christmas-mode','alice',{enabled:true})).status,200);
+ // No client, including the host, may turn the event on or off.
+ await assert.rejects(h.api('POST',path+'/christmas-mode','alice',{enabled:false}),/NO_ROUTE/);
+ await assert.rejects(h.api('POST',path+'/christmas-mode','bob',{enabled:true}),/NO_ROUTE/);
  view=await h.api('GET',path+'/village','alice');
  assert.equal(view.enabled,true);
- assert.equal(view.canSetMode,true);
  h.docs.set('dog_christmas_villages_v1/user_alice123',{hostUid:'user_alice123',lightsTenths:1700,levels:{tower:1,workshop:1,bakery:1,inn:1}});
  const buy={building:'tower',expectedLevel:1,commandId:'christmas-buy-safe-001'};
  const first=await h.api('POST',path+'/village/upgrade','alice',buy);
@@ -1540,10 +1540,50 @@ test('DOG Christmas event: host activates it, upgrades deduct shared lights once
  assert.equal(other.village.lightsTenths,1550);
 });
 
+test('DOG Christmas event ends centrally without deleting levels or allowing new bonus payouts',async()=>{
+ const h=harness({christmasEventActive:()=>false}),code=(await h.api('POST','/api/hub/rooms')).room.code,base='/api/hub/rooms/'+code;
+ h.docs.set('dog_christmas_villages_v1/user_alice123',{hostUid:'user_alice123',lightsTenths:1230,levels:{tower:3,workshop:2,bakery:1,inn:4}});
+ await h.api('POST',base+'/select','alice',{game:'dog'});
+ const status=await h.api('GET',base+'/dog/village','alice');
+ assert.equal(status.enabled,false);
+ assert.equal(status.canUpgrade,false);
+ assert.equal(status.village.levels.tower,3);
+ assert.equal(status.village.lightsTenths,1230);
+ const buy=await h.api('POST',base+'/dog/village/upgrade','alice',{building:'tower',expectedLevel:3,commandId:'event-ended-buy-00001'});
+ assert.equal(buy.status,409);
+ assert.equal(buy.error,'DOG_CHRISTMAS_EVENT_ENDED');
+ const started=await h.api('POST',base+'/ready','alice',{ready:true});
+ assert.equal(started.status,200);
+ assert.equal(started.room.match.christmas,null);
+ assert.equal(started.room.settings.christmasActive,false);
+ assert.equal((await h.api('GET',base+'/dog/village','alice')).village.lightsTenths,1230);
+});
+
+test('DOG previously unactivated live rooms automatically join the event on their next legal move',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code,base='/api/hub/rooms/'+code;
+ await h.api('POST',base+'/select','alice',{game:'dog'});
+ const started=await h.api('POST',base+'/ready','alice',{ready:true});
+ assert.equal(started.status,200);
+ const room=h.docs.get('spielesammlung_hub_v1/'+code);
+ room.match.christmas=null; // Existing game from the older opt-in implementation.
+ room.match.dog.phase='play';
+ room.match.dog.current=0;
+ room.match.dog.hands=[[{id:999,type:'4'}],[],[],[]];
+ room.match.dog.exchanges=[null,null,null,null];
+ room.match.dog.pieces[0].place='track';room.match.dog.pieces[0].pos=63;
+ h.docs.set('spielesammlung_hub_v1/'+code,room);
+ const result=await h.api('POST',base+'/dog/action','alice',{matchId:room.match.id,
+   expectedRevision:room.match.dog.revision,actionId:'event-retroactive-001',
+   action:{type:'move',cardId:999,as:'4',pieceId:0,steps:4,viaGoal:false}});
+ assert.equal(result.status,200,JSON.stringify(result));
+ assert.equal(result.room.match.christmas.enabled,true);
+ assert.ok(result.room.match.christmas.claimedFields.includes(3));
+ assert.equal((await h.api('GET',base+'/dog/village','alice')).village.giftsCollected,1);
+});
+
 test('DOG Christmas event: a verified landing credits lights, replay cannot duplicate reward',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code,base='/api/hub/rooms/'+code;
  await h.api('POST',base+'/select','alice',{game:'dog'});
- await h.api('POST',base+'/dog/christmas-mode','alice',{enabled:true});
  const start=await h.api('POST',base+'/ready','alice',{ready:true});
  assert.equal(start.status,200);
  assert.equal(start.room.match.christmas.giftFields.length,10);
