@@ -78,6 +78,23 @@ test('illegal actions are rejected rather than accepted',()=>{
  const s=card(ready(),0,'5');
  assert.throws(()=>takeAction(s,0,{type:'move',cardId:999,as:'5',pieceId:0,steps:90}),/ILLEGAL_ACTION/);
 });
+test('the online discard pile exposes the last played card without exposing hidden cards',()=>{
+ let s=card(ready(),0,'4');
+ s.pieces[0].place='track';s.pieces[0].pos=0;
+ const move=legalActions(s,0).find(a=>a.type==='move'&&a.pieceId===0&&a.steps===-4);
+ assert.ok(move);
+ s=takeAction(s,0,move);
+ assert.deepEqual(s.lastPlayedCard,{type:'4',seat:0});
+ const member=publicState(s,0);
+ const spectator=publicState(s,null);
+ assert.deepEqual(member.lastPlayedCard,{type:'4',seat:0});
+ assert.deepEqual(spectator.lastPlayedCard,{type:'4',seat:0});
+ assert.equal(member.discardCount>=1,true);
+ assert.equal(spectator.deck,undefined);
+ assert.equal(spectator.discard,undefined);
+ assert.ok(spectator.hands.every(hand=>!Array.isArray(hand)));
+});
+
 test('computer-vs-computer matches terminate with a team winner',()=>{
  for(let gameNo=0;gameNo<8;gameNo++){
   let s=createGame({bots:[true,true,true,true]});
