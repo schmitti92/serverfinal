@@ -793,6 +793,22 @@ function finishEisstock(ch,members){
     try{settings=validateScratchSettings(req.body?.settings);}
     catch(e){throw error(400,e.message);}
     const ref=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    // Preserve new per-symbol odds and amounts when an older, cached host
+    // editor saves only the earlier fields. Never reset another host's values
+    // just because their browser has not fetched the new UI yet.
+    const submitted=req.body?.settings?.variants||{};
+    const preservedFields=['coinAmounts','moneySymbolWeights','giftSymbolWeights'];
+    if(Object.keys(settings.variants).some(id=>
+      preservedFields.some(field=>submitted[id]?.[field]===undefined))){
+      const prior=await ref.get();
+      const saved=normalizeScratchSettings(prior.exists?prior.data():null);
+      for(const id of Object.keys(settings.variants)){
+       for(const field of preservedFields){
+        if(submitted[id]?.[field]===undefined)
+         settings.variants[id][field]=[...saved.variants[id][field]];
+       }
+      }
+    }
     await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
     return {settings};
   }));
