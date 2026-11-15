@@ -137,6 +137,67 @@ function generatePremium27V3(prizes,{draw,maxAttempts}){
  throw Error('PREMIUM27_SYMBOL_BOARD_GENERATION_FAILED');
 }
 
+/**
+ * Version 4: money may win in ANY real three-symbol row. The fixed
+ * 20-symbol bonus is an INDEPENDENT 1,000-coin prize, never a substituted
+ * row payout. A ticket without that bonus has fewer than 20 real symbols.
+ *
+ * All prizes are issued before the grid is built; no client-side award,
+ * and no change to historic v1/v2/v3 receipts.
+ */
+function generatePremium27V4(prizes,{draw,maxAttempts}){
+ const gold=prizes.filter(p=>p.milestone==='gold-20');
+ const premium=prizes.filter(p=>p.milestone==='premium-24');
+ if(gold.length>1||premium.length>1||
+   gold.some(p=>p.type!=='coins'||p.amount!==1000||p.symbol!=='🪙')||
+   premium.some(p=>p.type!=='unlock'||!SCRATCH_GIFT_SYMBOLS.includes(p.symbol))||
+   (premium.length>0&&gold.length===0)||
+   prizes.some(p=>p.type==='coins'?!P27_MONEY.includes(p.symbol):
+    !SCRATCH_GIFT_SYMBOLS.includes(p.symbol)))
+  throw Error('PREMIUM27_PRIZE_SYMBOL_INVALID');
+ const milestoneGold=gold[0]||null,milestonePremium=premium[0]||null;
+ const rowPrizes=prizes.filter(p=>p!==milestoneGold&&p!==milestonePremium);
+ const moneyRows=rowPrizes.filter(p=>p.type==='coins');
+ const giftRows=rowPrizes.filter(p=>p.type==='unlock');
+ if(new Set(moneyRows.map(p=>p.symbol)).size!==moneyRows.length||
+   new Set([...(milestonePremium?[milestonePremium.symbol]:[]),...giftRows.map(p=>p.symbol)]).size!==
+    giftRows.length+(milestonePremium?1:0))
+  throw Error('PREMIUM27_ROW_SYMBOL_DUPLICATE');
+ const fixedRows=[...(milestonePremium?[milestonePremium]:[]),...rowPrizes];
+ const targetReal=milestonePremium?24+choose(4,draw):
+  milestoneGold?20+choose(4,draw):13+choose(7,draw);
+ const filler=[...PREMIUM_27_SYMBOLS.filter(s=>s!=='🎁'),...SCRATCH_GIFT_SYMBOLS];
+ for(let attempt=0;attempt<maxAttempts;attempt++){
+  const cells=Array(27).fill(PREMIUM_27_DUD);
+  const rows=randomOrder(Array.from({length:9},(_,r)=>r),draw).slice(0,fixedRows.length);
+  fixedRows.forEach((prize,i)=>{
+   const offset=3*rows[i];
+   for(let c=0;c<3;c++)cells[offset+c]=prize.symbol;
+  });
+  const empty=randomOrder(cells.flatMap((s,i)=>s===PREMIUM_27_DUD?[i]:[]),draw);
+  const remaining=targetReal-fixedRows.length*3;
+  if(remaining<0)throw Error('PREMIUM27_PRIZE_CAPACITY');
+  for(let i=0;i<remaining;i++)cells[empty[i]]=filler[choose(filler.length,draw)];
+  const board={variantId:PREMIUM_27_ID,symbolVersion:4,
+   milestoneSymbols:{gold:milestoneGold?.symbol||null,premium:milestonePremium?.symbol||null},cells};
+  const wins=evaluatePremium27V3(board);
+  if(wins.length!==prizes.length)continue;
+  const used=new Set();
+  const bound=wins.map(w=>{
+   const index=prizes.findIndex((p,i)=>!used.has(i)&&p.symbol===w.symbol&&
+    (w.rule==='gold-20'?p===milestoneGold:
+     w.rule==='premium-24'?p===milestonePremium:
+     p!==milestoneGold&&p!==milestonePremium));
+   if(index<0)return null;
+   used.add(index);
+   return {...w,prize:prizes[index]};
+  });
+  if(bound.some(w=>!w)||used.size!==prizes.length)continue;
+  return {...board,wins:bound};
+ }
+ throw Error('PREMIUM27_SYMBOL_BOARD_GENERATION_FAILED');
+}
+
 function generatePremium27V2(prizes,{draw,maxAttempts}){
  const money=prizes.filter(p=>p.type==='coins'),unlocks=prizes.filter(p=>p.type==='unlock');
  if(prizes.some(p=>p.type==='coins'?!P27_MONEY.includes(p.symbol):p.symbol!=='🎁')||
@@ -175,6 +236,7 @@ function generatePremium27V2(prizes,{draw,maxAttempts}){
 export function evaluatePremium27(board){
  if(board?.variantId!==PREMIUM_27_ID||!Array.isArray(board.cells)||board.cells.length!==27)
   throw Error('PREMIUM27_GRID_INVALID');
+ if(board.symbolVersion===4)return evaluatePremium27V3(board);
  if(board.symbolVersion===3)return evaluatePremium27V3(board);
  if(board.symbolVersion===2)return evaluatePremium27V2(board);
  if(board.symbolVersion!==undefined)throw Error('PREMIUM27_VERSION_INVALID');
@@ -191,11 +253,12 @@ export function evaluatePremium27(board){
  }
  return wins;
 }
-export function generatePremium27(prizes,{draw=randomInt,maxAttempts=16000}={}){
+export function generatePremium27(prizes,{draw=randomInt,maxAttempts=16000,version=null}={}){
  if(!Array.isArray(prizes)||prizes.length>3||
   prizes.some(p=>!p||!['coins','unlock'].includes(p.type))||
   !Number.isInteger(maxAttempts)||maxAttempts<1||typeof draw!=='function')
   throw Error('PREMIUM27_PRIZES_INVALID');
+ if(version===4)return generatePremium27V4(prizes,{draw,maxAttempts});
  if(prizes.every(p=>typeof p.symbol==='string'))
   return generatePremium27V3(prizes,{draw,maxAttempts});
  const coins=prizes.filter(p=>p.type==='coins');
@@ -241,10 +304,14 @@ export function verifyPremium27(board){
    if(JSON.stringify(w.indices)!==JSON.stringify(exact[i].indices)||
      w.symbol!==exact[i].symbol||w.rule!==exact[i].rule)return false;
    const p=w.prize;
-   if([2,3].includes(board.symbolVersion)&&
+   if([2,3,4].includes(board.symbolVersion)&&
     (p?.symbol!==w.symbol||
      (p?.type==='coins'&&!P27_MONEY.includes(p.symbol))||
      (p?.type==='unlock'&&!(board.symbolVersion===2?p.symbol==='🎁':SCRATCH_GIFT_SYMBOLS.includes(p.symbol)))))return false;
+   if(board.symbolVersion===4&&
+     ((w.rule==='gold-20'&&(p.amount!==1000||p.milestone!=='gold-20'))||
+      (w.rule==='premium-24'&&p.milestone!=='premium-24')||
+      (w.rule==='row-3'&&p.milestone)))return false;
    if(w.rule==='gold-20'&&p?.type!=='coins')return false;
    if(w.rule==='premium-24'&&p?.type!=='unlock')return false;
    if(p?.type==='coins')return Number.isSafeInteger(p.amount)&&p.amount>0;
