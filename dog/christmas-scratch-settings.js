@@ -23,7 +23,7 @@ function validVariant(config,id){
   ['none','coins','unlock'].every(key=>integer(w[key],0,1000))&&
   w.none+w.coins+w.unlock===1000&&
   integer(config.extraCoinChance,0,100)&&
-  integer(config.maxPrizes,id==='premium_27'?2:1,3);
+  integer(config.maxPrizes,1,10);
 }
 /** Read stored settings defensively, retaining defaults for older documents. */
 export function normalizeScratchSettings(raw){
