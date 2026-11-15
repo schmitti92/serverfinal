@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- DOG_TOWER_FIELDS,DOG_GIFT_FIELD_ORDER,DOG_SCRATCH_FIELDS_PER_DEAL,DOG_FIELD_SCRATCH_TIER_ODDS,drawHiddenDogChristmasFields,drawDogScratchTier,refreshDogChristmasDeal,publicDogChristmasMatch,claimDogChristmasScratch,isDogChristmasEventActive,normalizedDogVillage,dogVillagePublic,
+ DOG_TOWER_FIELDS,DOG_GIFT_FIELD_ORDER,DOG_SCRATCH_FIELDS_PER_DEAL,DOG_SCRATCH_FIELDS_PER_INN_LEVEL,dogInnScratchFieldCount,DOG_FIELD_SCRATCH_TIER_ODDS,drawHiddenDogChristmasFields,drawDogScratchTier,refreshDogChristmasDeal,publicDogChristmasMatch,claimDogChristmasScratch,isDogChristmasEventActive,normalizedDogVillage,dogVillagePublic,
  buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,
  finishDogChristmasMatch,creditDogVillage
 } from '../dog/christmas-village.js';
@@ -111,6 +111,37 @@ test('every card deal has 10–20 hidden random gift spaces and eight separate s
   assert.equal(m.roundGiftCollected,0);
   assert.equal(m.roundScratchCollected,0);
  }
+});
+test('every Friedensherberge upgrade spawns exactly two more hidden scratch spots per deal',()=>{
+ assert.equal(DOG_SCRATCH_FIELDS_PER_INN_LEVEL,2);
+ let village=normalizedDogVillage({lightsTenths:3000},host);
+ for(let innLevel=1;innLevel<=5;innLevel++){
+  const expected=8+2*(innLevel-1);
+  assert.equal(dogInnScratchFieldCount(innLevel),expected);
+  assert.equal(dogVillagePublic(village,host).bonus.innScratchFields,expected);
+  let seed=91+innLevel;
+  const draw=max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor(seed/4294967296*max)};
+  const match=createDogChristmasMatch(village,true,draw);
+  assert.equal(match.scratchFields.length,expected);
+  assert.equal(publicDogChristmasMatch(match).scratchFieldCount,expected);
+  assert.equal(match.giftFields.length,10);
+  assert.equal(new Set([...match.giftFields,...match.scratchFields]).size,10+expected);
+  const oldPositions=JSON.stringify(match.scratchFields);
+  assert.equal(refreshDogChristmasDeal(match,1,draw),false,'same deal must not spawn again');
+  assert.equal(JSON.stringify(match.scratchFields),oldPositions);
+  assert.equal(refreshDogChristmasDeal(match,2,draw),true,'new cards reshuffle all hidden spaces');
+  assert.equal(match.scratchFields.length,expected);
+  assert.equal(new Set([...match.giftFields,...match.scratchFields]).size,10+expected);
+  if(innLevel<5){
+   const id='inn-level-'+innLevel+'-upgrade';
+   const bought=buyDogVillageUpgrade(village,host,'inn',innLevel,id);
+   assert.equal(bought.village.levels.inn,innLevel+1);
+   const repeated=buyDogVillageUpgrade(bought.village,host,'inn',innLevel,id);
+   assert.equal(repeated.unchanged,true,'retry does not upgrade twice');
+   village=bought.village;
+  }
+ }
+ assert.throws(()=>dogInnScratchFieldCount(6),/INVALID_INN_LEVEL/);
 });
 test('verified scratch landing is single-use per deal and gives exact 88/10/2 tiers',()=>{
  let seed=9876;
