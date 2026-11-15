@@ -11,6 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
+import {DOG_VILLAGE_COLLECTION,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage} from './dog/christmas-village.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -66,6 +67,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
+  const dogVillageFor=(store,hostUid)=>store.collection(DOG_VILLAGE_COLLECTION).doc(hostUid);
   const validCode=s=>typeof s==='string'&&CODE_PATTERN.test(s.toUpperCase())?s.toUpperCase():null;
   async function authentication(req,res,next){
     if(!db())return res.status(503).json({ok:false,error:'DATABASE_UNAVAILABLE'});
@@ -489,7 +491,7 @@ function finishEisstock(ch,members){
       applyKniffel(state,uid,choice);
     }
   }
-  function advanceDogBots(match){
+  function advanceDogBots(match,onVerifiedMove=()=>{}){
     let s=match.dog;
     let guard=0;
     while(s.phase!=='finished' && ++guard<300){
@@ -502,13 +504,15 @@ function finishEisstock(ch,members){
       }else if((s.phase==='play'||s.phase==='seven')&&s.players[s.current]?.bot){
         const move=dogBotAction(s,s.current);
         if(!move)throw Error('DOG_BOT_MOVE_FAILED');
-        s=dogTakeAction(s,s.current,move);
+        const before=s,seat=s.current;
+        s=dogTakeAction(s,seat,move);
+        onVerifiedMove(before,s,move,seat);
       }else break;
     }
     if(guard>=300)throw Error('DOG_BOT_LOOP');
     match.dog=s;
   }
-  function startDog(room){
+  function startDog(room,village=null){
     if(room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
     const players=activeSeats(room);
     if(players.length<1||players.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -517,11 +521,12 @@ function finishEisstock(ch,members){
       return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
     });
     room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
+    room.match.christmas=createDogChristmasMatch(village,room.settings?.dog?.christmasEnabled===true);
     room.phase='playing';
     advanceDogBots(room.match);
   }
 
-  function startGame(room){
+  function startGame(room,village=null){
     if(room.game==='drei-schatzkammern'){
       const seats=activeSeats(room);
       let engine=createEngine2Room({roomId:room.code,hostId:room.hostUid,hostName:seats.find(p=>p.uid===room.hostUid)?.name||'Host',now:clock()});
@@ -554,7 +559,7 @@ function finishEisstock(ch,members){
       assertFreshMatch(room.lastCompleted,room.match);
       room.phase='playing';return;
     }
-    if(room.game==='dog')return startDog(room);
+    if(room.game==='dog')return startDog(room,village);
     if(room.game==='partychallenge')return startChallenge(room);
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
@@ -591,6 +596,7 @@ function finishEisstock(ch,members){
         treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,revealHistory:room.match.treasureHistory||[],myReady:!!room.match.engine2.match.ready[identity.uid],engine:(()=>{const m=projectEngine2(room.match.engine2,identity.uid).match;return m?.phase==='countdown'&&clock()>=m.startedAt?{...m,phase:'playing'}:m;})()}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
+        christmas:room.match.game==='dog'&&room.match.christmas?{...room.match.christmas}:null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
         playerCount:room.match.members.length,
@@ -704,7 +710,7 @@ function finishEisstock(ch,members){
     const outcome=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
-      const result=await change(room);
+      const result=await change(room,tx,store);
       // Record each completed match exactly once, in the same transaction as its final move.
       if(room.match?.game==='kniffel'&&room.match.kniffel?.finished&&!room.match.kniffel.statsRecorded){
         const game=room.match.kniffel;
@@ -1021,28 +1027,34 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),ready=req.body?.ready,identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(typeof ready!=='boolean')throw error(400,'INVALID_READY');
-    return {room:await mutate(code,identity,room=>{
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
       if(room.phase!=='preparing'||!room.game)throw error(409,'NO_GAME_SELECTED');
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
       if(player.testBot)throw error(403,'TEST_PLAYER_MANAGED_SEPARATELY');
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
-      if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge')startGame(room);
+      if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
+        const village=room.game==='dog'&&room.settings?.dog?.christmasEnabled===true
+         ?(await tx.get(dogVillageFor(store,room.hostUid))).data():null;
+        startGame(room,village);
+      }
     })};
   }));
   // No fake game launch: the game adapters must be implemented and tested first.
   app.post('/api/hub/rooms/:code/start',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    return {room:await mutate(code,identity,async room=>{
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase!=='preparing'||!room.game)throw error(409,'NO_GAME_SELECTED');
       const rule=HUB_GAMES[room.game];
       const active=room.players.filter(p=>p.participating);
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
-      startGame(room);
+      const village=room.game==='dog'&&room.settings?.dog?.christmasEnabled===true
+        ?(await tx.get(dogVillageFor(store,room.hostUid))).data():null;
+      startGame(room,village);
     })};
   }));
   // Merk-Matrix uses the shared hub and its authenticated members; no game-specific room.
