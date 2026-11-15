@@ -605,7 +605,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  };
  const awardCoin=()=>{
   if(winnings.length>=visiblePrizeLimit)return false;
-  const unused=DOG_SCRATCH_COIN_AMOUNTS[tier].map((amount,i)=>({amount,symbol:SCRATCH_PAYOUT_ORDER[i]}))
+  const unused=config.coinAmounts.map((amount,i)=>({amount,symbol:SCRATCH_PAYOUT_ORDER[i]}))
    .filter(option=>!winnings.some(w=>w.type==='coins'&&w.symbol===option.symbol));
   if(!unused.length)return false;
   const option=unused[random(unused.length)];
@@ -681,9 +681,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
    const sourceWin=random(board.wins.length);
-   const coinIndex=random(DOG_SCRATCH_COIN_AMOUNTS[tier].length);
+   const coinIndex=random(config.coinAmounts.length);
    bonusWinnings.push({type:'coins',symbol:SCRATCH_PAYOUT_ORDER[coinIndex],
-    amount:DOG_SCRATCH_COIN_AMOUNTS[tier][coinIndex],bonus:true,sourceWin});
+    amount:config.coinAmounts[coinIndex],bonus:true,sourceWin});
   }
  }
  const allWinnings=[...winnings,...bonusWinnings];
@@ -700,6 +700,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   type:first?.type||'none',tier,
   ...(first?.type==='coins'?{amount:first.amount}:{}),
   ...(first?.type==='unlock'?{prize:first.prize}:{}),
+  // Fix the advertised payouts on this exact receipt. A later host edit
+  // must never change the legend of an already purchased scratch ticket.
+  coinAmounts:[...config.coinAmounts],
   winnings:allWinnings,totalCoins,board,
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free,at:stamped,balance:w.coins
