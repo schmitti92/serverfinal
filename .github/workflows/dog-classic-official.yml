@@ -7,12 +7,14 @@ on:
       - 'dog/christmas-building-costs.js'
       - 'dog/christmas-village.js'
       - 'dog/christmas-tree-rewards.js'
+      - 'dog/christmas-scratch.js'
       - 'shared-lobby.js'
       - 'tests/shared-lobby.test.js'
       - 'tests/dog-engine.test.js'
       - 'tests/dog-christmas-building-costs.test.js'
       - 'tests/dog-christmas-village.test.js'
       - 'tests/dog-christmas-tree-rewards.test.js'
+      - 'tests/dog-christmas-scratch.test.js'
       - 'tests/dog-official-rules.test.js'
       - '.github/workflows/dog-classic-official.yml'
   pull_request:
@@ -21,12 +23,14 @@ on:
       - 'dog/christmas-building-costs.js'
       - 'dog/christmas-village.js'
       - 'dog/christmas-tree-rewards.js'
+      - 'dog/christmas-scratch.js'
       - 'shared-lobby.js'
       - 'tests/shared-lobby.test.js'
       - 'tests/dog-engine.test.js'
       - 'tests/dog-christmas-building-costs.test.js'
       - 'tests/dog-christmas-village.test.js'
       - 'tests/dog-christmas-tree-rewards.test.js'
+      - 'tests/dog-christmas-scratch.test.js'
       - 'tests/dog-official-rules.test.js'
   workflow_dispatch:
 jobs:
@@ -42,5 +46,6 @@ jobs:
       - run: node --test tests/dog-christmas-building-costs.test.js
       - run: node --check dog/christmas-village.js && node --test tests/dog-christmas-village.test.js
       - run: node --check dog/christmas-tree-rewards.js && node --test tests/dog-christmas-tree-rewards.test.js
+      - run: node --check dog/christmas-scratch.js && node --test tests/dog-christmas-scratch.test.js
       - run: node --test tests/dog-engine.test.js tests/dog-official-rules.test.js
       - run: node --test --test-name-pattern=DOG tests/shared-lobby.test.js
