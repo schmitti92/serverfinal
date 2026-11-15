@@ -1,14 +1,51 @@
 /**
- * DOG Christmas scratch: pure, server-safe grid rules.
- * No payout is inferred from a UI label; the board is the source of truth.
- * Phase 2: Geschenk-Linie 3x3 and Schneeflocken-Bingo 4x4.
+ * Lichtertal scratch cards — board generator and independent rule evaluator.
+ *
+ * Every emitted board is checked against what a player can actually see.
+ * The winner count is derived ONLY from the revealed cells, never from
+ * board.wins, requested count, or a payout flag.
+ *
+ * This is a pure rules module. Buying a ticket / granting prizes is separate.
  */
-export const SCRATCH_GRID_VARIANTS=Object.freeze({
- gifts:Object.freeze({id:'gifts',name:'Geschenkelinie',size:3,winLength:3,cellCount:9}),
- snow:Object.freeze({id:'snow',name:'Schneeflocken-Bingo',size:4,winLength:4,cellCount:16})
+import {randomInt} from 'node:crypto';
+
+const MAIN_SYMBOLS=Object.freeze(['🎁','❄️','🔔','⭐','🍪','🦌','🎄','🍬','🌙','🎅','🧤','🕯️']);
+const STARS=Object.freeze(['⭐','🌟','✨','💫']);
+const DEER=Object.freeze(['🦌','🦌🔴','🦌🔵','🦌🟡']);
+const FILLERS=Object.freeze(['🍪','🎄','🧤','🍬','🔔','❄️','🎁','🕯️']);
+const TREE_SEQUENCE=Object.freeze(['⭐','🎄','🎁']);
+const BELL_DIAMOND=Object.freeze([2,6,8,11,13]);
+const MODE_NAMES=Object.freeze({
+ gifts:'Geschenkelinie',snow:'Schneeflocken-Bingo',stars:'Sternensammler',
+ elf:'Wichtelpfad',reindeer:'Rentierglück',candy:'Zuckerstangen-Duell',
+ tree:'Weihnachtsbaum-Los',cookie:'Lebkuchen-Memory',
+ diamond:'Diamantenjagd',bells:'Glocken-Jackpot'
 });
-const SYMBOLS=Object.freeze(['🎁','❄️','🔔','⭐','🍪','🦌','🎄','🍬']);
+export const SCRATCH_GRID_VARIANTS=Object.freeze({
+ gifts:Object.freeze({id:'gifts',name:MODE_NAMES.gifts,rows:3,cols:3,size:3,winLength:3,cellCount:9,rule:'Drei gleiche Symbole in einer Reihe, Spalte oder Diagonale'}),
+ snow:Object.freeze({id:'snow',name:MODE_NAMES.snow,rows:4,cols:4,size:4,winLength:4,cellCount:16,rule:'Vier gleiche Symbole in einer Reihe, Spalte oder Diagonale'}),
+ stars:Object.freeze({id:'stars',name:MODE_NAMES.stars,rows:3,cols:4,cellCount:12,rule:'Vier Sterne derselben Art sammeln; jede Vierergruppe zählt einmal'}),
+ elf:Object.freeze({id:'elf',name:MODE_NAMES.elf,rows:4,cols:5,cellCount:20,rule:'Ein zusammenhängender Weg gleicher Symbole von links bis rechts'}),
+ reindeer:Object.freeze({id:'reindeer',name:MODE_NAMES.reindeer,rows:3,cols:4,cellCount:12,rule:'Drei gleiche Rentiere beliebig auf dem Los; jede Dreiergruppe zählt einmal'}),
+ candy:Object.freeze({id:'candy',name:MODE_NAMES.candy,rows:3,cols:2,cellCount:6,rule:'Jedes gleiche Paar in einer der drei Zweierreihen gewinnt'}),
+ tree:Object.freeze({id:'tree',name:MODE_NAMES.tree,rows:5,cols:3,cellCount:15,rule:'Die Folge ⭐ 🎄 🎁 von links nach rechts in einer Dreierreihe'}),
+ cookie:Object.freeze({id:'cookie',name:MODE_NAMES.cookie,rows:4,cols:4,cellCount:16,rule:'In einem 2×2-Feld müssen beide waagerechten Symbolpaare passen'}),
+ diamond:Object.freeze({id:'diamond',name:MODE_NAMES.diamond,rows:3,cols:3,cellCount:9,rule:'Drei Diamanten beliebig auf dem Feld; jede Dreiergruppe gewinnt'}),
+ bells:Object.freeze({id:'bells',name:MODE_NAMES.bells,rows:4,cols:5,cellCount:20,rule:'Fünf gleiche Symbole waagerecht oder fünf Glocken im Diamantmuster'})
+});
+export const SCRATCH_VARIANT_IDS=Object.freeze(Object.keys(SCRATCH_GRID_VARIANTS));
+const random=(max,draw)=>{
+ if(!Number.isSafeInteger(max)||max<1)throw Error('SCRATCH_RANDOM_RANGE');
+ const value=draw(max);
+ if(!Number.isInteger(value)||value<0||value>=max)throw Error('SCRATCH_RANDOM_INVALID');
+ return value;
+};
+const sample=(pool,draw)=>pool[random(pool.length,draw)];
+const arrayEq=(a,b)=>Array.isArray(a)&&a.length===b.length&&a.every((v,i)=>v===b[i]);
+const match=(indices,symbol,rule)=>({indices,symbol,rule});
+
 export function scratchLines(size){
+ if(!Number.isInteger(size)||size<2||size>8)throw Error('SCRATCH_GRID_SIZE_INVALID');
  const lines=[];
  for(let r=0;r<size;r++)lines.push(Array.from({length:size},(_,c)=>r*size+c));
  for(let c=0;c<size;c++)lines.push(Array.from({length:size},(_,r)=>r*size+c));
@@ -16,41 +53,253 @@ export function scratchLines(size){
  lines.push(Array.from({length:size},(_,i)=>i*size+(size-1-i)));
  return lines;
 }
+function groups(cells,symbols,count,rule){
+ const wins=[];
+ for(const symbol of symbols){
+  const found=cells.flatMap((s,i)=>s===symbol?[i]:[]);
+  for(let i=0;i+count<=found.length;i+=count)wins.push(match(found.slice(i,i+count),symbol,rule));
+ }
+ return wins;
+}
+function elfPaths(cells){
+ // One winning path per symbol, from the left to the right border.
+ // Breadth-first search guarantees a deterministically selected path.
+ const rows=4,cols=5,wins=[];
+ for(const symbol of MAIN_SYMBOLS){
+  const queue=[],seen=new Set();
+  for(let r=0;r<rows;r++){
+   const i=r*cols;
+   if(cells[i]===symbol){queue.push([i,[i]]);seen.add(i)}
+  }
+  while(queue.length){
+   const [index,path]=queue.shift();
+   if(index%cols===cols-1){wins.push(match(path,symbol,'path'));break}
+   const r=Math.floor(index/cols),c=index%cols;
+   const neighbors=[[r,c+1],[r+1,c],[r-1,c],[r,c-1]];
+   for(const [y,x] of neighbors){
+    if(y<0||y>=rows||x<0||x>=cols)continue;
+    const n=y*cols+x;
+    if(!seen.has(n)&&cells[n]===symbol){seen.add(n);queue.push([n,[...path,n]])}
+   }
+  }
+ }
+ return wins;
+}
 export function evaluateScratchGrid(board){
  const spec=SCRATCH_GRID_VARIANTS[board?.variantId];
- if(!spec||!Array.isArray(board.cells)||board.cells.length!==spec.cellCount)throw Error('SCRATCH_GRID_INVALID');
- if(board.cells.some(c=>!SYMBOLS.includes(c)))throw Error('SCRATCH_GRID_SYMBOL_INVALID');
- return scratchLines(spec.size).filter(indices=>indices.every(i=>board.cells[i]===board.cells[indices[0]]))
-  .map(indices=>({indices,symbol:board.cells[indices[0]]}));
-}
-const shuffle=(values,draw)=>{
- const a=[...values];
- for(let i=a.length-1;i>0;i--){const j=draw(i+1);if(!Number.isInteger(j)||j<0||j>i)throw Error('SCRATCH_RANDOM_INVALID');[a[i],a[j]]=[a[j],a[i]]}
- return a;
-};
-/**
- * desiredLines: 0 or 1. Returns a validated board with exactly that many
- * complete lines. Each winning line can be paired with a separate payout.
- * draw(max) must be a cryptographically secure integer in [0,max).
- */
-export function generateScratchGrid(variantId,desiredLines,{draw,maxAttempts=12000}={}){
- const spec=SCRATCH_GRID_VARIANTS[variantId];
- if(!spec||![0,1].includes(desiredLines)||typeof draw!=='function')throw Error('SCRATCH_GRID_REQUEST_INVALID');
- const lines=scratchLines(spec.size);
- for(let attempt=0;attempt<maxAttempts;attempt++){
-  const cells=Array.from({length:spec.cellCount},()=>SYMBOLS[draw(SYMBOLS.length)]);
-  if(desiredLines===1){
-   const target=lines[draw(lines.length)],symbol=SYMBOLS[draw(SYMBOLS.length)];
-   for(const i of target)cells[i]=symbol;
+ if(!spec||!Array.isArray(board.cells)||board.cells.length!==spec.cellCount)
+  throw Error('SCRATCH_GRID_INVALID');
+ const cells=board.cells;
+ const permitted=board.variantId==='stars'?[...MAIN_SYMBOLS,...STARS]:
+  board.variantId==='reindeer'?[...MAIN_SYMBOLS,...DEER]:
+  board.variantId==='diamond'?[...MAIN_SYMBOLS,'💎']:
+  MAIN_SYMBOLS;
+ if(cells.some(s=>typeof s!=='string'||!permitted.includes(s)))
+  throw Error('SCRATCH_GRID_SYMBOL_INVALID');
+ switch(board.variantId){
+  case 'gifts':case 'snow':
+   return scratchLines(spec.size).filter(line=>line.every(i=>cells[i]===cells[line[0]]))
+    .map(line=>match(line,cells[line[0]],'line'));
+  case 'stars':return groups(cells,STARS,4,'four-stars');
+  case 'elf':return elfPaths(cells);
+  case 'reindeer':return groups(cells,DEER,3,'three-reindeer');
+  case 'candy':
+   return [0,2,4].filter(i=>cells[i]===cells[i+1])
+    .map(i=>match([i,i+1],cells[i],'pair'));
+  case 'tree':
+   return [0,3,6,9,12].filter(i=>TREE_SEQUENCE.every((symbol,j)=>cells[i+j]===symbol))
+    .map(i=>match([i,i+1,i+2],'⭐🎄🎁','sequence'));
+  case 'cookie':{
+   const wins=[];
+   for(const r of [0,2])for(const c of [0,2]){
+    const a=r*4+c,b=a+1,d=a+4,e=d+1;
+    if(cells[a]===cells[b]&&cells[d]===cells[e])
+     wins.push(match([a,b,d,e],cells[a]+'+'+cells[d],'double-pair'));
+   }
+   return wins;
   }
-  const board={variantId,cells};
+  case 'diamond':return groups(cells,['💎'],3,'three-diamonds');
+  case 'bells':{
+   const wins=[];
+   for(let r=0;r<4;r++){
+    const line=Array.from({length:5},(_,c)=>r*5+c);
+    if(line.every(i=>cells[i]===cells[line[0]]))
+     wins.push(match(line,cells[line[0]],'five-line'));
+   }
+   if(BELL_DIAMOND.every(i=>cells[i]==='🔔'))
+    wins.push(match([...BELL_DIAMOND],'🔔','bell-diamond'));
+   return wins;
+  }
+  default:throw Error('SCRATCH_GRID_VARIANT_INVALID');
+ }
+}
+function shuffle(values,draw){
+ const cells=[...values];
+ for(let i=cells.length-1;i>0;i--){
+  const j=random(i+1,draw);
+  [cells[i],cells[j]]=[cells[j],cells[i]];
+ }
+ return cells;
+}
+function linesBoard(spec,desired,draw){
+ const cells=Array.from({length:spec.cellCount},()=>sample(MAIN_SYMBOLS,draw));
+ const lines=scratchLines(spec.size);
+ const chosen=shuffle(lines,draw).slice(0,desired);
+ // All forced lines get the same symbol so intersecting lines stay valid.
+ const symbol=sample(MAIN_SYMBOLS,draw);
+ for(const line of chosen)for(const i of line)cells[i]=symbol;
+ return cells;
+}
+function starBoard(desired,draw){
+ const cells=[];
+ for(const symbol of shuffle(STARS,draw).slice(0,desired))
+  cells.push(symbol,symbol,symbol,symbol);
+ const remaining=12-cells.length;
+ const safe=STARS.filter(s=>!cells.includes(s));
+ const extra=Math.min(remaining,random(4,draw));
+ for(let i=0;i<extra;i++)cells.push(safe[i%safe.length]);
+ while(cells.length<12)cells.push(sample(FILLERS,draw));
+ return shuffle(cells,draw);
+}
+function reindeerBoard(desired,draw){
+ const cells=[];
+ for(const symbol of shuffle(DEER,draw).slice(0,desired))
+  cells.push(symbol,symbol,symbol);
+ const safe=DEER.filter(s=>!cells.includes(s));
+ const extra=Math.min(12-cells.length,random(3,draw));
+ for(let i=0;i<extra;i++)cells.push(safe[i%safe.length]);
+ while(cells.length<12)cells.push(sample(FILLERS,draw));
+ return shuffle(cells,draw);
+}
+function elfBoard(desired,draw){
+ const cells=Array.from({length:20},()=>sample(MAIN_SYMBOLS,draw));
+ const chosen=shuffle([0,1,2,3],draw).slice(0,desired);
+ const colors=shuffle(MAIN_SYMBOLS,draw).slice(0,desired);
+ for(let p=0;p<chosen.length;p++){
+  const row=chosen[p],symbol=colors[p];
+  for(let c=0;c<5;c++)cells[row*5+c]=symbol;
+ }
+ // Keep the winning symbols out of filler rows so each continuous route
+ // remains an independent, visibly identified prize.
+ for(let i=0;i<20;i++){
+  if(chosen.includes(Math.floor(i/5)))continue;
+  const others=MAIN_SYMBOLS.filter(s=>!colors.includes(s));
+  cells[i]=sample(others,draw);
+ }
+ return cells;
+}
+function candyBoard(desired,draw){
+ const cells=Array.from({length:6},()=>sample(MAIN_SYMBOLS,draw));
+ const chosen=shuffle([0,1,2],draw).slice(0,desired);
+ for(let p=0;p<3;p++){
+  const idx=p*2,symbol=sample(MAIN_SYMBOLS,draw);
+  cells[idx]=symbol;
+  cells[idx+1]=chosen.includes(p)?symbol:sample(MAIN_SYMBOLS.filter(s=>s!==symbol),draw);
+ }
+ return cells;
+}
+function treeBoard(desired,draw){
+ const cells=Array.from({length:15},()=>sample(MAIN_SYMBOLS,draw));
+ const chosen=shuffle([0,1,2,3,4],draw).slice(0,desired);
+ for(let r=0;r<5;r++){
+  const at=r*3;
+  if(chosen.includes(r)){
+   for(let c=0;c<3;c++)cells[at+c]=TREE_SEQUENCE[c];
+  }else{
+   // Deliberately break at least one position of the required sequence.
+   const broken=random(3,draw);
+   cells[at+broken]=sample(MAIN_SYMBOLS.filter(s=>s!==TREE_SEQUENCE[broken]),draw);
+  }
+ }
+ return cells;
+}
+function cookieBoard(desired,draw){
+ const cells=Array.from({length:16},()=>sample(MAIN_SYMBOLS,draw));
+ const chosen=shuffle([0,1,2,3],draw).slice(0,desired);
+ for(let b=0;b<4;b++){
+  const row=Math.floor(b/2)*2,col=(b%2)*2;
+  const a=row*4+col,d=a+4;
+  const top=sample(MAIN_SYMBOLS,draw),bottom=sample(MAIN_SYMBOLS,draw);
+  cells[a]=top;cells[a+1]=chosen.includes(b)?top:sample(MAIN_SYMBOLS.filter(s=>s!==top),draw);
+  cells[d]=bottom;cells[d+1]=bottom;
+ }
+ return cells;
+}
+function diamondBoard(desired,draw){
+ const cells=Array.from({length:desired*3},()=> '💎');
+ while(cells.length<9)cells.push(sample(FILLERS,draw));
+ return shuffle(cells,draw);
+}
+function bellsBoard(desired,draw){
+ const cells=Array.from({length:20},()=>sample(MAIN_SYMBOLS,draw));
+ const chosen=shuffle([0,1,2,3],draw).slice(0,desired);
+ for(const r of chosen){
+  const symbol=sample(MAIN_SYMBOLS,draw);
+  for(let c=0;c<5;c++)cells[r*5+c]=symbol;
+ }
+ return cells;
+}
+const builders=Object.freeze({
+ gifts:linesBoard,snow:linesBoard,stars:starBoard,elf:elfBoard,
+ reindeer:reindeerBoard,candy:candyBoard,tree:treeBoard,
+ cookie:cookieBoard,diamond:diamondBoard,bells:bellsBoard
+});
+/**
+ * Generate exactly 0–3 independently verifiable visible winning combinations.
+ * draw(max) must return an unbiased integer in [0,max); crypto.randomInt is
+ * used in production by default. All candidates are evaluated before return.
+ */
+export function generateScratchGrid(variantId,desiredLines,{draw=randomInt,maxAttempts=12000}={}){
+ const spec=SCRATCH_GRID_VARIANTS[variantId];
+ if(!spec||!Number.isInteger(desiredLines)||desiredLines<0||desiredLines>3||
+  typeof draw!=='function'||!Number.isInteger(maxAttempts)||maxAttempts<1)
+  throw Error('SCRATCH_GRID_REQUEST_INVALID');
+ for(let attempt=0;attempt<maxAttempts;attempt++){
+  const candidate=builders[variantId](
+   variantId==='gifts'||variantId==='snow'?spec:desiredLines,
+   variantId==='gifts'||variantId==='snow'?desiredLines:draw,
+   variantId==='gifts'||variantId==='snow'?draw:undefined
+  );
+  const board={variantId,cells:candidate};
   const wins=evaluateScratchGrid(board);
   if(wins.length===desiredLines)return {...board,wins};
  }
  throw Error('SCRATCH_GRID_GENERATION_FAILED');
 }
 export function validateScratchGrid(board,expectedWinCount){
+ try{
+  const wins=evaluateScratchGrid(board);
+  return Number.isInteger(expectedWinCount)&&wins.length===expectedWinCount&&
+   (!Object.hasOwn(board,'wins')||JSON.stringify(board.wins)===JSON.stringify(wins));
+ }catch{return false}
+}
+/**
+ * Bind each displayable prize to a verified match in the canonical order.
+ * A money amount or unlock name must be rendered next to that match.
+ */
+export function attachScratchPrizes(board,prizes){
+ if(!Array.isArray(prizes)||!validateScratchGrid(board,prizes.length))
+  throw Error('SCRATCH_PRIZE_MATCH_MISMATCH');
  const wins=evaluateScratchGrid(board);
- return wins.length===expectedWinCount&&
-  (!board.wins||JSON.stringify(board.wins)===JSON.stringify(wins));
+ const lines=wins.map((win,index)=>{
+  const prize=prizes[index];
+  if(!prize||typeof prize!=='object'||!['coins','unlock'].includes(prize.type))
+   throw Error('SCRATCH_PRIZE_INVALID');
+  if(prize.type==='coins'&&(!Number.isSafeInteger(prize.amount)||prize.amount<1))
+   throw Error('SCRATCH_PRIZE_COINS_INVALID');
+  if(prize.type==='unlock'&&
+   (typeof prize.prize?.unlockId!=='string'||typeof prize.prize?.name!=='string'))
+   throw Error('SCRATCH_PRIZE_UNLOCK_INVALID');
+  return {...win,prize};
+ });
+ return {...board,wins:lines};
+}
+export function verifyScratchPrizes(board){
+ try{
+  const verified=evaluateScratchGrid(board);
+  return Array.isArray(board.wins)&&board.wins.length===verified.length&&
+   board.wins.every((listed,i)=>arrayEq(listed.indices,verified[i].indices)&&
+    listed.symbol===verified[i].symbol&&listed.rule===verified[i].rule&&
+    listed.prize&&['coins','unlock'].includes(listed.prize.type));
+ }catch{return false}
 }
