@@ -2197,6 +2197,7 @@ function finishEisstock(ch,members){
   }
   function attachSocket(ws){
     let unwatch=null,closed=false,authenticated=false,emojiIdentity=null,emojiRoomCode=null,emojiRoom=null,emojiClient=null;
+    let ownedEmojiCache=null,ownedEmojiAt=0,ownedEmojiUid='';
     // Suppress duplicate room payloads on reconnect/metadata-only snapshots.
     // Authentication and membership checks still run for every snapshot.
     let lastRoomPayload='';
@@ -2234,9 +2235,34 @@ function finishEisstock(ch,members){
         if(room.phase!=='playing'||room.match?.game!=='dog'||room.match?.id!==msg.matchId){
           reject('NO_DOG_MATCH');return;
         }
-        if(!DOG_STARTER_EMOJIS.has(id)){reject('EMOJI_LOCKED');return;}
         const seat=room.match.dogRoster?.find(p=>p.uid===identity.uid&&!p.bot)?.seat;
         if(!Number.isInteger(seat)){reject('NOT_A_PARTICIPANT');return;}
+        // Initial three Emojis are free. For every other emoji, use one
+        // signed-in personal entitlement check (cached 60 seconds per socket).
+        // No Firestore writes or per-frame sync; the room socket stays shared.
+        if(!DOG_STARTER_EMOJIS.has(id)){
+          const number=/^emoji_(\d{2})$/.exec(String(id||''))?.[1];
+          const n=Number(number);
+          if(!Number.isInteger(n)||n<4||n>60){reject('EMOJI_LOCKED');return;}
+          const unlockId=n<=50?'christmas2026:standard-emoji:'+id:
+            'christmas2026:emoji:'+String(n-50).padStart(2,'0');
+          const timestamp=clock();
+          try{
+            if(!ownedEmojiCache||ownedEmojiUid!==identity.uid||timestamp-ownedEmojiAt>=60000){
+              const store=db();
+              const [scratchSnap,treeSnap]=await Promise.all([
+                store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
+                store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
+              ]);
+              const scratchOwned=Object.keys(scratchSnap.exists?scratchSnap.data()?.owned||{}:{});
+              const treeOwned=Object.values(treeSnap.exists?treeSnap.data()?.claims||{}:{})
+                .map(entry=>entry?.unlockId).filter(Boolean);
+              ownedEmojiCache=new Set([...scratchOwned,...treeOwned]);
+              ownedEmojiAt=timestamp;ownedEmojiUid=identity.uid;
+            }
+          }catch{reject('EMOJI_LOCKED');return;}
+          if(!ownedEmojiCache.has(unlockId)){reject('EMOJI_LOCKED');return;}
+        }
         const now=clock(),cooldownKey=emojiRoomCode+':'+identity.uid;
         if(now-(dogEmojiCooldown.get(cooldownKey)??-Infinity)<5000){reject('COOLDOWN');return;}
         dogEmojiCooldown.set(cooldownKey,now);
