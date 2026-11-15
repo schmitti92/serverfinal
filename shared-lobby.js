@@ -13,6 +13,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_VILLAGE_COLLECTION,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
+import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket} from './dog/christmas-scratch.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -747,6 +748,42 @@ function finishEisstock(ch,members){
   app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog'],challengeFoundation:true,
     // Counters are Render RAM only; never fetch Firebase to report them.
     hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size}
+  }));
+  // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
+  // A read never writes or grants a prize. Payouts happen in a transaction
+  // and share the existing 10 tree entitlements to avoid duplicated art.
+  app.get('/api/hub/scratch',authentication,handler(async req=>{
+    const identity=req.hubIdentity,store=db();
+    const [snap,tree]=await Promise.all([
+      store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
+      store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
+    ]);
+    return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,clock())};
+  }));
+  app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
+    if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
+    const body=req.body||{},identity=req.hubIdentity,store=db();
+    if(!['simple','medium','premium'].includes(body.tier)||
+      typeof body.commandId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(body.commandId)||
+      (body.free!==undefined&&typeof body.free!=='boolean'))
+      throw error(400,'SCRATCH_INVALID_REQUEST');
+    const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
+    const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
+    const award=await store.runTransaction(async tx=>{
+      const [walletSnap,treeSnap]=await Promise.all([tx.get(accountRef),tx.get(treeRef)]);
+      let result;
+      try{
+        result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,
+          treeSnap.exists?treeSnap.data():null,
+          {tier:body.tier,commandId:body.commandId,free:body.free===true},
+          {clock:()=>clock(),now:()=>clock()});
+      }catch(e){
+        throw error(e.message==='SCRATCH_NOT_ENOUGH_COINS'||e.message==='SCRATCH_DAILY_ALREADY_USED'?409:400,e.message);
+      }
+      if(!result.unchanged)tx.set(accountRef,result.wallet);
+      return {result:result.result,replayed:result.unchanged,scratch:result.status};
+    });
+    return award;
   }));
   app.use('/api/hub/rooms',authentication);
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
