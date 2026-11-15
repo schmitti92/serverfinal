@@ -887,8 +887,9 @@ function finishEisstock(ch,members){
       accountSnap.exists?accountSnap.data():null
     )};
   }));
-  // Each prize is assigned only once for this player. The server draws it
-  // after verifying that the shared village really reached the tree level.
+  // Every tree level has a pre-announced, fixed prize. The server awards it
+  // only once per player after verifying the shared village's actual level.
+  // Prior claims from the old random phase remain unchanged.
   app.post('/api/hub/rooms/:code/dog/tree-rewards/claim',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     const level=req.body?.level,store=db();
