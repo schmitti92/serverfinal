@@ -3,45 +3,49 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {DOG_META_ALBUM_MILESTONES,dogMetaAlbumStatus} from '../dog-meta-album.js';
 const source=path=>readFileSync(new URL(path,import.meta.url),'utf8');
-test('nine Christmas meta pictures map onto existing claimed DOG bingo rewards at 2..18',()=>{
- assert.deepEqual(DOG_META_ALBUM_MILESTONES.map(m=>m.at),[2,4,6,8,10,12,14,16,18]);
- assert.equal(new Set(DOG_META_ALBUM_MILESTONES.map(m=>m.id)).size,9);
- assert.equal(new Set(DOG_META_ALBUM_MILESTONES.map(m=>m.unlockId)).size,9);
- assert.deepEqual(DOG_META_ALBUM_MILESTONES.map(m=>m.unlockId),
-  Array.from({length:9},(_,n)=>'meta:christmas1:picture:'+String(n+1).padStart(2,'0')));
+test('12 Christmas pictures have distinct permanent identities',()=>{
+ assert.equal(DOG_META_ALBUM_MILESTONES.length,12);
+ assert.equal(new Set(DOG_META_ALBUM_MILESTONES.map(m=>m.id)).size,12);
+ assert.equal(new Set(DOG_META_ALBUM_MILESTONES.map(m=>m.unlockId)).size,12);
 });
-test('no pictures unlock just because Bingo progress was reached; existing claim grants them',()=>{
- let result=dogMetaAlbumStatus(18,{});
- assert.equal(result.unlockedCount,0);
- assert.deepEqual(result.milestones.map(m=>m.state),Array(9).fill('ready'));
- result=dogMetaAlbumStatus(18,{'2':111,'4':222,'6':333});
- assert.equal(result.unlockedCount,3);
- assert.equal(result.unlockedIds.length,3);
- assert.equal(result.milestones[3].state,'ready');
- assert.equal(result.nextAt,8);
+test('tree unlocks only at Lichtertal level 10, regardless of Bingo rewards',()=>{
+ for(let level=0;level<=9;level++){
+  const result=dogMetaAlbumStatus({highestTreeLevel:level});
+  assert.equal(result.milestones[0].state,'locked');
+  assert.equal(result.unlockedIds.includes('meta:christmas1:picture:01'),false);
+ }
+ assert.equal(dogMetaAlbumStatus({highestTreeLevel:10}).milestones[0].state,'unlocked');
 });
-test('claimed bingo rewards stay unlocked when current bingo count changes or account reopens',()=>{
- const claims=Object.fromEntries(Array.from({length:9},(_,i)=>[String((i+1)*2),1700000000000+i]));
- const status=dogMetaAlbumStatus(0,claims);
- assert.equal(status.unlockedCount,9);
- assert.deepEqual(status.milestones.map(x=>x.state),Array(9).fill('unlocked'));
- assert.equal(status.nextAt,null);
- assert.equal(status.eventId,'weihnachtsevent-1');
- assert.equal(status.source,'dog-season-2-bingo-rewards');
- assert.equal(dogMetaAlbumStatus(40,claims).unlockedCount,9);
+test('four buildings each unlock their OWN image exclusively at level 5',()=>{
+ for(const id of ['bakery','workshop','tower','inn']){
+  const until4=dogMetaAlbumStatus({highestBuildingLevels:{[id]:4}});
+  const at5=dogMetaAlbumStatus({highestBuildingLevels:{[id]:5}});
+  const m=at5.milestones.find(x=>x.buildingId===id);
+  assert.ok(m);
+  assert.equal(until4.milestones.find(x=>x.buildingId===id).state,'locked');
+  assert.equal(m.state,'unlocked');
+  assert.equal(at5.unlockedCount,1);
+  assert.equal(at5.unlockedIds[0],m.unlockId);
+ }
 });
-test('invalid claim receipts cannot produce unlocks',()=>{
- const result=dogMetaAlbumStatus(18,{'2':true,'4':'123','6':-1,'8':null,'10':12.3});
- assert.equal(result.unlockedCount,0);
- assert.equal(dogMetaAlbumStatus(Number.NaN,null).unlockedCount,0);
+test('seven further images stay locked until their own rules exist',()=>{
+ const result=dogMetaAlbumStatus({
+  highestTreeLevel:10,
+  highestBuildingLevels:{bakery:5,workshop:5,tower:5,inn:5},
+  bingos:60,bingoRewardsClaimed:{'2':1234,'4':1234}
+ });
+ assert.equal(result.unlockedCount,5);
+ assert.equal(result.milestones.filter(m=>m.state==='locked').length,7);
+ assert.equal(result.source,'dog-lichtertal-event');
+ assert.equal(dogMetaAlbumStatus({highestTreeLevel:'10',highestBuildingLevels:{inn:'5'}}).unlockedCount,0);
 });
-test('one authenticated GET reads the existing season-2 doc and performs no extra writes',()=>{
- const js=source('../dog-album-season2.js');
- const from=js.indexOf("app.get(base+'/meta-album',auth,");
- const to=js.indexOf("app.get(base+'/me',auth,",from);
- assert.ok(from>0&&to>from);
- const route=js.slice(from,to);
- assert.match(route,/db.collection\(DOG_S2_COLLECTION\)\.doc\(req\.dealIdentity\.uid\)\.get\(\)/);
- assert.doesNotMatch(route,/\.set\(|\.update\(|\.create\(|runTransaction\(/);
- assert.match(js,/metaAlbum:dogMetaAlbumStatus\(progress.bingos,claimed\)/);
+test('only authoritative, read-only Lichtertal world storage feeds the meta album route',()=>{
+ const server=source('../dog-album-season2.js');
+ const start=server.indexOf("app.get(base+'/meta-album',auth,");
+ const end=server.indexOf("app.get(base+'/me',auth,",start);
+ assert.ok(start>=0&&end>start);
+ const route=server.slice(start,end);
+ assert.match(route,/db.collection\('dog_lichtertal_world_v1'\).doc\('main'\).get\(\)/);
+ assert.doesNotMatch(route,/\.set\(|\.update\(|runTransaction\(/);
+ assert.doesNotMatch(route,/req\.body|req\.query|bingoRewardsClaimed/);
 });
