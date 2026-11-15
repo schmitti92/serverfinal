@@ -638,7 +638,13 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const categoryRoll=random(1000);
  // Pick the displayed card before applying its separately configured odds.
  const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
- const variantId=availableVariants.length===1?availableVariants[0]:availableVariants[random(availableVariants.length)];
+ // The four shop cards may request a specific verified visual variant.
+ // Legacy buyers without variantId keep the previous random simple-card draw.
+ const requestedVariant=request?.variantId;
+ if(requestedVariant!==undefined&&!availableVariants.includes(requestedVariant))
+  throw Error('SCRATCH_INVALID_VARIANT');
+ const variantId=requestedVariant??(availableVariants.length===1?
+  availableVariants[0]:availableVariants[random(availableVariants.length)]);
  const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
  // The visual card supports three canonical matches. Host caps above three
  // permit extra coin payouts tied to genuine matching symbols, not fake rows.
