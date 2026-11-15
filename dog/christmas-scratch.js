@@ -629,13 +629,14 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // is exactly 1/1000+(799/1000)*(109/799)=110/1000 = 11%.
  // When cosmetics are exhausted, use 110/800 to retain 11% overall.
  const rarePossible=remaining.length>=2;
- const ordinaryMultiplier=baseCategory!=='none'&&!rareMainMultiplier&&
+ const ordinaryRoll=baseCategory!=='none'&&!rareMainMultiplier&&
   (rarePossible?random(799)<109:random(800)<110);
+ // Never show a misleading ×2 if a one-prize cosmetic-only card has no
+ // room for the required visible coin prize.
+ if(ordinaryRoll&&!winnings.some(x=>x.type==='coins'))awardCoin();
+ const ordinaryMultiplier=ordinaryRoll&&winnings.some(x=>x.type==='coins');
  const multiplier=(rareMainMultiplier||ordinaryMultiplier)?2:1;
  if(ordinaryMultiplier){
-  // Every visible x2 must apply to a visible money prize. If this ticket
-  // only contains cosmetics, add a monetary prize before doubling it.
-  if(!winnings.some(x=>x.type==='coins')&&winnings.length<config.maxPrizes)awardCoin();
   for(const item of winnings)if(item.type==='coins'){
    item.baseAmount=item.amount;item.amount*=2;item.x2=true;
   }
