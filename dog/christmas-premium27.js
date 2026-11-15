@@ -166,7 +166,11 @@ function generatePremium27V4(prizes,{draw,maxAttempts}){
  const fixedRows=[...(milestonePremium?[milestonePremium]:[]),...rowPrizes];
  const targetReal=milestonePremium?24+choose(4,draw):
   milestoneGold?20+choose(4,draw):13+choose(7,draw);
- const filler=[...PREMIUM_27_SYMBOLS.filter(s=>s!=='🎁'),...SCRATCH_GIFT_SYMBOLS];
+ // Money icons are part of the actual premium scratch field, not merely
+ // the prize legend. Guarantee all three icons on every NEW ticket, even if
+ // none forms a paid triple. A three-of-a-kind is still validated server-side.
+ const filler=[...PREMIUM_27_SYMBOLS.filter(s=>s!=='🎁'),
+  ...SCRATCH_GIFT_SYMBOLS,...P27_MONEY,...P27_MONEY];
  for(let attempt=0;attempt<maxAttempts;attempt++){
   const cells=Array(27).fill(PREMIUM_27_DUD);
   const rows=randomOrder(Array.from({length:9},(_,r)=>r),draw).slice(0,fixedRows.length);
@@ -177,7 +181,13 @@ function generatePremium27V4(prizes,{draw,maxAttempts}){
   const empty=randomOrder(cells.flatMap((s,i)=>s===PREMIUM_27_DUD?[i]:[]),draw);
   const remaining=targetReal-fixedRows.length*3;
   if(remaining<0)throw Error('PREMIUM27_PRIZE_CAPACITY');
-  for(let i=0;i<remaining;i++)cells[empty[i]]=filler[choose(filler.length,draw)];
+  const missingMoney=P27_MONEY.filter(symbol=>!cells.includes(symbol));
+  if(remaining<missingMoney.length)throw Error('PREMIUM27_MONEY_SYMBOL_CAPACITY');
+  // Put each missing symbol in an independent randomly chosen square.
+  // Evaluation below rejects any accidental extra winning row.
+  for(let i=0;i<missingMoney.length;i++)cells[empty[i]]=missingMoney[i];
+  for(let i=missingMoney.length;i<remaining;i++)
+   cells[empty[i]]=filler[choose(filler.length,draw)];
   const board={variantId:PREMIUM_27_ID,symbolVersion:4,
    milestoneSymbols:{gold:milestoneGold?.symbol||null,premium:milestonePremium?.symbol||null},cells};
   const wins=evaluatePremium27V3(board);
