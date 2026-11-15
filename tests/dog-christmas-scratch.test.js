@@ -89,7 +89,7 @@ test('after the item category is exhausted, the prize safely falls back to 1–1
  const owned=Object.fromEntries(DOG_SCRATCH_BASIC_EMOJIS.map(x=>[x.unlockId,NOW]));
  const raw={coins:1000,owned};
  const x=buyScratchTicket(raw,null,{tier:'simple',commandId:'scratch-fallback-1'},
-  {...args,draw:max=>max===100?90:0});
+  {...args,draw:(()=>{let first=true;return max=>{if(first){first=false;return 90}return 0};})()});
  assert.equal(x.result.type,'coins');
  assert.equal(x.result.amount,1);
  assert.equal(x.wallet.coins,801);
