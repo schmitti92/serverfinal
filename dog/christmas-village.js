@@ -4,6 +4,16 @@
  */
 import {randomInt} from 'node:crypto';
 import {CHRISTMAS_BUILDING_IDS,CHRISTMAS_BUILDING_MAX_LEVEL,christmasUpgradeCost} from './christmas-building-costs.js';
+/** Event lifecycle belongs to the server, never to a player or a room.
+ * Active by default while the Christmas event is available. Operators can
+ * end it centrally via DOG_CHRISTMAS_EVENT_ENABLED=false on Render.
+ * No user action, local storage or room setting can change this state.
+ */
+export function isDogChristmasEventActive(env=process.env){
+ const setting=String(env?.DOG_CHRISTMAS_EVENT_ENABLED??'true').trim().toLowerCase();
+ return !['0','false','off','ended'].includes(setting);
+}
+
 export const DOG_VILLAGE_COLLECTION='dog_christmas_villages_v1';
 export const DOG_GIFT_FIELD_ORDER=Object.freeze([3,9,15,21,27,33,39,45,51,57,6,12,19,25,31,38,44,50,56,62]);
 export const DOG_TOWER_FIELDS=Object.freeze([10,12,15,18,20]);
