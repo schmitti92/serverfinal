@@ -11,7 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
-import {DOG_VILLAGE_COLLECTION,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,claimDogChristmasGift,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket} from './dog/christmas-scratch.js';
 
@@ -70,7 +70,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
-  const dogVillageFor=(store,hostUid)=>store.collection(DOG_VILLAGE_COLLECTION).doc(hostUid);
+  const dogVillageFor=store=>store.collection(DOG_VILLAGE_COLLECTION).doc(DOG_GLOBAL_VILLAGE_ID);
+  const legacyDogVillageFor=(store,uid)=>store.collection(DOG_VILLAGE_COLLECTION).doc(uid);
   const validCode=s=>typeof s==='string'&&CODE_PATTERN.test(s.toUpperCase())?s.toUpperCase():null;
   async function authentication(req,res,next){
     if(!db())return res.status(503).json({ok:false,error:'DATABASE_UNAVAILABLE'});
@@ -901,10 +902,10 @@ function finishEisstock(ch,members){
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     const store=db(),roomSnap=await documentFor(store,code).get(),room=roomSnap.exists?roomSnap.data():null;
     validateRead(room,identity);
-    const snap=await dogVillageFor(store,room.hostUid).get();
-    return {village:dogVillagePublic(snap.exists?snap.data():null,room.hostUid),
-      host:room.hostUid===identity.uid,
-      canUpgrade:christmasActive()&&!(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished'),
+    const snap=await dogVillageFor(store).get();
+    return {village:dogVillagePublic(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID),
+      host:true,shared:true,
+      canUpgrade:christmasActive(),
       enabled:christmasActive(),
       matchEnabled:christmasActive()&&room.phase==='playing'&&room.match?.game==='dog'};
   }));
@@ -916,7 +917,7 @@ function finishEisstock(ch,members){
     const roomSnap=await documentFor(store,code).get(),room=roomSnap.exists?roomSnap.data():null;
     validateRead(room,identity);
     const [villageSnap,accountSnap]=await Promise.all([
-      dogVillageFor(store,room.hostUid).get(),
+      dogVillageFor(store).get(),
       store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
     ]);
     return {treeRewards:dogTreeRewardStatus(
@@ -940,7 +941,7 @@ function finishEisstock(ch,members){
       if(room.game!=='dog'&&room.match?.game!=='dog')throw error(409,'DOG_NOT_SELECTED');
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player?.participating)throw error(403,'JOIN_DOG_FIRST');
-      const villageRef=dogVillageFor(store,room.hostUid);
+      const villageRef=dogVillageFor(store);
       const [villageSnap,accountSnap]=await Promise.all([tx.get(villageRef),tx.get(accountRef)]);
       const village=villageSnap.exists?villageSnap.data():null;
       let granted;
@@ -961,15 +962,14 @@ function finishEisstock(ch,members){
     const village=await store.runTransaction(async tx=>{
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
-      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      // Any authenticated room member may use the common funds.
       if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
-      if(room.phase==='playing'&&room.match?.game==='dog'&&room.match?.dog?.phase!=='finished')throw error(409,'DOG_MATCH_IN_PROGRESS');
-      const ref=dogVillageFor(store,room.hostUid),prior=await tx.get(ref);
+      const ref=dogVillageFor(store),prior=await tx.get(ref);
       let result;
-      try{result=buyDogVillageUpgrade(prior.exists?prior.data():null,room.hostUid,building,expectedLevel,commandId);}
+      try{result=buyDogVillageUpgrade(prior.exists?prior.data():null,DOG_GLOBAL_VILLAGE_ID,building,expectedLevel,commandId);}
       catch(e){throw error(e.message==='NOT_ENOUGH_CHRISTMAS_LIGHTS'?409:400,e.message);}
       if(!result.unchanged)tx.set(ref,result.village);
-      return dogVillagePublic(result.village,room.hostUid);
+      return dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID);
     });
     return {village};
   }));
@@ -991,7 +991,7 @@ function finishEisstock(ch,members){
       // verified move. Already completed moves do not receive retroactive gifts.
       const seasonal=christmasActive();
       if(seasonal&&!match.christmas){
-        const villageSnap=await tx.get(dogVillageFor(store,room.hostUid));
+        const villageSnap=await tx.get(dogVillageFor(store));
         match.christmas=createDogChristmasMatch(villageSnap.exists?villageSnap.data():null,true);
       }
       // After the event ends, persisted snapshots remain for history only;
@@ -1021,8 +1021,8 @@ function finishEisstock(ch,members){
         creditedTenths+=finishDogChristmasMatch(event,match.dog);
         const completedNow=!hadInn&&event.innCredited===true;
         if(creditedTenths||completedNow){
-          const ref=dogVillageFor(store,room.hostUid),snap=await tx.get(ref);
-          const wallet=creditDogVillage(snap.exists?snap.data():null,room.hostUid,event,creditedTenths,
+          const ref=dogVillageFor(store),snap=await tx.get(ref);
+          const wallet=creditDogVillage(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID,event,creditedTenths,
             event.giftCount-initialGifts,event.bonusGiftCount-initialBonus,completedNow);
           tx.set(ref,wallet);
         }
@@ -1186,7 +1186,7 @@ function finishEisstock(ch,members){
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
         const village=room.game==='dog'&&christmasActive()
-         ?(await tx.get(dogVillageFor(store,room.hostUid))).data():null;
+         ?(await tx.get(dogVillageFor(store))).data():null;
         startGame(room,village);
       }
     })};
@@ -1203,7 +1203,7 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       const village=room.game==='dog'&&christmasActive()
-        ?(await tx.get(dogVillageFor(store,room.hostUid))).data():null;
+        ?(await tx.get(dogVillageFor(store))).data():null;
       startGame(room,village);
     })};
   }));
