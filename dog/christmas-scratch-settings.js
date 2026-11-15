@@ -16,11 +16,15 @@ const defaultCoins=Object.freeze({
  elf:Object.freeze([100,300,800]),
  premium_27:Object.freeze([200,800,2000])
 });
+// Probabilities are conditional on the main ticket category: money or unlock.
+// Values use per-mille precision, allowing independent 0.1% increments.
+export const DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS=Object.freeze([334,333,333]);
+export const DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS=Object.freeze([250,250,250,250]);
 const defaults=Object.freeze({
- gifts:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.gifts}),
- snow_collect:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.snow_collect}),
- elf:Object.freeze({weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40,maxPrizes:3,coinAmounts:defaultCoins.elf}),
- premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:3,coinAmounts:defaultCoins.premium_27})
+ gifts:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.gifts,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
+ snow_collect:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.snow_collect,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
+ elf:Object.freeze({weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40,maxPrizes:3,coinAmounts:defaultCoins.elf,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
+ premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:3,coinAmounts:defaultCoins.premium_27,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS})
 });
 export const DOG_SCRATCH_DEFAULT_SETTINGS=Object.freeze({
  version:1,freeEnabled:false,variants:defaults
@@ -31,6 +35,11 @@ export function validScratchCoinAmounts(amounts){
   amounts.every(amount=>integer(amount,1,DOG_SCRATCH_COIN_MAX))&&
   amounts[0]<amounts[1]&&amounts[1]<amounts[2];
 }
+export function validScratchSymbolWeights(weights,expectedCount){
+ return Array.isArray(weights)&&weights.length===expectedCount&&
+  weights.every(weight=>integer(weight,0,1000))&&
+  weights.reduce((sum,weight)=>sum+weight,0)===1000;
+}
 function validVariant(config,id){
  const w=config?.weights;
  return config&&typeof config==='object'&&!Array.isArray(config)&&w&&typeof w==='object'&&
@@ -39,7 +48,9 @@ function validVariant(config,id){
   integer(config.extraCoinChance,0,100)&&
   integer(config.maxPrizes,1,10)&&
   // Allow older stored settings and cached host clients to migrate safely.
-  (config.coinAmounts===undefined||validScratchCoinAmounts(config.coinAmounts));
+  (config.coinAmounts===undefined||validScratchCoinAmounts(config.coinAmounts))&&
+  (config.moneySymbolWeights===undefined||validScratchSymbolWeights(config.moneySymbolWeights,3))&&
+  (config.giftSymbolWeights===undefined||validScratchSymbolWeights(config.giftSymbolWeights,4));
 }
 /** Read stored settings defensively, retaining defaults for older documents. */
 export function normalizeScratchSettings(raw){
@@ -49,7 +60,9 @@ export function normalizeScratchSettings(raw){
   const v=validVariant(candidate,id)?candidate:defaults[id];
   variants[id]={weights:{none:v.weights.none,coins:v.weights.coins,unlock:v.weights.unlock},
    extraCoinChance:v.extraCoinChance,maxPrizes:v.maxPrizes,
-   coinAmounts:[...(v.coinAmounts??defaultCoins[id])]};
+   coinAmounts:[...(v.coinAmounts??defaultCoins[id])],
+   moneySymbolWeights:[...(v.moneySymbolWeights??DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS)],
+   giftSymbolWeights:[...(v.giftSymbolWeights??DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS)]};
  }
  return {version:1,freeEnabled:raw?.freeEnabled===true,variants};
 }
