@@ -265,3 +265,34 @@ test('premium 20-symbol bonus awards exactly 1000 coins and stays at 30 percent 
  assert.ok(unlock>=15&&unlock<=55,'unlock share should remain near 4%: '+unlock+'/800');
  assert.ok(coinRowTickets>=350,'money rows should remain a normal premium outcome');
 });
+
+
+test('all three money symbols appear on every newly generated premium scratch field',()=>{
+ let seed=291873;const draw=max=>{
+  seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+  return Math.floor(seed/4294967296*max);
+ };
+ const cases=[
+  [],
+  [{type:'coins',symbol:'🪙',amount:200}],
+  [{type:'coins',symbol:'💵',amount:800}],
+  [{type:'coins',symbol:'💼',amount:2000}],
+  [{type:'coins',symbol:'🪙',amount:1000,milestone:'gold-20'}],
+  [{type:'coins',symbol:'🪙',amount:1000,milestone:'gold-20'},
+   {type:'unlock',symbol:'🎁',milestone:'premium-24',
+    prize:{unlockId:'a',name:'A'}}]
+ ];
+ for(const prizes of cases)for(let i=0;i<45;i++){
+  const board=generatePremium27(prizes,{draw,version:4,maxAttempts:12000});
+  assert.equal(board.symbolVersion,4);
+  assert.ok(verifyPremium27(board));
+  for(const icon of ['🪙','💵','💼']){
+   assert.ok(board.cells.includes(icon),'premium must visibly contain '+icon);
+  }
+  assert.equal(board.wins.length,prizes.length,'incidental money icons cannot give fake wins');
+  for(const row of board.wins.filter(w=>w.rule==='row-3')){
+   assert.ok(['🪙','💵','💼','🎁','💝','🎀','🧧'].includes(row.symbol));
+   assert.ok(row.indices.every(index=>board.cells[index]===row.symbol));
+  }
+ }
+});
