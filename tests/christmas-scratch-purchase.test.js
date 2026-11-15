@@ -35,8 +35,9 @@ test('all tiers produce exactly one visible board for a ticket',()=>{
    assert.ok(SCRATCH_VARIANT_IDS_BY_TIER[tier].includes(board.variantId));
    seen.add(board.variantId);
    assert.ok(verifyScratchPrizes(board));
-   assert.equal(evaluateScratchGrid(board).length,winnings.length);
-   assert.ok(winnings.length<=3);
+   assert.ok(winnings.length>=board.wins.length);
+   assert.deepEqual(winnings.slice(0,board.wins.length),board.wins.map(w=>w.prize));
+   assert.ok(winnings.length<=(tier==='premium'?10:3));
    assert.ok(result.totalCoins>=0);
    assert.equal(result.totalCoins,winnings.filter(p=>p.type==='coins').reduce((sum,p)=>sum+p.amount,0));
    if(result.type==='none'){
@@ -60,7 +61,7 @@ test('no wins and x2 obey the server-defined baseline roll',()=>{
     return randomInt(max);
    };
    const {result}=buyScratchTicket(fresh(),null,req(tier,tier+first),{draw});
-   assert.equal(result.type,kind);
+   assert.equal(result.type,tier==='premium'&&kind==='none'?'coins':kind);
    assert.ok(verifyScratchPrizes(result.board));
   }
  }
@@ -96,10 +97,10 @@ test('27-cell premium purchase always displays both milestone prizes at 24 symbo
   assert.ok(board.wins.some(w=>w.rule==='gold-20'&&w.prize.type==='coins'));
   assert.ok(board.wins.some(w=>w.rule==='premium-24'&&w.prize.type==='unlock'));
   assert.ok(verifyScratchPrizes(board));
-  assert.deepEqual(winnings,board.wins.map(w=>w.prize));
+  assert.deepEqual(winnings.slice(0,board.wins.length),board.wins.map(w=>w.prize));
  }
 });
-test('27-cell premium losing cards never accidentally award threshold or row prizes',()=>{
+test('premium base-category none still pays four money rows but no 20-symbol bonus',()=>{
  for(let i=0;i<200;i++){
   let rolled=false;
   const draw=max=>{
@@ -110,7 +111,10 @@ test('27-cell premium losing cards never accidentally award threshold or row pri
   assert.equal(result.board.variantId,'premium_27');
   assert.equal(result.board.cells.length,27);
   assert.ok(result.board.cells.filter(v=>v!=='🧊').length<20);
-  assert.equal(result.board.wins.length,0);
+  const cash=result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins');
+  assert.equal(cash.length,4);
+  assert.ok(['🪙','💵','💼'].every(icon=>cash.some(w=>w.symbol===icon)));
+  assert.ok(!result.board.wins.some(w=>w.rule==='gold-20'));
   assert.ok(verifyScratchPrizes(result.board));
  }
 });
@@ -244,7 +248,7 @@ test('premium 20-symbol bonus awards exactly 1000 coins and stays at 30 percent 
   const milestones=result.board.wins.filter(w=>w.rule==='gold-20');
   const coins=result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins');
   const gifts=result.board.wins.filter(w=>w.rule==='premium-24');
-  assert.equal(result.board.symbolVersion,4);
+  assert.equal(result.board.symbolVersion,5);
   assert.equal(real>=20,milestones.length===1);
   assert.ok(verifyPremium27(result.board));
   assert.equal(milestones.length,gifts.length>0?1:milestones.length);
@@ -258,8 +262,9 @@ test('premium 20-symbol bonus awards exactly 1000 coins and stays at 30 percent 
    assert.ok(result.totalCoins>=1000);
   }
   if(gifts.length){unlock++;assert.ok(real>=24)}
-  if(coins.length)coinRowTickets++;
-  assert.ok(result.board.wins.length<=3);
+  if(coins.length===4)coinRowTickets++;
+  assert.ok(result.board.wins.length<=7);
+  assert.equal(coins.length,4);
  }
  assert.ok(threshold>=205&&threshold<=285,'milestone share should be near 30%: '+threshold+'/800');
  assert.ok(unlock>=15&&unlock<=55,'unlock share should remain near 4%: '+unlock+'/800');
@@ -295,4 +300,46 @@ test('all three money symbols appear on every newly generated premium scratch fi
    assert.ok(row.indices.every(index=>board.cells[index]===row.symbol));
   }
  }
+});
+
+test('each premium ticket has at least four PAID money rows, including repeat symbol',()=>{
+ let seed=1732870;
+ const draw=max=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+  return Math.floor(seed/4294967296*max)};
+ for(let i=0;i<250;i++){
+  const {result}=buyScratchTicket(fresh(),null,
+   req('premium','guaranteed-four-money-rows-'+i),{draw});
+  const board=result.board;
+  assert.equal(board.symbolVersion,5);
+  assert.ok(verifyPremium27(board));
+  const rows=board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins');
+  assert.equal(rows.length,4);
+  assert.ok(['🪙','💵','💼'].every(icon=>rows.some(w=>w.symbol===icon)));
+  assert.equal(new Set(rows.map(w=>w.symbol)).size,3);
+  assert.ok(rows.every(w=>w.indices.length===3&&w.indices.every(
+   index=>board.cells[index]===w.symbol)));
+  assert.ok(rows.every(w=>w.prize.amount>0),'all four money rows must actually pay');
+  assert.ok(result.winnings.length>=4);
+  assert.equal(result.totalCoins,result.winnings.filter(w=>w.type==='coins')
+   .reduce((total,w)=>total+w.amount,0));
+ }
+});
+test('premium v5 safely pays repeated money symbols, bonus and gift on one board',()=>{
+ const prizes=[
+  {type:'coins',symbol:'🪙',amount:200},
+  {type:'coins',symbol:'💵',amount:800},
+  {type:'coins',symbol:'💼',amount:2000},
+  {type:'coins',symbol:'💵',amount:800},
+  {type:'coins',symbol:'🪙',amount:1000,milestone:'gold-20'},
+  {type:'unlock',symbol:'🎀',milestone:'premium-24',prize:{unlockId:'test-gift',name:'Geschenk'}}
+ ];
+ const board=generatePremium27(prizes,{version:5});
+ assert.ok(verifyPremium27(board));
+ assert.equal(board.symbolVersion,5);
+ assert.deepEqual(board.wins.map(w=>w.rule),[
+  'gold-20','premium-24','row-3','row-3','row-3','row-3'
+ ]);
+ assert.equal(board.wins.filter(w=>w.symbol==='💵'&&w.rule==='row-3').length,2);
+ assert.equal(board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins')
+  .reduce((sum,w)=>sum+w.prize.amount,0),3800);
 });
