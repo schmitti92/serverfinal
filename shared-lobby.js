@@ -813,7 +813,10 @@ function finishEisstock(ch,members){
     const body=req.body||{},identity=req.hubIdentity,store=db();
     if(!['simple','medium','premium'].includes(body.tier)||
       typeof body.commandId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(body.commandId)||
-      (body.free!==undefined&&typeof body.free!=='boolean'))
+      (body.free!==undefined&&typeof body.free!=='boolean')||
+      (body.variantId!==undefined&&
+       !({simple:['gifts','snow_collect'],medium:['elf'],premium:['premium_27']}[body.tier]||[])
+        .includes(body.variantId)))
       throw error(400,'SCRATCH_INVALID_REQUEST');
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
@@ -825,7 +828,7 @@ function finishEisstock(ch,members){
       try{
         result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,
           treeSnap.exists?treeSnap.data():null,
-          {tier:body.tier,commandId:body.commandId,free:body.free===true},
+          {tier:body.tier,variantId:body.variantId,commandId:body.commandId,free:body.free===true},
           {clock:()=>clock(),now:()=>clock(),settings});
       }catch(e){
         throw error(e.message==='SCRATCH_NOT_ENOUGH_COINS'||e.message==='SCRATCH_DAILY_ALREADY_USED'?409:400,e.message);
