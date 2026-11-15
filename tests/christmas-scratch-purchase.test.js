@@ -45,7 +45,7 @@ test('all tiers produce exactly one visible board for a ticket',()=>{
    assert.equal(new Set(unlocked.map(x=>x.prize.unlockId)).size,unlocked.length);
    assert.equal(t.status.lastResult.commandId,result.commandId);
   }
-  assert.equal(seen.size,10,'all 10 game variants sampled');
+  assert.equal(seen.size,6,'all 6 active game variants sampled');
  }
 });
 test('no wins and x2 obey the server-defined baseline roll',()=>{
