@@ -5,7 +5,6 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import admin from "firebase-admin";
 import { installProfileApi } from "./profile-api.js";
-import { installChristmasScratchApi } from "./christmas-scratch-api.js";
 import { installProfileStats } from "./profile-stats.js";
 import { installDogMaterialsApi } from "./dog-materials.js";
 import { installDogForgeApi } from "./dog-forge.js";
@@ -4331,7 +4330,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "500kb" }));
-installChristmasScratchApi(app,{getFirestore:()=>firestore,admin});
+// Scratch APIs are registered once by installSharedLobby with verified tree unlocks,
+// event gating and atomic wallet writes. Do not shadow them with a legacy handler.
 // Spielerprofil V1.1: sichere Startdiagnose (nur öffentliche Projekt-ID, keine Secrets).
 // Die Spiele bleiben auch bei einer Abweichung der Profil-Konfiguration nutzbar.
 const PROFILE_EXPECTED_PROJECT = 'spiel-barik';
