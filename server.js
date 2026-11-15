@@ -4308,7 +4308,6 @@ const clients = new Map(); // clientId -> {ws, room, name, sessionToken}
 const rooms = new Map();   // code -> room
 
 const app = express();
-installChristmasScratchApi(app,{getFirestore:()=>firestore,admin});
 
 // CORS for GitHub Pages / mobile browsers (stats/presence endpoints).
 // NOTE: WebSocket is unchanged; this only affects HTTP requests.
@@ -4332,6 +4331,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "500kb" }));
+installChristmasScratchApi(app,{getFirestore:()=>firestore,admin});
 // Spielerprofil V1.1: sichere Startdiagnose (nur öffentliche Projekt-ID, keine Secrets).
 // Die Spiele bleiben auch bei einer Abweichung der Profil-Konfiguration nutzbar.
 const PROFILE_EXPECTED_PROJECT = 'spiel-barik';
