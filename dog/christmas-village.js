@@ -15,16 +15,25 @@ export function isDogChristmasEventActive(env=process.env){
 }
 
 export const DOG_VILLAGE_COLLECTION='dog_christmas_villages_v1';
+// The one shared seasonal village across all signed-in DOG players, independent of rooms.
+export const DOG_GLOBAL_VILLAGE_ID='lichtertal_2026_shared';
 export const DOG_GIFT_FIELD_ORDER=Object.freeze([3,9,15,21,27,33,39,45,51,57,6,12,19,25,31,38,44,50,56,62]);
 export const DOG_TOWER_FIELDS=Object.freeze([10,12,15,18,20]);
 export const DOG_VILLAGE_DEFAULT_LEVELS=Object.freeze(Object.fromEntries(CHRISTMAS_BUILDING_IDS.map(id=>[id,1])));
 const validLevel=n=>Number.isInteger(n)&&n>=1&&n<=CHRISTMAS_BUILDING_MAX_LEVEL;
 const cleanInt=n=>Number.isSafeInteger(n)&&n>=0?n:0;
+const pastBuildingSpendTenths=levels=>CHRISTMAS_BUILDING_IDS.reduce(
+ (sum,id)=>sum+15*(2**(levels[id]-1)-1)*10,0);
+
 export function normalizedDogVillage(raw,hostUid){
  const source=raw&&typeof raw==='object'?raw:{};
  const levels=Object.fromEntries(CHRISTMAS_BUILDING_IDS.map(id=>[id,validLevel(source.levels?.[id])?source.levels[id]:1]));
+ const lightsTenths=cleanInt(source.lightsTenths);
+ const baselineSpentTenths=pastBuildingSpendTenths(levels);
+ const totalSpentTenths=cleanInt(source.totalSpentTenths??baselineSpentTenths);
+ const totalEarnedTenths=cleanInt(source.totalEarnedTenths??(lightsTenths+totalSpentTenths));
  return {
-  hostUid,levels,lightsTenths:cleanInt(source.lightsTenths),
+  hostUid,levels,lightsTenths,totalEarnedTenths,totalSpentTenths,
   giftsCollected:cleanInt(source.giftsCollected),
   bonusGifts:cleanInt(source.bonusGifts),
   matchesCompleted:cleanInt(source.matchesCompleted),
@@ -35,8 +44,10 @@ export function normalizedDogVillage(raw,hostUid){
 export function dogVillagePublic(raw,hostUid){
  const v=normalizedDogVillage(raw,hostUid);
  return {
-  owner:hostUid,levels:v.levels,
+  owner:hostUid,scope:hostUid===DOG_GLOBAL_VILLAGE_ID?'all-dog-players':'legacy-host',
+  levels:v.levels,
   lights:Math.floor(v.lightsTenths/10),lightsTenths:v.lightsTenths,
+  totalEarnedTenths:v.totalEarnedTenths,totalSpentTenths:v.totalSpentTenths,
   giftsCollected:v.giftsCollected,bonusGifts:v.bonusGifts,
   matchesCompleted:v.matchesCompleted,revision:v.revision,
   nextCosts:Object.fromEntries(CHRISTMAS_BUILDING_IDS.map(id=>[id,christmasUpgradeCost(v.levels[id])])),
@@ -58,6 +69,7 @@ export function buyDogVillageUpgrade(raw,hostUid,building,expectedLevel,commandI
  if(price===null)throw Error('BUILDING_MAX_LEVEL');
  if(village.lightsTenths<price*10)throw Error('NOT_ENOUGH_CHRISTMAS_LIGHTS');
  village.lightsTenths-=price*10;
+ village.totalSpentTenths+=price*10;
  village.levels[building]++;
  village.revision++;
  village.recentUpgradeIds.push(commandId);
@@ -105,9 +117,34 @@ export function creditDogVillage(raw,hostUid,match,deltaTenths,deltaGifts=0,delt
     !Number.isSafeInteger(deltaBonus)||deltaBonus<0)throw Error('INVALID_REWARD_DELTA');
  if(deltaTenths===0&&deltaGifts===0&&deltaBonus===0&&!finished)return village;
  village.lightsTenths+=deltaTenths;
+ village.totalEarnedTenths+=deltaTenths;
  village.giftsCollected+=deltaGifts;
  village.bonusGifts+=deltaBonus;
  if(finished)village.matchesCompleted++;
  village.revision++;
  return village;
+}
+
+/** One-time, idempotent migration of a former host-owned village.
+ * Called inside a Firestore transaction that also marks the legacy document.
+ * Distinct old hosts contributed to separate villages; balances and history
+ * are summed, while shared building levels take the highest previously earned
+ * level per building. This never charges or awards currency from the browser.
+ */
+export function mergeLegacyDogVillage(sharedRaw,legacyRaw,legacyUid){
+ const shared=normalizedDogVillage(sharedRaw,DOG_GLOBAL_VILLAGE_ID);
+ const legacy=normalizedDogVillage(legacyRaw,legacyUid);
+ const hasHistory=legacy.lightsTenths>0||legacy.giftsCollected>0||
+   legacy.matchesCompleted>0||CHRISTMAS_BUILDING_IDS.some(id=>legacy.levels[id]>1);
+ if(!hasHistory)return {village:shared,changed:false};
+ for(const id of CHRISTMAS_BUILDING_IDS)
+  shared.levels[id]=Math.max(shared.levels[id],legacy.levels[id]);
+ shared.lightsTenths+=legacy.lightsTenths;
+ shared.totalEarnedTenths+=legacy.totalEarnedTenths;
+ shared.totalSpentTenths+=legacy.totalSpentTenths;
+ shared.giftsCollected+=legacy.giftsCollected;
+ shared.bonusGifts+=legacy.bonusGifts;
+ shared.matchesCompleted+=legacy.matchesCompleted;
+ shared.revision++;
+ return {village:shared,changed:true};
 }
