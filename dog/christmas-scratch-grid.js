@@ -8,6 +8,7 @@
  * This is a pure rules module. Buying a ticket / granting prizes is separate.
  */
 import {randomInt} from 'node:crypto';
+import {evaluateSpecialScratch,verifySpecialScratch} from './christmas-special-scratch.js';
 import {evaluateTicTacToe,verifyTicTacToe} from './christmas-tictactoe.js';
 import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS,SCRATCH_PAYOUT_VERSION,evaluatePayoutGrid,generatePayoutGrid} from './christmas-scratch-symbols.js';
 import {PREMIUM_27_SPEC,evaluatePremium27,generatePremium27,verifyPremium27} from './christmas-premium27.js';
@@ -31,6 +32,8 @@ const MODE_NAMES=Object.freeze({
 export const SCRATCH_GRID_VARIANTS=Object.freeze({
  premium_27:PREMIUM_27_SPEC,
  tic_tac_toe:Object.freeze({id:'tic_tac_toe',name:'DOG Tic-Tac-Toe',rows:3,cols:3,cellCount:9,winLength:3,rule:'Drei gleiche Symbole in einer der acht Linien'}),
+ number_one_20:Object.freeze({id:'number_one_20',name:'Glückszahl 1',rows:20,cols:2,cellCount:40,rule:'20 Preisreihen; jede Zahl 1 gewinnt den Preis links davon'}),
+ dog_jackpot_9:Object.freeze({id:'dog_jackpot_9',name:'Finde DOG!',rows:3,cols:3,cellCount:9,rule:'DOG-Symbol aktiviert sämtliche übrigen acht Preise der Karte'}),
  gifts:Object.freeze({id:'gifts',name:MODE_NAMES.gifts,rows:3,cols:3,size:3,winLength:3,cellCount:9,rule:'Drei gleiche Symbole in einer Reihe, Spalte oder Diagonale'}),
  snow:Object.freeze({id:'snow',name:MODE_NAMES.snow,rows:4,cols:4,size:4,winLength:4,cellCount:16,rule:'Vier gleiche Symbole in einer Reihe, Spalte oder Diagonale (altes Los)'}),
  snow_collect:Object.freeze({id:'snow_collect',name:MODE_NAMES.snow_collect,rows:4,cols:4,cellCount:16,winLength:3,rule:'Drei gleiche Gewinnsymbole irgendwo auf der Karte; pro Symbolart maximal ein Gewinn; Eiswürfel sind Nietenfelder'}),
@@ -45,11 +48,11 @@ export const SCRATCH_GRID_VARIANTS=Object.freeze({
 });
 // Four new-sale cards: two simple (200), one medium (500), one 27-cell premium (1000).
 // Old IDs remain readable for previously purchased tickets.
-export const SCRATCH_VARIANT_IDS=Object.freeze(['gifts','snow_collect','elf','premium_27','tic_tac_toe']);
+export const SCRATCH_VARIANT_IDS=Object.freeze(['gifts','snow_collect','elf','premium_27','tic_tac_toe','number_one_20','dog_jackpot_9']);
 export const SCRATCH_VARIANT_IDS_BY_TIER=Object.freeze({
  simple:Object.freeze(['gifts','snow_collect']),
- medium:Object.freeze(['elf','tic_tac_toe']),
- premium:Object.freeze(['premium_27'])
+ medium:Object.freeze(['elf','tic_tac_toe','number_one_20']),
+ premium:Object.freeze(['premium_27','dog_jackpot_9'])
 });
 export const SCRATCH_ARCHIVED_VARIANT_IDS=Object.freeze(
  Object.keys(SCRATCH_GRID_VARIANTS).filter(id=>!SCRATCH_VARIANT_IDS.includes(id))
@@ -111,6 +114,7 @@ export function evaluateScratchGrid(board){
   throw Error('SCRATCH_GRID_INVALID');
  if(board.variantId==='premium_27')return evaluatePremium27(board);
  if(board.variantId==='tic_tac_toe')return evaluateTicTacToe(board.cells);
+ if(['number_one_20','dog_jackpot_9'].includes(board.variantId))return evaluateSpecialScratch(board);
  if(board.symbolVersion===2||board.symbolVersion===SCRATCH_PAYOUT_VERSION)return evaluatePayoutGrid(board);
  if(board.symbolVersion!==undefined)throw Error('SCRATCH_GRID_VERSION_INVALID');
  const cells=board.cells;
@@ -384,6 +388,7 @@ export function attachScratchPrizes(board,prizes){
 }
 export function verifyScratchPrizes(board){
  if(board?.variantId==='tic_tac_toe')return verifyTicTacToe(board);
+ if(['number_one_20','dog_jackpot_9'].includes(board?.variantId))return verifySpecialScratch(board);
  if(board?.variantId==='premium_27')return verifyPremium27(board);
  try{
   const verified=evaluateScratchGrid(board);
