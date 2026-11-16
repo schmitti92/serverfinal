@@ -1,0 +1,25 @@
+name: DOG special scratch tickets
+
+on:
+  push:
+    paths:
+      - 'dog/christmas-special-scratch.js'
+      - 'dog/christmas-tictactoe.js'
+      - 'dog/christmas-scratch.js'
+      - 'dog/christmas-scratch-grid.js'
+      - 'tests/dog-christmas-special-scratch.test.js'
+      - 'tests/dog-christmas-tictactoe.test.js'
+      - 'tests/christmas-scratch-grid.test.js'
+      - '.github/workflows/dog-special-scratch.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify both new scratch cards and legacy grids
+        run: node --test tests/dog-christmas-special-scratch.test.js tests/dog-christmas-tictactoe.test.js tests/christmas-scratch-grid.test.js
