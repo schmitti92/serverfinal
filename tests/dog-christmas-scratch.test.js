@@ -6,7 +6,7 @@ import {DOG_SCRATCH_DEFAULT_SETTINGS} from '../dog/christmas-scratch-settings.js
 import {verifyScratchPrizes} from '../dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_TIERS,DOG_SCRATCH_PREMIUM_POOL,DOG_SCRATCH_MEDIUM_POOL,
  DOG_SCRATCH_BASIC_EMOJIS,DOG_SCRATCH_BLOCK_COLORS,DOG_SCRATCH_START_COINS,
- normalizedScratchWallet,dogScratchStatus,dogScratchToday,buyScratchTicket} from '../dog/christmas-scratch.js';
+ normalizedScratchWallet,dogScratchStatus,dogScratchToday,buyScratchTicket,claimDogLevelOneScratchVouchers} from '../dog/christmas-scratch.js';
 const NOW=Date.parse('2026-11-15T12:00:00Z');
 const args={now:()=>NOW};
 const receipt=(tier,n,roll,extra={})=>{
@@ -172,4 +172,34 @@ test('server scratch actions require auth and commit exactly one account documen
  const start=main.indexOf("app.get('/api/hub/scratch',authentication");
  const end=main.indexOf("app.post('/api/hub/scratch/buy',authentication",start);
  assert.doesNotMatch(main.slice(start,end),/tx\.set\(|runTransaction\(/);
+});
+
+test('level 1 starter reward is atomic, specific to all four variants, and idempotent',()=>{
+ const first=claimDogLevelOneScratchVouchers(null,{now:NOW});
+ assert.equal(first.unchanged,false);
+ assert.equal(first.wallet.coins,1000);
+ assert.deepEqual(first.wallet.variantVouchers,{gifts:1,snow_collect:1,elf:1,premium_27:1});
+ assert.deepEqual(first.wallet.vouchers,{simple:0,medium:0,premium:0});
+ const replay=claimDogLevelOneScratchVouchers(first.wallet,{now:NOW+100});
+ assert.equal(replay.unchanged,true);
+ assert.deepEqual(replay.wallet.variantVouchers,first.wallet.variantVouchers);
+ assert.equal(dogScratchStatus(replay.wallet).levelOneStarterClaimed,true);
+});
+test('four free starter variants redeem separately without using generic tier vouchers',()=>{
+ let wallet=claimDogLevelOneScratchVouchers(null,{now:NOW}).wallet;
+ for(const [i,[tier,variantId]] of [['simple','gifts'],['simple','snow_collect'],
+   ['medium','elf'],['premium','premium_27']].entries()){
+   const opened=buyScratchTicket(wallet,null,
+     {tier,variantId,voucher:true,commandId:'starter-voucher-'+i},
+     {...args,draw:max=>0});
+   assert.equal(opened.result.price,0);
+   assert.equal(opened.result.board.variantId,variantId);
+   assert.equal(opened.wallet.variantVouchers[variantId],0);
+   assert.deepEqual(opened.wallet.vouchers,{simple:0,medium:0,premium:0});
+   wallet=opened.wallet;
+ }
+ assert.deepEqual(wallet.variantVouchers,{gifts:0,snow_collect:0,elf:0,premium_27:0});
+ assert.throws(()=>buyScratchTicket(wallet,null,
+  {tier:'simple',variantId:'gifts',voucher:true,commandId:'starter-no-more'},
+  {...args,draw:max=>0}),/SCRATCH_NO_VOUCHER/);
 });

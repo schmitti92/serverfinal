@@ -517,6 +517,24 @@ const capCoins=n=>Number.isSafeInteger(n)&&n>=0?Math.min(n,1000000000):0;
 const cleanScratchVouchers=raw=>Object.fromEntries(
  ['simple','medium','premium'].map(tier=>[tier,
   Number.isSafeInteger(raw?.[tier])&&raw[tier]>=0?Math.min(raw[tier],10000):0]));
+const STARTER_SCRATCH_VARIANTS=Object.freeze(['gifts','snow_collect','elf','premium_27']);
+const cleanVariantVouchers=raw=>Object.fromEntries(
+ STARTER_SCRATCH_VARIANTS.map(id=>[id,Number.isSafeInteger(raw?.[id])&&raw[id]>=0?Math.min(raw[id],10000):0]));
+/**
+ * One-time Level 1 starter prize for an authenticated player. This pure function
+ * is called INSIDE the existing scratch-wallet Firestore transaction.
+ * The marker and four vouchers are committed together, never separately.
+ */
+export function claimDogLevelOneScratchVouchers(raw,{now=Date.now()}={}){
+ const wallet=normalizedScratchWallet(raw);
+ if(wallet.levelOneStarterClaimedAt)return {unchanged:true,wallet};
+ for(const id of STARTER_SCRATCH_VARIANTS){
+  if(wallet.variantVouchers[id]>=10000)throw Error('SCRATCH_VOUCHER_LIMIT');
+  wallet.variantVouchers[id]++;
+ }
+ wallet.levelOneStarterClaimedAt=now;
+ return {unchanged:false,wallet};
+}
 /** Call only after a server-verified hidden-field hit, within the move's transaction. */
 export function grantDogScratchVoucher(raw,tier){
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
@@ -598,6 +616,8 @@ export function normalizedScratchWallet(raw){
   daily:typeof raw?.daily==='string'?raw.daily:'',
   purchased:Number.isSafeInteger(raw?.purchased)&&raw.purchased>=0?raw.purchased:0,
   vouchers:cleanScratchVouchers(raw?.vouchers),
+  variantVouchers:cleanVariantVouchers(raw?.variantVouchers),
+  levelOneStarterClaimedAt:Number.isSafeInteger(raw?.levelOneStarterClaimedAt)&&raw.levelOneStarterClaimedAt>0?raw.levelOneStarterClaimedAt:0,
   progress:normalizeScratchProgress(raw?.progress,recent),
   lastResult:raw?.lastResult&&typeof raw.lastResult==='object'?raw.lastResult:null,
   version:1
@@ -615,7 +635,8 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
  const owned=[...new Set([...Object.keys(w.owned),...treeOwned(tree)])];
  const pools=Object.fromEntries(Object.keys(DOG_SCRATCH_TIERS).map(id=>
   [id,{total:tierPool(id).length,remaining:tierPool(id).filter(p=>!owned.includes(p.unlockId)).length}]));
- return {coins:w.coins,vouchers:{...w.vouchers},starterCoins:DOG_SCRATCH_START_COINS,
+ return {coins:w.coins,vouchers:{...w.vouchers},variantVouchers:{...w.variantVouchers},
+  levelOneStarterClaimed:Boolean(w.levelOneStarterClaimedAt),starterCoins:DOG_SCRATCH_START_COINS,
   dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   settings:normalizeScratchSettings(settings),
@@ -643,7 +664,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const free=request?.free===true;
  if(voucher&&free)throw Error('SCRATCH_INVALID_PAYMENT');
  const hostFree=free&&liveSettings.freeEnabled;
- if(voucher&&w.vouchers[tier]<=0)throw Error('SCRATCH_NO_VOUCHER');
+ const variantRequested=request?.variantId;
+ const variantVoucherAvailable=variantRequested!==undefined&&w.variantVouchers[variantRequested]>0;
+ if(voucher&&!variantVoucherAvailable&&w.vouchers[tier]<=0)throw Error('SCRATCH_NO_VOUCHER');
  if(free&&!hostFree&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
  const today=dogScratchToday(now());
  if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
@@ -842,7 +865,10 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const totalCoins=allWinnings.filter(x=>x.type==='coins').reduce((sum,x)=>sum+x.amount,0);
  w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
  w.purchased++;
- if(voucher)w.vouchers[tier]--;
+ if(voucher){
+  if(variantVoucherAvailable)w.variantVouchers[variantId]--;
+  else w.vouchers[tier]--;
+ }
  if(free&&!hostFree)w.daily=today;
  const first=baseCategory==='unlock'?
    winnings.find(w=>w.type==='unlock')||winnings[0]:winnings[0];

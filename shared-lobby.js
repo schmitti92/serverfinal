@@ -15,7 +15,7 @@ import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPla
 import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
-import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher} from './dog/christmas-scratch.js';
+import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
 export const HUB_GAMES = Object.freeze({
@@ -860,9 +860,29 @@ function finishEisstock(ch,members){
   // from the shared Christmas tree. Opens only when the user views their level.
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
     const store=db();
-    const snap=await store.collection(DOG_PLAYER_STATS_COLLECTION).doc(req.hubIdentity.uid).get();
+    const uid=req.hubIdentity.uid;
+    const [snap,walletSnap]=await Promise.all([
+      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
+      store.collection(DOG_SCRATCH_COLLECTION).doc(uid).get()
+    ]);
     return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
+      levelRewardClaims:{1:Boolean(walletSnap.exists&&walletSnap.data()?.levelOneStarterClaimedAt)},
       scope:'verified-dog-online-matches',rewardsConfigured:true};
+  }));
+  // Only the authenticated account can redeem its Level-1 starter pack.
+  // One atomic scratch-wallet write guarantees exactly four specific vouchers
+  // despite retry, reconnect, or two devices claiming simultaneously.
+  app.post('/api/hub/dog/level/rewards/claim',authentication,handler(async req=>{
+    if(req.body?.level!==1)throw error(400,'DOG_LEVEL_REWARD_INVALID');
+    const store=db(),walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(req.hubIdentity.uid);
+    const receipt=await store.runTransaction(async tx=>{
+      const snap=await tx.get(walletRef);
+      const grant=claimDogLevelOneScratchVouchers(snap.exists?snap.data():null,{now:clock()});
+      if(!grant.unchanged)tx.set(walletRef,grant.wallet);
+      return {replayed:grant.unchanged,levelRewardClaims:{1:true},
+        scratch:dogScratchStatus(grant.wallet)};
+    });
+    return receipt;
   }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
     const store=db(),snap=await dogVillageFor(store).get();
