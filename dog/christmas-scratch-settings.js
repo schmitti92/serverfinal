@@ -26,8 +26,13 @@ const defaults=Object.freeze({
  elf:Object.freeze({weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40,maxPrizes:3,coinAmounts:defaultCoins.elf,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:6,coinAmounts:defaultCoins.premium_27,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS})
 });
+export const NUMBER_ONE_20_SETTINGS_DEFAULT=Object.freeze({
+ price:500,hitPer1000:100,
+ coinAmounts:Object.freeze([100,300,800]),
+ symbolWeights:Object.freeze([650,280,60,10])
+});
 export const DOG_SCRATCH_DEFAULT_SETTINGS=Object.freeze({
- version:1,freeEnabled:false,variants:defaults
+ version:1,freeEnabled:false,variants:defaults,numberOne20:NUMBER_ONE_20_SETTINGS_DEFAULT
 });
 const integer=(v,min,max)=>Number.isInteger(v)&&v>=min&&v<=max;
 export function validScratchCoinAmounts(amounts){
@@ -71,6 +76,17 @@ function validVariant(config,id){
   (config.moneySymbolWeights===undefined||validScratchSymbolWeights(config.moneySymbolWeights,3))&&
   (config.giftSymbolWeights===undefined||validScratchSymbolWeights(config.giftSymbolWeights,4));
 }
+function validNumberOne20(value){
+ return value&&typeof value==='object'&&!Array.isArray(value)&&
+  integer(value.price,1,1000000)&&integer(value.hitPer1000,0,1000)&&
+  validScratchCoinAmounts(value.coinAmounts)&&
+  validScratchSymbolWeights(value.symbolWeights,4);
+}
+function normalizeNumberOne20(value){
+ const source=validNumberOne20(value)?value:NUMBER_ONE_20_SETTINGS_DEFAULT;
+ return {price:source.price,hitPer1000:source.hitPer1000,
+  coinAmounts:[...source.coinAmounts],symbolWeights:[...source.symbolWeights]};
+}
 /** Read stored settings defensively, retaining defaults for older documents. */
 export function normalizeScratchSettings(raw){
  const variants={};
@@ -83,14 +99,16 @@ export function normalizeScratchSettings(raw){
    moneySymbolWeights:[...(v.moneySymbolWeights??DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS)],
    giftSymbolWeights:[...(v.giftSymbolWeights??DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS)]};
  }
- return {version:1,freeEnabled:raw?.freeEnabled===true,variants};
+ return {version:1,freeEnabled:raw?.freeEnabled===true,variants,
+  numberOne20:normalizeNumberOne20(raw?.numberOne20)};
 }
 /** Reject malformed or partial host edits before any Firestore write. */
 export function validateScratchSettings(raw){
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||typeof raw.freeEnabled!=='boolean'||
    !raw.variants||typeof raw.variants!=='object'||Array.isArray(raw.variants)||
    Object.keys(raw.variants).length!==DOG_SCRATCH_VARIANTS.length||
-   DOG_SCRATCH_VARIANTS.some(id=>!validVariant(raw.variants[id],id)))
+   DOG_SCRATCH_VARIANTS.some(id=>!validVariant(raw.variants[id],id))||
+   (raw.numberOne20!==undefined&&!validNumberOne20(raw.numberOne20)))
   throw Error('SCRATCH_SETTINGS_INVALID');
  return normalizeScratchSettings(raw);
 }
