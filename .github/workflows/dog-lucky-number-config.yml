@@ -1,0 +1,23 @@
+name: DOG Lucky Number Dynamic Settings
+
+on:
+  push:
+    paths:
+      - 'dog/christmas-scratch-settings.js'
+      - 'dog/christmas-special-scratch.js'
+      - 'dog/christmas-scratch.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-christmas-lucky-number-config.test.js'
+      - '.github/workflows/dog-lucky-number-config.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate configurable lottery settings and receipt settlement
+        run: node --test tests/dog-christmas-lucky-number-config.test.js tests/dog-christmas-special-scratch.test.js tests/dog-christmas-scratch-settings.test.js
