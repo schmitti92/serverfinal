@@ -27,7 +27,7 @@ const defaults=Object.freeze({
  premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:6,coinAmounts:defaultCoins.premium_27,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS})
 });
 export const NUMBER_ONE_20_SETTINGS_DEFAULT=Object.freeze({
- price:500,hitPer1000:100,
+ price:500,hitPer1000:100,giftFallbackCoins:1500,
  coinAmounts:Object.freeze([100,300,800]),
  symbolWeights:Object.freeze([650,280,60,10])
 });
@@ -79,12 +79,14 @@ function validVariant(config,id){
 function validNumberOne20(value){
  return value&&typeof value==='object'&&!Array.isArray(value)&&
   integer(value.price,1,1000000)&&integer(value.hitPer1000,0,1000)&&
+  (value.giftFallbackCoins===undefined||integer(value.giftFallbackCoins,0,DOG_SCRATCH_COIN_MAX))&&
   validScratchCoinAmounts(value.coinAmounts)&&
   validScratchSymbolWeights(value.symbolWeights,4);
 }
 function normalizeNumberOne20(value){
  const source=validNumberOne20(value)?value:NUMBER_ONE_20_SETTINGS_DEFAULT;
  return {price:source.price,hitPer1000:source.hitPer1000,
+  giftFallbackCoins:source.giftFallbackCoins??1500,
   coinAmounts:[...source.coinAmounts],symbolWeights:[...source.symbolWeights]};
 }
 /** Read stored settings defensively, retaining defaults for older documents. */
