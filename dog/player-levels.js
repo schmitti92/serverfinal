@@ -2,7 +2,8 @@
  * Personal DOG player progression (levels 1–10).
  * Progress is awarded only on an authoritative, completed online DOG match.
  * Level 1 grants one voucher for EACH of the 4 scratch variants.
- * Level 2 opens the DOG Design-Studio; level 3 unlocks the Nikolaus card deck.
+ * Level 2 opens the DOG Design-Studio; level 3 unlocks Nikolaus cards.
+ * Level 4 unlocks the classic 3D pawns (solid-color pieces are free).
  * Rewards are bound to authenticated, server-verified experience points.
  */
 export const DOG_LEVEL_MAX=10;
@@ -12,7 +13,8 @@ export const DOG_LEVEL_REWARDS=Object.freeze(Array.from({length:DOG_LEVEL_MAX},(
  const reward=i===0?Object.freeze({type:'scratchStarter',id:'scratch-vouchers-4',
   title:'🎟️ Vier Rubbellos-Gutscheine · je 1 pro Losart'}):
   i===1?Object.freeze({type:'feature',id:'dog-design-studio',title:'Brettdesigner'}):
-  i===2?Object.freeze({type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'}):null;
+  i===2?Object.freeze({type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'}):
+  i===3?Object.freeze({type:'pieceShape',id:'dog-pawn-3d',title:'♟️ Klassische 3D-Spielfiguren'}):null;
  return Object.freeze({level:i+1,id:'dog-player-level-'+(i+1),configured:reward!==null,reward});
 }));
 const safeXp=value=>Number.isSafeInteger(value)&&value>=0?Math.min(value,1000000000):0;
