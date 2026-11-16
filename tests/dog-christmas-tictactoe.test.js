@@ -48,6 +48,6 @@ test('gift row grants at most one premium entitlement; two gifts create one spar
 });
 
 test('no prize when all three-in-a-row lines are broken',()=>{
- const cells=['🪙','💵','💼','💵','💼','🪙','💼','🪙','💵'];
+ const cells=['🪙','💼','💼','💼','💵','🪙','🪙','🪙','💼'];
  assert.equal(evaluateTicTacToe(cells).length,0);
 });
