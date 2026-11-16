@@ -8,7 +8,7 @@ import {
 
 const fixtures=Object.freeze([
  ['gifts',9],['snow',16],['snow_collect',16],['stars',12],['elf',20],['reindeer',12],
- ['candy',6],['tree',15],['premium_27',27],['cookie',16],['diamond',9],['bells',20]
+ ['candy',6],['tree',15],['cookie',16],['diamond',9],['bells',20]
 ]);
 
 test('seven active scratch games by tier; archived tickets remain valid',()=>{
@@ -72,6 +72,7 @@ test('medium elf paths join only orthogonal neighbors and may wind across rows',
 });
 
 test('premium card is 9 rows by 3, and 24 symbols count for both milestones',()=>{
+ assert.equal(SCRATCH_GRID_VARIANTS.premium_27.cellCount,27);
  const twenty=Array(27).fill('🧊');
  for(let i=0;i<20;i++)twenty[i]=i%3===2?'⭐':'🎁';
  const gold=evaluateScratchGrid({variantId:'premium_27',cells:twenty});
