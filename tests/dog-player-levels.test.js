@@ -24,7 +24,12 @@ test('all ten levels are monotonic, with accurate XP progression',()=>{
   type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'
  });
  assert.equal(DOG_LEVEL_THRESHOLDS[2],250);
- assert.ok(DOG_LEVEL_REWARDS.filter(x=>![1,2,3].includes(x.level)).every(x=>!x.configured&&x.reward===null));
+ assert.equal(DOG_LEVEL_THRESHOLDS[3],450);
+ assert.equal(DOG_LEVEL_REWARDS[3].configured,true);
+ assert.deepEqual(DOG_LEVEL_REWARDS[3].reward,{
+  type:'pieceShape',id:'dog-pawn-3d',title:'♟️ Klassische 3D-Spielfiguren'
+ });
+ assert.ok(DOG_LEVEL_REWARDS.filter(x=>![1,2,3,4].includes(x.level)).every(x=>!x.configured&&x.reward===null));
 });
 test('one completed DOG match gives 50 XP, victory bonus and capped knockouts',()=>{
  assert.equal(dogMatchXp(),50);
