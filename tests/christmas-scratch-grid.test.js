@@ -11,14 +11,14 @@ const fixtures=Object.freeze([
  ['candy',6],['tree',15],['premium_27',27],['cookie',16],['diamond',9],['bells',20]
 ]);
 
-test('five active scratch games by tier; previous tickets remain valid',()=>{
- assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','premium_27','tic_tac_toe']);
- assert.equal(new Set(SCRATCH_VARIANT_IDS).size,5);
- assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,13);
+test('seven active scratch games by tier; archived tickets remain valid',()=>{
+ assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','premium_27','tic_tac_toe','number_one_20','dog_jackpot_9']);
+ assert.equal(new Set(SCRATCH_VARIANT_IDS).size,7);
+ assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,15);
  assert.deepEqual(SCRATCH_VARIANT_IDS_BY_TIER,{
   simple:['gifts','snow_collect'],
-  medium:['elf','tic_tac_toe'],
-  premium:['premium_27']
+  medium:['elf','tic_tac_toe','number_one_20'],
+  premium:['premium_27','dog_jackpot_9']
  });
  assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,
   ['snow','stars','reindeer','candy','tree','cookie','diamond','bells']);
