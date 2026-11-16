@@ -2314,7 +2314,10 @@ function finishEisstock(ch,members){
       room.phase='lobby';
       room.game=null;
       room.match=null;
-      room.players.forEach(p=>{p.ready=false;p.participating=false;p.colorPref=null;});
+      room.players.forEach(p=>{
+        p.ready=false;p.participating=false;
+        if(match.game!=='dog')p.colorPref=null;
+      });
     })};
   }));
   app.post('/api/hub/rooms/:code/finish',handler(async req=>{
