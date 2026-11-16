@@ -12,6 +12,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
+import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
@@ -540,8 +541,9 @@ function finishEisstock(ch,members){
     if(room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
     const players=activeSeats(room);
     if(players.length<1||players.length>4)throw error(409,'INVALID_PLAYER_COUNT');
+    const seats=dogLobbySeats(players);
     const roster=Array.from({length:4},(_,seat)=>{
-      const player=players[seat];
+      const player=seats[seat];
       return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
     });
     room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
@@ -625,6 +627,7 @@ function finishEisstock(ch,members){
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
         christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?publicDogChristmasMatch(room.match.christmas):null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
+        dogSeatColors:room.match.game==='dog'?room.match.dogRoster.map(r=>DOG_LOBBY_COLORS[r.seat]):null,
         dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
@@ -1048,6 +1051,7 @@ function finishEisstock(ch,members){
       if(room.phase==='playing'&&!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
       if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
+      if(game!==room.game)room.players.forEach(p=>{p.colorPref=null;});
       room.game=game;room.phase='preparing';
       if(game==='dog'&&validDogAvatar(req.body?.dogAvatar)){
         const me=room.players.find(p=>p.uid===identity.uid);
@@ -1363,11 +1367,12 @@ function finishEisstock(ch,members){
     const color=req.body?.color;
     if(color!==null&&!BARIKADE_COLORS.includes(color))throw error(400,'INVALID_COLOR');
     return {room:await mutate(code,identity,room=>{
-      if(room.phase!=='preparing'||room.game!=='barikade')throw error(409,'NO_BARIKADE_SETUP');
-      if(room.settings?.barikade?.colorMode!=='manual')throw error(409,'COLORS_BY_WHEEL');
+      if(room.phase!=='preparing'||!['barikade','dog'].includes(room.game))throw error(409,'NO_COLOR_SETUP');
+      if(room.game==='barikade'&&room.settings?.barikade?.colorMode!=='manual')throw error(409,'COLORS_BY_WHEEL');
       const me=room.players.find(p=>p.uid===identity.uid);
       if(!me?.participating)throw error(403,'SPECTATOR_CANNOT_SELECT_COLOR');
       if(color&&room.players.some(p=>p.uid!==identity.uid&&p.participating&&p.colorPref===color))throw error(409,'COLOR_TAKEN');
+      if(me.colorPref===color)return {unchanged:true};
       me.colorPref=color;
       room.players.forEach(p=>p.ready=false);
     })};
