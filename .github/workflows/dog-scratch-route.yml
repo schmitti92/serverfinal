@@ -1,0 +1,25 @@
+name: DOG Scratch Route Validation
+
+on:
+  push:
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/christmas-scratch-grid.js'
+      - 'dog/christmas-scratch.js'
+      - 'dog/christmas-special-scratch.js'
+      - 'dog/christmas-tictactoe.js'
+      - 'tests/shared-lobby.test.js'
+      - '.github/workflows/dog-scratch-route.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Test live scratch purchase router and free mode
+        run: node --test --test-name-pattern="authenticated hub scratch route|Christmas scratch hub accepts free" tests/shared-lobby.test.js
