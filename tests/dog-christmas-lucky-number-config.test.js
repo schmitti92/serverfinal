@@ -7,11 +7,11 @@ const copy=v=>JSON.parse(JSON.stringify(v));
 
 test('Glückszahl 1 host values are validated and persist when old settings are loaded',()=>{
  const cfg=copy(DOG_SCRATCH_DEFAULT_SETTINGS);
- cfg.numberOne20={price:1234,hitPer1000:225,coinAmounts:[11,222,3333],symbolWeights:[0,100,900,0]};
+ cfg.numberOne20={price:1234,hitPer1000:225,giftFallbackCoins:777,coinAmounts:[11,222,3333],symbolWeights:[0,100,900,0]};
  assert.deepEqual(validateScratchSettings(cfg).numberOne20,cfg.numberOne20);
  const legacy=copy(cfg);delete legacy.numberOne20;
  assert.deepEqual(normalizeScratchSettings(legacy).numberOne20,{
-  price:500,hitPer1000:100,coinAmounts:[100,300,800],symbolWeights:[650,280,60,10]
+  price:500,hitPer1000:100,giftFallbackCoins:1500,coinAmounts:[100,300,800],symbolWeights:[650,280,60,10]
  });
  for(const [key,value] of [
   ['price',0],['hitPer1000',1001],['coinAmounts',[3,3,4]],
