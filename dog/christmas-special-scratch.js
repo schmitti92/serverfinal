@@ -71,7 +71,7 @@ function decorate(board,unlock){
     prize={type:'unlock',symbol:'🎁',prize:{
      unlockId:unlock.unlockId,name:unlock.name,icon:unlock.icon,category:unlock.category
     }};
-   }else prize={type:'coins',symbol:'🎁',amount:1500};
+   }else prize={type:'coins',symbol:'🎁',amount:board.variantId==='number_one_20'?board.giftFallbackCoins??1500:1500};
   }else prize={type:'coins',symbol:pattern.symbol,amount:payouts.get(pattern.symbol)};
   return {...pattern,prize};
  });
@@ -87,11 +87,13 @@ export function drawNumberOne20({draw,unlock=null,settings=null}={}){
  const weights=Array.isArray(settings?.symbolWeights)?settings.symbolWeights:defaults;
  const amounts=Array.isArray(settings?.coinAmounts)?settings.coinAmounts:[100,300,800];
  const hitPer1000=Number.isInteger(settings?.hitPer1000)?settings.hitPer1000:100;
+ const giftFallbackCoins=Number.isInteger(settings?.giftFallbackCoins)?settings.giftFallbackCoins:1500;
  if(weights.length!==4||weights.some(x=>!Number.isInteger(x)||x<0||x>1000)||
     weights.reduce((a,b)=>a+b,0)!==1000||!Array.isArray(amounts)||amounts.length!==3||
     amounts.some(x=>!Number.isInteger(x)||x<1||x>50000000)||
     !(amounts[0]<amounts[1]&&amounts[1]<amounts[2])||
-    hitPer1000<0||hitPer1000>1000)throw Error('SCRATCH_NUMBER_SETTINGS_INVALID');
+    (hitPer1000<0||hitPer1000>1000||giftFallbackCoins<0||giftFallbackCoins>50000000))
+  throw Error('SCRATCH_NUMBER_SETTINGS_INVALID');
  const prizePool=NUMBER_PRIZE_WEIGHTS.map((row,i)=>({...row,weight:weights[i],amount:i<3?amounts[i]:null}));
  const cells=[];
  for(let i=0;i<NUMBER_ROW_COUNT;i++){
@@ -116,7 +118,7 @@ export function drawNumberOne20({draw,unlock=null,settings=null}={}){
   cells.push(symbol,number);
  }
  return decorate({variantId:'number_one_20',symbolVersion:SPECIAL_SCRATCH_VERSION,cells,
-  coinAmounts:[...amounts],symbolWeights:[...weights],hitPer1000},unlock);
+  coinAmounts:[...amounts],symbolWeights:[...weights],hitPer1000,giftFallbackCoins},unlock);
 }
 export function drawDogJackpot9({draw,unlock=null}={}){
  if(typeof draw!=='function')throw Error('SCRATCH_SPECIAL_DRAW_REQUIRED');
@@ -137,7 +139,9 @@ export function verifySpecialScratch(board){
    if(!Array.isArray(a)||a.length!==3||a.some(n=>!Number.isInteger(n)||n<1||n>50000000)||
      !(a[0]<a[1]&&a[1]<a[2])||!Array.isArray(w)||w.length!==4||
      w.some(n=>!Number.isInteger(n)||n<0||n>1000)||w.reduce((x,y)=>x+y,0)!==1000||
-     !Number.isInteger(h)||h<0||h>1000)return false;
+     !Number.isInteger(h)||h<0||h>1000||
+     (board.giftFallbackCoins!==undefined&&(!Number.isInteger(board.giftFallbackCoins)||
+       board.giftFallbackCoins<0||board.giftFallbackCoins>50000000)))return false;
   }
   const calculated=evaluateSpecialScratch(board);
   if(!Array.isArray(board.wins)||board.wins.length!==calculated.length)return false;
@@ -154,7 +158,7 @@ export function verifySpecialScratch(board){
       !prize.prize.name||unlockIds.has(prize.prize.unlockId))return false;
      usedUnlock=true;unlockIds.add(prize.prize.unlockId);return prize.symbol==='🎁';
     }
-    return prize?.type==='coins'&&prize.amount===1500&&prize.symbol==='🎁';
+    return prize?.type==='coins'&&prize.amount===(board.variantId==='number_one_20'?board.giftFallbackCoins??1500:1500)&&prize.symbol==='🎁';
    }
    const payout=board.variantId==='number_one_20'&&Array.isArray(board.coinAmounts)?
     board.coinAmounts[icons.indexOf(pattern.symbol)]:money.get(pattern.symbol);
