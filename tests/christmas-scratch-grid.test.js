@@ -11,13 +11,13 @@ const fixtures=Object.freeze([
  ['candy',6],['tree',15],['premium_27',27],['cookie',16],['diamond',9],['bells',20]
 ]);
 
-test('four active scratch games by tier; previous ten remain valid for old tickets',()=>{
- assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','premium_27']);
- assert.equal(new Set(SCRATCH_VARIANT_IDS).size,4);
- assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,12);
+test('five active scratch games by tier; previous tickets remain valid',()=>{
+ assert.deepEqual(SCRATCH_VARIANT_IDS,['gifts','snow_collect','elf','premium_27','tic_tac_toe']);
+ assert.equal(new Set(SCRATCH_VARIANT_IDS).size,5);
+ assert.equal(Object.keys(SCRATCH_GRID_VARIANTS).length,13);
  assert.deepEqual(SCRATCH_VARIANT_IDS_BY_TIER,{
   simple:['gifts','snow_collect'],
-  medium:['elf'],
+  medium:['elf','tic_tac_toe'],
   premium:['premium_27']
  });
  assert.deepEqual(SCRATCH_ARCHIVED_VARIANT_IDS,
