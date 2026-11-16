@@ -667,7 +667,12 @@ function finishEisstock(ch,members){
     room.phase='lobby';
     room.game=null;
     room.match=null;
-    room.players.forEach(p=>{p.ready=false;p.participating=false;p.colorPref=null;});
+    // A color picked while DOG was running is reserved for the next DOG match.
+    // Clearing it here would silently discard the player's in-game choice.
+    room.players.forEach(p=>{
+      p.ready=false;p.participating=false;
+      if(match.game!=='dog')p.colorPref=null;
+    });
   }
   function validateRead(room,identity){
     if(!room||room.expiresAt<=clock())throw error(404,'ROOM_NOT_FOUND');
@@ -1051,7 +1056,10 @@ function finishEisstock(ch,members){
       if(room.phase==='playing'&&!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
       if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
-      if(game!==room.game)room.players.forEach(p=>{p.colorPref=null;});
+      // Keep DOG's next-match color across the return to the shared lobby.
+      // Switching to another game (or coming from another game) resets it.
+      const continuingDog=game==='dog'&&!room.game&&room.lastCompleted?.game==='dog';
+      if(game!==room.game&&!continuingDog)room.players.forEach(p=>{p.colorPref=null;});
       room.game=game;room.phase='preparing';
       if(game==='dog'&&validDogAvatar(req.body?.dogAvatar)){
         const me=room.players.find(p=>p.uid===identity.uid);
@@ -1367,14 +1375,20 @@ function finishEisstock(ch,members){
     const color=req.body?.color;
     if(color!==null&&!BARIKADE_COLORS.includes(color))throw error(400,'INVALID_COLOR');
     return {room:await mutate(code,identity,room=>{
-      if(room.phase!=='preparing'||!['barikade','dog'].includes(room.game))throw error(409,'NO_COLOR_SETUP');
+      const preparing=room.phase==='preparing';
+      const dogRunning=room.phase==='playing'&&room.game==='dog'&&room.match?.game==='dog';
+      if(!((preparing&&['barikade','dog'].includes(room.game))||dogRunning))
+        throw error(409,'NO_COLOR_SETUP');
       if(room.game==='barikade'&&room.settings?.barikade?.colorMode!=='manual')throw error(409,'COLORS_BY_WHEEL');
       const me=room.players.find(p=>p.uid===identity.uid);
       if(!me?.participating)throw error(403,'SPECTATOR_CANNOT_SELECT_COLOR');
       if(color&&room.players.some(p=>p.uid!==identity.uid&&p.participating&&p.colorPref===color))throw error(409,'COLOR_TAKEN');
       if(me.colorPref===color)return {unchanged:true};
       me.colorPref=color;
-      room.players.forEach(p=>p.ready=false);
+      // During a live DOG match, the engine, private hands, turn order,
+      // team affiliation and active roster must NEVER change. This is a
+      // reservation for the next match only; do not reset ready states.
+      if(preparing)room.players.forEach(p=>p.ready=false);
     })};
   }));
   // Only the host may change seats. Spectators remain room members.
