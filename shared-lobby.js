@@ -811,6 +811,13 @@ function finishEisstock(ch,members){
        }
       }
     }
+    // Cached/older clients must not overwrite a customized Glückszahl 1 ticket.
+    // Keep its independent symbol odds, prize amounts and price if the edit
+    // form did not submit numberOne20 at all.
+    if(req.body?.settings?.numberOne20===undefined){
+      const prior=await ref.get();
+      settings.numberOne20=normalizeScratchSettings(prior.exists?prior.data():null).numberOne20;
+    }
     await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
     return {settings};
   }));
