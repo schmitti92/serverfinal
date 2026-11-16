@@ -679,7 +679,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  if(free&&!hostFree&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
  const today=dogScratchToday(now());
  if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
- const price=free||voucher?0:DOG_SCRATCH_TIERS[tier].price;
+ const ticketPrice=request?.variantId==='number_one_20'?liveSettings.numberOne20.price:DOG_SCRATCH_TIERS[tier].price;
+ const price=free||voucher?0:ticketPrice;
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
  const random=max=>{
   const value=draw(max);
@@ -697,7 +698,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
   const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock}):
-   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock}):
+   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,settings:liveSettings.numberOne20}):
    drawDogJackpot9({draw:random,unlock});
   if(!verifyScratchPrizes(drawn.board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
   const stamped=now();
@@ -718,7 +719,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const result={type:first?.type||'none',tier,commandId,price,free:free||voucher,voucher,
    ...(first?.type==='coins'?{amount:first.amount}:{}),
    ...(first?.type==='unlock'?{prize:first.prize}:{}),
-   coinAmounts:specialId==='tic_tac_toe'?[200,450,800]:[100,300,800],
+   coinAmounts:specialId==='tic_tac_toe'?[200,450,800]:
+    specialId==='number_one_20'?[...drawn.board.coinAmounts]:[100,300,800],
    ...(specialId==='tic_tac_toe'?{symbolWeights:[360,330,270,40]}:{}),
    giftSparksEarned:drawn.giftSparks||0,giftVoucherEarned:earnedVoucher,
    board:drawn.board,winnings:drawn.winnings,totalCoins,at:stamped,balance:w.coins};
