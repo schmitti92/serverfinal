@@ -6,6 +6,7 @@
  * Daily: one free simple ticket. New players start with 1000 event coins.
  */
 import {randomInt} from 'node:crypto';
+import {drawTicTacToe} from './christmas-tictactoe.js';
 import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-symbols.js';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
@@ -519,7 +520,7 @@ const cleanScratchVouchers=raw=>Object.fromEntries(
   Number.isSafeInteger(raw?.[tier])&&raw[tier]>=0?Math.min(raw[tier],10000):0]));
 const STARTER_SCRATCH_VARIANTS=Object.freeze(['gifts','snow_collect','elf','premium_27']);
 const cleanVariantVouchers=raw=>Object.fromEntries(
- STARTER_SCRATCH_VARIANTS.map(id=>[id,Number.isSafeInteger(raw?.[id])&&raw[id]>=0?Math.min(raw[id],10000):0]));
+ [...STARTER_SCRATCH_VARIANTS,'tic_tac_toe'].map(id=>[id,Number.isSafeInteger(raw?.[id])&&raw[id]>=0?Math.min(raw[id],10000):0]));
 /**
  * One-time Level 1 starter prize for an authenticated player. This pure function
  * is called INSIDE the existing scratch-wallet Firestore transaction.
@@ -601,6 +602,8 @@ function addScratchProgress(progress,result){
  }
 }
 function normalizeScratchProgress(raw,recent){
+ // Migrate pre-Tic-Tac-Toe counters without losing historical statistics.
+ if(raw?.byVariant&&!raw.byVariant.tic_tac_toe)raw={...raw,byVariant:{...raw.byVariant,tic_tac_toe:emptyScratchProgressRow()}};
  if(validScratchProgress(raw))return raw;
  const progress=emptyScratchProgress();
  for(const receipt of recent)addScratchProgress(progress,receipt.result);
@@ -615,6 +618,7 @@ export function normalizedScratchWallet(raw){
   recent,
   daily:typeof raw?.daily==='string'?raw.daily:'',
   purchased:Number.isSafeInteger(raw?.purchased)&&raw.purchased>=0?raw.purchased:0,
+  giftSparks:Number.isSafeInteger(raw?.giftSparks)&&raw.giftSparks>=0?Math.min(raw.giftSparks,4):0,
   vouchers:cleanScratchVouchers(raw?.vouchers),
   variantVouchers:cleanVariantVouchers(raw?.variantVouchers),
   levelOneStarterClaimedAt:Number.isSafeInteger(raw?.levelOneStarterClaimedAt)&&raw.levelOneStarterClaimedAt>0?raw.levelOneStarterClaimedAt:0,
@@ -635,7 +639,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
  const owned=[...new Set([...Object.keys(w.owned),...treeOwned(tree)])];
  const pools=Object.fromEntries(Object.keys(DOG_SCRATCH_TIERS).map(id=>
   [id,{total:tierPool(id).length,remaining:tierPool(id).filter(p=>!owned.includes(p.unlockId)).length}]));
- return {coins:w.coins,vouchers:{...w.vouchers},variantVouchers:{...w.variantVouchers},
+ return {coins:w.coins,giftSparks:w.giftSparks,vouchers:{...w.vouchers},variantVouchers:{...w.variantVouchers},
   levelOneStarterClaimed:Boolean(w.levelOneStarterClaimedAt),starterCoins:DOG_SCRATCH_START_COINS,
   dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
@@ -677,6 +681,41 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   if(!Number.isInteger(value)||value<0||value>=max)throw Error('SCRATCH_INVALID_RANDOM');
   return value;
  };
+ // Tic-Tac-Toe always draws nine independent visible symbols. The server
+ // resolves all eight matching lines and every bonus in this transaction.
+ if(request?.variantId==='tic_tac_toe'){
+  if(tier!=='medium')throw Error('SCRATCH_INVALID_VARIANT');
+  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
+  const remaining=DOG_SCRATCH_PREMIUM_POOL.filter(prize=>!owned.has(prize.unlockId));
+  const unlock=remaining.length?remaining[random(remaining.length)]:null;
+  const drawn=drawTicTacToe({draw:random,unlock});
+  if(!verifyScratchPrizes(drawn.board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
+  const stamped=now();
+  if(drawn.unlockId)w.owned[drawn.unlockId]=stamped;
+  const totalCoins=drawn.winnings.filter(prize=>prize.type==='coins').reduce((sum,prize)=>sum+prize.amount,0);
+  w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
+  w.purchased++;
+  if(voucher){
+   if(variantVoucherAvailable)w.variantVouchers.tic_tac_toe--;
+   else w.vouchers[tier]--;
+  }
+  if(free&&!hostFree)w.daily=today;
+  const sparks=w.giftSparks+drawn.giftSparks;
+  const earnedVoucher=Math.floor(sparks/5);
+  w.giftSparks=sparks%5;
+  if(earnedVoucher)w.variantVouchers.tic_tac_toe=Math.min(10000,w.variantVouchers.tic_tac_toe+earnedVoucher);
+  const first=drawn.winnings.find(prize=>prize.type==='unlock')||drawn.winnings[0];
+  const result={type:first?.type||'none',tier,commandId,price,free:free||voucher,voucher,
+   ...(first?.type==='coins'?{amount:first.amount}:{}),
+   ...(first?.type==='unlock'?{prize:first.prize}:{}),
+   coinAmounts:[200,450,800],symbolWeights:[360,330,270,40],
+   giftSparksEarned:drawn.giftSparks,giftVoucherEarned:earnedVoucher,
+   board:drawn.board,winnings:drawn.winnings,totalCoins,at:stamped,balance:w.coins};
+  addScratchProgress(w.progress,result);
+  w.lastResult=result;
+  w.recent=[...w.recent,{commandId,result}].slice(-40);
+  return {unchanged:false,wallet:w,result,status:dogScratchStatus(w,tree,now(),liveSettings)};
+ }
  const categoryRoll=random(1000);
  // Pick the displayed card before applying its separately configured odds.
  const availableVariants=SCRATCH_VARIANT_IDS_BY_TIER[tier];
@@ -685,7 +724,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const requestedVariant=request?.variantId;
  if(requestedVariant!==undefined&&!availableVariants.includes(requestedVariant))
   throw Error('SCRATCH_INVALID_VARIANT');
- const variantId=requestedVariant??(availableVariants.length===1?
+ const variantId=requestedVariant??(tier==='medium'?'elf':availableVariants.length===1?
   availableVariants[0]:availableVariants[random(availableVariants.length)]);
  const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
  // The visual card supports three canonical matches. Host caps above three
