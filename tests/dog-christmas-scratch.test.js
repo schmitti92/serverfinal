@@ -178,7 +178,7 @@ test('level 1 starter reward is atomic, specific to all four variants, and idemp
  const first=claimDogLevelOneScratchVouchers(null,{now:NOW});
  assert.equal(first.unchanged,false);
  assert.equal(first.wallet.coins,1000);
- assert.deepEqual(first.wallet.variantVouchers,{gifts:1,snow_collect:1,elf:1,premium_27:1});
+ assert.deepEqual(first.wallet.variantVouchers,{gifts:1,snow_collect:1,elf:1,premium_27:1,tic_tac_toe:0,number_one_20:0,dog_jackpot_9:0});
  assert.deepEqual(first.wallet.vouchers,{simple:0,medium:0,premium:0});
  const replay=claimDogLevelOneScratchVouchers(first.wallet,{now:NOW+100});
  assert.equal(replay.unchanged,true);
@@ -198,7 +198,7 @@ test('four free starter variants redeem separately without using generic tier vo
    assert.deepEqual(opened.wallet.vouchers,{simple:0,medium:0,premium:0});
    wallet=opened.wallet;
  }
- assert.deepEqual(wallet.variantVouchers,{gifts:0,snow_collect:0,elf:0,premium_27:0});
+ assert.deepEqual(wallet.variantVouchers,{gifts:0,snow_collect:0,elf:0,premium_27:0,tic_tac_toe:0,number_one_20:0,dog_jackpot_9:0});
  assert.throws(()=>buyScratchTicket(wallet,null,
   {tier:'simple',variantId:'gifts',voucher:true,commandId:'starter-no-more'},
   {...args,draw:max=>0}),/SCRATCH_NO_VOUCHER/);
