@@ -27,8 +27,13 @@ test('server settles nine-symbol ticket and replays the same receipt without cha
  const options={draw:fixed(0),now:()=>Date.parse('2026-11-16T16:00:00Z')};
  const first=buyScratchTicket(null,null,request,options);
  assert.equal(first.result.price,500);
- assert.equal(first.result.totalCoins,23800);
- assert.equal(first.wallet.coins,DOG_SCRATCH_START_COINS-500+23800);
+ assert.equal(first.result.board.symbolVersion,8);
+ assert.equal(first.result.board.multiplier,1);
+ assert.equal(first.result.board.winningSymbol,'◯');
+ assert.equal(first.result.board.wins.length,8);
+ assert.equal(first.result.winnings.length,1);
+ assert.equal(first.result.totalCoins,200);
+ assert.equal(first.wallet.coins,DOG_SCRATCH_START_COINS-500+200);
  assert.equal(first.status.progress.byVariant.tic_tac_toe.opened,1);
  const again=buyScratchTicket(first.wallet,null,request,{...options,draw:()=>{throw Error('rerolled')}});
  assert.equal(again.unchanged,true);
