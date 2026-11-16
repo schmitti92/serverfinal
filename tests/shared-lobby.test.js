@@ -27,7 +27,25 @@ function harness(options={}){
   },
  };
  function snapshot(value){return {exists:!!value,data:()=>structuredClone(value)};}
- const app={get(path,fn){routes.push({method:'GET',path,fn});},post(path,fn){routes.push({method:'POST',path,fn});},use(path,fn){middles.push({path,fn});}};
+ // Real Express routes may use multiple handlers (authentication, response).
+ // Run the complete chain for scratch endpoints rather than invoking auth
+ // alone and mistakenly treating next() as missing.
+ const chain=handlers=>async(req,res)=>{
+  const call=async i=>{
+   if(i>=handlers.length)return;
+   let downstream;
+   await handlers[i](req,res,()=>{downstream=call(i+1)});
+   if(downstream)await downstream;
+  };
+  return call(0);
+ };
+ const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')?
+  chain(handlers):handlers[0];
+ const app={
+  get(path,...handlers){routes.push({method:'GET',path,fn:routeFn(path,handlers)});},
+  post(path,...handlers){routes.push({method:'POST',path,fn:routeFn(path,handlers)});},
+  use(path,fn){middles.push({path,fn});}
+ };
  const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'},dana:{uid:'user_dana123',name:'Dana'}};
  let id=0,now=1000;
  adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,challengeRandomInt:options.challengeRandomInt,christmasEventActive:options.christmasEventActive,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
