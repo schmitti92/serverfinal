@@ -16,6 +16,7 @@ import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
+import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
 export const HUB_GAMES = Object.freeze({
@@ -822,8 +823,7 @@ function finishEisstock(ch,members){
       (body.voucher!==undefined&&typeof body.voucher!=='boolean')||
       (body.voucher===true&&body.free===true)||
       (body.variantId!==undefined&&
-       !({simple:['gifts','snow_collect'],medium:['elf'],premium:['premium_27']}[body.tier]||[])
-        .includes(body.variantId)))
+       !(SCRATCH_VARIANT_IDS_BY_TIER[body.tier]||[]).includes(body.variantId)))
       throw error(400,'SCRATCH_INVALID_REQUEST');
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
