@@ -7,6 +7,7 @@
  */
 import {randomInt} from 'node:crypto';
 import {drawTicTacToe} from './christmas-tictactoe.js';
+import {drawNumberOne20,drawDogJackpot9} from './christmas-special-scratch.js';
 import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-symbols.js';
 import {DOG_TREE_PRIZE_POOL} from './christmas-tree-rewards.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,generateScratchGrid,attachScratchPrizes,verifyScratchPrizes} from './christmas-scratch-grid.js';
@@ -520,7 +521,7 @@ const cleanScratchVouchers=raw=>Object.fromEntries(
   Number.isSafeInteger(raw?.[tier])&&raw[tier]>=0?Math.min(raw[tier],10000):0]));
 const STARTER_SCRATCH_VARIANTS=Object.freeze(['gifts','snow_collect','elf','premium_27']);
 const cleanVariantVouchers=raw=>Object.fromEntries(
- [...STARTER_SCRATCH_VARIANTS,'tic_tac_toe'].map(id=>[id,Number.isSafeInteger(raw?.[id])&&raw[id]>=0?Math.min(raw[id],10000):0]));
+ [...STARTER_SCRATCH_VARIANTS,'tic_tac_toe','number_one_20','dog_jackpot_9'].map(id=>[id,Number.isSafeInteger(raw?.[id])&&raw[id]>=0?Math.min(raw[id],10000):0]));
 /**
  * One-time Level 1 starter prize for an authenticated player. This pure function
  * is called INSIDE the existing scratch-wallet Firestore transaction.
@@ -603,7 +604,11 @@ function addScratchProgress(progress,result){
 }
 function normalizeScratchProgress(raw,recent){
  // Migrate pre-Tic-Tac-Toe counters without losing historical statistics.
- if(raw?.byVariant&&!raw.byVariant.tic_tac_toe)raw={...raw,byVariant:{...raw.byVariant,tic_tac_toe:emptyScratchProgressRow()}};
+ if(raw?.byVariant){
+  const missing=SCRATCH_PROGRESS_VARIANTS.filter(id=>!raw.byVariant[id]);
+  if(missing.length)raw={...raw,byVariant:{...raw.byVariant,
+   ...Object.fromEntries(missing.map(id=>[id,emptyScratchProgressRow()]))}};
+ }
  if(validScratchProgress(raw))return raw;
  const progress=emptyScratchProgress();
  for(const receipt of recent)addScratchProgress(progress,receipt.result);
@@ -681,14 +686,19 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   if(!Number.isInteger(value)||value<0||value>=max)throw Error('SCRATCH_INVALID_RANDOM');
   return value;
  };
- // Tic-Tac-Toe always draws nine independent visible symbols. The server
- // resolves all eight matching lines and every bonus in this transaction.
- if(request?.variantId==='tic_tac_toe'){
-  if(tier!=='medium')throw Error('SCRATCH_INVALID_VARIANT');
+ // All special tickets use the existing idempotent purchase receipt and the
+ // same atomic wallet transaction as the four classic ticket variants.
+ // No money can be awarded by a browser-only scratch action.
+ if(['tic_tac_toe','number_one_20','dog_jackpot_9'].includes(request?.variantId)){
+  const specialId=request.variantId;
+  if(tier!==(specialId==='dog_jackpot_9'?'premium':'medium'))throw Error('SCRATCH_INVALID_VARIANT');
   const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
-  const remaining=DOG_SCRATCH_PREMIUM_POOL.filter(prize=>!owned.has(prize.unlockId));
+  const pool=specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
+  const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
-  const drawn=drawTicTacToe({draw:random,unlock});
+  const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock}):
+   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock}):
+   drawDogJackpot9({draw:random,unlock});
   if(!verifyScratchPrizes(drawn.board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
   const stamped=now();
   if(drawn.unlockId)w.owned[drawn.unlockId]=stamped;
@@ -696,11 +706,11 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   w.coins=Math.max(0,Math.min(1000000000,w.coins+totalCoins-price));
   w.purchased++;
   if(voucher){
-   if(variantVoucherAvailable)w.variantVouchers.tic_tac_toe--;
+   if(variantVoucherAvailable)w.variantVouchers[specialId]--;
    else w.vouchers[tier]--;
   }
   if(free&&!hostFree)w.daily=today;
-  const sparks=w.giftSparks+drawn.giftSparks;
+  const sparks=w.giftSparks+(drawn.giftSparks||0);
   const earnedVoucher=Math.floor(sparks/5);
   w.giftSparks=sparks%5;
   if(earnedVoucher)w.variantVouchers.tic_tac_toe=Math.min(10000,w.variantVouchers.tic_tac_toe+earnedVoucher);
@@ -708,8 +718,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const result={type:first?.type||'none',tier,commandId,price,free:free||voucher,voucher,
    ...(first?.type==='coins'?{amount:first.amount}:{}),
    ...(first?.type==='unlock'?{prize:first.prize}:{}),
-   coinAmounts:[200,450,800],symbolWeights:[360,330,270,40],
-   giftSparksEarned:drawn.giftSparks,giftVoucherEarned:earnedVoucher,
+   coinAmounts:specialId==='tic_tac_toe'?[200,450,800]:[100,300,800],
+   ...(specialId==='tic_tac_toe'?{symbolWeights:[360,330,270,40]}:{}),
+   giftSparksEarned:drawn.giftSparks||0,giftVoucherEarned:earnedVoucher,
    board:drawn.board,winnings:drawn.winnings,totalCoins,at:stamped,balance:w.coins};
   addScratchProgress(w.progress,result);
   w.lastResult=result;
