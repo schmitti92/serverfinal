@@ -10,6 +10,7 @@
 import {randomInt} from 'node:crypto';
 import {evaluateSpecialScratch,verifySpecialScratch} from './christmas-special-scratch.js';
 import {evaluateTicTacToe,verifyTicTacToe} from './christmas-tictactoe.js';
+import {evaluateTicTacToeDuel} from './christmas-tictactoe-duel.js';
 import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS,SCRATCH_PAYOUT_VERSION,evaluatePayoutGrid,generatePayoutGrid} from './christmas-scratch-symbols.js';
 import {PREMIUM_27_SPEC,evaluatePremium27,generatePremium27,verifyPremium27} from './christmas-premium27.js';
 
@@ -113,7 +114,8 @@ export function evaluateScratchGrid(board){
  if(!spec||!Array.isArray(board.cells)||board.cells.length!==spec.cellCount)
   throw Error('SCRATCH_GRID_INVALID');
  if(board.variantId==='premium_27')return evaluatePremium27(board);
- if(board.variantId==='tic_tac_toe')return evaluateTicTacToe(board.cells);
+ if(board.variantId==='tic_tac_toe')return board.symbolVersion===8?
+  evaluateTicTacToeDuel(board):evaluateTicTacToe(board.cells);
  if(['number_one_20','dog_jackpot_9'].includes(board.variantId))return evaluateSpecialScratch(board);
  if(board.symbolVersion===2||board.symbolVersion===SCRATCH_PAYOUT_VERSION)return evaluatePayoutGrid(board);
  if(board.symbolVersion!==undefined)throw Error('SCRATCH_GRID_VERSION_INVALID');
