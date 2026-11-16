@@ -735,7 +735,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const requestedVariant=request?.variantId;
  if(requestedVariant!==undefined&&!availableVariants.includes(requestedVariant))
   throw Error('SCRATCH_INVALID_VARIANT');
- const variantId=requestedVariant??(tier==='medium'?'elf':availableVariants.length===1?
+ const variantId=requestedVariant??(tier==='medium'?'elf':tier==='premium'?'premium_27':availableVariants.length===1?
   availableVariants[0]:availableVariants[random(availableVariants.length)]);
  const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
  // The visual card supports three canonical matches. Host caps above three
