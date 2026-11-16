@@ -1,15 +1,17 @@
 /**
  * Personal DOG player progression (levels 1–10).
  * Progress is awarded only on an authoritative, completed online DOG match.
- * Level 2 opens the DOG Design-Studio; other reward slots remain unconfigured.
+ * Level 2 opens the DOG Design-Studio; level 3 unlocks the Nikolaus card deck.
+ * Rewards are bound to authenticated, server-verified experience points.
  */
 export const DOG_LEVEL_MAX=10;
 export const DOG_LEVEL_THRESHOLDS=Object.freeze([0,100,250,450,700,1000,1350,1750,2200,2700]);
 export const DOG_LEVEL_XP=Object.freeze({complete:50,win:50,knockout:10,maxCountedKnockouts:5});
-export const DOG_LEVEL_REWARDS=Object.freeze(Array.from({length:DOG_LEVEL_MAX},(_,i)=>
- Object.freeze({level:i+1,id:'dog-player-level-'+(i+1),
-  configured:i===1,
-  reward:i===1?Object.freeze({type:'feature',id:'dog-design-studio',title:'Brettdesigner'}):null})));
+export const DOG_LEVEL_REWARDS=Object.freeze(Array.from({length:DOG_LEVEL_MAX},(_,i)=>{
+ const reward=i===1?Object.freeze({type:'feature',id:'dog-design-studio',title:'Brettdesigner'}):
+  i===2?Object.freeze({type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'}):null;
+ return Object.freeze({level:i+1,id:'dog-player-level-'+(i+1),configured:reward!==null,reward});
+}));
 const safeXp=value=>Number.isSafeInteger(value)&&value>=0?Math.min(value,1000000000):0;
 export function dogLevelFromXp(totalXp){
  const xp=safeXp(totalXp);

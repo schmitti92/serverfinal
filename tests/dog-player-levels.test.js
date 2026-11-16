@@ -15,7 +15,12 @@ test('all ten levels are monotonic, with accurate XP progression',()=>{
  assert.equal(DOG_LEVEL_REWARDS.length,10);
  assert.equal(DOG_LEVEL_REWARDS[1].configured,true);
  assert.deepEqual(DOG_LEVEL_REWARDS[1].reward,{type:'feature',id:'dog-design-studio',title:'Brettdesigner'});
- assert.ok(DOG_LEVEL_REWARDS.filter(x=>x.level!==2).every(x=>!x.configured&&x.reward===null));
+ assert.equal(DOG_LEVEL_REWARDS[2].configured,true);
+ assert.deepEqual(DOG_LEVEL_REWARDS[2].reward,{
+  type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'
+ });
+ assert.equal(DOG_LEVEL_THRESHOLDS[2],250);
+ assert.ok(DOG_LEVEL_REWARDS.filter(x=>![2,3].includes(x.level)).every(x=>!x.configured&&x.reward===null));
 });
 test('one completed DOG match gives 50 XP, victory bonus and capped knockouts',()=>{
  assert.equal(dogMatchXp(),50);

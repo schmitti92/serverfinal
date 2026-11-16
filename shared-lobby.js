@@ -862,7 +862,7 @@ function finishEisstock(ch,members){
     const store=db();
     const snap=await store.collection(DOG_PLAYER_STATS_COLLECTION).doc(req.hubIdentity.uid).get();
     return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
-      scope:'verified-dog-online-matches',rewardsConfigured:false};
+      scope:'verified-dog-online-matches',rewardsConfigured:true};
   }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
     const store=db(),snap=await dogVillageFor(store).get();
