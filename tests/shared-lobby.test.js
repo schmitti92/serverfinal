@@ -8,6 +8,7 @@ function harness(options={}){
  const docs=new Map(),routes=[],middles=[],listeners=new Map();
  const store={
   collection:name=>({doc:code=>({path:name+'/'+code,get:async()=>snapshot(docs.get(name+'/'+code)),
+     set:async value=>{docs.set(name+'/'+code,structuredClone(value));},
     onSnapshot(cb,_onError){
      watchStarts++;
      const key=name+'/'+code;const set=listeners.get(key)||new Set();set.add(cb);listeners.set(key,set);
