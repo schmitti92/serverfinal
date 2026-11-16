@@ -1,3 +1,4 @@
+import {drawTicTacToeDuel,verifyTicTacToeDuel} from './christmas-tictactoe-duel.js';
 /**
  * DOG Tic-Tac-Toe - independent 3x3 scratch-ticket rules.
  * Every reward is derived from immutable visible symbols on Render.
@@ -21,7 +22,8 @@ export function evaluateTicTacToe(cells){
  return TIC_TAC_TOE_LINES.filter(indices=>indices.every(i=>cells[i]===cells[indices[0]]))
   .map(indices=>({indices:[...indices],symbol:cells[indices[0]],rule:'tic-line'}));
 }
-export function drawTicTacToe({draw,unlock=null}={}){
+export function drawTicTacToe({draw,unlock=null,mode='classic'}={}){
+ if(mode==='duel')return drawTicTacToeDuel({draw,unlock});
  if(typeof draw!=='function')throw Error('TICTACTOE_RANDOM_REQUIRED');
  const cells=Array.from({length:9},()=>{
   let roll=draw(1000);
@@ -67,6 +69,7 @@ export function drawTicTacToe({draw,unlock=null}={}){
  };
 }
 export function verifyTicTacToe(board){
+ if(board?.symbolVersion===8)return verifyTicTacToeDuel(board);
  try{
   if(board?.variantId!=='tic_tac_toe'||board.symbolVersion!==6)return false;
   const expected=evaluateTicTacToe(board.cells);
