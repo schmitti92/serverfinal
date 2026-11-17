@@ -660,7 +660,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
 export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
  doubleMainPer1000:1,mainMultiplierPer1000:1,multiplierPer1000:110
 });
-export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null}={}){
+export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null,printControl=null}={}){
  const liveSettings=normalizeScratchSettings(settings);
  const tier=request?.tier;
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
@@ -743,7 +743,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // The visual card supports three canonical matches. Host caps above three
  // permit extra coin payouts tied to genuine matching symbols, not fake rows.
  const visiblePrizeLimit=variantId==='premium_27'?config.maxPrizes:Math.min(config.maxPrizes,3);
- const baseCategory=categoryRoll<config.weights.none?'none':
+ const baseCategory=printControl?.forcePremiumUnlock&&variantId==='premium_27'?'unlock':
+  categoryRoll<config.weights.none?'none':
   categoryRoll<config.weights.none+config.weights.coins?'coins':'unlock';
  // Premium money rows are independent of the 20-symbol threshold.
  // At default odds: 4% premium unlocks (all 24+), plus 26% from the
@@ -886,7 +887,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
-  generatePremium27(winnings,{draw:random,version:5}):
+  generatePremium27(winnings,{draw:random,version:5,
+   forceFull27:printControl?.forceFull27===true}):
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
    prizeSymbols:winnings.map(w=>w.symbol)}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
@@ -904,6 +906,18 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
     (variantId!=='premium_27'||baseCategory!=='none')){
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
+   const sourceWin=random(board.wins.length);
+   const coinIndex=pickWeightedScratchSymbol(config.moneySymbolWeights,random);
+   bonusWinnings.push({type:'coins',symbol:SCRATCH_PAYOUT_ORDER[coinIndex],
+    amount:config.coinAmounts[coinIndex],bonus:true,sourceWin});
+  }
+ }
+ if(variantId==='premium_27'&&Number.isInteger(printControl?.forcedWins)){
+  const expected=printControl.forcedWins;
+  if(expected<winnings.length||expected>config.maxPrizes||expected>10)
+   throw Error('SCRATCH_EDITION_PRIZE_COUNT_UNREACHABLE');
+  while(winnings.length+bonusWinnings.length<expected){
+   if(!board.wins.length)throw Error('SCRATCH_EDITION_NO_BONUS_SOURCE');
    const sourceWin=random(board.wins.length);
    const coinIndex=pickWeightedScratchSymbol(config.moneySymbolWeights,random);
    bonusWinnings.push({type:'coins',symbol:SCRATCH_PAYOUT_ORDER[coinIndex],
