@@ -17,7 +17,6 @@ import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
-import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket,scratchEditionCatalog,validateEditionConfig,unpackEditionTickets} from './dog/christmas-scratch-editions.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
@@ -832,131 +831,6 @@ function finishEisstock(ch,members){
     await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
     return {settings};
   }));
-  // Each printed edition is an immutable 500-card draw queue. The admin tool
-  // reads this endpoint only when opened; regular game status stays inexpensive.
-  app.get('/api/hub/scratch/editions',authentication,handler(async req=>{
-    const store=db();
-    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const [pointers,settingsSnap]=await Promise.all([
-      Promise.all(SCRATCH_EDITION_VARIANTS.map(id=>
-        store.collection(SCRATCH_EDITION_POINTERS).doc(id).get())),
-      store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get()
-    ]);
-    const editions=await Promise.all(pointers.map(async(snap,i)=>{
-      const id=snap.exists?snap.data()?.editionId:null;
-      if(!id)return {variantId:SCRATCH_EDITION_VARIANTS[i],active:null};
-      const doc=await store.collection(SCRATCH_EDITION_COLLECTION).doc(id).get();
-      return {variantId:SCRATCH_EDITION_VARIANTS[i],active:doc.exists?editionPublic(doc.data()):null};
-    }));
-    return {editions,catalog:scratchEditionCatalog(settingsSnap.exists?settingsSnap.data():null),canManage:true,printSize:500,maxPrintSize:500};
-  }));
-  app.get('/api/hub/scratch/editions/history/:variantId',authentication,handler(async req=>{
-    const variantId=req.params.variantId;
-    if(!SCRATCH_EDITION_VARIANTS.includes(variantId))throw error(400,'EDITION_INVALID_VARIANT');
-    const store=db();
-    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const snap=await store.collection(SCRATCH_EDITION_COLLECTION)
-      .where('variantId','==',variantId).limit(30).get();
-    const history=snap.docs.map(row=>editionPublic(row.data()))
-      .sort((a,b)=>b.createdAt-a.createdAt).slice(0,20);
-    return {variantId,history};
-  }));
-  // Preserve the precise vetted print-run for publication. One Firestore
-  // draft per preview, not 500 individual writes or exposed future prizes.
-  app.post('/api/hub/scratch/editions/preview',authentication,handler(async req=>{
-    const store=db();
-    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const settingsSnap=await store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get();
-    const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
-    let planned;
-    try{planned=planScratchEdition(req.body?.config,settings)}
-    catch(e){throw error(400,e.message)}
-    const previewId=randomUUID(),createdAt=clock();
-    await store.collection('dog_christmas_scratch_editions_previews_v1').doc(previewId)
-      .set({planned,createdBy:req.hubIdentity.uid,createdAt,expiresAt:createdAt+30*60*1000});
-    return {config:planned.config,summary:planned.summary,preview:true,previewId};
-  }));
-  // Read-only, anonymous-to-the-print-order sample of already vetted boards.
-  // Only the creator of the still-unpublished preview may inspect them.
-  app.get('/api/hub/scratch/editions/preview/:previewId/tickets',authentication,handler(async req=>{
-    const previewId=req.params.previewId;
-    if(!/^[0-9a-f-]{36}$/.test(previewId))throw error(400,'EDITION_PREVIEW_REQUIRED');
-    const store=db();
-    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const snap=await store.collection('dog_christmas_scratch_editions_previews_v1').doc(previewId).get();
-    const draft=snap.exists?snap.data():null;
-    if(!draft||draft.createdBy!==req.hubIdentity.uid||draft.expiresAt<clock())
-      throw error(404,'EDITION_PREVIEW_EXPIRED');
-    const printed=unpackEditionTickets(draft.planned.packed,draft.planned.config?.printSize??500);
-    // Draw unlabelled samples using server-only random indices. Deliberately
-    // avoid a public deterministic mapping between examples and sale positions.
-    const sampled=new Set();
-    while(sampled.size<Math.min(8,printed.length))sampled.add(randomInt(printed.length));
-    const tickets=[...sampled].map(index=>printed[index]);
-    return {previewId,count:tickets.length,tickets:tickets.map(ticket=>({
-      board:ticket.board,winnings:ticket.winnings,totalCoins:ticket.totalCoins||0,
-      totalLights:ticket.totalLights||0,doubleWin:ticket.doubleWin||null,
-      lightBadgeIndex:ticket.lightBadgeIndex??null,
-      doubleBadgeIndex:ticket.doubleBadgeIndex??null
-    }))};
-  }));
-  app.post('/api/hub/scratch/editions/publish',authentication,handler(async req=>{
-    const store=db();
-    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const previewId=req.body?.previewId;
-    if(typeof previewId!=='string'||!/^[0-9a-f-]{36}$/.test(previewId))
-      throw error(400,'EDITION_PREVIEW_REQUIRED');
-    let normalized;
-    try{normalized=validateEditionConfig(req.body?.config)}
-    catch(e){throw error(400,e.message)}
-    const previewRef=store.collection('dog_christmas_scratch_editions_previews_v1').doc(previewId);
-    const result=await store.runTransaction(async tx=>{
-      const previewSnap=await tx.get(previewRef);
-      const draft=previewSnap.exists?previewSnap.data():null;
-      if(!draft||draft.createdBy!==req.hubIdentity.uid||
-        !Number.isSafeInteger(draft.expiresAt)||draft.expiresAt<clock())
-        throw error(409,'EDITION_PREVIEW_EXPIRED');
-      if(JSON.stringify(draft.planned?.config)!==JSON.stringify(normalized))
-        throw error(409,'EDITION_PREVIEW_CHANGED');
-      const edition=newEditionDocument(draft.planned,req.hubIdentity.uid,clock());
-      const ref=store.collection(SCRATCH_EDITION_COLLECTION).doc(edition.id);
-      const pointerRef=store.collection(SCRATCH_EDITION_POINTERS).doc(edition.variantId);
-      const prior=await tx.get(pointerRef);
-      const id=prior.exists?prior.data()?.editionId:null;
-      if(id){
-        const old=await tx.get(store.collection(SCRATCH_EDITION_COLLECTION).doc(id));
-        if(old.exists&&old.data()?.status==='active'&&
-          old.data()?.issued<(old.data()?.config?.printSize??500))
-          throw error(409,'EDITION_STILL_ACTIVE');
-      }
-      tx.set(ref,edition);
-      tx.set(pointerRef,{editionId:edition.id,variantId:edition.variantId,updatedAt:clock()});
-      tx.delete(previewRef);
-      return editionPublic(edition);
-    });
-    return {edition:result,published:true};
-  }));
-  app.post('/api/hub/scratch/editions/retire',authentication,handler(async req=>{
-    const variantId=req.body?.variantId;
-    if(!SCRATCH_EDITION_VARIANTS.includes(variantId)||req.body?.confirmation!=='RETIRE')
-      throw error(400,'EDITION_RETIRE_CONFIRMATION_REQUIRED');
-    const store=db();
-    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const pointerRef=store.collection(SCRATCH_EDITION_POINTERS).doc(variantId);
-    const retired=await store.runTransaction(async tx=>{
-      const pointer=await tx.get(pointerRef);
-      const id=pointer.exists?pointer.data()?.editionId:null;
-      if(!id)throw error(404,'EDITION_NOT_FOUND');
-      const docRef=store.collection(SCRATCH_EDITION_COLLECTION).doc(id);
-      const snap=await tx.get(docRef);
-      if(!snap.exists)throw error(404,'EDITION_NOT_FOUND');
-      const updated={...snap.data(),status:'retired',updatedAt:clock()};
-      tx.set(docRef,updated);
-      tx.delete(pointerRef);
-      return editionPublic(updated);
-    });
-    return {edition:retired,retired:true};
-  }));
   app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const body=req.body||{},identity=req.hubIdentity,store=db();
@@ -971,36 +845,23 @@ function finishEisstock(ch,members){
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
     const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
     const sharedVillageRef=dogVillageFor(store);
-    const editionPointerRef=body.variantId?
-      store.collection(SCRATCH_EDITION_POINTERS).doc(body.variantId):null;
+    // Regular DOG scratch purchase; no printed editions or 500-ticket queue.
+    // The server still verifies prizes and atomically books each purchase.
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap,settingsSnap,pointerSnap,villageSnap]=await Promise.all([
-        tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),
-        editionPointerRef?tx.get(editionPointerRef):Promise.resolve(null),tx.get(sharedVillageRef)]);
+      const [walletSnap,treeSnap,settingsSnap,villageSnap]=await Promise.all([
+        tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),tx.get(sharedVillageRef)]);
       const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
       const request={tier:body.tier,variantId:body.variantId,commandId:body.commandId,
         free:body.free===true,voucher:body.voucher===true};
       const tree=treeSnap.exists?treeSnap.data():null;
-      let editionRef=null,edition=null;
-      const editionId=pointerSnap?.exists?pointerSnap.data()?.editionId:null;
-      if(editionId){
-        editionRef=store.collection(SCRATCH_EDITION_COLLECTION).doc(editionId);
-        const editionSnap=await tx.get(editionRef);
-        if(editionSnap.exists&&editionSnap.data()?.status==='active')edition=editionSnap.data();
-      }
-      // Once an edition is exhausted or retired, no random fallback tickets
-      // may be issued for this variant. It must be reprinted explicitly.
-      if(!edition)throw error(409,'EDITION_NO_ACTIVE_PRINT_RUN');
-      // The final buyer may retry the exact same command after a timeout.
-      // issueEditionTicket checks the wallet receipt before SOLD_OUT.
       let result;
       try{
-        result=issueEditionTicket(edition,walletSnap.exists?walletSnap.data():null,tree,request,
-          {now:()=>clock(),settings,discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)});
+        result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,tree,request,
+          {now:()=>clock(),settings,
+           discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)});
       }catch(e){
-        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|EDITION_SOLD_OUT|EDITION_NO_AVAILABLE_UNLOCK)$/.test(e.message);
-        throw error(conflict?409:400,e.message==='EDITION_SOLD_OUT'?
-          'EDITION_NO_ACTIVE_PRINT_RUN':e.message);
+        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|SCRATCH_NO_VOUCHER)$/.test(e.message);
+        throw error(conflict?409:400,e.message);
       }
       let village=null;
       if(!result.unchanged&&Number.isSafeInteger(result.result?.totalLights)&&result.result.totalLights>0){
@@ -1008,14 +869,9 @@ function finishEisstock(ch,members){
           DOG_GLOBAL_VILLAGE_ID,null,result.result.totalLights*10);
         tx.set(sharedVillageRef,village);
       }
-      if(!result.unchanged){
-        tx.set(accountRef,result.wallet);
-        if(result.doc)tx.set(editionRef,result.doc);
-      }
+      if(!result.unchanged)tx.set(accountRef,result.wallet);
       return {result:result.result,replayed:result.unchanged,
         scratch:{...result.status,discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)},
-        edition:{id:edition.id,remaining:(edition.config?.printSize??500)-
-          (result.doc?.issued??edition.issued)},
         ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
     return award;
