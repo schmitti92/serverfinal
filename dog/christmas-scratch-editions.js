@@ -316,7 +316,11 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   // Keep the original verified board untouched; only the printed receipt
   // and its payout are multiplied. This cannot create two unlocks.
   if(applyDouble){
-   const cash=(sample.winnings||[]).filter(p=>p.type==='coins');
+   // The original board.wins[].prize objects are shared by some legacy
+   // generators. Clone receipt prizes before the bonus, otherwise applying
+   // ×2 would alter the independently verified original winning grid.
+   sample.winnings=(sample.winnings||[]).map(prize=>({...prize}));
+   const cash=sample.winnings.filter(p=>p.type==='coins');
    const stars=(sample.winnings||[]).filter(p=>p.type==='lights');
    if(cash.length||stars.length){
     const beforeCoins=sample.totalCoins||0,beforeLights=sample.totalLights||0;
