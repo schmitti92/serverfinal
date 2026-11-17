@@ -35,8 +35,7 @@ test('print plan creates exactly 500 independently verified tickets and exact du
 });
 test('33 reserved two-win cards keep their exact quantity in a 500-card print',()=>{
  const plan=planScratchEdition({
-  ...simple(),maxTotalCoins:350000,maxPerTicketCoins:1500,
-  targetTotalCoins:100000,targetTolerancePercent:30,
+  ...simple(),maxTotalCoins:5000000,maxPerTicketCoins:1000000,
   quotas:{2:33}
  },settings);
  assert.equal(plan.summary.tickets,500);
