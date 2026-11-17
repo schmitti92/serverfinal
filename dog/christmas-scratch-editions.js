@@ -392,7 +392,13 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     sample.totalLights=beforeLights*2;
     sample.doubleWin={symbol:'✖️2',baseCoins:beforeCoins,extraCoins:beforeCoins,
      baseLights:beforeLights,extraLights:beforeLights};
-    sample.doubleBadgeIndex=draw(sample.board.cells.length);
+    const matchingCells=[...new Set((sample.board?.wins||[]).flatMap(win=>
+      Array.isArray(win.indices)?win.indices:[]))]
+      .filter(index=>Number.isInteger(index)&&index>=0&&index<sample.board.cells.length);
+    // For Tic-Tac-Toe the ✖️2 stamp sits on the actual winning Circle/Cross,
+    // never an unrelated square; its original winning sign remains visible.
+    sample.doubleBadgeIndex=matchingCells.length?
+     matchingCells[draw(matchingCells.length)]:draw(sample.board.cells.length);
    }
   }
   return sample;
