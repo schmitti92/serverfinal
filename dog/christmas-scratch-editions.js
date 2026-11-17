@@ -83,17 +83,21 @@ export function validateEditionConfig(input){
  if(input.symbolBudgets!==undefined&&input.symbolBudgets!==null){
   if(!input.symbolBudgets||typeof input.symbolBudgets!=='object'||
     Array.isArray(input.symbolBudgets)||
-    Object.keys(input.symbolBudgets).some(id=>!['coin','note','case','lights'].includes(id)))
+    Object.keys(input.symbolBudgets).some(id=>!['coin','note','case','lights','gift'].includes(id)))
    throw Error('EDITION_SYMBOL_BUDGET_INVALID');
   for(const [id,row] of Object.entries(input.symbolBudgets)){
    const min=Number(row?.min),max=Number(row?.max),maxTotal=Number(row?.maxTotal);
+   const minTotal=Number(row?.minTotal??0);
    const chancePer1000=id==='lights'?Number(row?.chancePer1000??0):null;
-   if(!Number.isSafeInteger(min)||min<1||min>50000000||
-    !Number.isSafeInteger(max)||max<min||max>50000000||
-    !Number.isSafeInteger(maxTotal)||maxTotal<0||maxTotal>1000000000000||
-    (id==='lights'&&(!cleanInt(chancePer1000,0,1000))))
+   const smallest=id==='gift'?0:1;
+   const largest=id==='gift'?20:50000000;
+   if(!Number.isSafeInteger(min)||min<smallest||min>largest||
+    !Number.isSafeInteger(max)||max<min||max>largest||
+    !Number.isSafeInteger(minTotal)||minTotal<0||minTotal>maxTotal||
+    !Number.isSafeInteger(maxTotal)||maxTotal<0||maxTotal>(id==='gift'?500:1000000000000)||
+    (id==='lights'&&!cleanInt(chancePer1000,0,1000)))
     throw Error('EDITION_SYMBOL_BUDGET_INVALID_'+id);
-   symbolBudgets[id]={min,max,maxTotal,...(id==='lights'?{chancePer1000}:{})};
+   symbolBudgets[id]={min,max,minTotal,maxTotal,...(id==='lights'?{chancePer1000}:{})};
   }
  }
  const ticketPrice=input.ticketPrice===undefined?
@@ -218,8 +222,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  for(let i=requested.length-1;i>=0;i--)
   suffixWeights[i]=suffixWeights[i+1]+payoutWeights[i];
  const tickets=[],byWins=Array(21).fill(0);
- const symbolTotals={coin:0,note:0,case:0,lights:0};
- const symbolHitCounts={coin:0,note:0,case:0,lights:0};
+ const symbolTotals={coin:0,note:0,case:0,lights:0,gift:0};
+ const symbolHitCounts={coin:0,note:0,case:0,lights:0,gift:0};
  let totalCoins=0,totalLights=0,unlocks=0,biggest=0,winners=0,full27Count=0;
  const target=config.targetTotalCoins;
  const isClassic=['gifts','snow_collect','elf','premium_27'].includes(config.variantId);
@@ -233,7 +237,9 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   config.variantId==='tic_tac_toe'?1:config.variantId==='dog_jackpot_9'?8:
   config.variantId==='number_one_20'?20:10);
  const categoryFor=prize=>prize.type==='lights'?'lights':
+  prize.type==='unlock'?'gift':
   prize.type==='coins'?({'🪙':'coin','💵':'note','💼':'case'}[prize.symbol]||'coin'):null;
+ const categoryAmount=prize=>prize.type==='unlock'?1:(prize.amount||0);
  const amountsForCandidate=()=>{
   const cats=['coin','note','case'];
   for(let trial=0;trial<24;trial++){
@@ -317,15 +323,19 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    try{sample=sampleTicket(slot,attempt,forced,rule.full27)}
    catch(e){if(/^SCRATCH_|^PREMIUM27_/.test(e.message))continue;throw e}
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
-   const candidateTotals={coin:0,note:0,case:0,lights:0};
+   const candidateTotals={coin:0,note:0,case:0,lights:0,gift:0};
    let outsideLimits=false;
    for(const prize of sample.winnings||[]){
     const id=categoryFor(prize);
     if(!id)continue;
     const range=config.symbolBudgets[id];
-    if(range&&(prize.amount<range.min||prize.amount>range.max)){outsideLimits=true;break;}
-    candidateTotals[id]+=prize.amount||0;
+    if(range&&id!=='gift'&&
+      (prize.amount<range.min||prize.amount>range.max)){outsideLimits=true;break;}
+    candidateTotals[id]+=categoryAmount(prize);
    }
+   const giftRange=config.symbolBudgets.gift;
+   if(giftRange&&(candidateTotals.gift<giftRange.min||
+     candidateTotals.gift>giftRange.max))outsideLimits=true;
    if(outsideLimits||Object.entries(config.symbolBudgets).some(([id,range])=>
      candidateTotals[id]+symbolTotals[id]>range.maxTotal))continue;
    const full=sample.board?.variantId==='premium_27'&&
@@ -353,7 +363,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   byWins[count]++;totalCoins+=accepted.totalCoins||0;
   for(const prize of accepted.winnings||[]){
    const id=categoryFor(prize);
-   if(id){symbolTotals[id]+=prize.amount||0;symbolHitCounts[id]++}
+   if(id){symbolTotals[id]+=categoryAmount(prize);symbolHitCounts[id]++}
   }
   totalLights=symbolTotals.lights;
   unlocks+=unlockCount(accepted);
@@ -364,6 +374,10 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  }
  if(target!==null&&Math.abs(totalCoins-target)>Math.max(1,target*config.targetTolerancePercent/100))
   throw Error('EDITION_TARGET_NOT_REACHED_'+totalCoins+'_OF_'+target);
+ for(const [id,range] of Object.entries(config.symbolBudgets)){
+  if(symbolTotals[id]<range.minTotal)
+   throw Error('EDITION_SYMBOL_MIN_TOTAL_UNREACHABLE_'+id);
+ }
  for(let i=tickets.length-1;i>0;i--){
   const j=draw(i+1);[tickets[i],tickets[j]]=[tickets[j],tickets[i]];
  }
