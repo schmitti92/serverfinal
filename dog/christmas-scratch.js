@@ -586,7 +586,7 @@ export function addScratchProgress(progress,result){
  const row=SCRATCH_PROGRESS_VARIANTS.includes(variant)?progress.byVariant[variant]:progress.other;
  const prizes=Array.isArray(result.winnings)?result.winnings:
   result.type==='none'?[]:[{type:result.type,amount:result.amount,prize:result.prize}];
- const won=prizes.length>0;
+ const won=prizes.length>0||(Number.isSafeInteger(result.totalLights)&&result.totalLights>0);
  const freebies=result.free===true?1:0;
  const unlocks=prizes.filter(prize=>prize?.type==='unlock').length;
  const lights=Number.isSafeInteger(result.totalLights)&&result.totalLights>=0?
@@ -683,7 +683,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  if(free&&!hostFree&&tier!=='simple')throw Error('SCRATCH_FREE_ONLY_SIMPLE');
  const today=dogScratchToday(now());
  if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
- const ticketPrice=request?.variantId==='number_one_20'?liveSettings.numberOne20.price:DOG_SCRATCH_TIERS[tier].price;
+ const ticketPrice=request?.variantId==='number_one_20'?liveSettings.numberOne20.price:
+  request?.variantId==='gifts'?liveSettings.variants.gifts.price:DOG_SCRATCH_TIERS[tier].price;
  // Edition price is trusted only as a server-side argument. Client-supplied
  // request fields never override the public shop price.
  if(editionPrice!==null&&(!Number.isSafeInteger(editionPrice)||editionPrice<0||editionPrice>1000000))
@@ -878,7 +879,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // When cosmetics are exhausted, use 110/800 to retain 11% overall.
  const rarePossible=remaining.length>=2;
  const ordinaryRoll=baseCategory!=='none'&&!rareMainMultiplier&&
-  (rarePossible?random(799)<109:random(800)<110);
+  (variantId==='gifts'?random(1000)<(config.doubleChancePer1000??110):
+   (rarePossible?random(799)<109:random(800)<110));
  // Never show a misleading ×2 if a one-prize cosmetic-only card has no
  // room for the required visible coin prize.
  const canMultiplyMoney=()=>winnings.some(x=>x.type==='coins'&&x.milestone!=='gold-20');
@@ -943,6 +945,12 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   }
  }
  const allWinnings=[...winnings,...bonusWinnings];
+ // 🎄 Independent light bonus: verified and booked with the immutable server
+ // receipt. It is separate from the visible three-in-a-row prize limit.
+ const lightMin=config.lightMin??1,lightMax=config.lightMax??10;
+ const baseLights=variantId==='gifts'&&random(1000)<(config.lightChancePer1000??100)?
+  lightMin+random(lightMax-lightMin+1):0;
+ const totalLights=baseLights*(multiplier===2?2:1);
  // Only after generating and verifying the exact visible card, grant awards.
  const stamped=now();
  for(const unlockId of newUnlocks)w.owned[unlockId]=stamped;
@@ -965,7 +973,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   coinAmounts:[...config.coinAmounts],
   moneySymbolWeights:[...config.moneySymbolWeights],
   giftSymbolWeights:[...config.giftSymbolWeights],
-  winnings:allWinnings,totalCoins,board,
+  winnings:allWinnings,totalCoins,totalLights,board,
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free:free||voucher,voucher,at:stamped,balance:w.coins
  };
