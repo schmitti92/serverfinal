@@ -413,6 +413,13 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   for(let attempt=0;attempt<tries+rescueTries;attempt++){
    if(attempt===tries&&best)break;
    let forced=rule.wins==='any'?null:rule.wins;
+   // In unconstrained remaining slots, prevent random early payouts from
+   // exhausting the budget before all 500 genuine boards can be printed.
+   // Reserve the legal zero-win board only when the user has not fixed that
+   // count. Exact quotas are never changed by this safety fallback.
+   if(forced===null&&target===null&&isClassic&&minWins===0&&
+      !reserved.has(0)&&config.maxTotalCoins-totalCoins<
+       remaining*meanWin)forced=0;
    if(forced===null&&target!==null&&isClassic){
     const variety=0.6+draw(101)/125; // roughly 0.60–1.40
     const desired=Math.round(pace*variety/meanWin);
