@@ -243,3 +243,24 @@ test('invalid per-symbol ranges and light frequency are rejected before publishi
   symbolBudgets:{case:{min:100,max:50,maxTotal:1000}}}),
   /EDITION_SYMBOL_BUDGET_INVALID_case/);
 });
+
+
+test('gift symbol has an independent 500-ticket quantity cap and lights can demand a minimum total',()=>{
+ const cfg={...simple(),maxPrizesPerTicket:10,
+  symbolBudgets:{
+   gift:{min:0,max:0,minTotal:0,maxTotal:0},
+   lights:{min:2,max:2,minTotal:1,maxTotal:1000,chancePer1000:1000}
+  },quotas:{}};
+ const plan=planScratchEdition(cfg,settings);
+ assert.equal(plan.summary.symbolTotals.gift,0);
+ assert.ok(plan.summary.symbolTotals.lights>=1);
+ assert.ok(plan.summary.symbolTotals.lights<=1000);
+ for(const ticket of unpackEditionTickets(plan.packed))
+  assert.ok(ticket.winnings.every(prize=>prize.type!=='unlock'));
+ const impossible={...cfg,symbolBudgets:{
+  ...cfg.symbolBudgets,
+  lights:{min:1,max:1,minTotal:1,maxTotal:500,chancePer1000:0}
+ }};
+ assert.throws(()=>planScratchEdition(impossible,settings),
+  /EDITION_SYMBOL_MIN_TOTAL_UNREACHABLE_lights/);
+});
