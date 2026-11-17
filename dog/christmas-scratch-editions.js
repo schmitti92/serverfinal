@@ -30,6 +30,19 @@ export function validateEditionConfig(input){
  const maxPerTicketCoins=Number(input.maxPerTicketCoins);
  const maxPrizesPerTicket=Number(input.maxPrizesPerTicket);
  const maxUnlocks=Number(input.maxUnlocks);
+ const targetTotalCoins=input.targetTotalCoins===null||input.targetTotalCoins===undefined||input.targetTotalCoins===''?
+  null:Number(input.targetTotalCoins);
+ const targetTolerancePercent=input.targetTolerancePercent===undefined?5:Number(input.targetTolerancePercent);
+ const premiumFull27Tickets=input.premiumFull27Tickets===undefined?0:Number(input.premiumFull27Tickets);
+ if(targetTotalCoins!==null&&(!cleanInt(targetTotalCoins,0,1000000000000)||
+   targetTotalCoins>maxTotalCoins||
+   targetTotalCoins>maxPerTicketCoins*SCRATCH_PRINT_SIZE))
+  throw Error('EDITION_TARGET_INVALID');
+ if(!cleanInt(targetTolerancePercent,0,30))
+  throw Error('EDITION_TARGET_TOLERANCE_INVALID');
+ if(!cleanInt(premiumFull27Tickets,0,500)||
+   (premiumFull27Tickets&&variantId!=='premium_27'))
+  throw Error('EDITION_FULL27_INVALID');
  if(!cleanInt(maxTotalCoins,0,1000000000000)||
   !cleanInt(maxPerTicketCoins,0,1000000000)||
   !cleanInt(maxPrizesPerTicket,1,20)||
@@ -49,6 +62,10 @@ export function validateEditionConfig(input){
   quotas[count]=value;
  }
  if(variantId==='premium_27'&&quotas[0]>0)throw Error('EDITION_PREMIUM_HAS_NO_DUDS');
+ if(premiumFull27Tickets&&(maxPrizesPerTicket<10||maxUnlocks<premiumFull27Tickets||
+   (quotas[10]!==undefined&&quotas[10]<premiumFull27Tickets)||
+   (quotas[10]===0)))
+  throw Error('EDITION_FULL27_NEEDS_TEN_WINS_AND_UNLOCKS');
  if(variantId==='tic_tac_toe'&&Object.entries(quotas).some(([count,n])=>Number(count)>1&&n>0))
   throw Error('EDITION_DUEL_ONE_WIN_MAX');
  if(variantId==='dog_jackpot_9'&&Object.entries(quotas).some(([count,n])=>
@@ -57,6 +74,7 @@ export function validateEditionConfig(input){
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
+  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
@@ -88,63 +106,126 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   else if(config.variantId==='dog_jackpot_9')
    editionSpecial={dogJackpot:validateDogJackpotEditionSettings(config.gameSettings)};
  }
+ // Ten individually verified prizes require enough BONUS slots.
+ if(config.variantId==='premium_27'&&config.maxPrizesPerTicket>=10)
+  snapshot.variants.premium_27.maxPrizes=Math.max(10,snapshot.variants.premium_27.maxPrizes);
  const runSettings=validateScratchSettings(snapshot);
- const requested=[];
- const reserved=new Set();
+ const requested=[],reserved=new Set();
+ let fullLeft=config.premiumFull27Tickets;
  for(const [count,value] of Object.entries(config.quotas)){
-  for(let i=0;i<value;i++)requested.push(Number(count));
+  for(let i=0;i<value;i++){
+   const full=config.variantId==='premium_27'&&Number(count)===10&&fullLeft>0;
+   if(full)fullLeft--;
+   requested.push({wins:Number(count),full27:full});
+  }
   reserved.add(Number(count));
  }
- while(requested.length<SCRATCH_PRINT_SIZE)requested.push('any');
- // Shuffle all quota slots first, so budget constraints are not systematically
- // assigned to whichever category the host put at the top.
- for(let i=requested.length-1;i>0;i--){
-  const j=draw(i+1);[requested[i],requested[j]]=[requested[j],requested[i]];
- }
- const tickets=[];
- const byWins=Array(21).fill(0);
- let totalCoins=0,unlocks=0,biggest=0,winners=0;
- for(const [slot,required] of requested.entries()){
-  let accepted=null;
-  // Reject a candidate rather than altering a visible winning board or
-  // silently paying an amount unrelated to its shown combination.
-  for(let attempt=0;attempt<Math.max(90,required===10?1200:required==='any'?90:400);attempt++){
-   const sample=buyScratchTicket({coins:1000000000},null,{
-    tier:config.tier,variantId:config.variantId,
-    commandId:'ed_sample_'+slot+'_'+attempt
-   },{settings:runSettings,editionSpecial,draw,now:()=>1700000000000}).result;
+ while(fullLeft>0){requested.push({wins:10,full27:true});fullLeft--;reserved.add(10)}
+ while(requested.length<SCRATCH_PRINT_SIZE)requested.push({wins:'any',full27:false});
+ // Reserve all expensive, explicit jackpot guarantees BEFORE the flexible
+ // tickets; shuffle only at the end so the order cannot influence odds.
+ requested.sort((a,b)=>Number(b.full27)-Number(a.full27)||
+  (b.wins==='any'?-1:b.wins)-(a.wins==='any'?-1:a.wins));
+ const tickets=[],byWins=Array(21).fill(0);
+ let totalCoins=0,unlocks=0,biggest=0,winners=0,full27Count=0;
+ const target=config.targetTotalCoins;
+ const isClassic=['gifts','snow_collect','elf','premium_27'].includes(config.variantId);
+ const amounts=isClassic?runSettings.variants[config.variantId].coinAmounts:
+  config.variantId==='number_one_20'?runSettings.numberOne20.coinAmounts:
+  config.variantId==='tic_tac_toe'?(editionSpecial?.ticTacToe?.coinAmounts??[200,450,800]):
+  (editionSpecial?.dogJackpot?.coinAmounts??[100,300,800]);
+ const meanWin=Math.max(1,Math.round((amounts[0]+amounts[1]+amounts[2])/3));
+ const minWins=config.variantId==='premium_27'?4:0;
+ const maxWins=Math.min(config.maxPrizesPerTicket,
+  config.variantId==='tic_tac_toe'?1:config.variantId==='dog_jackpot_9'?8:
+  config.variantId==='number_one_20'?20:10);
+ const sampleTicket=(slot,attempt,forced,full27)=>{
+  const printControl=isClassic?{
+   ...(forced===null?{}:{forcedWins:forced}),
+   ...(config.variantId==='premium_27'?{
+    forceFull27:full27,excludeFull27:!full27,
+    forcePremiumUnlock:full27,
+    forceNoPremiumMilestone:forced===4&&!full27
+   }:{})
+  }:null;
+  return buyScratchTicket({coins:1000000000},null,{
+   tier:config.tier,variantId:config.variantId,
+   commandId:'ed_sample_'+slot+'_'+attempt
+  },{settings:runSettings,editionSpecial,printControl,draw,now:()=>1700000000000}).result;
+ };
+ for(const [slot,rule] of requested.entries()){
+  const remaining=SCRATCH_PRINT_SIZE-slot;
+  const unspent=target===null?null:target-totalCoins;
+  const pace=target===null?null:Math.max(0,unspent/remaining);
+  let best=null,score=Infinity;
+  // A fixed quota is EXACT. Flexible slots sample multiple legal tickets and
+  // choose one that keeps the remaining 500-ticket budget on course.
+  const tries=target===null?(!isClassic&&rule.wins!=='any'?550:160):
+   rule.wins==='any'?13:10;
+  for(let attempt=0;attempt<tries;attempt++){
+   let forced=rule.wins==='any'?null:rule.wins;
+   if(forced===null&&target!==null&&isClassic){
+    const variety=0.6+draw(101)/125; // roughly 0.60–1.40
+    const desired=Math.round(pace*variety/meanWin);
+    forced=Math.max(minWins,Math.min(maxWins,
+      desired+(attempt%3===0?draw(3)-1:0)));
+    if(reserved.has(forced)){
+     const alternatives=Array.from({length:maxWins-minWins+1},(_,i)=>i+minWins)
+      .filter(count=>!reserved.has(count));
+     if(!alternatives.length)continue;
+     forced=alternatives.reduce((a,b)=>Math.abs(a-desired)<=Math.abs(b-desired)?a:b);
+    }
+   }
+   let sample;
+   try{sample=sampleTicket(slot,attempt,forced,rule.full27)}
+   catch(e){if(/^SCRATCH_|^PREMIUM27_/.test(e.message))continue;throw e}
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
-   if(wins>config.maxPrizesPerTicket||coins>config.maxPerTicketCoins||
+   const full=sample.board?.variantId==='premium_27'&&
+    sample.board.cells.every(symbol=>symbol!=='🧊');
+   if(wins>config.maxPrizesPerTicket||wins>20||coins>config.maxPerTicketCoins||
      totalCoins+coins>config.maxTotalCoins||unlocks+cosmetics>config.maxUnlocks)continue;
-   if(required==='any'&&reserved.has(wins))continue;
-   if(required!=='any'&&wins!==required)continue;
-   accepted=removeReceiptFields(sample);break;
+   if(full!==rule.full27&&config.variantId==='premium_27')continue;
+   if(rule.wins==='any'&&reserved.has(wins))continue;
+   if(rule.wins!=='any'&&wins!==rule.wins)continue;
+   if(target===null){best=sample;break;}
+   const after=unspent-coins;
+   const feasibleNext=after<-(target*config.targetTolerancePercent/100)||
+    after>(remaining-1)*config.maxPerTicketCoins+target*config.targetTolerancePercent/100;
+   if(feasibleNext)continue;
+   const jitter=(draw(101)-50)/100;
+   const variantPenalty=attempt%4===0?0:Math.abs(coins-pace)*0.015;
+   const objective=Math.abs(coins-pace)+variantPenalty+
+    Math.abs(jitter)*Math.max(1,pace)*0.17;
+   if(objective<score){score=objective;best=sample}
+   if(score<Math.max(1,pace)*0.05)break;
   }
-  if(!accepted)throw Error('EDITION_DISTRIBUTION_IMPOSSIBLE_SLOT_'+(slot+1)+
-   '_WINS_'+required+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
-  const count=prizeCount(accepted);
-  byWins[count]++;
-  totalCoins+=accepted.totalCoins||0;
+  if(!best)throw Error('EDITION_DISTRIBUTION_IMPOSSIBLE_SLOT_'+(slot+1)+
+   '_WINS_'+rule.wins+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
+  const accepted=removeReceiptFields(best),count=prizeCount(accepted);
+  byWins[count]++;totalCoins+=accepted.totalCoins||0;
   unlocks+=unlockCount(accepted);
   biggest=Math.max(biggest,accepted.totalCoins||0);
   if(count)winners++;
+  if(config.variantId==='premium_27'&&accepted.board.cells.every(s=>s!=='🧊'))full27Count++;
   tickets.push(accepted);
  }
- // Cryptographically shuffle the completed 500-card print run. A player never
- // gets to choose the serial number or learn the next ticket in the queue.
+ if(target!==null&&Math.abs(totalCoins-target)>Math.max(1,target*config.targetTolerancePercent/100))
+  throw Error('EDITION_TARGET_NOT_REACHED_'+totalCoins+'_OF_'+target);
  for(let i=tickets.length-1;i>0;i--){
   const j=draw(i+1);[tickets[i],tickets[j]]=[tickets[j],tickets[i]];
  }
  const summary={tickets:SCRATCH_PRINT_SIZE,winners,duds:SCRATCH_PRINT_SIZE-winners,
-  totalCoins,unlocks,biggestTicketCoins:biggest,byWins,
+  totalCoins,unlocks,biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
+  targetTotalCoins:target,deltaToTarget:target===null?null:totalCoins-target,
+  targetDifferencePercent:target>0?Math.round(Math.abs(totalCoins-target)/target*10000)/100:0,
   expectedAverageCoins:Math.round(totalCoins/SCRATCH_PRINT_SIZE),
   remainingBudget:config.maxTotalCoins-totalCoins};
  const packed=packEditionTickets(tickets);
- // Firestore has a 1 MiB document limit: leave margin for metadata.
  if(Buffer.byteLength(packed,'utf8')>750000)throw Error('EDITION_DOCUMENT_TOO_LARGE');
  return {config,summary,packed,packedBytes:packed.length,
   settingsSnapshot:runSettings,specialSnapshot:editionSpecial};
 }
+
 export function newEditionDocument(plan,creator,now=Date.now()){
  return {version:1,id:plan.config.variantId+'_'+now+'_'+randomUUID().slice(0,8),
   variantId:plan.config.variantId,tier:plan.config.tier,title:plan.config.title,
