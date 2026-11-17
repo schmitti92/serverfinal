@@ -173,7 +173,8 @@ export function validateEditionConfig(input){
  if(variantId==='premium_27'&&maxPrizesPerTicket<4)
   throw Error('EDITION_MINIMUM_FOUR_PREMIUM_WINS');
  if(Object.values(quotas).reduce((a,b)=>a+b,0)>printSize)
-  throw Error('EDITION_QUOTAS_OVER_PRINT_SIZE');
+  throw Error(printSize===SCRATCH_PRINT_SIZE?'EDITION_QUOTAS_OVER_500':
+   'EDITION_QUOTAS_OVER_PRINT_SIZE');
  return {variantId,tier:ticketTier(variantId),title,printSize,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
   targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,symbolBudgets,doubleWin,
