@@ -138,3 +138,32 @@ export function validateScratchSettings(raw){
   throw Error('SCRATCH_SETTINGS_INVALID');
  return normalizeScratchSettings(raw);
 }
+
+/**
+ * Modify exactly one ticket type: Geschenkelinie. This does not enable
+ * limited print runs, and it does not overwrite the other ticket settings.
+ * All percentages are entered as whole permille (100 = 10.0%).
+ */
+export function updateGiftScratchSettings(raw,change){
+ if(!change||typeof change!=='object'||Array.isArray(change))throw Error('SCRATCH_GIFTS_SETTINGS_INVALID');
+ const {price,nonePer1000,unlockPer1000,coinAmounts,maxPrizes,
+  extraCoinChance,doubleChancePer1000,lightChancePer1000,lightMin,lightMax}=change;
+ if(!integer(price,0,1000000)||!integer(nonePer1000,0,1000)||
+    !integer(unlockPer1000,0,1000)||nonePer1000+unlockPer1000>1000||
+    !validScratchCoinAmounts(coinAmounts)||!integer(maxPrizes,1,10)||
+    !integer(extraCoinChance,0,100)||!integer(doubleChancePer1000,0,1000)||
+    !integer(lightChancePer1000,0,1000)||!integer(lightMin,1,100)||
+    !integer(lightMax,1,100)||lightMin>lightMax)
+  throw Error('SCRATCH_GIFTS_SETTINGS_INVALID');
+ const current=normalizeScratchSettings(raw);
+ current.variants.gifts={
+  ...current.variants.gifts,price,
+  weights:{none:nonePer1000,coins:1000-nonePer1000-unlockPer1000,unlock:unlockPer1000},
+  coinAmounts:[...coinAmounts],maxPrizes,extraCoinChance,
+  doubleChancePer1000,lightChancePer1000,lightMin,lightMax,
+  // The user does not need to juggle manual symbol weightings.
+  moneySymbolWeights:[...DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS],
+  giftSymbolWeights:[...DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS]
+ };
+ return validateScratchSettings(current);
+}
