@@ -17,7 +17,7 @@ import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
-import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket,scratchEditionCatalog,validateEditionConfig} from './dog/christmas-scratch-editions.js';
+import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket,scratchEditionCatalog,validateEditionConfig,unpackEditionTickets} from './dog/christmas-scratch-editions.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
@@ -875,6 +875,30 @@ function finishEisstock(ch,members){
     await store.collection('dog_christmas_scratch_editions_previews_v1').doc(previewId)
       .set({planned,createdBy:req.hubIdentity.uid,createdAt,expiresAt:createdAt+30*60*1000});
     return {config:planned.config,summary:planned.summary,preview:true,previewId};
+  }));
+  // Read-only, anonymous-to-the-print-order sample of already vetted boards.
+  // Only the creator of the still-unpublished preview may inspect them.
+  app.get('/api/hub/scratch/editions/preview/:previewId/tickets',authentication,handler(async req=>{
+    const previewId=req.params.previewId;
+    if(!/^[0-9a-f-]{36}$/.test(previewId))throw error(400,'EDITION_PREVIEW_REQUIRED');
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const snap=await store.collection('dog_christmas_scratch_editions_previews_v1').doc(previewId).get();
+    const draft=snap.exists?snap.data():null;
+    if(!draft||draft.createdBy!==req.hubIdentity.uid||draft.expiresAt<clock())
+      throw error(404,'EDITION_PREVIEW_EXPIRED');
+    const printed=unpackEditionTickets(draft.planned.packed);
+    // Draw unlabelled samples using server-only random indices. Deliberately
+    // avoid a public deterministic mapping between examples and sale positions.
+    const sampled=new Set();
+    while(sampled.size<8)sampled.add(randomInt(printed.length));
+    const tickets=[...sampled].map(index=>printed[index]);
+    return {previewId,count:tickets.length,tickets:tickets.map(ticket=>({
+      board:ticket.board,winnings:ticket.winnings,totalCoins:ticket.totalCoins||0,
+      totalLights:ticket.totalLights||0,doubleWin:ticket.doubleWin||null,
+      lightBadgeIndex:ticket.lightBadgeIndex??null,
+      doubleBadgeIndex:ticket.doubleBadgeIndex??null
+    }))};
   }));
   app.post('/api/hub/scratch/editions/publish',authentication,handler(async req=>{
     const store=db();

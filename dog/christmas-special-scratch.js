@@ -98,7 +98,7 @@ function decorate(board,unlock){
   unlockId:usedUnlock?unlock.unlockId:null
  };
 }
-export function drawNumberOne20({draw,unlock=null,settings=null}={}){
+export function drawNumberOne20({draw,unlock=null,settings=null,forcedHits=null}={}){
  if(typeof draw!=='function')throw Error('SCRATCH_SPECIAL_DRAW_REQUIRED');
  const defaults=[650,280,60,10];
  const weights=Array.isArray(settings?.symbolWeights)?settings.symbolWeights:defaults;
@@ -113,12 +113,23 @@ export function drawNumberOne20({draw,unlock=null,settings=null}={}){
   throw Error('SCRATCH_NUMBER_SETTINGS_INVALID');
  const prizePool=NUMBER_PRIZE_WEIGHTS.map((row,i)=>({...row,weight:weights[i],amount:i<3?amounts[i]:null}));
  const cells=[];
+ if(forcedHits!==null&&(!Number.isSafeInteger(forcedHits)||forcedHits<0||forcedHits>NUMBER_ROW_COUNT))
+  throw Error('SCRATCH_PRINT_HITS_INVALID');
+ // Only the server print engine may force genuine winning rows. Their positions
+ // are shuffled, and the existing award verifier checks the resulting board.
+ const slots=Array.from({length:NUMBER_ROW_COUNT},(_,i)=>i);
+ if(forcedHits!==null)for(let i=slots.length-1;i>0;i--){
+  const j=draw(i+1);[slots[i],slots[j]]=[slots[j],slots[i]];
+ }
+ const printedHits=forcedHits===null?null:new Set(slots.slice(0,forcedHits));
  for(let i=0;i<NUMBER_ROW_COUNT;i++){
   const symbol=pick(prizePool,draw);
   // Preserve the default 1..10 uniform roll for older tests and receipts.
   // Custom odds are sampled in thousandths; other numbers remain 2..10.
   let number;
-  if(hitPer1000===100){
+  if(printedHits!==null){
+   number=printedHits.has(i)?1:draw(9)+2;
+  }else if(hitPer1000===100){
    const roll=draw(10);
    if(!Number.isInteger(roll)||roll<0||roll>=10)throw Error('SCRATCH_SPECIAL_RANDOM_INVALID');
    number=roll+1;
@@ -137,12 +148,14 @@ export function drawNumberOne20({draw,unlock=null,settings=null}={}){
  return decorate({variantId:'number_one_20',symbolVersion:SPECIAL_SCRATCH_VERSION,cells,
   coinAmounts:[...amounts],symbolWeights:[...weights],hitPer1000,giftFallbackCoins},unlock);
 }
-export function drawDogJackpot9({draw,unlock=null,settings=null}={}){
+export function drawDogJackpot9({draw,unlock=null,settings=null,forcedHit=null}={}){
  if(typeof draw!=='function')throw Error('SCRATCH_SPECIAL_DRAW_REQUIRED');
  const custom=settings===null?null:validateDogJackpotEditionSettings(settings);
  const roll=draw(1000);
  if(!Number.isInteger(roll)||roll<0||roll>=1000)throw Error('SCRATCH_SPECIAL_RANDOM_INVALID');
- const dogIndex=roll<(custom?.dogChancePer1000??DOG_JACKPOT_CHANCE_PER_1000)?
+ if(forcedHit!==null&&typeof forcedHit!=='boolean')throw Error('SCRATCH_PRINT_DOG_INVALID');
+ const dogIndex=(forcedHit===null?
+  roll<(custom?.dogChancePer1000??DOG_JACKPOT_CHANCE_PER_1000):forcedHit)?
   draw(DOG_JACKPOT_FIELD_COUNT):-1;
  if(dogIndex!==-1&&(!Number.isInteger(dogIndex)||dogIndex<0||dogIndex>=DOG_JACKPOT_FIELD_COUNT))
   throw Error('SCRATCH_SPECIAL_RANDOM_INVALID');

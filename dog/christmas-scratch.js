@@ -708,8 +708,10 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
   const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel',settings:editionSpecial?.ticTacToe??null}):
-   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,settings:liveSettings.numberOne20}):
-   drawDogJackpot9({draw:random,unlock,settings:editionSpecial?.dogJackpot??null});
+   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,settings:liveSettings.numberOne20,
+    forcedHits:Number.isInteger(printControl?.forcedWins)?printControl.forcedWins:null}):
+   drawDogJackpot9({draw:random,unlock,settings:editionSpecial?.dogJackpot??null,
+    forcedHit:printControl?.forcedWins===8?true:printControl?.forcedWins===0?false:null});
   if(!verifyScratchPrizes(drawn.board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
   const stamped=now();
   if(drawn.unlockId)w.owned[drawn.unlockId]=stamped;
