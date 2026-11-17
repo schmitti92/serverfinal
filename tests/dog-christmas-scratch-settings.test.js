@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol,updateGiftScratchSettings} from '../dog/christmas-scratch-settings.js';
 import {buyScratchTicket,grantDogScratchVoucher,normalizedScratchWallet,dogScratchStatus} from '../dog/christmas-scratch.js';
+import {evaluateScratchGrid} from '../dog/christmas-scratch-grid.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
 const draw=(roll)=>{let first=true;return max=>{if(first){first=false;return roll}return 0}};
 test('four scratch variants have independent defaults and validated percentages',()=>{
@@ -53,7 +54,7 @@ test('per-variant win caps retain verified payout combinations',()=>{
  }
 });
 
-test('all four cards can pay up to ten real, individually listed win-linked prizes',()=>{
+test('Geschenkelinie has only visible winning triples; other cards keep their linked prizes',()=>{
  const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
  for(const item of Object.values(config.variants)){
   item.weights={none:0,coins:1000,unlock:0};
@@ -77,10 +78,12 @@ test('all four cards can pay up to ten real, individually listed win-linked priz
    {tier,commandId:'scratch-ten-'+variant},
    {settings:config,draw:seeded(67439,variantIndex)});
   assert.equal(result.result.board.variantId,variant);
-  assert.equal(result.result.winnings.length,10,variant+' should pay ten rewards');
+  if(variant==='gifts')assert.equal(result.result.winnings.length,result.result.board.wins.length,
+   'Geschenkelinie prizes all require their own visible triple');
+  else assert.equal(result.result.winnings.length,10,variant+' should pay ten rewards');
   const wins=result.result.board.wins,bonuses=result.result.winnings.filter(p=>p.bonus);
   assert.ok(wins.length>=1&&wins.length<=(variant==='premium_27'?7:3),variant+' has real visible matches');
-  assert.equal(bonuses.length,10-wins.length,variant+' bonus count');
+  assert.equal(bonuses.length,variant==='gifts'?0:10-wins.length,variant+' bonus count');
   assert.ok(bonuses.every(p=>p.type==='coins'&&p.amount>0&&
    Number.isInteger(p.sourceWin)&&p.sourceWin>=0&&p.sourceWin<wins.length),variant+' linked bonuses');
   assert.equal(result.result.totalCoins,result.result.winnings.filter(p=>p.type==='coins').reduce((n,p)=>n+p.amount,0));
@@ -264,7 +267,7 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
     {settings:config,draw:seeded(index)});
    const prizes=purchase.result.winnings;
    assert.equal(purchase.result.board.variantId,id);
-   assert.equal(prizes.length,10,id+' reward count');
+   assert.equal(prizes.length,id==='gifts'?purchase.result.board.wins.length:10,id+' reward count');
    assert.ok(id==='premium_27'?['🪙','💵','💼'].every(icon=>prizes.some(x=>x.type==='coins'&&x.symbol===icon)):
    prizes.filter(x=>x.type==='coins').every(x=>x.symbol==='💼'),id+' money weights');
    if(group==='gifts'){
@@ -332,13 +335,13 @@ test('earned DOG field tickets enter the personal voucher wallet, not the daily-
 test('Geschenkelinie settings update only this variant and never changes other tickets',()=>{
  const before=normalizeScratchSettings(null);
  const input={price:250,nonePer1000:200,unlockPer1000:150,
-  coinAmounts:[17,77,777],maxPrizes:7,extraCoinChance:45,
+  coinAmounts:[17,77,777],maxPrizes:3,extraCoinChance:45,
   doubleChancePer1000:230,lightChancePer1000:300,lightMin:2,lightMax:8};
  const next=updateGiftScratchSettings(before,input);
  assert.equal(next.variants.gifts.price,250);
  assert.deepEqual(next.variants.gifts.weights,{none:200,coins:650,unlock:150});
  assert.deepEqual(next.variants.gifts.coinAmounts,[17,77,777]);
- assert.equal(next.variants.gifts.maxPrizes,7);
+ assert.equal(next.variants.gifts.maxPrizes,3);
  assert.equal(next.variants.gifts.doubleChancePer1000,230);
  assert.equal(next.variants.gifts.lightChancePer1000,300);
  assert.equal(next.variants.gifts.lightMax,8);
@@ -378,4 +381,43 @@ test('Geschenkelinie price, x2 and independent light credit are frozen per purch
  assert.equal(replay.unchanged,true);
  assert.deepEqual(replay.result,paid.result);
  assert.equal(replay.wallet.coins,paid.wallet.coins);
+});
+
+test('Geschenkelinie uses only exact identical money or jackpot triples; no unseen bonuses',()=>{
+ // Even when 3 GIFT icons occur, they must be the SAME gift emoji.
+ const cells=['🎁','💝','🎀','🧧','🛍️','🍪','❄️','🔔','⭐'];
+ assert.equal(evaluateScratchGrid({variantId:'gifts',symbolVersion:3,cells}).length,0);
+ const match=[...cells];match[0]='🎁';match[1]='🎁';match[2]='🎁';
+ const jackpot=evaluateScratchGrid({variantId:'gifts',symbolVersion:3,cells:match});
+ assert.equal(jackpot.length,1);
+ assert.deepEqual(jackpot[0].indices,[0,1,2]);
+ assert.equal(jackpot[0].symbol,'🎁');
+ const settings=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ settings.variants.gifts.weights={none:0,coins:0,unlock:1000};
+ settings.variants.gifts.maxPrizes=10; // old saved settings migrate to visible cap
+ settings.variants.gifts.extraCoinChance=100;
+ let state=67439;
+ const draw=max=>{
+  state=(Math.imul(state,1664525)+1013904223)>>>0;
+  return Math.floor(state/4294967296*max);
+ };
+ const receipt=buyScratchTicket({coins:10000},null,
+  {tier:'simple',variantId:'gifts',commandId:'gifts-real-identical-jackpot'},
+  {settings,draw});
+ const {board,winnings}=receipt.result;
+ assert.equal(board.symbolVersion,3);
+ assert.equal(winnings.length,board.wins.length,'one payout for each visible combination');
+ assert.ok(winnings.length<=3);
+ assert.ok(winnings.every(p=>!p.bonus),'no invisible money bonus');
+ assert.ok(board.wins.every(w=>w.indices.length===3&&w.indices.every(i=>board.cells[i]===w.symbol)));
+ assert.ok(board.wins.filter(w=>w.prize.type==='unlock').every(w=>
+  ['🎁','💝','🎀','🧧','🛍️'].includes(w.symbol)&&w.prize.symbol===w.symbol));
+ assert.equal(receipt.result.totalCoins,winnings.filter(p=>p.type==='coins')
+  .reduce((sum,p)=>sum+p.amount,0));
+ assert.equal(normalizeScratchSettings(settings).variants.gifts.maxPrizes,3);
+ assert.throws(()=>updateGiftScratchSettings(null,{
+  price:200,nonePer1000:0,unlockPer1000:0,coinAmounts:[10,40,100],
+  maxPrizes:4,extraCoinChance:30,doubleChancePer1000:110,
+  lightChancePer1000:100,lightMin:1,lightMax:10
+ }),/SCRATCH_GIFTS_SETTINGS_INVALID/);
 });
