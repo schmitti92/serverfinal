@@ -560,9 +560,9 @@ const safeReceipts=raw=>Array.isArray(raw)?raw.filter(x=>
 // splits are honestly reported as unknown rather than fabricated.
 const SCRATCH_PROGRESS_VARIANTS=Object.freeze(Object.values(SCRATCH_VARIANT_IDS_BY_TIER).flat());
 const progressCount=value=>Number.isSafeInteger(value)&&value>=0?value:0;
-const emptyScratchProgressRow=()=>({opened:0,winTickets:0,duds:0,free:0,coinsWon:0,unlocks:0});
+const emptyScratchProgressRow=()=>({opened:0,winTickets:0,duds:0,free:0,coinsWon:0,lightsWon:0,unlocks:0});
 const emptyScratchProgress=()=>({
- tracked:0,winTickets:0,duds:0,free:0,coinsWon:0,unlocks:0,
+ tracked:0,winTickets:0,duds:0,free:0,coinsWon:0,lightsWon:0,unlocks:0,
  byVariant:Object.fromEntries(SCRATCH_PROGRESS_VARIANTS.map(id=>[id,emptyScratchProgressRow()])),
  other:emptyScratchProgressRow()
 });
@@ -589,6 +589,9 @@ export function addScratchProgress(progress,result){
  const won=prizes.length>0;
  const freebies=result.free===true?1:0;
  const unlocks=prizes.filter(prize=>prize?.type==='unlock').length;
+ const lights=Number.isSafeInteger(result.totalLights)&&result.totalLights>=0?
+  result.totalLights:prizes.filter(prize=>prize?.type==='lights').reduce((sum,prize)=>
+   sum+progressCount(prize?.amount),0);
  const amount=Number.isSafeInteger(result.totalCoins)&&result.totalCoins>=0?
   result.totalCoins:prizes.filter(prize=>prize?.type==='coins').reduce((sum,prize)=>
    sum+progressCount(prize?.amount),0);
@@ -599,6 +602,7 @@ export function addScratchProgress(progress,result){
   target.duds+=Number(!won);
   target.free+=freebies;
   target.coinsWon+=amount;
+  target.lightsWon=progressCount(target.lightsWon)+lights;
   target.unlocks+=unlocks;
  }
 }
