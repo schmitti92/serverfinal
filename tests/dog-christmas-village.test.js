@@ -18,12 +18,14 @@ test('Christmas event is globally active by default, never a room or host settin
 test('Christmas village starts at level 1, with 10 real gift fields and empty shared balance',()=>{
  const initial=dogVillagePublic(null,host);
  assert.equal(initial.lightsTenths,0);
- assert.deepEqual(initial.levels,{tower:1,workshop:1,bakery:1,inn:1});
- assert.deepEqual(initial.nextCosts,{tower:15,workshop:15,bakery:15,inn:15});
+ assert.deepEqual(initial.levels,{tower:1,workshop:1,bakery:1,inn:1,luckhouse:1,academy:1});
+ assert.deepEqual(initial.nextCosts,{tower:15,workshop:15,bakery:15,inn:15,luckhouse:15,academy:15});
  assert.equal(initial.bonus.towerFields,10);
  assert.equal(initial.bonus.workshopExtraChancePercent,5);
  assert.equal(initial.bonus.bakeryExtraPercent,0);
  assert.equal(initial.bonus.innPerFinishedGame,0);
+ assert.equal(initial.bonus.luckhouseDiscountPercent,0);
+ assert.equal(initial.bonus.academyXpPercent,0);
  assert.deepEqual(DOG_TOWER_FIELDS,[10,12,15,18,20]);
  assert.equal(new Set(DOG_GIFT_FIELD_ORDER).size,20);
  assert.ok(DOG_GIFT_FIELD_ORDER.every(x=>Number.isInteger(x)&&x>=0&&x<64&&x%16!==0));
