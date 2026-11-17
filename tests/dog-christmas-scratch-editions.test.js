@@ -33,6 +33,18 @@ test('print plan creates exactly 500 independently verified tickets and exact du
  }
  assert.equal(printedCoins,plan.summary.totalCoins);
 });
+test('33 reserved two-win cards keep their exact quantity in a 500-card print',()=>{
+ const plan=planScratchEdition({
+  ...simple(),maxTotalCoins:350000,maxPerTicketCoins:1500,
+  targetTotalCoins:100000,targetTolerancePercent:30,
+  quotas:{2:33}
+ },settings);
+ assert.equal(plan.summary.tickets,500);
+ assert.equal(plan.summary.byWins[2],33);
+ assert.equal(unpackEditionTickets(plan.packed).filter(ticket=>
+  ticket.winnings.length===2).length,33);
+});
+
 test('a printed purchase is charged once and its immutable winning board is preserved',()=>{
  const plan=planScratchEdition({
   ...simple(),quotas:{0:500}
