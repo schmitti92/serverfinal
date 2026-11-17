@@ -8,6 +8,7 @@
  * Immutable 7th-generation visual receipts are created on Render.
  * This module never reads browser state or grants money by itself.
  */
+import {SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-symbols.js';
 export const SPECIAL_SCRATCH_VERSION=7;
 export const NUMBER_ROW_COUNT=20;
 export const DOG_JACKPOT_FIELD_COUNT=9;
@@ -41,13 +42,14 @@ export function validateDogJackpotEditionSettings(value){
 }
 const money=new Map([...NUMBER_PRIZE_WEIGHTS,...DOG_PRIZE_WEIGHTS]
  .filter(entry=>entry.amount!==null).map(entry=>[entry.symbol,entry.amount]));
-const icons=Object.freeze([...NUMBER_PRIZE_WEIGHTS.map(entry=>entry.symbol)]);
+const icons=Object.freeze([...new Set([...NUMBER_PRIZE_WEIGHTS.map(entry=>entry.symbol),...SCRATCH_GIFT_SYMBOLS])]);
 const pick=(pool,draw)=>{
  const value=draw(1000);
  if(!Number.isInteger(value)||value<0||value>=1000)throw Error('SCRATCH_SPECIAL_RANDOM_INVALID');
  let n=value;
  for(const entry of pool){
-  if(n<entry.weight)return entry.symbol;
+  if(n<entry.weight)return entry.symbol==='🎁'?
+   SCRATCH_GIFT_SYMBOLS[draw(SCRATCH_GIFT_SYMBOLS.length)]:entry.symbol;
   n-=entry.weight;
  }
  throw Error('SCRATCH_SPECIAL_WEIGHTS_INVALID');
@@ -80,13 +82,13 @@ function decorate(board,unlock){
  let usedUnlock=false;
  const wins=patterns.map(pattern=>{
   let prize;
-  if(pattern.symbol==='🎁'){
+  if(SCRATCH_GIFT_SYMBOLS.includes(pattern.symbol)){
    if(!usedUnlock&&unlock?.unlockId){
     usedUnlock=true;
-    prize={type:'unlock',symbol:'🎁',prize:{
+    prize={type:'unlock',symbol:pattern.symbol,prize:{
      unlockId:unlock.unlockId,name:unlock.name,icon:unlock.icon,category:unlock.category
     }};
-   }else prize={type:'coins',symbol:'🎁',amount:board.giftFallbackCoins??1500};
+   }else prize={type:'coins',symbol:pattern.symbol,amount:board.giftFallbackCoins??1500};
   }else prize={type:'coins',symbol:pattern.symbol,amount:payouts.get(pattern.symbol)};
   return {...pattern,prize};
  });
@@ -178,14 +180,14 @@ export function verifySpecialScratch(board){
    const pattern=calculated[i],prize=win?.prize;
    if(win.rule!==pattern.rule||win.symbol!==pattern.symbol||
     JSON.stringify(win.indices)!==JSON.stringify(pattern.indices))return false;
-   if(pattern.symbol==='🎁'){
+   if(SCRATCH_GIFT_SYMBOLS.includes(pattern.symbol)){
     if(prize?.type==='unlock'){
      if(usedUnlock||typeof prize.prize?.unlockId!=='string'||
       !prize.prize.unlockId||typeof prize.prize.name!=='string'||
       !prize.prize.name||unlockIds.has(prize.prize.unlockId))return false;
-     usedUnlock=true;unlockIds.add(prize.prize.unlockId);return prize.symbol==='🎁';
+     usedUnlock=true;unlockIds.add(prize.prize.unlockId);return prize.symbol===pattern.symbol;
     }
-    return prize?.type==='coins'&&prize.amount===(board.giftFallbackCoins??1500)&&prize.symbol==='🎁';
+    return prize?.type==='coins'&&prize.amount===(board.giftFallbackCoins??1500)&&prize.symbol===pattern.symbol;
    }
    const payout=Array.isArray(board.coinAmounts)?
     board.coinAmounts[icons.indexOf(pattern.symbol)]:money.get(pattern.symbol);
