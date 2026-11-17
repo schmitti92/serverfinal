@@ -1630,7 +1630,7 @@ test('DOG Christmas event: a verified landing credits lights, replay cannot dupl
  assert.equal((await h.api('GET',base+'/dog/village','alice')).village.lightsTenths,balance.lightsTenths);
 });
 
-test('authenticated hub scratch route accepts all registered Christmas scratch variants and replays safely',async()=>{
+test('authenticated hub scratch route locks all registered variants until a 500-ticket edition is printed',async()=>{
  for(const [tier,variantId] of [
   ['medium','tic_tac_toe'],
   ['medium','number_one_20'],
@@ -1640,16 +1640,13 @@ test('authenticated hub scratch route accepts all registered Christmas scratch v
   const commandId='scratch-buy-'+variantId;
   const input={tier,variantId,commandId,free:false,voucher:false};
   const bought=await h.api('POST','/api/hub/scratch/buy','alice',input);
-  assert.equal(bought.status,200,variantId+': '+bought.error);
-  assert.equal(bought.ok,true);
-  assert.equal(bought.result?.board?.variantId,variantId);
-  assert.equal(bought.result?.board?.cells?.length,variantId==='number_one_20'?40:9);
-  assert.equal(bought.scratch?.purchased,1);
+  assert.equal(bought.status,409,variantId+': '+bought.error);
+  assert.equal(bought.error,'EDITION_NO_ACTIVE_PRINT_RUN');
   const repeated=await h.api('POST','/api/hub/scratch/buy','alice',input);
-  assert.equal(repeated.status,200);
-  assert.equal(repeated.replayed,true);
-  assert.deepEqual(repeated.result,bought.result);
-  assert.equal(repeated.scratch?.coins,bought.scratch?.coins);
+  assert.equal(repeated.status,409);
+  assert.equal(repeated.error,'EDITION_NO_ACTIVE_PRINT_RUN');
+  const status=await h.api('GET','/api/hub/scratch','alice');
+  assert.equal(status.scratch?.purchased,0);
   const mismatchedTier=await h.api('POST','/api/hub/scratch/buy','alice',{
    ...input,tier:tier==='premium'?'medium':'premium',commandId:'mismatch-'+variantId
   });
@@ -1657,7 +1654,7 @@ test('authenticated hub scratch route accepts all registered Christmas scratch v
   assert.equal(mismatchedTier.error,'SCRATCH_INVALID_REQUEST');
  }
 });
-test('Christmas scratch hub accepts free special tickets when shared free mode is enabled',async()=>{
+test('Christmas scratch hub still requires printed editions even when shared free mode is enabled',async()=>{
  const h=harness({christmasEventActive:()=>true});
  const status=await h.api('GET','/api/hub/scratch');
  assert.equal(status.status,200);
@@ -1672,8 +1669,7 @@ test('Christmas scratch hub accepts free special tickets when shared free mode i
   const receipt=await h.api('POST','/api/hub/scratch/buy','alice',{
    tier,variantId,commandId:'free-special-'+variantId,free:true,voucher:false
   });
-  assert.equal(receipt.status,200,variantId+': '+receipt.error);
-  assert.equal(receipt.result?.price,0);
-  assert.equal(receipt.result?.board?.variantId,variantId);
+  assert.equal(receipt.status,409,variantId+': '+receipt.error);
+  assert.equal(receipt.error,'EDITION_NO_ACTIVE_PRINT_RUN');
  }
 });
