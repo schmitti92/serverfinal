@@ -3,16 +3,16 @@
  * Old receipts without symbolVersion remain evaluated by the legacy rules.
  *
  * 🪙 = small coins, 💵 = banknotes, 💼 = money case,
- * 🎁 / 💝 / 🎀 / 🧧 = collectible unlocks. Mixed gifts are never a match.
+ * 🎁 / 💝 / 🎀 / 🧧 / 🛍️ = five collectible jackpot symbols. Mixed gifts never match.
  */
 export const SCRATCH_PAYOUT_SYMBOLS=Object.freeze({
  coin:'🪙',banknote:'💵',case:'💼',unlock:'🎁'
 });
-export const SCRATCH_GIFT_SYMBOLS=Object.freeze(['🎁','💝','🎀','🧧']);
+export const SCRATCH_GIFT_SYMBOLS=Object.freeze(['🎁','💝','🎀','🧧','🛍️']);
 export const SCRATCH_PAYOUT_ORDER=Object.freeze([...Object.values(SCRATCH_PAYOUT_SYMBOLS).slice(0,3),...SCRATCH_GIFT_SYMBOLS]);
 export const SCRATCH_PAYOUT_VERSION=3;
 const DECOR=Object.freeze(['❄️','🔔','⭐','🍪','🦌','🎄','🍬','🌙','🧤','🕯️']);
-// All four wrapped-gift icons may be harmless filler. Only a valid match wins.
+// All five gift icons may also appear as fillers; only a verified match wins.
 const GIFT_FILL=Object.freeze([...DECOR,...SCRATCH_GIFT_SYMBOLS]);
 const ICE='🧊';
 const TYPES=Object.freeze({gifts:9,snow_collect:16,elf:20,tree:15});
