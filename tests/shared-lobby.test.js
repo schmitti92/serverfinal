@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installSharedLobby } from '../shared-lobby.js';
+import {packEditionTickets,unpackEditionTickets} from '../dog/christmas-scratch-editions.js';
 
 function harness(options={}){
  let finished=false,skyjoBootstraps=0,watchStarts=0,watchStops=0;
@@ -1672,4 +1673,45 @@ test('Christmas scratch hub still requires printed editions even when shared fre
   assert.equal(receipt.status,409,variantId+': '+receipt.error);
   assert.equal(receipt.error,'EDITION_NO_ACTIVE_PRINT_RUN');
  }
+});
+
+
+test('published edition lights are credited to the shared village exactly once and sold-out runs lock',async()=>{
+ const h=harness({christmasEventActive:()=>true});
+ const config={variantId:'gifts',title:'Gemeinsame Lichtertal-Lichtlose',
+  ticketPrice:100,maxTotalCoins:1000000,maxPerTicketCoins:50000,
+  maxPrizesPerTicket:10,maxUnlocks:0,volatility:40,quotas:{},
+  symbolBudgets:{lights:{min:2,max:2,minTotal:2,maxTotal:1000,chancePer1000:1000}}};
+ const published=await h.api('POST','/api/hub/scratch/editions/publish','alice',{config});
+ assert.equal(published.status,200,published.error);
+ const editionId=published.edition.id;
+ const key='dog_christmas_scratch_editions_v1/'+editionId;
+ const doc=h.docs.get(key);assert.ok(doc?.packed);
+ const tickets=unpackEditionTickets(doc.packed);
+ const lightIndex=tickets.findIndex(ticket=>ticket.totalLights===2);
+ assert.ok(lightIndex>=0,'at least one printed ticket grants Christmas lights');
+ [tickets[0],tickets[lightIndex]]=[tickets[lightIndex],tickets[0]];
+ doc.packed=packEditionTickets(tickets);
+ h.docs.set(key,doc);
+ const cmd='test-shared-lights-0001';
+ const first=await h.api('POST','/api/hub/scratch/buy','alice',{
+  tier:'simple',variantId:'gifts',commandId:cmd});
+ assert.equal(first.status,200,first.error);
+ assert.equal(first.result.totalLights,2);
+ assert.equal(first.result.winnings.find(x=>x.type==='lights')?.symbol,'⭐');
+ const village=await h.api('GET','/api/hub/christmas-village','alice');
+ assert.equal(village.village.lightsTenths,20);
+ const replay=await h.api('POST','/api/hub/scratch/buy','alice',{
+  tier:'simple',variantId:'gifts',commandId:cmd});
+ assert.equal(replay.status,200,replay.error);
+ assert.equal(replay.replayed,true);
+ const afterward=await h.api('GET','/api/hub/christmas-village','alice');
+ assert.equal(afterward.village.lightsTenths,20);
+ const full=h.docs.get(key);full.issued=500;h.docs.set(key,full);
+ const empty=await h.api('POST','/api/hub/scratch/buy','alice',{
+  tier:'simple',variantId:'gifts',commandId:'test-shared-lights-0002'});
+ assert.equal(empty.status,409);
+ assert.equal(empty.error,'EDITION_NO_ACTIVE_PRINT_RUN');
+ const check=await h.api('GET','/api/hub/scratch/editions','alice');
+ assert.equal(check.editions.find(x=>x.variantId==='gifts').active.remaining,0);
 });
