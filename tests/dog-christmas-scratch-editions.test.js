@@ -471,3 +471,42 @@ test('Finde DOG exact eight-hit quotas use actual DOG boards even at zero random
   assert.equal(verifyScratchPrizes(card.board),true);
  }
 });
+
+test('custom 37-ticket run prints, issues and redeems exactly 37 immutable tickets',()=>{
+ const config={...simple(),printSize:37,quotas:{0:37},targetTotalCoins:null};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.config.printSize,37);
+ assert.equal(plan.summary.tickets,37);
+ assert.equal(plan.summary.byWins[0],37);
+ assert.equal(unpackEditionTickets(plan.packed,37).length,37);
+ assert.throws(()=>unpackEditionTickets(plan.packed),/EDITION_STORED_TICKETS_INVALID/);
+ let document=newEditionDocument(plan,'studio-host',1763430000000);
+ assert.equal(editionPublic(document).remaining,37);
+ let wallet={coins:20000,owned:{}};
+ for(let i=0;i<37;i++){
+  const issued=issueEditionTicket(document,wallet,null,{
+   tier:'simple',variantId:'gifts',commandId:'custom_run_'+String(i).padStart(4,'0')
+  },{settings,now:()=>1763430000000+i});
+  document=issued.doc;wallet=issued.wallet;
+  assert.equal(editionPublic(document).remaining,36-i);
+ }
+ assert.equal(document.issued,37);
+ assert.throws(()=>issueEditionTicket(document,wallet,null,{
+  tier:'simple',variantId:'gifts',commandId:'custom_run_sold_out'
+ },{settings}),/EDITION_SOLD_OUT/);
+});
+test('custom print sizes bound quotas, max double tickets and premium jackpots',()=>{
+ const base={...simple(),printSize:42,quotas:{0:43}};
+ assert.throws(()=>validateEditionConfig(base),/EDITION_INVALID_QUOTA_0/);
+ assert.throws(()=>validateEditionConfig({...base,quotas:{0:42,1:1}}),
+  /EDITION_QUOTAS_OVER_PRINT_SIZE/);
+ assert.throws(()=>validateEditionConfig({...simple(),printSize:501}),
+  /EDITION_PRINT_SIZE_INVALID/);
+ assert.throws(()=>validateEditionConfig({...simple(),printSize:0}),
+  /EDITION_PRINT_SIZE_INVALID/);
+ assert.throws(()=>validateEditionConfig({...simple(),printSize:40,
+  doubleWin:{chancePer1000:100,minTickets:0,maxTickets:41}}),
+  /EDITION_DOUBLE_INVALID/);
+ assert.equal(validateEditionConfig({...simple(),printSize:40,quotas:{0:40}}).printSize,40);
+ assert.equal(validateEditionConfig(simple()).printSize,500);
+});
