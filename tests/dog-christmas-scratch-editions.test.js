@@ -366,3 +366,26 @@ test('×2 never changes unlock count and never ignores edition symbol budgets',(
   doubleWin:{chancePer1000:200,minTickets:100,maxTickets:40}}),
   /EDITION_DOUBLE_INVALID/);
 });
+
+
+test('a ×2 star ticket doubles the lights credited to the shared village and keeps the payout within print limits',()=>{
+ const cfg={...simple(),maxTotalCoins:10000000,maxPerTicketCoins:150000,
+  maxPrizesPerTicket:10,maxUnlocks:100,quotas:{},
+  symbolBudgets:{lights:{min:1,max:10,minTotal:1,maxTotal:5000,chancePer1000:1000}},
+  doubleWin:{chancePer1000:1000,minTickets:5,maxTickets:60}};
+ const plan=planScratchEdition(cfg,settings);
+ const results=unpackEditionTickets(plan.packed);
+ const winners=results.filter(t=>t.doubleWin&&t.doubleWin.extraLights>0);
+ assert.ok(winners.length>0,'at least one ×2 card must award double Christmas lights');
+ for(const card of winners){
+  const light=card.winnings.find(p=>p.type==='lights');
+  assert.ok(light);
+  assert.equal(light.amount,light.baseAmount*2);
+  assert.equal(card.totalLights,light.amount);
+  assert.equal(card.doubleWin.extraLights,light.baseAmount);
+  assert.equal(verifyScratchPrizes(card.board),true);
+ }
+ assert.equal(plan.summary.totalLights,
+  results.reduce((sum,card)=>sum+(card.totalLights||0),0));
+ assert.ok(plan.summary.totalLights<=5000);
+});
