@@ -831,7 +831,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   // No dummy matching rows are created. The normal ×2 only applies to
   // the actual money-row amounts; the 1,000-coin milestone stays fixed.
   const rarePossible=remaining.length>=2;
-  const ordinaryRoll=baseCategory!=='none'&&!rareMainMultiplier&&
+  const ordinaryRoll=printControl?.disableRandomDouble!==true&&
+   baseCategory!=='none'&&!rareMainMultiplier&&
    (rarePossible?random(799)<109:random(800)<110);
   if(ordinaryRoll)for(const row of winnings){
    if(row.type==='coins'&&!row.milestone){
