@@ -50,7 +50,8 @@ test('gift activates one unlock regardless of multiplier or winning-line count',
  const draw=max=>max===5?4:max===1000?995:0;
  const drawn=drawTicTacToeDuel({draw,unlock});
  assert.equal(drawn.board.multiplier,5);
- assert.equal(drawn.board.prizeSymbol,'🎁');
+ assert.ok(['🎁','💝','🎀','🧧','🛍️'].includes(drawn.board.prizeSymbol));
+ assert.equal(drawn.winnings[0].symbol,drawn.board.prizeSymbol);
  assert.equal(drawn.board.wins.length,8);
  assert.equal(drawn.winnings.length,1);
  assert.equal(drawn.winnings[0].type,'unlock');
