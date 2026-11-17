@@ -204,14 +204,14 @@ test('each coin, banknote and briefcase pays configured amounts including bonus 
  }
 });
 
-test('money icons and four gift icons each form their own validated 100% distribution',()=>{
+test('money icons and five gift icons each form their own validated 100% distribution',()=>{
  const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
  for(const variant of Object.values(config.variants)){
   variant.moneySymbolWeights=[10,90,900];
   variant.giftSymbolWeights=[20,80,200,700];
  }
  assert.deepEqual(validateScratchSettings(config).variants.elf.moneySymbolWeights,[10,90,900]);
- assert.deepEqual(validateScratchSettings(config).variants.elf.giftSymbolWeights,[20,80,200,700]);
+ assert.deepEqual(validateScratchSettings(config).variants.elf.giftSymbolWeights,[18,72,180,630,100]);
  const invalidMoney=[[100,100,100],[0,0,0],[1.2,100,899],[0,1001,-1],[1,999]];
  for(const values of invalidMoney){
   const altered=clone(config);altered.variants.elf.moneySymbolWeights=values;
@@ -228,7 +228,7 @@ test('money icons and four gift icons each form their own validated 100% distrib
  }
  const migrated=normalizeScratchSettings(old);
  assert.deepEqual(migrated.variants.elf.moneySymbolWeights,[334,333,333]);
- assert.deepEqual(migrated.variants.elf.giftSymbolWeights,[250,250,250,250]);
+ assert.deepEqual(migrated.variants.elf.giftSymbolWeights,[200,200,200,200,200]);
  assert.deepEqual(migrated.variants.elf.coinAmounts,config.variants.elf.coinAmounts);
 });
 test('weighted money and gift selection honours zero and 100% exactly',()=>{
@@ -257,7 +257,7 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
    const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
    const v=config.variants[id];
    v.weights=group==='money'?{none:0,coins:1000,unlock:0}:{none:0,coins:0,unlock:1000};
-   v.moneySymbolWeights=[0,0,1000];v.giftSymbolWeights=[0,0,0,1000];
+   v.moneySymbolWeights=[0,0,1000];v.giftSymbolWeights=[0,0,0,1000,0];
    v.maxPrizes=10;v.extraCoinChance=100;
    const purchase=buyScratchTicket({coins:100000},null,
     {tier,commandId:'scratch-symbol-odds-'+group+'-'+id},
@@ -272,7 +272,7 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
     assert.ok(prizes.filter(x=>x.type==='unlock').every(x=>x.symbol==='🧧'),id+' red envelope only');
    }else assert.ok(prizes.every(x=>x.type==='coins'),id+' money only');
    assert.deepEqual(purchase.result.moneySymbolWeights,[0,0,1000]);
-   assert.deepEqual(purchase.result.giftSymbolWeights,[0,0,0,1000]);
+   assert.deepEqual(purchase.result.giftSymbolWeights,[0,0,0,1000,0]);
    const changed=clone(config);changed.variants[id].moneySymbolWeights=[1000,0,0];
    const replay=buyScratchTicket(purchase.wallet,null,
     {tier,commandId:'scratch-symbol-odds-'+group+'-'+id},
