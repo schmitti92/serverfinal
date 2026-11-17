@@ -1,0 +1,34 @@
+name: DOG 500er Rubbellos-Auflagen
+on:
+  push:
+    paths:
+      - 'dog/christmas-scratch-editions.js'
+      - 'dog/christmas-scratch.js'
+      - 'dog/christmas-scratch-settings.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-christmas-scratch-editions.test.js'
+      - '.github/workflows/dog-christmas-scratch-editions.yml'
+  pull_request:
+    paths:
+      - 'dog/christmas-scratch-editions.js'
+      - 'dog/christmas-scratch.js'
+      - 'dog/christmas-scratch-settings.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-christmas-scratch-editions.test.js'
+      - '.github/workflows/dog-christmas-scratch-editions.yml'
+jobs:
+  edition-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify JavaScript syntax
+        run: |
+          node --check shared-lobby.js
+          node --check dog/christmas-scratch-editions.js
+          node --check dog/christmas-scratch.js
+      - name: Test 500-ticket edition generator and redemption
+        run: node --test tests/dog-christmas-scratch-editions.test.js
