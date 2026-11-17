@@ -292,3 +292,77 @@ test('Christmas light badges can be printed in each of the seven scratch-game fo
   assert.equal(verifyScratchPrizes(winner.board),true);
  }
 });
+
+
+test('every DOG scratch variant prints payable ×2 symbols with immutable verified boards',()=>{
+ const cases=[
+  ['gifts','simple'],['snow_collect','simple'],['elf','medium'],
+  ['premium_27','premium'],['tic_tac_toe','medium'],
+  ['number_one_20','medium'],['dog_jackpot_9','premium']
+ ];
+ for(const [variantId,tier] of cases){
+  const config={variantId,title:'×2 Bonus für '+variantId,ticketPrice:100,
+   maxTotalCoins:100000000,maxPerTicketCoins:1500000,
+   maxPrizesPerTicket:variantId==='number_one_20'?20:10,
+   maxUnlocks:300,quotas:{},doubleWin:{
+    chancePer1000:1000,minTickets:1,maxTickets:12
+   }};
+  const plan=planScratchEdition(config,settings);
+  assert.equal(plan.config.tier,tier);
+  assert.ok(plan.summary.doubleWinTickets>=1,variantId+' should include ×2');
+  assert.ok(plan.summary.doubleWinTickets<=12,variantId+' must obey ×2 cap');
+  let verifiedDoubles=0,extraCoins=0,extraLights=0,total=0;
+  for(const ticket of unpackEditionTickets(plan.packed)){
+   assert.equal(verifyScratchPrizes(ticket.board),true,variantId);
+   assert.equal(ticket.totalCoins,ticket.winnings.filter(x=>x.type==='coins')
+    .reduce((a,p)=>a+p.amount,0));
+   total+=ticket.totalCoins;
+   if(!ticket.doubleWin)continue;
+   verifiedDoubles++;
+   assert.ok(Number.isSafeInteger(ticket.doubleBadgeIndex));
+   assert.ok(ticket.doubleBadgeIndex>=0&&ticket.doubleBadgeIndex<ticket.board.cells.length);
+   assert.equal(ticket.doubleWin.symbol,'✖️2');
+   const doubled=ticket.winnings.filter(p=>p.x2);
+   assert.ok(doubled.length>0);
+   for(const prize of doubled)assert.equal(prize.amount,prize.baseAmount*2);
+   assert.equal(ticket.doubleWin.extraCoins,ticket.doubleWin.baseCoins);
+   assert.equal(ticket.doubleWin.extraLights,ticket.doubleWin.baseLights);
+   extraCoins+=ticket.doubleWin.extraCoins;
+   extraLights+=ticket.doubleWin.extraLights;
+  }
+  assert.equal(plan.summary.totalCoins,total);
+  assert.equal(plan.summary.doubleWinTickets,verifiedDoubles);
+  assert.equal(plan.summary.doubleExtraCoins,extraCoins);
+  assert.equal(plan.summary.doubleExtraLights,extraLights);
+ }
+});
+test('×2 never changes unlock count and never ignores edition symbol budgets',()=>{
+ const plan=planScratchEdition({...simple(),
+  maxTotalCoins:1000000,maxPerTicketCoins:5000,maxUnlocks:15,
+  symbolBudgets:{
+   coin:{min:1,max:1000,minTotal:0,maxTotal:450000},
+   note:{min:2,max:1500,minTotal:0,maxTotal:450000},
+   case:{min:4,max:3000,minTotal:0,maxTotal:450000},
+   gift:{min:0,max:2,minTotal:0,maxTotal:15},
+   lights:{min:1,max:6,minTotal:0,maxTotal:400,chancePer1000:300}
+  },
+  doubleWin:{chancePer1000:250,minTickets:0,maxTickets:50}
+ },settings);
+ assert.equal(plan.summary.tickets,500);
+ assert.ok(plan.summary.doubleWinTickets<=50);
+ for(const [key,range] of Object.entries(plan.config.symbolBudgets)){
+  assert.ok(plan.summary.symbolTotals[key]<=range.maxTotal,key+' ×2 budget');
+ }
+ for(const ticket of unpackEditionTickets(plan.packed)){
+  assert.equal(verifyScratchPrizes(ticket.board),true);
+  assert.ok(ticket.totalCoins<=5000);
+  assert.equal(ticket.winnings.filter(p=>p.type==='unlock').length,
+   ticket.board.wins.filter(w=>w.prize?.type==='unlock').length);
+ }
+ assert.throws(()=>validateEditionConfig({...simple(),
+  doubleWin:{chancePer1000:1001,minTickets:0,maxTickets:50}}),
+  /EDITION_DOUBLE_INVALID/);
+ assert.throws(()=>validateEditionConfig({...simple(),
+  doubleWin:{chancePer1000:200,minTickets:100,maxTickets:40}}),
+  /EDITION_DOUBLE_INVALID/);
+});
