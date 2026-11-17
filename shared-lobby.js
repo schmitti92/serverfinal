@@ -888,9 +888,11 @@ function finishEisstock(ch,members){
     if(!draft||draft.createdBy!==req.hubIdentity.uid||draft.expiresAt<clock())
       throw error(404,'EDITION_PREVIEW_EXPIRED');
     const printed=unpackEditionTickets(draft.planned.packed);
-    // A small stable sample, not the sequence in which the tickets sell.
-    const offset=Number.parseInt(previewId.slice(0,8),16)%printed.length;
-    const tickets=Array.from({length:8},(_,i)=>printed[(offset+i*61)%printed.length]);
+    // Draw unlabelled samples using server-only random indices. Deliberately
+    // avoid a public deterministic mapping between examples and sale positions.
+    const sampled=new Set();
+    while(sampled.size<8)sampled.add(randomInt(printed.length));
+    const tickets=[...sampled].map(index=>printed[index]);
     return {previewId,count:tickets.length,tickets:tickets.map(ticket=>({
       board:ticket.board,winnings:ticket.winnings,totalCoins:ticket.totalCoins||0,
       totalLights:ticket.totalLights||0,doubleWin:ticket.doubleWin||null,
