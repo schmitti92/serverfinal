@@ -274,6 +274,20 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  // tickets; shuffle only at the end so the order cannot influence odds.
  requested.sort((a,b)=>Number(b.full27)-Number(a.full27)||
   (b.wins==='any'?-1:b.wins)-(a.wins==='any'?-1:a.wins));
+ const exactLightTickets=config.symbolBudgets.lights?.ticketCount;
+ if(Number.isInteger(exactLightTickets)){
+  const flex=[],fixed=[];
+  for(const [index,rule] of requested.entries()){
+   if(rule.wins==='any')flex.push(index);
+   else if(config.variantId!=='dog_jackpot_9'&&!rule.full27&&
+     rule.wins>(config.variantId==='premium_27'?4:0))fixed.push(index);
+  }
+  const available=[...flex,...fixed];
+  if(exactLightTickets>available.length)
+   throw Error('EDITION_LIGHT_QUOTA_NO_ROOM_'+available.length+'_REQUIRED_'+exactLightTickets);
+  for(const index of available.slice(0,exactLightTickets))requested[index].mustLight=true;
+ }
+
  // Each free ticket receives a stable budget weight. The weights jointly
  // sum to the payout target; very small weights create legitimate duds,
  // high weights create rare ten-prize jackpots. Each follows the same
@@ -293,7 +307,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const symbolTotals={coin:0,note:0,case:0,lights:0,gift:0};
  const symbolHitCounts={coin:0,note:0,case:0,lights:0,gift:0};
  let totalCoins=0,totalLights=0,unlocks=0,biggest=0,winners=0,full27Count=0;
- let doubleWinTickets=0,doubleExtraCoins=0,doubleExtraLights=0;
+ let doubleWinTickets=0,doubleExtraCoins=0,doubleExtraLights=0,lightWinTickets=0;
  const target=config.targetTotalCoins;
  const isClassic=['gifts','snow_collect','elf','premium_27'].includes(config.variantId);
  const amounts=isClassic?runSettings.variants[config.variantId].coinAmounts:
@@ -325,7 +339,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   if(values.every((n,i)=>n<=upper[i]))return values;
   throw Error('EDITION_SYMBOL_RANGES_OVERLAP');
  };
- const sampleTicket=(slot,attempt,forced,full27,applyDouble)=>{
+ const sampleTicket=(slot,attempt,forced,full27,applyDouble,mustLight=false)=>{
   let useSettings=runSettings,useSpecial=editionSpecial;
   if(['coin','note','case'].some(id=>config.symbolBudgets[id])){
    const chosenAmounts=amountsForCandidate();
@@ -369,7 +383,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    editionPrice:config.ticketPrice,draw,now:()=>1700000000000}).result;
   const lightRange=config.symbolBudgets.lights;
   if(lightRange&&sample.winnings.length<config.maxPrizesPerTicket&&
-    draw(1000)<lightRange.chancePer1000){
+    (lightRange.ticketCount===null?
+     draw(1000)<lightRange.chancePer1000:mustLight)){
    const maxAllowed=Math.min(lightRange.max,lightRange.maxTotal-symbolTotals.lights);
    if(maxAllowed>=lightRange.min){
     const amount=lightRange.min+draw(maxAllowed-lightRange.min+1);
@@ -430,7 +445,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   const rescueTries=rule.wins!=='any'?(isClassic?360:120):0;
   for(let attempt=0;attempt<tries+rescueTries;attempt++){
    if(attempt===tries&&best)break;
-   let forced=rule.wins==='any'?null:rule.wins;
+   let forced=rule.wins==='any'?null:rule.wins-(rule.mustLight?1:0);
    // In unconstrained remaining slots, prevent random early payouts from
    // exhausting the budget before all 500 genuine boards can be printed.
    // Reserve the legal zero-win board only when the user has not fixed that
@@ -455,9 +470,10 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    // During rescue attempts, also test the normal payout; do not relax any
    // mandatory ×2 minimum or exact quota on the number of wins.
    const useDouble=tryDouble&&(forceDouble||attempt<tries||attempt%2===0);
-   try{sample=sampleTicket(slot,attempt,forced,rule.full27,useDouble)}
+   try{sample=sampleTicket(slot,attempt,forced,rule.full27,useDouble,rule.mustLight===true)}
    catch(e){if(/^SCRATCH_|^PREMIUM27_/.test(e.message))continue;throw e}
    if(forceDouble&&!sample.doubleWin)continue;
+   if(rule.mustLight&&!sample.winnings.some(p=>p.type==='lights'))continue;
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
    const candidateTotals={coin:0,note:0,case:0,lights:0,gift:0};
    let outsideLimits=false;
@@ -506,6 +522,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    const id=categoryFor(prize);
    if(id){symbolTotals[id]+=categoryAmount(prize);symbolHitCounts[id]++}
   }
+  if(accepted.winnings.some(p=>p.type==='lights'))lightWinTickets++;
   totalLights=symbolTotals.lights;
   unlocks+=unlockCount(accepted);
   biggest=Math.max(biggest,accepted.totalCoins||0);
@@ -513,6 +530,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   if(config.variantId==='premium_27'&&accepted.board.cells.every(s=>s!=='🧊'))full27Count++;
   tickets.push(accepted);
  }
+ if(Number.isInteger(exactLightTickets)&&lightWinTickets!==exactLightTickets)
+  throw Error('EDITION_LIGHT_QUOTA_GENERATION_FAILED');
  if(doubleWinTickets<config.doubleWin.minTickets)
   throw Error('EDITION_DOUBLE_MIN_UNREACHABLE');
  if(target!==null&&Math.abs(totalCoins-target)>Math.max(1,target*config.targetTolerancePercent/100))
@@ -526,7 +545,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  }
  const grossRevenue=config.ticketPrice*config.printSize;
  const summary={tickets:config.printSize,winners,duds:config.printSize-winners,
-  totalCoins,totalLights,symbolTotals,symbolHitCounts,unlocks,
+  totalCoins,totalLights,lightWinTickets,symbolTotals,symbolHitCounts,unlocks,
   doubleWinTickets,doubleExtraCoins,doubleExtraLights,
   biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
   ticketPrice:config.ticketPrice,projectedGrossRevenue:grossRevenue,
