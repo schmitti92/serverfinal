@@ -61,3 +61,39 @@ test('invalid configurations never create a partially printed batch',()=>{
  assert.throws(()=>validateEditionConfig({...simple(),maxTotalCoins:-1}),/EDITION_INVALID_LIMITS/);
  assert.throws(()=>validateEditionConfig({...simple(),quotas:{10:1},maxPrizesPerTicket:5}),/EDITION_QUOTA_ABOVE_MAX_10/);
 });
+
+test('Tic-Tac-Toe edition freezes its own reward amounts, odds and multiplier ceiling',()=>{
+ const config={variantId:'tic_tac_toe',title:'Duell mit eigenem Münzplan',
+  maxTotalCoins:100000000,maxPerTicketCoins:1000000,
+  maxPrizesPerTicket:1,maxUnlocks:0,
+  gameSettings:{coinAmounts:[111,444,999],symbolWeights:[1000,0,0,0],
+   maxMultiplier:2,giftFallbackCoins:1000},
+  quotas:{0:200}};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.summary.tickets,500);
+ assert.equal(plan.summary.duds,200);
+ for(const ticket of unpackEditionTickets(plan.packed)){
+  assert.equal(ticket.board.variantId,'tic_tac_toe');
+  assert.deepEqual(ticket.board.coinAmounts,[111,444,999]);
+  assert.ok(ticket.board.multiplier>=1&&ticket.board.multiplier<=2);
+  assert.equal(verifyScratchPrizes(ticket.board),true);
+  if(ticket.winnings.length)assert.equal(ticket.winnings[0].amount,111*ticket.board.multiplier);
+ }
+});
+test('DOG Jackpot edition accepts custom DOG frequency and exact 8-win quotas',()=>{
+ const config={variantId:'dog_jackpot_9',title:'DOG-Jackpot acht Treffer',
+  maxTotalCoins:200000000,maxPerTicketCoins:3000000,
+  maxPrizesPerTicket:8,maxUnlocks:0,
+  gameSettings:{coinAmounts:[10,20,30],symbolWeights:[1000,0,0,0],
+   dogChancePer1000:1000,giftFallbackCoins:1500},
+  quotas:{8:500}};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.summary.winners,500);
+ assert.equal(plan.summary.byWins[8],500);
+ assert.equal(plan.summary.totalCoins,500*8*10);
+ for(const ticket of unpackEditionTickets(plan.packed)){
+  assert.equal(ticket.winnings.length,8);
+  assert.equal(ticket.totalCoins,80);
+  assert.equal(verifyScratchPrizes(ticket.board),true);
+ }
+});
