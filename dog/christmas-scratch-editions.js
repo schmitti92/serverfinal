@@ -11,6 +11,9 @@ import {
  DOG_SCRATCH_BASIC_EMOJIS,DOG_SCRATCH_BLOCK_COLORS
 } from './christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './christmas-scratch-grid.js';
+import {normalizeScratchSettings,validateScratchSettings} from './christmas-scratch-settings.js';
+import {validateTicDuelEditionSettings} from './christmas-tictactoe-duel.js';
+import {validateDogJackpotEditionSettings} from './christmas-special-scratch.js';
 
 export const SCRATCH_EDITION_COLLECTION='dog_christmas_scratch_editions_v1';
 export const SCRATCH_EDITION_POINTERS='dog_christmas_scratch_editions_active_v1';
@@ -31,6 +34,10 @@ export function validateEditionConfig(input){
   !cleanInt(maxPerTicketCoins,0,1000000000)||
   !cleanInt(maxPrizesPerTicket,1,20)||
   !cleanInt(maxUnlocks,0,500))throw Error('EDITION_INVALID_LIMITS');
+ const gameSettings=input?.gameSettings??null;
+ if(gameSettings!==null&&(!gameSettings||typeof gameSettings!=='object'||
+  Array.isArray(gameSettings)||JSON.stringify(gameSettings).length>6000))
+  throw Error('EDITION_INVALID_GAME_SETTINGS');
  const title=String(input.title||'').trim();
  if(!title||title.length>70)throw Error('EDITION_INVALID_TITLE');
  const quotas={};
@@ -49,7 +56,8 @@ export function validateEditionConfig(input){
  if(Object.values(quotas).reduce((a,b)=>a+b,0)>SCRATCH_PRINT_SIZE)
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
-  maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas};
+  maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
+  gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
 const unlockCount=result=>Array.isArray(result.winnings)?
@@ -68,6 +76,19 @@ export function unpackEditionTickets(packed){
 }
 export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const config=validateEditionConfig(input);
+ const snapshot=normalizeScratchSettings(settings);
+ let editionSpecial=null;
+ if(config.gameSettings){
+  if(['gifts','snow_collect','elf','premium_27'].includes(config.variantId))
+   snapshot.variants[config.variantId]=config.gameSettings;
+  else if(config.variantId==='number_one_20')
+   snapshot.numberOne20=config.gameSettings;
+  else if(config.variantId==='tic_tac_toe')
+   editionSpecial={ticTacToe:validateTicDuelEditionSettings(config.gameSettings)};
+  else if(config.variantId==='dog_jackpot_9')
+   editionSpecial={dogJackpot:validateDogJackpotEditionSettings(config.gameSettings)};
+ }
+ const runSettings=validateScratchSettings(snapshot);
  const requested=[];
  const reserved=new Set();
  for(const [count,value] of Object.entries(config.quotas)){
@@ -91,7 +112,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    const sample=buyScratchTicket({coins:1000000000},null,{
     tier:config.tier,variantId:config.variantId,
     commandId:'ed_sample_'+slot+'_'+attempt
-   },{settings,draw,now:()=>1700000000000}).result;
+   },{settings:runSettings,editionSpecial,draw,now:()=>1700000000000}).result;
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
    if(wins>config.maxPrizesPerTicket||coins>config.maxPerTicketCoins||
      totalCoins+coins>config.maxTotalCoins||unlocks+cosmetics>config.maxUnlocks)continue;
@@ -121,12 +142,14 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const packed=packEditionTickets(tickets);
  // Firestore has a 1 MiB document limit: leave margin for metadata.
  if(Buffer.byteLength(packed,'utf8')>750000)throw Error('EDITION_DOCUMENT_TOO_LARGE');
- return {config,summary,packed,packedBytes:packed.length};
+ return {config,summary,packed,packedBytes:packed.length,
+  settingsSnapshot:runSettings,specialSnapshot:editionSpecial};
 }
 export function newEditionDocument(plan,creator,now=Date.now()){
  return {version:1,id:plan.config.variantId+'_'+now+'_'+randomUUID().slice(0,8),
   variantId:plan.config.variantId,tier:plan.config.tier,title:plan.config.title,
   config:plan.config,summary:plan.summary,packed:plan.packed,
+  settingsSnapshot:plan.settingsSnapshot,specialSnapshot:plan.specialSnapshot,
   issued:0,issuedCoins:0,issuedUnlocks:0,createdAt:now,createdBy:creator,
   status:'active',updatedAt:now};
 }
@@ -189,7 +212,8 @@ export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date
  if(!template)throw Error('EDITION_NO_AVAILABLE_UNLOCK');
  // This calls the existing wallet engine to enforce exact payment, the free
  // daily limit, voucher redemption, and receipt idempotency.
- const purchase=buyScratchTicket(rawWallet,tree,request,{settings,now});
+ const purchase=buyScratchTicket(rawWallet,tree,request,
+  {settings:doc.settingsSnapshot??settings,editionSpecial:doc.specialSnapshot??null,now});
  if(purchase.unchanged)return {unchanged:true,doc,wallet:purchase.wallet,
   result:purchase.result,status:purchase.status};
  const wallet=purchase.wallet,result=template;
