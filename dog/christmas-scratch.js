@@ -951,6 +951,17 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const baseLights=variantId==='gifts'&&random(1000)<(config.lightChancePer1000??100)?
   lightMin+random(lightMax-lightMin+1):0;
  const totalLights=baseLights*(multiplier===2?2:1);
+ // Show the real server-booked light and x2 bonuses on the scratched ticket.
+ // Extra coin payouts have already been included in allWinnings amounts.
+ const extraCoins=allWinnings.filter(prize=>prize?.x2&&Number.isSafeInteger(prize.baseAmount))
+  .reduce((sum,prize)=>sum+prize.amount-prize.baseAmount,0);
+ const extraLights=multiplier===2?baseLights:0;
+ const doubleWin=variantId==='gifts'&&(extraCoins>0||extraLights>0)?
+  {extraCoins,extraLights}:null;
+ const lightBadgeIndex=variantId==='gifts'&&totalLights>0?random(board.cells.length):null;
+ const sourceWin=board.wins.find(win=>win.prize?.type==='coins'&&win.prize?.x2);
+ const doubleBadgeIndex=doubleWin?
+  (Number.isInteger(sourceWin?.indices?.[0])?sourceWin.indices[0]:random(board.cells.length)):null;
  // Only after generating and verifying the exact visible card, grant awards.
  const stamped=now();
  for(const unlockId of newUnlocks)w.owned[unlockId]=stamped;
@@ -974,6 +985,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   moneySymbolWeights:[...config.moneySymbolWeights],
   giftSymbolWeights:[...config.giftSymbolWeights],
   winnings:allWinnings,totalCoins,totalLights,board,
+  ...(variantId==='gifts'?{doubleWin,lightBadgeIndex,doubleBadgeIndex}:{}),
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free:free||voucher,voucher,at:stamped,balance:w.coins
  };
