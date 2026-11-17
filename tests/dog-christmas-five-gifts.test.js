@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {randomInt} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {SCRATCH_GIFT_SYMBOLS,generatePayoutGrid} from '../dog/christmas-scratch-symbols.js';
 import {normalizeScratchSettings} from '../dog/christmas-scratch-settings.js';
@@ -14,7 +15,7 @@ test('five distinct gift symbols are in the verified classic payout alphabet',()
  assert.deepEqual([...SCRATCH_GIFT_SYMBOLS],icons);
  for(const icon of icons){
   for(const variant of ['gifts','snow_collect','elf']){
-   const board=generatePayoutGrid(variant,[icon],undefined);
+   const board=generatePayoutGrid(variant,[icon],randomInt);
    assert.equal(board.wins.length,1,variant+' '+icon);
    assert.equal(board.wins[0].symbol,icon);
    assert.ok(board.wins[0].indices.every(index=>board.cells[index]===icon));
