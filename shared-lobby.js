@@ -901,23 +901,31 @@ function finishEisstock(ch,members){
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
     const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    const giftsEditionRef=body.variantId==='gifts'?
+      store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT):null;
     const sharedVillageRef=dogVillageFor(store);
     // Regular DOG scratch purchase; no printed editions or 500-ticket queue.
     // The server still verifies prizes and atomically books each purchase.
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap,settingsSnap,villageSnap]=await Promise.all([
-        tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),tx.get(sharedVillageRef)]);
+      const [walletSnap,treeSnap,settingsSnap,villageSnap,editionSnap]=await Promise.all([
+        tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),tx.get(sharedVillageRef),
+        giftsEditionRef?tx.get(giftsEditionRef):Promise.resolve(null)]);
       const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
       const request={tier:body.tier,variantId:body.variantId,commandId:body.commandId,
         free:body.free===true,voucher:body.voucher===true};
       const tree=treeSnap.exists?treeSnap.data():null;
-      let result;
+      let result,nextEdition=null;
       try{
-        result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,tree,request,
-          {now:()=>clock(),settings,
-           discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)});
+        const wallet=walletSnap.exists?walletSnap.data():null;
+        const options={now:()=>clock(),settings,
+          discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)};
+        if(giftsEditionRef&&editionSnap?.exists){
+          const issued=issueGiftsEditionTicket(wallet,tree,request,editionSnap.data(),settings,options);
+          result=issued.purchase;
+          nextEdition=issued.edition;
+        }else result=buyScratchTicket(wallet,tree,request,options);
       }catch(e){
-        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|SCRATCH_NO_VOUCHER)$/.test(e.message);
+        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|SCRATCH_NO_VOUCHER|SCRATCH_GIFTS_EDITION_SOLD_OUT)$/.test(e.message);
         throw error(conflict?409:400,e.message);
       }
       let village=null;
@@ -926,9 +934,14 @@ function finishEisstock(ch,members){
           DOG_GLOBAL_VILLAGE_ID,null,result.result.totalLights*10);
         tx.set(sharedVillageRef,village);
       }
-      if(!result.unchanged)tx.set(accountRef,result.wallet);
+      if(!result.unchanged){
+        tx.set(accountRef,result.wallet);
+        if(nextEdition)tx.set(giftsEditionRef,nextEdition);
+      }
       return {result:result.result,replayed:result.unchanged,
-        scratch:{...result.status,discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)},
+        scratch:{...result.status,settings,
+         discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)},
+        giftsEdition:giftsEditionPublic(nextEdition||(editionSnap?.exists?editionSnap.data():null)),
         ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
     return award;
