@@ -917,11 +917,12 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // each prize exactly once, but show it beside its actual matching cells.
  winnings.splice(0,winnings.length,...board.wins.map(w=>w.prize));
 
- // Beyond the visible matches, independent bonus money rolls can pay up
- // to the host's chosen total of 10. Each bonus cites a verified match.
- // The three original coin symbols remain the money denominations.
+ // Each Geschenkelinie payout, including its main prize, must be backed
+ // by a visible, independently verifiable exact triple. Invisible bonus
+ // money is not a separate winning combination on this 3×3 ticket.
+ // Other scratch variants keep their own established bonus rules.
  const bonusWinnings=[];
- if(config.maxPrizes>3&&board.wins.length>0&&
+ if(variantId!=='gifts'&&config.maxPrizes>3&&board.wins.length>0&&
     (variantId!=='premium_27'||baseCategory!=='none')){
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
@@ -931,7 +932,17 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
     amount:config.coinAmounts[coinIndex],bonus:true,sourceWin});
   }
  }
- if(Number.isInteger(printControl?.forcedWins)&&!['tic_tac_toe','number_one_20','dog_jackpot_9'].includes(variantId)){
+ if(variantId==='gifts'){
+  // Older print-control paths cannot create extra invisible money wins.
+  if(Number.isInteger(printControl?.forcedWins)&&printControl.forcedWins!==board.wins.length)
+   throw Error('SCRATCH_GIFTS_VISIBLE_MATCH_REQUIRED');
+  if(board.symbolVersion!==3||winnings.length!==board.wins.length||
+    board.wins.some(win=>!Array.isArray(win.indices)||win.indices.length!==3||
+     !win.indices.every(i=>board.cells[i]===win.symbol)||
+     !['🪙','💵','💼','🎁','💝','🎀','🧧','🛍️'].includes(win.symbol)))
+   throw Error('SCRATCH_GIFTS_VISIBLE_MATCH_REQUIRED');
+ }else if(Number.isInteger(printControl?.forcedWins)&&
+   !['tic_tac_toe','number_one_20','dog_jackpot_9'].includes(variantId)){
   const expected=printControl.forcedWins;
   bonusWinnings.length=Math.min(bonusWinnings.length,Math.max(0,expected-winnings.length));
   if(expected<winnings.length||expected>config.maxPrizes||expected>10)
