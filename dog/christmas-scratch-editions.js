@@ -79,6 +79,23 @@ export function validateEditionConfig(input){
  const maxPerTicketCoins=Number(input.maxPerTicketCoins);
  const maxPrizesPerTicket=Number(input.maxPrizesPerTicket);
  const maxUnlocks=Number(input.maxUnlocks);
+ const symbolBudgets={};
+ if(input.symbolBudgets!==undefined&&input.symbolBudgets!==null){
+  if(!input.symbolBudgets||typeof input.symbolBudgets!=='object'||
+    Array.isArray(input.symbolBudgets)||
+    Object.keys(input.symbolBudgets).some(id=>!['coin','note','case','lights'].includes(id)))
+   throw Error('EDITION_SYMBOL_BUDGET_INVALID');
+  for(const [id,row] of Object.entries(input.symbolBudgets)){
+   const min=Number(row?.min),max=Number(row?.max),maxTotal=Number(row?.maxTotal);
+   const chancePer1000=id==='lights'?Number(row?.chancePer1000??0):null;
+   if(!Number.isSafeInteger(min)||min<1||min>50000000||
+    !Number.isSafeInteger(max)||max<min||max>50000000||
+    !Number.isSafeInteger(maxTotal)||maxTotal<0||maxTotal>1000000000000||
+    (id==='lights'&&(!cleanInt(chancePer1000,0,1000))))
+    throw Error('EDITION_SYMBOL_BUDGET_INVALID_'+id);
+   symbolBudgets[id]={min,max,maxTotal,...(id==='lights'?{chancePer1000}:{})};
+  }
+ }
  const ticketPrice=input.ticketPrice===undefined?
   (variantId==='number_one_20'?500:DOG_SCRATCH_TIERS[ticketTier(variantId)].price):
   Number(input.ticketPrice);
@@ -130,7 +147,7 @@ export function validateEditionConfig(input){
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
-  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,
+  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,symbolBudgets,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
@@ -201,7 +218,9 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  for(let i=requested.length-1;i>=0;i--)
   suffixWeights[i]=suffixWeights[i+1]+payoutWeights[i];
  const tickets=[],byWins=Array(21).fill(0);
- let totalCoins=0,unlocks=0,biggest=0,winners=0,full27Count=0;
+ const symbolTotals={coin:0,note:0,case:0,lights:0};
+ const symbolHitCounts={coin:0,note:0,case:0,lights:0};
+ let totalCoins=0,totalLights=0,unlocks=0,biggest=0,winners=0,full27Count=0;
  const target=config.targetTotalCoins;
  const isClassic=['gifts','snow_collect','elf','premium_27'].includes(config.variantId);
  const amounts=isClassic?runSettings.variants[config.variantId].coinAmounts:
@@ -213,7 +232,37 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const maxWins=Math.min(config.maxPrizesPerTicket,
   config.variantId==='tic_tac_toe'?1:config.variantId==='dog_jackpot_9'?8:
   config.variantId==='number_one_20'?20:10);
+ const categoryFor=prize=>prize.type==='lights'?'lights':
+  prize.type==='coins'?({'🪙':'coin','💵':'note','💼':'case'}[prize.symbol]||'coin'):null;
+ const amountsForCandidate=()=>{
+  const cats=['coin','note','case'];
+  for(let trial=0;trial<24;trial++){
+   const picked=cats.map((id,i)=>{
+    const range=config.symbolBudgets[id];
+    return range?range.min+draw(range.max-range.min+1):amounts[i];
+   });
+   if(picked[0]<picked[1]&&picked[1]<picked[2])return picked;
+  }
+  throw Error('EDITION_SYMBOL_RANGES_OVERLAP');
+ };
  const sampleTicket=(slot,attempt,forced,full27)=>{
+  let useSettings=runSettings,useSpecial=editionSpecial;
+  if(['coin','note','case'].some(id=>config.symbolBudgets[id])){
+   const chosenAmounts=amountsForCandidate();
+   useSettings=structuredClone(runSettings);
+   if(isClassic)useSettings.variants[config.variantId].coinAmounts=chosenAmounts;
+   else if(config.variantId==='number_one_20')useSettings.numberOne20.coinAmounts=chosenAmounts;
+   else {
+    useSpecial=structuredClone(editionSpecial??{});
+    const id=config.variantId==='tic_tac_toe'?'ticTacToe':'dogJackpot';
+    const fallback=useSpecial[id]??(id==='ticTacToe'?
+     {coinAmounts:[200,450,800],symbolWeights:[700,250,40,10],
+      maxMultiplier:5,giftFallbackCoins:1500}:
+     {coinAmounts:[100,300,800],symbolWeights:[550,300,148,2],
+      dogChancePer1000:350,giftFallbackCoins:1500});
+    useSpecial[id]={...fallback,coinAmounts:chosenAmounts};
+   }
+  }
   const printControl=isClassic?{
    ...(forced===null?{}:{forcedWins:forced}),
    ...(config.variantId==='premium_27'?{
@@ -222,10 +271,23 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     forceNoPremiumMilestone:forced===4&&!full27
    }:{})
   }:null;
-  return buyScratchTicket({coins:1000000000},null,{
+  const sample=buyScratchTicket({coins:1000000000},null,{
    tier:config.tier,variantId:config.variantId,
    commandId:'ed_sample_'+slot+'_'+attempt
-  },{settings:runSettings,editionSpecial,printControl,editionPrice:config.ticketPrice,draw,now:()=>1700000000000}).result;
+  },{settings:useSettings,editionSpecial:useSpecial,printControl,
+   editionPrice:config.ticketPrice,draw,now:()=>1700000000000}).result;
+  const lightRange=config.symbolBudgets.lights;
+  if(lightRange&&sample.winnings.length<config.maxPrizesPerTicket&&
+    draw(1000)<lightRange.chancePer1000){
+   const maxAllowed=Math.min(lightRange.max,lightRange.maxTotal-symbolTotals.lights);
+   if(maxAllowed>=lightRange.min){
+    const amount=lightRange.min+draw(maxAllowed-lightRange.min+1);
+    sample.winnings.push({type:'lights',symbol:'⭐',amount,bonus:true,lightField:true});
+    sample.totalLights=amount;
+    if(sample.type==='none')sample.type='lights';
+   }
+  }
+  return sample;
  };
  for(const [slot,rule] of requested.entries()){
   const remaining=SCRATCH_PRINT_SIZE-slot;
@@ -254,6 +316,17 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    try{sample=sampleTicket(slot,attempt,forced,rule.full27)}
    catch(e){if(/^SCRATCH_|^PREMIUM27_/.test(e.message))continue;throw e}
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
+   const candidateTotals={coin:0,note:0,case:0,lights:0};
+   let outsideLimits=false;
+   for(const prize of sample.winnings||[]){
+    const id=categoryFor(prize);
+    if(!id)continue;
+    const range=config.symbolBudgets[id];
+    if(range&&(prize.amount<range.min||prize.amount>range.max)){outsideLimits=true;break;}
+    candidateTotals[id]+=prize.amount||0;
+   }
+   if(outsideLimits||Object.entries(config.symbolBudgets).some(([id,range])=>
+     candidateTotals[id]+symbolTotals[id]>range.maxTotal))continue;
    const full=sample.board?.variantId==='premium_27'&&
     sample.board.cells.every(symbol=>symbol!=='🧊');
    if(wins>config.maxPrizesPerTicket||wins>20||coins>config.maxPerTicketCoins||
@@ -277,6 +350,11 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    '_WINS_'+rule.wins+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
   const accepted=removeReceiptFields(best),count=prizeCount(accepted);
   byWins[count]++;totalCoins+=accepted.totalCoins||0;
+  for(const prize of accepted.winnings||[]){
+   const id=categoryFor(prize);
+   if(id){symbolTotals[id]+=prize.amount||0;symbolHitCounts[id]++}
+  }
+  totalLights=symbolTotals.lights;
   unlocks+=unlockCount(accepted);
   biggest=Math.max(biggest,accepted.totalCoins||0);
   if(count)winners++;
@@ -290,7 +368,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  }
  const grossRevenue=config.ticketPrice*SCRATCH_PRINT_SIZE;
  const summary={tickets:SCRATCH_PRINT_SIZE,winners,duds:SCRATCH_PRINT_SIZE-winners,
-  totalCoins,unlocks,biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
+  totalCoins,totalLights,symbolTotals,symbolHitCounts,unlocks,
+  biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
   ticketPrice:config.ticketPrice,projectedGrossRevenue:grossRevenue,
   projectedNetCoins:grossRevenue-totalCoins,
   payoutRatioPercent:grossRevenue>0?Math.round(totalCoins/grossRevenue*10000)/100:null,
@@ -309,7 +388,7 @@ export function newEditionDocument(plan,creator,now=Date.now()){
   variantId:plan.config.variantId,tier:plan.config.tier,title:plan.config.title,
   config:plan.config,summary:plan.summary,packed:plan.packed,
   settingsSnapshot:plan.settingsSnapshot,specialSnapshot:plan.specialSnapshot,
-  issued:0,issuedCoins:0,issuedUnlocks:0,createdAt:now,createdBy:creator,
+  issued:0,issuedCoins:0,issuedLights:0,issuedUnlocks:0,createdAt:now,createdBy:creator,
   status:'active',updatedAt:now};
 }
 export function editionPublic(doc){
@@ -317,7 +396,8 @@ export function editionPublic(doc){
  return {id:doc.id,variantId:doc.variantId,title:doc.title,
   config:doc.config,summary:doc.summary,
   issued:doc.issued||0,remaining:SCRATCH_PRINT_SIZE-(doc.issued||0),
-  issuedCoins:doc.issuedCoins||0,issuedUnlocks:doc.issuedUnlocks||0,
+  issuedCoins:doc.issuedCoins||0,issuedLights:doc.issuedLights||0,
+  issuedUnlocks:doc.issuedUnlocks||0,
   createdAt:doc.createdAt,status:doc.status};
 }
 const availableUnlocks=(tier,owned)=>
@@ -400,6 +480,7 @@ export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date
   [tickets[chosenIndex],tickets[doc.issued]];
  const updated={...doc,issued:doc.issued+1,
   issuedCoins:(doc.issuedCoins||0)+(result.totalCoins||0),
+  issuedLights:(doc.issuedLights||0)+(result.totalLights||0),
   issuedUnlocks:(doc.issuedUnlocks||0)+unlockCount(result),
   packed:chosenIndex===doc.issued?doc.packed:packEditionTickets(tickets),
   updatedAt:now()};
