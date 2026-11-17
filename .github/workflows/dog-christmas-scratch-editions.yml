@@ -5,6 +5,10 @@ on:
       - 'dog/christmas-scratch-editions.js'
       - 'dog/christmas-scratch.js'
       - 'dog/christmas-scratch-settings.js'
+      - 'dog/christmas-scratch-symbols.js'
+      - 'dog/christmas-tictactoe-duel.js'
+      - 'dog/christmas-special-scratch.js'
+      - 'tests/dog-christmas-five-gifts.test.js'
       - 'shared-lobby.js'
       - 'tests/dog-christmas-scratch-editions.test.js'
       - '.github/workflows/dog-christmas-scratch-editions.yml'
@@ -13,6 +17,10 @@ on:
       - 'dog/christmas-scratch-editions.js'
       - 'dog/christmas-scratch.js'
       - 'dog/christmas-scratch-settings.js'
+      - 'dog/christmas-scratch-symbols.js'
+      - 'dog/christmas-tictactoe-duel.js'
+      - 'dog/christmas-special-scratch.js'
+      - 'tests/dog-christmas-five-gifts.test.js'
       - 'shared-lobby.js'
       - 'tests/dog-christmas-scratch-editions.test.js'
       - '.github/workflows/dog-christmas-scratch-editions.yml'
@@ -30,5 +38,7 @@ jobs:
           node --check shared-lobby.js
           node --check dog/christmas-scratch-editions.js
           node --check dog/christmas-scratch.js
+          node --check dog/christmas-special-scratch.js
+          node --check dog/christmas-tictactoe-duel.js
       - name: Test 500-ticket edition generator and redemption
-        run: node --test tests/dog-christmas-scratch-editions.test.js
+        run: node --test tests/dog-christmas-scratch-editions.test.js tests/dog-christmas-five-gifts.test.js
