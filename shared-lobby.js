@@ -19,6 +19,8 @@ import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings,updateGiftScratchSettings} from './dog/christmas-scratch-settings.js';
+import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COLLECTION,
+ createGiftsEdition,giftsEditionPublic,issueGiftsEditionTicket} from './dog/christmas-gifts-edition.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -785,17 +787,20 @@ function finishEisstock(ch,members){
   // and share the existing 10 tree entitlements to avoid duplicated art.
   app.get('/api/hub/scratch',authentication,handler(async req=>{
      const identity=req.hubIdentity,store=db();
-     const [snap,tree,settingsSnap,villageSnap]=await Promise.all([
+     const [snap,tree,settingsSnap,villageSnap,giftsEditionSnap]=await Promise.all([
        store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
-       dogVillageFor(store).get()
+       dogVillageFor(store).get(),
+       store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT).get()
      ]);
      // The event odds are global, and every authenticated player may edit them
      // even if they did not open a shared room. No room document read needed.
      return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,
        clock(),settingsSnap.exists?settingsSnap.data():null),
-       discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1),canManageScratch:true};
+       discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1),
+       giftsEdition:giftsEditionPublic(giftsEditionSnap.exists?giftsEditionSnap.data():null),
+       canManageScratch:true};
    }));
    // Authenticate all writes, but do not require host/room membership:
    // DOG Christmas settings are intentionally shared by all online players.
@@ -855,6 +860,33 @@ function finishEisstock(ch,members){
       return next;
     });
     return {settings};
+  }));
+  // Create a complete 500-ticket Geschenkelinie series with one hard coin cap.
+  // Individual winning cards are drawn when purchased, avoiding a costly preview.
+  app.post('/api/hub/scratch/editions/gifts',authentication,handler(async req=>{
+    if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    const editionRef=store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT);
+    const result=await store.runTransaction(async tx=>{
+      const [editionSnap,settingsSnap]=await Promise.all([tx.get(editionRef),tx.get(settingsRef)]);
+      const previous=editionSnap.exists?editionSnap.data():null;
+      if(previous&&giftsEditionPublic(previous)?.remaining>0)
+        throw error(409,'SCRATCH_GIFTS_EDITION_ACTIVE');
+      let settings;
+      try{settings=updateGiftScratchSettings(settingsSnap.exists?settingsSnap.data():null,req.body?.gifts)}
+      catch(e){throw error(400,e.message)}
+      let edition;
+      try{edition=createGiftsEdition({id:randomUUID(),createdAt:clock(),
+       createdBy:req.hubIdentity.uid,maxTotalCoins:req.body?.maxTotalCoins,settings})}
+      catch(e){throw error(400,e.message)}
+      if(previous)tx.set(store.collection(GIFTS_EDITION_HISTORY_COLLECTION).doc(previous.id),previous);
+      tx.set(settingsRef,{...settings,updatedBy:req.hubIdentity.uid,updatedAt:clock()});
+      tx.set(editionRef,edition);
+      return {giftsEdition:giftsEditionPublic(edition),settings};
+    });
+    return result;
   }));
   app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
