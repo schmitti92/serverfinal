@@ -143,15 +143,28 @@ export function refreshDogChristmasDeal(match,round,draw=randomInt){
   roundGiftCollected:0,roundScratchCollected:0});
  return true;
 }
-/** Deliberately omit every hidden field and any claimed field index. */
+/**
+ * Temporary Christmas board visibility. Switch to false to restore the
+ * original secret-field gameplay without changing stored matches or rewards.
+ * The server remains authoritative for every move and field claim.
+ */
+export const DOG_CHRISTMAS_SHOW_BOARD_FIELDS=true;
+
+/** Public room snapshot: during the preview only UNCLAIMED field positions
+ * are exposed. Internal arrays and claimed indices remain private.
+ */
 export function publicDogChristmasMatch(match){
  if(!match?.enabled)return null;
  const {enabled,levels,round,giftCount,scratchCount,roundGiftCollected,
   roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,activity}=match;
+ const boardFields=DOG_CHRISTMAS_SHOW_BOARD_FIELDS?{
+  visibleGiftFields:(match.giftFields||[]).filter(i=>!(match.claimedFields||[]).includes(i)),
+  visibleScratchFields:(match.scratchFields||[]).filter(i=>!(match.claimedScratchFields||[]).includes(i))
+ }:{};
  return {enabled,levels,round,giftFieldCount:DOG_TOWER_FIELDS[levels.tower-1],
   scratchFieldCount:Array.isArray(match.scratchFields)?match.scratchFields.length:DOG_SCRATCH_FIELDS_PER_DEAL,giftCount,scratchCount,
   roundGiftCollected,roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,
-  activity:(activity||[]).slice(-12)};
+  ...boardFields,activity:(activity||[]).slice(-12)};
 }
 function landedDogTrackField(before,after,action){
  if(!['move','seven-step'].includes(action?.type))return null;
