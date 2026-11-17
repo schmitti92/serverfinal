@@ -6,6 +6,7 @@
  * per ticket. Any of eight matching lines awards ONE base prize × multiplier.
  * Existing version 6 scratch tickets remain supported by legacy code.
  */
+import {SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-symbols.js';
 export const TIC_DUEL_VERSION=8;
 export const TIC_DUEL_SIGNS=Object.freeze(['◯','✕']);
 export const TIC_DUEL_REWARD_WEIGHTS=Object.freeze([
@@ -25,7 +26,9 @@ const validDraw=(draw,max)=>{
  if(!Number.isInteger(value)||value<0||value>=max)throw Error('TIC_DUEL_RANDOM_INVALID');
  return value;
 };
-const rewardBySymbol=(s)=>TIC_DUEL_REWARD_WEIGHTS.find(row=>row.symbol===s);
+const isGift=s=>SCRATCH_GIFT_SYMBOLS.includes(s);
+const rewardBySymbol=s=>TIC_DUEL_REWARD_WEIGHTS.find(row=>row.symbol===s)||
+ (isGift(s)?TIC_DUEL_REWARD_WEIGHTS[3]:null);
 export function validateTicDuelEditionSettings(s){
  if(!s||typeof s!=='object'||Array.isArray(s))throw Error('EDITION_TIC_SETTINGS_INVALID');
  const amounts=s.coinAmounts,weights=s.symbolWeights;
@@ -68,6 +71,7 @@ export function drawTicTacToeDuel({draw,unlock=null,settings=null}={}){
   cursor-=weights[i];
  }
  if(!prizeSymbol)throw Error('TIC_DUEL_WEIGHTS_INVALID');
+ if(prizeSymbol==='🎁')prizeSymbol=SCRATCH_GIFT_SYMBOLS[validDraw(draw,SCRATCH_GIFT_SYMBOLS.length)];
  const cells=Array.from({length:9},()=>TIC_DUEL_SIGNS[validDraw(draw,2)]);
  const board={variantId:'tic_tac_toe',symbolVersion:TIC_DUEL_VERSION,
   cells,multiplier,winningSymbol,prizeSymbol,wins:[],
@@ -77,13 +81,13 @@ export function drawTicTacToeDuel({draw,unlock=null,settings=null}={}){
  const winnings=[];
  if(paths.length){
   const reward=rewardBySymbol(prizeSymbol);
-  if(prizeSymbol==='🎁'&&unlock?.unlockId){
-   winnings.push({type:'unlock',symbol:'🎁',prize:{
+  if(isGift(prizeSymbol)&&unlock?.unlockId){
+   winnings.push({type:'unlock',symbol:prizeSymbol,prize:{
     unlockId:unlock.unlockId,name:unlock.name,icon:unlock.icon,category:unlock.category
    }});
   }else{
-   winnings.push({type:'coins',symbol:prizeSymbol==='🎁'?'🪙':prizeSymbol,
-    amount:(prizeSymbol==='🎁'?fallback:amounts[TIC_DUEL_REWARD_WEIGHTS.findIndex(row=>row.symbol===prizeSymbol)])*multiplier});
+   winnings.push({type:'coins',symbol:isGift(prizeSymbol)?'🪙':prizeSymbol,
+    amount:(isGift(prizeSymbol)?fallback:amounts[TIC_DUEL_REWARD_WEIGHTS.findIndex(row=>row.symbol===prizeSymbol)])*multiplier});
   }
  }
  board.wins=paths.map(path=>({...path,prize:winnings[0]?{...winnings[0]}:undefined}));
@@ -99,17 +103,17 @@ export function verifyTicTacToeDuel(board){
     symbolWeights:board.symbolWeights,maxMultiplier:board.maxMultiplier,
     giftFallbackCoins:board.giftFallbackCoins}):null;
   const amounts=custom?.coinAmounts??TIC_DUEL_REWARD_WEIGHTS.slice(0,3).map(row=>row.coins);
-  const amount=(board.prizeSymbol==='🎁'?(custom?.giftFallbackCoins??TIC_DUEL_GIFT_FALLBACK):
+  const amount=(isGift(board.prizeSymbol)?(custom?.giftFallbackCoins??TIC_DUEL_GIFT_FALLBACK):
    amounts[TIC_DUEL_REWARD_WEIGHTS.findIndex(row=>row.symbol===board.prizeSymbol)])*board.multiplier;
   for(let i=0;i<expected.length;i++){
    const actual=board.wins[i],match=expected[i],prize=actual?.prize;
    if(actual.rule!=='tic-duel-line'||actual.symbol!==match.symbol||
     JSON.stringify(actual.indices)!==JSON.stringify(match.indices))return false;
-   if(board.prizeSymbol==='🎁'&&prize?.type==='unlock'){
+   if(isGift(board.prizeSymbol)&&prize?.type==='unlock'){
     if(!prize.prize?.unlockId||typeof prize.prize.name!=='string'||!prize.prize.name||
-     prize.symbol!=='🎁')return false;
+     prize.symbol!==board.prizeSymbol)return false;
    }else if(prize?.type!=='coins'||prize.amount!==amount||
-    prize.symbol!==(board.prizeSymbol==='🎁'?'🪙':board.prizeSymbol))return false;
+    prize.symbol!==(isGift(board.prizeSymbol)?'🪙':board.prizeSymbol))return false;
    if(i>0&&JSON.stringify(board.wins[i].prize)!==JSON.stringify(board.wins[0].prize))
     return false;
   }
