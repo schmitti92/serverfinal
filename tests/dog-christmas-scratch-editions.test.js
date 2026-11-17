@@ -4,7 +4,7 @@ import {normalizeScratchSettings} from '../dog/christmas-scratch-settings.js';
 import {verifyScratchPrizes} from '../dog/christmas-scratch-grid.js';
 import {
  SCRATCH_PRINT_SIZE,validateEditionConfig,planScratchEdition,
- newEditionDocument,unpackEditionTickets,editionPublic,issueEditionTicket
+ newEditionDocument,unpackEditionTickets,editionPublic,issueEditionTicket,scratchEditionCatalog
 } from '../dog/christmas-scratch-editions.js';
 
 const settings=normalizeScratchSettings(null);
@@ -138,4 +138,48 @@ test('premium full27 printing rejects impossible prize/quantity constraints',()=
   maxPerTicketCoins:100000,maxPrizesPerTicket:6,maxUnlocks:0,
   premiumFull27Tickets:1,quotas:{10:1}
  }),/EDITION_FULL27_NEEDS_TEN_WINS_AND_UNLOCKS/);
+});
+
+
+test('each of the seven lots exposes real geometry, lines and prize ceilings',()=>{
+ const entries=scratchEditionCatalog(settings);
+ assert.equal(entries.length,7);
+ const byId=Object.fromEntries(entries.map(row=>[row.variantId,row]));
+ assert.equal(byId.gifts.lineCount,8);
+ assert.equal(byId.snow_collect.lineCount,null);
+ assert.equal(byId.elf.lineCount,null);
+ assert.equal(byId.premium_27.lineCount,9);
+ assert.equal(byId.premium_27.minWins,4);
+ assert.equal(byId.premium_27.maxWins,10);
+ assert.equal(byId.tic_tac_toe.lineCount,8);
+ assert.equal(byId.tic_tac_toe.scratchFields,11);
+ assert.equal(byId.tic_tac_toe.maxWins,1);
+ assert.equal(byId.number_one_20.lineCount,20);
+ assert.equal(byId.number_one_20.maxWins,20);
+ assert.equal(byId.dog_jackpot_9.lineCount,0);
+ assert.equal(byId.dog_jackpot_9.maxWins,8);
+ assert.equal(byId.gifts.standardPrice,200);
+ assert.equal(byId.premium_27.standardPrice,1000);
+});
+test('ticket price is printed with 500-ticket theoretical revenue and charged exactly once',()=>{
+ const config={...simple(),ticketPrice:777,quotas:{0:500}};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.config.ticketPrice,777);
+ assert.equal(plan.summary.ticketPrice,777);
+ assert.equal(plan.summary.projectedGrossRevenue,388500);
+ assert.equal(plan.summary.projectedNetCoins,388500);
+ assert.equal(plan.summary.payoutRatioPercent,0);
+ const doc=newEditionDocument(plan,'host',1763430000000);
+ const request={tier:'simple',variantId:'gifts',commandId:'price_777_tested'};
+ const purchase=issueEditionTicket(doc,{coins:2000,owned:{}},null,request,{
+  settings,now:()=>1763430100000});
+ assert.equal(purchase.result.price,777);
+ assert.equal(purchase.wallet.coins,1223);
+ assert.equal(purchase.doc.issued,1);
+ const replay=issueEditionTicket(purchase.doc,purchase.wallet,null,request,{
+  settings,now:()=>1763430101000});
+ assert.equal(replay.unchanged,true);
+ assert.equal(replay.wallet.coins,1223);
+ assert.throws(()=>validateEditionConfig({...config,ticketPrice:1000001}),
+  /EDITION_TICKET_PRICE_INVALID/);
 });
