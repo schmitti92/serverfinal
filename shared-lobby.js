@@ -1010,11 +1010,13 @@ function finishEisstock(ch,members){
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
     const store=db();
     const uid=req.hubIdentity.uid;
-    const [snap,walletSnap]=await Promise.all([
+    const [snap,walletSnap,villageSnap]=await Promise.all([
       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
-      store.collection(DOG_SCRATCH_COLLECTION).doc(uid).get()
+      store.collection(DOG_SCRATCH_COLLECTION).doc(uid).get(),
+      dogVillageFor(store).get()
     ]);
     return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
+      academyXpPercent:christmasActive()?dogAcademyXpPercent(villageSnap.exists?villageSnap.data()?.levels?.academy:1):0,
       levelRewardClaims:{1:Boolean(walletSnap.exists&&walletSnap.data()?.levelOneStarterClaimedAt)},
       scope:'verified-dog-online-matches',rewardsConfigured:true};
   }));
