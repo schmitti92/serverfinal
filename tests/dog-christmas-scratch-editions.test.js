@@ -198,7 +198,7 @@ test('every light prize is bound to a visible star badge and limited across the 
  assert.equal(plan.summary.tickets,500);
  assert.ok(plan.summary.totalLights>0);
  assert.ok(plan.summary.totalLights<=630);
- let awarded=0,seen=0;const categoryTotals={coin:0,note:0,case:0,lights:0};
+ let awarded=0,seen=0;const categoryTotals={coin:0,note:0,case:0,lights:0,gift:0};
  for(const ticket of unpackEditionTickets(plan.packed)){
   assert.equal(verifyScratchPrizes(ticket.board),true);
   const lights=ticket.winnings.filter(x=>x.type==='lights');
