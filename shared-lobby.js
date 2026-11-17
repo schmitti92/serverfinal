@@ -947,14 +947,16 @@ function finishEisstock(ch,members){
       // Once an edition is exhausted or retired, no random fallback tickets
       // may be issued for this variant. It must be reprinted explicitly.
       if(!edition)throw error(409,'EDITION_NO_ACTIVE_PRINT_RUN');
-      if(edition.issued>=500)throw error(409,'EDITION_NO_ACTIVE_PRINT_RUN');
+      // The final buyer may retry the exact same command after a timeout.
+      // issueEditionTicket checks the wallet receipt before SOLD_OUT.
       let result;
       try{
         result=issueEditionTicket(edition,walletSnap.exists?walletSnap.data():null,tree,request,
           {now:()=>clock(),settings});
       }catch(e){
         const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|EDITION_SOLD_OUT|EDITION_NO_AVAILABLE_UNLOCK)$/.test(e.message);
-        throw error(conflict?409:400,e.message);
+        throw error(conflict?409:400,e.message==='EDITION_SOLD_OUT'?
+          'EDITION_NO_ACTIVE_PRINT_RUN':e.message);
       }
       let village=null;
       if(!result.unchanged&&Number.isSafeInteger(result.result?.totalLights)&&result.result.totalLights>0){
