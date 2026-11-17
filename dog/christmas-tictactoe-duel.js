@@ -26,6 +26,22 @@ const validDraw=(draw,max)=>{
  return value;
 };
 const rewardBySymbol=(s)=>TIC_DUEL_REWARD_WEIGHTS.find(row=>row.symbol===s);
+export function validateTicDuelEditionSettings(s){
+ if(!s||typeof s!=='object'||Array.isArray(s))throw Error('EDITION_TIC_SETTINGS_INVALID');
+ const amounts=s.coinAmounts,weights=s.symbolWeights;
+ if(!Array.isArray(amounts)||amounts.length!==3||
+  amounts.some(n=>!Number.isSafeInteger(n)||n<1||n>50000000)||
+  !(amounts[0]<amounts[1]&&amounts[1]<amounts[2])||
+  !Array.isArray(weights)||weights.length!==4||
+  weights.some(n=>!Number.isInteger(n)||n<0||n>1000)||
+  weights.reduce((a,b)=>a+b,0)!==1000||
+  !Number.isInteger(s.maxMultiplier)||s.maxMultiplier<1||s.maxMultiplier>5||
+  !Number.isInteger(s.giftFallbackCoins)||s.giftFallbackCoins<0||
+  s.giftFallbackCoins>50000000)throw Error('EDITION_TIC_SETTINGS_INVALID');
+ return {coinAmounts:[...amounts],symbolWeights:[...weights],
+  maxMultiplier:s.maxMultiplier,giftFallbackCoins:s.giftFallbackCoins};
+}
+
 export function evaluateTicTacToeDuel(board){
  if(board?.symbolVersion!==TIC_DUEL_VERSION||
   !TIC_DUEL_SIGNS.includes(board.winningSymbol)||
@@ -37,20 +53,26 @@ export function evaluateTicTacToeDuel(board){
   .filter(indices=>indices.every(index=>board.cells[index]===board.winningSymbol))
   .map(indices=>({indices:[...indices],symbol:board.winningSymbol,rule:'tic-duel-line'}));
 }
-export function drawTicTacToeDuel({draw,unlock=null}={}){
+export function drawTicTacToeDuel({draw,unlock=null,settings=null}={}){
  if(typeof draw!=='function')throw Error('TIC_DUEL_DRAW_REQUIRED');
- const multiplier=1+validDraw(draw,5);
+ const custom=settings===null?null:validateTicDuelEditionSettings(settings);
+ const weights=custom?.symbolWeights??TIC_DUEL_REWARD_WEIGHTS.map(row=>row.weight);
+ const amounts=custom?.coinAmounts??TIC_DUEL_REWARD_WEIGHTS.slice(0,3).map(row=>row.coins);
+ const fallback=custom?.giftFallbackCoins??TIC_DUEL_GIFT_FALLBACK;
+ const multiplier=1+validDraw(draw,custom?.maxMultiplier??5);
  const winningSymbol=TIC_DUEL_SIGNS[validDraw(draw,2)];
  const prizeRoll=validDraw(draw,1000);
  let cursor=prizeRoll,prizeSymbol=null;
- for(const reward of TIC_DUEL_REWARD_WEIGHTS){
-  if(cursor<reward.weight){prizeSymbol=reward.symbol;break}
-  cursor-=reward.weight;
+ for(const [i,reward] of TIC_DUEL_REWARD_WEIGHTS.entries()){
+  if(cursor<weights[i]){prizeSymbol=reward.symbol;break}
+  cursor-=weights[i];
  }
  if(!prizeSymbol)throw Error('TIC_DUEL_WEIGHTS_INVALID');
  const cells=Array.from({length:9},()=>TIC_DUEL_SIGNS[validDraw(draw,2)]);
  const board={variantId:'tic_tac_toe',symbolVersion:TIC_DUEL_VERSION,
-  cells,multiplier,winningSymbol,prizeSymbol,wins:[]};
+  cells,multiplier,winningSymbol,prizeSymbol,wins:[],
+  ...(custom?{coinAmounts:[...amounts],symbolWeights:[...weights],
+   giftFallbackCoins:fallback,maxMultiplier:custom.maxMultiplier}:{})};
  const paths=evaluateTicTacToeDuel(board);
  const winnings=[];
  if(paths.length){
@@ -61,7 +83,7 @@ export function drawTicTacToeDuel({draw,unlock=null}={}){
    }});
   }else{
    winnings.push({type:'coins',symbol:prizeSymbol==='🎁'?'🪙':prizeSymbol,
-    amount:(prizeSymbol==='🎁'?TIC_DUEL_GIFT_FALLBACK:reward.coins)*multiplier});
+    amount:(prizeSymbol==='🎁'?fallback:amounts[TIC_DUEL_REWARD_WEIGHTS.findIndex(row=>row.symbol===prizeSymbol)])*multiplier});
   }
  }
  board.wins=paths.map(path=>({...path,prize:winnings[0]?{...winnings[0]}:undefined}));
@@ -72,8 +94,13 @@ export function verifyTicTacToeDuel(board){
   if(board?.variantId!=='tic_tac_toe'||board?.symbolVersion!==TIC_DUEL_VERSION)return false;
   const expected=evaluateTicTacToeDuel(board);
   if(!Array.isArray(board.wins)||board.wins.length!==expected.length)return false;
-  const amount=(board.prizeSymbol==='🎁'?TIC_DUEL_GIFT_FALLBACK:
-   rewardBySymbol(board.prizeSymbol).coins)*board.multiplier;
+  const custom=board.coinAmounts!==undefined?
+   validateTicDuelEditionSettings({coinAmounts:board.coinAmounts,
+    symbolWeights:board.symbolWeights,maxMultiplier:board.maxMultiplier,
+    giftFallbackCoins:board.giftFallbackCoins}):null;
+  const amounts=custom?.coinAmounts??TIC_DUEL_REWARD_WEIGHTS.slice(0,3).map(row=>row.coins);
+  const amount=(board.prizeSymbol==='🎁'?(custom?.giftFallbackCoins??TIC_DUEL_GIFT_FALLBACK):
+   amounts[TIC_DUEL_REWARD_WEIGHTS.findIndex(row=>row.symbol===board.prizeSymbol)])*board.multiplier;
   for(let i=0;i<expected.length;i++){
    const actual=board.wins[i],match=expected[i],prize=actual?.prize;
    if(actual.rule!=='tic-duel-line'||actual.symbol!==match.symbol||
