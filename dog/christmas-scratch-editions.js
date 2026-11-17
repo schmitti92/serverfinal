@@ -77,6 +77,8 @@ export function scratchEditionCatalog(settings=null){
 
 export function validateEditionConfig(input){
  const variantId=input?.variantId;
+ const printSize=Number(input?.printSize??SCRATCH_PRINT_SIZE);
+ if(!cleanInt(printSize,1,SCRATCH_PRINT_SIZE))throw Error('EDITION_PRINT_SIZE_INVALID');
  if(!SCRATCH_EDITION_VARIANTS.includes(variantId))throw Error('EDITION_INVALID_VARIANT');
  const maxTotalCoins=Number(input.maxTotalCoins);
  const maxPerTicketCoins=Number(input.maxPerTicketCoins);
@@ -91,8 +93,8 @@ export function validateEditionConfig(input){
   maxTickets:Number(requestedDouble.maxTickets??0)
  };
  if(!cleanInt(doubleWin.chancePer1000,0,1000)||
-  !cleanInt(doubleWin.minTickets,0,500)||
-  !cleanInt(doubleWin.maxTickets,0,500)||
+  !cleanInt(doubleWin.minTickets,0,printSize)||
+  !cleanInt(doubleWin.maxTickets,0,printSize)||
   doubleWin.minTickets>doubleWin.maxTickets)
   throw Error('EDITION_DOUBLE_INVALID');
  const symbolBudgets={};
@@ -128,17 +130,17 @@ export function validateEditionConfig(input){
  if(!cleanInt(volatility,0,100))throw Error('EDITION_VOLATILITY_INVALID');
  if(targetTotalCoins!==null&&(!cleanInt(targetTotalCoins,0,1000000000000)||
    targetTotalCoins>maxTotalCoins||
-   targetTotalCoins>maxPerTicketCoins*SCRATCH_PRINT_SIZE))
+   targetTotalCoins>maxPerTicketCoins*printSize))
   throw Error('EDITION_TARGET_INVALID');
  if(!cleanInt(targetTolerancePercent,0,30))
   throw Error('EDITION_TARGET_TOLERANCE_INVALID');
- if(!cleanInt(premiumFull27Tickets,0,500)||
+ if(!cleanInt(premiumFull27Tickets,0,printSize)||
    (premiumFull27Tickets&&variantId!=='premium_27'))
   throw Error('EDITION_FULL27_INVALID');
  if(!cleanInt(maxTotalCoins,0,1000000000000)||
   !cleanInt(maxPerTicketCoins,0,1000000000)||
   !cleanInt(maxPrizesPerTicket,1,20)||
-  !cleanInt(maxUnlocks,0,500))throw Error('EDITION_INVALID_LIMITS');
+  !cleanInt(maxUnlocks,0,printSize))throw Error('EDITION_INVALID_LIMITS');
  const gameSettings=input?.gameSettings??null;
  if(gameSettings!==null&&(!gameSettings||typeof gameSettings!=='object'||
   Array.isArray(gameSettings)||JSON.stringify(gameSettings).length>6000))
@@ -149,7 +151,7 @@ export function validateEditionConfig(input){
  for(let count=0;count<=20;count++){
   const value=input?.quotas?.[String(count)];
   if(value===null||value===undefined||value==='')continue;
-  if(!cleanInt(value,0,500))throw Error('EDITION_INVALID_QUOTA_'+count);
+  if(!cleanInt(value,0,printSize))throw Error('EDITION_INVALID_QUOTA_'+count);
   if(count>maxPrizesPerTicket&&value>0&&!(variantId==='premium_27'&&premiumFull27Tickets>0&&count===10))
    throw Error('EDITION_QUOTA_ABOVE_MAX_'+count);
   if(value>0)quotas[count]=value;
@@ -170,9 +172,9 @@ export function validateEditionConfig(input){
   throw Error('EDITION_UNSUPPORTED_WIN_COUNT_'+count);
  if(variantId==='premium_27'&&maxPrizesPerTicket<4)
   throw Error('EDITION_MINIMUM_FOUR_PREMIUM_WINS');
- if(Object.values(quotas).reduce((a,b)=>a+b,0)>SCRATCH_PRINT_SIZE)
-  throw Error('EDITION_QUOTAS_OVER_500');
- return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
+ if(Object.values(quotas).reduce((a,b)=>a+b,0)>printSize)
+  throw Error('EDITION_QUOTAS_OVER_PRINT_SIZE');
+ return {variantId,tier:ticketTier(variantId),title,printSize,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
   targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,symbolBudgets,doubleWin,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
@@ -190,7 +192,7 @@ export function editionMinimumBudget(input,settings=null){
  const baseWins=config.variantId==='premium_27'?4:0;
  const star=config.symbolBudgets.lights;
  const canHaveStar=Boolean(star&&star.chancePer1000>0&&star.maxTotal>=star.min);
- let mandatoryCoinWins=SCRATCH_PRINT_SIZE*baseWins,optionalCoinWins=0;
+ let mandatoryCoinWins=config.printSize*baseWins,optionalCoinWins=0;
  let singleTicketMinimum=baseWins*coinFloor;
  for(const [key,count] of Object.entries(config.quotas)){
   const wins=Number(key),freeStar=canHaveStar&&wins>baseWins?1:0;
@@ -214,9 +216,10 @@ const removeReceiptFields=result=>{
  return copy;
 };
 export const packEditionTickets=tickets=>gzipSync(Buffer.from(JSON.stringify(tickets),'utf8'),{level:9}).toString('base64');
-export function unpackEditionTickets(packed){
+export function unpackEditionTickets(packed,expectedSize=SCRATCH_PRINT_SIZE){
  const tickets=JSON.parse(gunzipSync(Buffer.from(packed,'base64')).toString('utf8'));
- if(!Array.isArray(tickets)||tickets.length!==SCRATCH_PRINT_SIZE)
+ if(!cleanInt(expectedSize,1,SCRATCH_PRINT_SIZE)||
+  !Array.isArray(tickets)||tickets.length!==expectedSize)
   throw Error('EDITION_STORED_TICKETS_INVALID');
  return tickets;
 }
@@ -257,7 +260,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   reserved.add(Number(count));
  }
  while(fullLeft>0){requested.push({wins:10,full27:true});fullLeft--;reserved.add(10)}
- while(requested.length<SCRATCH_PRINT_SIZE)requested.push({wins:'any',full27:false});
+ while(requested.length<config.printSize)requested.push({wins:'any',full27:false});
  // Reserve all expensive, explicit jackpot guarantees BEFORE the flexible
  // tickets; shuffle only at the end so the order cannot influence odds.
  requested.sort((a,b)=>Number(b.full27)-Number(a.full27)||
@@ -394,7 +397,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   return sample;
  };
  for(const [slot,rule] of requested.entries()){
-  const remaining=SCRATCH_PRINT_SIZE-slot;
+  const remaining=config.printSize-slot;
   const requiredDouble=Math.max(0,config.doubleWin.minTickets-doubleWinTickets);
   const canDouble=doubleWinTickets<config.doubleWin.maxTickets;
   const forceDouble=requiredDouble>=remaining&&canDouble;
@@ -506,8 +509,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  for(let i=tickets.length-1;i>0;i--){
   const j=draw(i+1);[tickets[i],tickets[j]]=[tickets[j],tickets[i]];
  }
- const grossRevenue=config.ticketPrice*SCRATCH_PRINT_SIZE;
- const summary={tickets:SCRATCH_PRINT_SIZE,winners,duds:SCRATCH_PRINT_SIZE-winners,
+ const grossRevenue=config.ticketPrice*config.printSize;
+ const summary={tickets:config.printSize,winners,duds:config.printSize-winners,
   totalCoins,totalLights,symbolTotals,symbolHitCounts,unlocks,
   doubleWinTickets,doubleExtraCoins,doubleExtraLights,
   biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
@@ -516,7 +519,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   payoutRatioPercent:grossRevenue>0?Math.round(totalCoins/grossRevenue*10000)/100:null,
   targetTotalCoins:target,deltaToTarget:target===null?null:totalCoins-target,
   targetDifferencePercent:target>0?Math.round(Math.abs(totalCoins-target)/target*10000)/100:0,
-  expectedAverageCoins:Math.round(totalCoins/SCRATCH_PRINT_SIZE),
+  expectedAverageCoins:Math.round(totalCoins/config.printSize),
   remainingBudget:config.maxTotalCoins-totalCoins};
  const packed=packEditionTickets(tickets);
  if(Buffer.byteLength(packed,'utf8')>750000)throw Error('EDITION_DOCUMENT_TOO_LARGE');
@@ -536,7 +539,7 @@ export function editionPublic(doc){
  if(!doc)return null;
  return {id:doc.id,variantId:doc.variantId,title:doc.title,
   config:doc.config,summary:doc.summary,
-  issued:doc.issued||0,remaining:SCRATCH_PRINT_SIZE-(doc.issued||0),
+  issued:doc.issued||0,remaining:(doc.config?.printSize??SCRATCH_PRINT_SIZE)-(doc.issued||0),
   issuedCoins:doc.issuedCoins||0,issuedLights:doc.issuedLights||0,
   issuedUnlocks:doc.issuedUnlocks||0,
   createdAt:doc.createdAt,status:doc.status};
@@ -574,7 +577,8 @@ function personalizeTemplate(template,rawWallet,tree,tier){
  return result;
 }
 export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date.now,discountPercent=0}={}){
- if(doc?.status!=='active'||!cleanInt(doc.issued,0,SCRATCH_PRINT_SIZE))
+ const size=doc?.config?.printSize??SCRATCH_PRINT_SIZE;
+ if(!cleanInt(size,1,SCRATCH_PRINT_SIZE)||doc?.status!=='active'||!cleanInt(doc.issued,0,size))
   throw Error('EDITION_INVALID_STATE');
  if(doc.variantId!==request.variantId||doc.tier!==request.tier)
   throw Error('EDITION_WRONG_VARIANT');
@@ -582,10 +586,10 @@ export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date
  const replay=original.recent.find(r=>r.commandId===request.commandId);
  if(replay)return {unchanged:true,doc,wallet:original,result:replay.result,
   status:dogScratchStatus(original,tree,now(),settings)};
- if(doc.issued===SCRATCH_PRINT_SIZE)throw Error('EDITION_SOLD_OUT');
- const tickets=unpackEditionTickets(doc.packed);
+ if(doc.issued===size)throw Error('EDITION_SOLD_OUT');
+ const tickets=unpackEditionTickets(doc.packed,size);
  let chosenIndex=-1,template=null;
- for(let i=doc.issued;i<SCRATCH_PRINT_SIZE;i++){
+ for(let i=doc.issued;i<size;i++){
   const candidate=personalizeTemplate(tickets[i],rawWallet,tree,doc.tier);
   if(candidate){template=candidate;chosenIndex=i;break;}
  }
