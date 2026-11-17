@@ -1682,8 +1682,26 @@ test('published edition lights are credited to the shared village exactly once a
   ticketPrice:100,maxTotalCoins:1000000,maxPerTicketCoins:50000,
   maxPrizesPerTicket:10,maxUnlocks:0,volatility:40,quotas:{},
   symbolBudgets:{lights:{min:2,max:2,minTotal:2,maxTotal:1000,chancePer1000:1000}}};
- const published=await h.api('POST','/api/hub/scratch/editions/publish','alice',{config});
+ const preview=await h.api('POST','/api/hub/scratch/editions/preview','alice',{config});
+ assert.equal(preview.status,200,preview.error);
+ assert.equal(preview.summary.tickets,500);
+ assert.ok(preview.previewId);
+ const invalid=await h.api('POST','/api/hub/scratch/editions/publish','alice',{config});
+ assert.equal(invalid.status,400);
+ assert.equal(invalid.error,'EDITION_PREVIEW_REQUIRED');
+ const stolen=await h.api('POST','/api/hub/scratch/editions/publish','bob',{
+  config,previewId:preview.previewId
+ });
+ assert.equal(stolen.status,409);
+ const published=await h.api('POST','/api/hub/scratch/editions/publish','alice',{
+  config,previewId:preview.previewId
+ });
  assert.equal(published.status,200,published.error);
+ assert.deepEqual(published.edition.summary,preview.summary);
+ const replayPreview=await h.api('POST','/api/hub/scratch/editions/publish','alice',{
+  config,previewId:preview.previewId
+ });
+ assert.equal(replayPreview.status,409);
  const editionId=published.edition.id;
  const key='dog_christmas_scratch_editions_v1/'+editionId;
  const doc=h.docs.get(key);assert.ok(doc?.packed);
