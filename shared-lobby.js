@@ -18,7 +18,7 @@ import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,d
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
-import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
+import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings,updateGiftScratchSettings} from './dog/christmas-scratch-settings.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -828,7 +828,32 @@ function finishEisstock(ch,members){
       const prior=await ref.get();
       settings.numberOne20=normalizeScratchSettings(prior.exists?prior.data():null).numberOne20;
     }
+    // Keep Geschenkelinie-only options if an older global settings form
+    // saves another ticket type without submitting these fields.
+    const submittedGifts=submitted.gifts||{};
+    const giftFields=['price','doubleChancePer1000','lightChancePer1000','lightMin','lightMax'];
+    if(giftFields.some(key=>submittedGifts[key]===undefined)){
+      const prior=await ref.get();
+      const saved=normalizeScratchSettings(prior.exists?prior.data():null).variants.gifts;
+      for(const key of giftFields)if(submittedGifts[key]===undefined)
+        settings.variants.gifts[key]=saved[key];
+    }
     await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
+    return {settings};
+  }));
+  // One atomic write updates only Geschenkelinie, not other ticket types.
+  app.post('/api/hub/scratch/settings/gifts',authentication,handler(async req=>{
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const ref=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    const settings=await store.runTransaction(async tx=>{
+      const old=await tx.get(ref);
+      let next;
+      try{next=updateGiftScratchSettings(old.exists?old.data():null,req.body?.gifts)}
+      catch(e){throw error(400,e.message)}
+      tx.set(ref,{...next,updatedBy:req.hubIdentity.uid,updatedAt:clock()});
+      return next;
+    });
     return {settings};
   }));
   app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
