@@ -164,7 +164,8 @@ function generatePremium27V4(prizes,{draw,maxAttempts}){
     giftRows.length+(milestonePremium?1:0))
   throw Error('PREMIUM27_ROW_SYMBOL_DUPLICATE');
  const fixedRows=[...(milestonePremium?[milestonePremium]:[]),...rowPrizes];
- const targetReal=milestonePremium?24+choose(4,draw):
+ if(forceFull27&&!milestonePremium)throw Error('PREMIUM27_FULL_FIELDS_REQUIRES_UNLOCK');
+ const targetReal=forceFull27?27:milestonePremium?24+choose(4,draw):
   milestoneGold?20+choose(4,draw):13+choose(7,draw);
  // Money icons are part of the actual premium scratch field, not merely
  // the prize legend. Guarantee all three icons on every NEW ticket, even if
@@ -209,7 +210,7 @@ function generatePremium27V4(prizes,{draw,maxAttempts}){
 }
 
 /** New premium rule: at least four paid horizontal money triples per ticket. */
-function generatePremium27V5(prizes,{draw,maxAttempts}){
+function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false}){
  const gold=prizes.filter(p=>p.milestone==='gold-20');
  const premium=prizes.filter(p=>p.milestone==='premium-24');
  if(gold.length>1||premium.length>1||
@@ -330,12 +331,12 @@ export function evaluatePremium27(board){
  }
  return wins;
 }
-export function generatePremium27(prizes,{draw=randomInt,maxAttempts=16000,version=null}={}){
+export function generatePremium27(prizes,{draw=randomInt,maxAttempts=16000,version=null,forceFull27=false}={}){
  if(!Array.isArray(prizes)||prizes.length>(version===5?10:3)||
   prizes.some(p=>!p||!['coins','unlock'].includes(p.type))||
   !Number.isInteger(maxAttempts)||maxAttempts<1||typeof draw!=='function')
   throw Error('PREMIUM27_PRIZES_INVALID');
- if(version===5)return generatePremium27V5(prizes,{draw,maxAttempts});
+ if(version===5)return generatePremium27V5(prizes,{draw,maxAttempts,forceFull27});
  if(version===4)return generatePremium27V4(prizes,{draw,maxAttempts});
  if(prizes.every(p=>typeof p.symbol==='string'))
   return generatePremium27V3(prizes,{draw,maxAttempts});
