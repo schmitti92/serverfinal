@@ -419,7 +419,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    // count. Exact quotas are never changed by this safety fallback.
    if(forced===null&&target===null&&isClassic&&minWins===0&&
       !reserved.has(0)&&config.maxTotalCoins-totalCoins<
-       remaining*meanWin)forced=0;
+       remaining*meanWin*Math.min(maxWins,4))forced=0;
    if(forced===null&&target!==null&&isClassic){
     const variety=0.6+draw(101)/125; // roughly 0.60–1.40
     const desired=Math.round(pace*variety/meanWin);
