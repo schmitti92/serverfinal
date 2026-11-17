@@ -360,7 +360,12 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   // choose one that keeps the remaining 500-ticket budget on course.
   const tries=target===null?(!isClassic&&rule.wins!=='any'?550:160):
    rule.wins==='any'?13:10;
-  for(let attempt=0;attempt<tries;attempt++){
+  // Fixed winner-count quotas are strict, but a failed random candidate is
+  // not evidence that the requested card is impossible. Search further only
+  // when the ordinary attempts cannot find an eligible ticket.
+  const rescueTries=rule.wins!=='any'&&target!==null?90:0;
+  for(let attempt=0;attempt<tries+rescueTries;attempt++){
+   if(attempt===tries&&best)break;
    let forced=rule.wins==='any'?null:rule.wins;
    if(forced===null&&target!==null&&isClassic){
     const variety=0.6+draw(101)/125; // roughly 0.60–1.40
@@ -375,7 +380,11 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     }
    }
    let sample;
-   try{sample=sampleTicket(slot,attempt,forced,rule.full27,tryDouble)}
+   // Optional ×2 can push an otherwise legal ticket above an exact budget.
+   // During rescue attempts, also test the normal payout; do not relax any
+   // mandatory ×2 minimum or exact quota on the number of wins.
+   const useDouble=tryDouble&&(forceDouble||attempt<tries||attempt%2===0);
+   try{sample=sampleTicket(slot,attempt,forced,rule.full27,useDouble)}
    catch(e){if(/^SCRATCH_|^PREMIUM27_/.test(e.message))continue;throw e}
    if(forceDouble&&!sample.doubleWin)continue;
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
