@@ -744,6 +744,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // permit extra coin payouts tied to genuine matching symbols, not fake rows.
  const visiblePrizeLimit=variantId==='premium_27'?config.maxPrizes:Math.min(config.maxPrizes,3);
  const baseCategory=printControl?.forcePremiumUnlock&&variantId==='premium_27'?'unlock':
+  printControl?.forceNoPremiumMilestone&&variantId==='premium_27'?'none':
   Number.isInteger(printControl?.forcedWins)&&variantId!=='premium_27'?
     (printControl.forcedWins===0?'none':'coins'):
   categoryRoll<config.weights.none?'none':
