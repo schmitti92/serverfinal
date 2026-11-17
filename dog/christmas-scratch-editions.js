@@ -22,6 +22,55 @@ export const SCRATCH_EDITION_VARIANTS=Object.freeze(Object.values(SCRATCH_VARIAN
 const cleanInt=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
 const ticketTier=id=>Object.keys(SCRATCH_VARIANT_IDS_BY_TIER).find(t=>SCRATCH_VARIANT_IDS_BY_TIER[t].includes(id));
 const format=(n)=>Number(n||0).toLocaleString('de-DE');
+// These facts mirror the currently shipped, server-verified prize evaluators.
+// A visual winning path is not the same as the number of payouts: classic
+// tickets can grant additional money bonuses referencing an actual match.
+const SCRATCH_EDITION_RULES=Object.freeze({
+ gifts:{label:'🎁 Geschenkelinie',fields:9,scratchFields:9,lineCount:8,lineLabel:'8 feste Dreierlinien',
+  maxWins:10,minWins:0,baseMatches:'Bis zu 3 sichtbare Basis-Treffer',
+  mechanic:'3 gleiche Symbole in einer der 3 Reihen, 3 Spalten oder 2 Diagonalen.',
+  extras:'Weitere Münzpreise können an geprüfte Gewinnlinien gekoppelt sein.'},
+ snow_collect:{label:'❄️ Schneeflocken-Bingo',fields:16,scratchFields:16,lineCount:null,lineLabel:'Keine festen Linien · beliebige Dreiergruppen',
+  maxWins:10,minWins:0,baseMatches:'Bis zu 3 sichtbare Basis-Treffer',
+  mechanic:'3 gleiche Symbole irgendwo auf den 16 Feldern; Nieten-Symbole zählen nicht.',
+  extras:'Theoretisch 560 Dreierkombinationen an Positionen, aber keine 560 unabhängigen Auszahlungen.'},
+ elf:{label:'🧝 Magischer Wichtelpfad',fields:20,scratchFields:20,lineCount:null,lineLabel:'Variable durchgehende Pfade',
+  maxWins:10,minWins:0,baseMatches:'Bis zu 3 sichtbare Basis-Treffer',
+  mechanic:'Geld: zusammenhängender Pfad gleicher Symbole links nach rechts. Geschenke: drei verbundene Felder.',
+  extras:'Pfadanzahl ist dynamisch und hängt von den tatsächlich angezeigten Symbolen ab.'},
+ premium_27:{label:'👑 Premium-Weihnachtslos',fields:27,scratchFields:27,lineCount:9,lineLabel:'9 waagerechte Dreierreihen',
+  maxWins:10,minWins:4,baseMatches:'4 garantierte Geldreihen',
+  mechanic:'Vier echte Geldreihen garantiert. Bei 20 Symbolfeldern +1.000 Münzen. 24+ Felder können eine Freischaltung enthalten.',
+  extras:'Bis 10 gesamte Auszahlungen mit geprüften Zusatzpreisen; 10 Auszahlungen sind nicht 10 eigenständige Gewinnlinien. 27/27 volle Felder separat planbar.'},
+ tic_tac_toe:{label:'⭕ DOG Tic-Tac-Toe',fields:9,scratchFields:11,lineCount:8,lineLabel:'8 mögliche Dreierreihen',
+  maxWins:1,minWins:0,baseMatches:'1 Auszahlung trotz mehrerer Linien',
+  mechanic:'11 Rubbelstellen: Multiplikator, Gewinnzeichen und neun Felder. Nur passende Kreis- oder Kreuzlinien zählen.',
+  extras:'Eine oder mehrere passende Dreierreihen lösen genau einen Gesamtpreis × Multiplikator aus.'},
+ number_one_20:{label:'🔢 Glückszahl 1',fields:40,scratchFields:40,lineCount:20,lineLabel:'20 unabhängige Gewinnreihen',
+  maxWins:20,minWins:0,baseMatches:'Bis 20 echte Reihentreffer',
+  mechanic:'20 Reihen mit je 2 Rubbelstellen: links Preis, rechts Zahl. Jede 1 gewinnt den linken Preis.',
+  extras:'Ein einzelnes Los kann in jeder seiner 20 Reihen gewinnen.'},
+ dog_jackpot_9:{label:'🐾 Finde DOG!',fields:9,scratchFields:9,lineCount:0,lineLabel:'1 DOG-Auslöser, keine Gewinnlinien',
+  maxWins:8,minWins:0,baseMatches:'0 oder 8 Gewinne',
+  mechanic:'Ein DOG-Symbol aktiviert die acht übrigen Symbolpreise. Ohne DOG gewinnt keines der Felder.',
+  extras:'Bei Treffer acht echte Einzelauszahlungen – keine klassische Reihenprüfung.'}
+});
+export function scratchEditionCatalog(settings=null){
+ const normalized=normalizeScratchSettings(settings);
+ return SCRATCH_EDITION_VARIANTS.map(variantId=>{
+  const rule=SCRATCH_EDITION_RULES[variantId],tier=ticketTier(variantId);
+  const activeSettings=normalized.variants?.[variantId]||
+   (variantId==='number_one_20'?normalized.numberOne20:null);
+  return {variantId,tier,...rule,boardRows:SCRATCH_GRID_VARIANTS[variantId]?.rows??null,
+   boardCols:SCRATCH_GRID_VARIANTS[variantId]?.cols??null,
+   standardPrice:variantId==='number_one_20'?normalized.numberOne20.price:DOG_SCRATCH_TIERS[tier].price,
+   configuredMaxPrizes:normalized.variants?.[variantId]?.maxPrizes??rule.maxWins,
+   coinAmounts:activeSettings?.coinAmounts??(tier==='simple'?[10,40,100]:
+     tier==='premium'?[200,800,2000]:[100,300,800]),
+   chances:activeSettings?.weights??null};
+ });
+}
+
 
 export function validateEditionConfig(input){
  const variantId=input?.variantId;
