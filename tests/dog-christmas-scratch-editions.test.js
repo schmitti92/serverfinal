@@ -183,3 +183,63 @@ test('ticket price is printed with 500-ticket theoretical revenue and charged ex
  assert.throws(()=>validateEditionConfig({...config,ticketPrice:1000001}),
   /EDITION_TICKET_PRICE_INVALID/);
 });
+
+
+test('every light prize is bound to a visible star badge and limited across the 500-ticket print run',()=>{
+ const limits={
+  lights:{min:2,max:5,maxTotal:630,chancePer1000:1000},
+  coin:{min:1,max:1000,maxTotal:2000000},
+  note:{min:5,max:2000,maxTotal:2000000},
+  case:{min:20,max:5000,maxTotal:2000000}
+ };
+ const config={...simple(),maxTotalCoins:5000000,maxPerTicketCoins:30000,
+  quotas:{},symbolBudgets:limits};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.summary.tickets,500);
+ assert.ok(plan.summary.totalLights>0);
+ assert.ok(plan.summary.totalLights<=630);
+ let awarded=0,seen=0;const categoryTotals={coin:0,note:0,case:0,lights:0};
+ for(const ticket of unpackEditionTickets(plan.packed)){
+  assert.equal(verifyScratchPrizes(ticket.board),true);
+  const lights=ticket.winnings.filter(x=>x.type==='lights');
+  if(lights.length){
+   seen++;
+   assert.equal(lights.length,1);
+   assert.equal(lights[0].symbol,'⭐');
+   assert.ok(lights[0].amount>=2&&lights[0].amount<=5);
+   assert.ok(Number.isInteger(ticket.lightBadgeIndex));
+   assert.ok(ticket.lightBadgeIndex>=0&&ticket.lightBadgeIndex<ticket.board.cells.length);
+   awarded+=lights[0].amount;
+  }
+  for(const p of ticket.winnings){
+   const id=p.type==='lights'?'lights':p.type==='coins'?
+    ({'🪙':'coin','💵':'note','💼':'case'}[p.symbol]):null;
+   if(!id)continue;
+   assert.ok(p.amount>=limits[id].min);
+   assert.ok(p.amount<=limits[id].max);
+   categoryTotals[id]+=p.amount;
+  }
+ }
+ assert.ok(seen>20);
+ assert.equal(awarded,plan.summary.totalLights);
+ assert.deepEqual(categoryTotals,plan.summary.symbolTotals);
+ for(const [id,limit] of Object.entries(limits))assert.ok(categoryTotals[id]<=limit.maxTotal);
+ const doc=newEditionDocument(plan,'host',1763430000000);
+ let wallet={coins:100000,owned:{}},edition=doc;
+ for(let i=0;i<Math.min(20,seen);i++){
+  const result=issueEditionTicket(edition,wallet,null,{
+   tier:'simple',variantId:'gifts',commandId:'light_print_test_'+i
+  },{settings,now:()=>1763430100000+i});
+  edition=result.doc;wallet=result.wallet;
+ }
+ assert.equal(edition.issued,20);
+ assert.ok(edition.issuedLights<=doc.summary.totalLights);
+});
+test('invalid per-symbol ranges and light frequency are rejected before publishing',()=>{
+ assert.throws(()=>validateEditionConfig({...simple(),
+  symbolBudgets:{lights:{min:1,max:5,maxTotal:10,chancePer1000:1200}}}),
+  /EDITION_SYMBOL_BUDGET_INVALID_lights/);
+ assert.throws(()=>validateEditionConfig({...simple(),
+  symbolBudgets:{case:{min:100,max:50,maxTotal:1000}}}),
+  /EDITION_SYMBOL_BUDGET_INVALID_case/);
+});
