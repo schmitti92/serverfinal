@@ -922,8 +922,7 @@ function finishEisstock(ch,members){
       (body.free!==undefined&&typeof body.free!=='boolean')||
       (body.voucher!==undefined&&typeof body.voucher!=='boolean')||
       (body.voucher===true&&body.free===true)||
-      (body.variantId!==undefined&&
-       !(SCRATCH_VARIANT_IDS_BY_TIER[body.tier]||[]).includes(body.variantId)))
+      !(SCRATCH_VARIANT_IDS_BY_TIER[body.tier]||[]).includes(body.variantId))
       throw error(400,'SCRATCH_INVALID_REQUEST');
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
@@ -945,23 +944,32 @@ function finishEisstock(ch,members){
         const editionSnap=await tx.get(editionRef);
         if(editionSnap.exists&&editionSnap.data()?.status==='active')edition=editionSnap.data();
       }
+      // Once an edition is exhausted or retired, no random fallback tickets
+      // may be issued for this variant. It must be reprinted explicitly.
+      if(!edition)throw error(409,'EDITION_NO_ACTIVE_PRINT_RUN');
+      if(edition.issued>=500)throw error(409,'EDITION_NO_ACTIVE_PRINT_RUN');
       let result;
       try{
-        result=edition?
-          issueEditionTicket(edition,walletSnap.exists?walletSnap.data():null,tree,request,
-            {now:()=>clock(),settings}):
-          buyScratchTicket(walletSnap.exists?walletSnap.data():null,tree,request,
-            {now:()=>clock(),settings});
+        result=issueEditionTicket(edition,walletSnap.exists?walletSnap.data():null,tree,request,
+          {now:()=>clock(),settings});
       }catch(e){
         const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|EDITION_SOLD_OUT|EDITION_NO_AVAILABLE_UNLOCK)$/.test(e.message);
         throw error(conflict?409:400,e.message);
       }
+      let village=null;
+      if(!result.unchanged&&Number.isSafeInteger(result.result?.totalLights)&&result.result.totalLights>0){
+        const villageRef=dogVillageFor(store),villageSnap=await tx.get(villageRef);
+        village=creditDogVillage(villageSnap.exists?villageSnap.data():null,
+          DOG_GLOBAL_VILLAGE_ID,null,result.result.totalLights*10);
+        tx.set(villageRef,village);
+      }
       if(!result.unchanged){
         tx.set(accountRef,result.wallet);
-        if(editionRef&&result.doc)tx.set(editionRef,result.doc);
+        if(result.doc)tx.set(editionRef,result.doc);
       }
       return {result:result.result,replayed:result.unchanged,scratch:result.status,
-        ...(edition?{edition:{id:edition.id,remaining:500-(result.doc?.issued??edition.issued)}}:{})};
+        edition:{id:edition.id,remaining:500-(result.doc?.issued??edition.issued)},
+        ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
     return award;
   }));
