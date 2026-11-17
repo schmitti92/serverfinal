@@ -660,7 +660,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
 export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
  doubleMainPer1000:1,mainMultiplierPer1000:1,multiplierPer1000:110
 });
-export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null}={}){
+export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null}={}){
  const liveSettings=normalizeScratchSettings(settings);
  const tier=request?.tier;
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
@@ -697,9 +697,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const pool=specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
   const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
-  const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel'}):
+  const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel',settings:editionSpecial?.ticTacToe??null}):
    specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,settings:liveSettings.numberOne20}):
-   drawDogJackpot9({draw:random,unlock});
+   drawDogJackpot9({draw:random,unlock,settings:editionSpecial?.dogJackpot??null});
   if(!verifyScratchPrizes(drawn.board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
   const stamped=now();
   if(drawn.unlockId)w.owned[drawn.unlockId]=stamped;
@@ -719,8 +719,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const result={type:first?.type||'none',tier,commandId,price,free:free||voucher,voucher,
    ...(first?.type==='coins'?{amount:first.amount}:{}),
    ...(first?.type==='unlock'?{prize:first.prize}:{}),
-   coinAmounts:specialId==='tic_tac_toe'?[200,450,800]:
-    specialId==='number_one_20'?[...drawn.board.coinAmounts]:[100,300,800],
+   coinAmounts:specialId==='tic_tac_toe'?[...(drawn.board.coinAmounts??[200,450,800])]:
+    specialId==='number_one_20'?[...drawn.board.coinAmounts]:[...(drawn.board.coinAmounts??[100,300,800])],
    ...(specialId==='tic_tac_toe'?{symbolWeights:[360,330,270,40]}:{}),
    giftSparksEarned:drawn.giftSparks||0,giftVoucherEarned:earnedVoucher,
    board:drawn.board,winnings:drawn.winnings,totalCoins,at:stamped,balance:w.coins};
