@@ -744,6 +744,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // permit extra coin payouts tied to genuine matching symbols, not fake rows.
  const visiblePrizeLimit=variantId==='premium_27'?config.maxPrizes:Math.min(config.maxPrizes,3);
  const baseCategory=printControl?.forcePremiumUnlock&&variantId==='premium_27'?'unlock':
+  Number.isInteger(printControl?.forcedWins)&&variantId!=='premium_27'?
+    (printControl.forcedWins===0?'none':'coins'):
   categoryRoll<config.weights.none?'none':
   categoryRoll<config.weights.none+config.weights.coins?'coins':'unlock';
  // Premium money rows are independent of the 20-symbol threshold.
@@ -913,7 +915,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
     amount:config.coinAmounts[coinIndex],bonus:true,sourceWin});
   }
  }
- if(variantId==='premium_27'&&Number.isInteger(printControl?.forcedWins)){
+ if(Number.isInteger(printControl?.forcedWins)&&!['tic_tac_toe','number_one_20','dog_jackpot_9'].includes(variantId)){
   const expected=printControl.forcedWins;
   bonusWinnings.length=Math.min(bonusWinnings.length,Math.max(0,expected-winnings.length));
   if(expected<winnings.length||expected>config.maxPrizes||expected>10)
