@@ -17,6 +17,7 @@ import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
+import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket} from './dog/christmas-scratch-editions.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
@@ -829,6 +830,87 @@ function finishEisstock(ch,members){
     await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
     return {settings};
   }));
+  // Each printed edition is an immutable 500-card draw queue. The admin tool
+  // reads this endpoint only when opened; regular game status stays inexpensive.
+  app.get('/api/hub/scratch/editions',authentication,handler(async req=>{
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const pointers=await Promise.all(SCRATCH_EDITION_VARIANTS.map(id=>
+      store.collection(SCRATCH_EDITION_POINTERS).doc(id).get()));
+    const editions=await Promise.all(pointers.map(async(snap,i)=>{
+      const id=snap.exists?snap.data()?.editionId:null;
+      if(!id)return {variantId:SCRATCH_EDITION_VARIANTS[i],active:null};
+      const doc=await store.collection(SCRATCH_EDITION_COLLECTION).doc(id).get();
+      return {variantId:SCRATCH_EDITION_VARIANTS[i],active:doc.exists?editionPublic(doc.data()):null};
+    }));
+    return {editions,canManage:true,printSize:500};
+  }));
+  app.get('/api/hub/scratch/editions/history/:variantId',authentication,handler(async req=>{
+    const variantId=req.params.variantId;
+    if(!SCRATCH_EDITION_VARIANTS.includes(variantId))throw error(400,'EDITION_INVALID_VARIANT');
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const snap=await store.collection(SCRATCH_EDITION_COLLECTION)
+      .where('variantId','==',variantId).limit(30).get();
+    const history=snap.docs.map(row=>editionPublic(row.data()))
+      .sort((a,b)=>b.createdAt-a.createdAt).slice(0,20);
+    return {variantId,history};
+  }));
+  app.post('/api/hub/scratch/editions/preview',authentication,handler(async req=>{
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const settingsSnap=await store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get();
+    const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
+    let planned;
+    try{planned=planScratchEdition(req.body?.config,settings)}
+    catch(e){throw error(400,e.message)}
+    return {config:planned.config,summary:planned.summary,preview:true};
+  }));
+  app.post('/api/hub/scratch/editions/publish',authentication,handler(async req=>{
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const settingsSnap=await store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get();
+    const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
+    let planned;
+    try{planned=planScratchEdition(req.body?.config,settings)}
+    catch(e){throw error(400,e.message)}
+    const edition=newEditionDocument(planned,req.hubIdentity.uid,clock());
+    const ref=store.collection(SCRATCH_EDITION_COLLECTION).doc(edition.id);
+    const pointerRef=store.collection(SCRATCH_EDITION_POINTERS).doc(edition.variantId);
+    await store.runTransaction(async tx=>{
+      const prior=await tx.get(pointerRef);
+      const id=prior.exists?prior.data()?.editionId:null;
+      if(id){
+        const old=await tx.get(store.collection(SCRATCH_EDITION_COLLECTION).doc(id));
+        if(old.exists&&old.data()?.status==='active'&&old.data()?.issued<500)
+          throw error(409,'EDITION_STILL_ACTIVE');
+      }
+      tx.set(ref,edition);
+      tx.set(pointerRef,{editionId:edition.id,variantId:edition.variantId,updatedAt:clock()});
+    });
+    return {edition:editionPublic(edition),published:true};
+  }));
+  app.post('/api/hub/scratch/editions/retire',authentication,handler(async req=>{
+    const variantId=req.body?.variantId;
+    if(!SCRATCH_EDITION_VARIANTS.includes(variantId)||req.body?.confirmation!=='RETIRE')
+      throw error(400,'EDITION_RETIRE_CONFIRMATION_REQUIRED');
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const pointerRef=store.collection(SCRATCH_EDITION_POINTERS).doc(variantId);
+    const retired=await store.runTransaction(async tx=>{
+      const pointer=await tx.get(pointerRef);
+      const id=pointer.exists?pointer.data()?.editionId:null;
+      if(!id)throw error(404,'EDITION_NOT_FOUND');
+      const docRef=store.collection(SCRATCH_EDITION_COLLECTION).doc(id);
+      const snap=await tx.get(docRef);
+      if(!snap.exists)throw error(404,'EDITION_NOT_FOUND');
+      const updated={...snap.data(),status:'retired',updatedAt:clock()};
+      tx.set(docRef,updated);
+      tx.delete(pointerRef);
+      return editionPublic(updated);
+    });
+    return {edition:retired,retired:true};
+  }));
   app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const body=req.body||{},identity=req.hubIdentity,store=db();
@@ -843,20 +925,40 @@ function finishEisstock(ch,members){
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
     const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    const editionPointerRef=body.variantId?
+      store.collection(SCRATCH_EDITION_POINTERS).doc(body.variantId):null;
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap,settingsSnap]=await Promise.all([tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef)]);
+      const [walletSnap,treeSnap,settingsSnap,pointerSnap]=await Promise.all([
+        tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),
+        editionPointerRef?tx.get(editionPointerRef):Promise.resolve(null)]);
       const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
+      const request={tier:body.tier,variantId:body.variantId,commandId:body.commandId,
+        free:body.free===true,voucher:body.voucher===true};
+      const tree=treeSnap.exists?treeSnap.data():null;
+      let editionRef=null,edition=null;
+      const editionId=pointerSnap?.exists?pointerSnap.data()?.editionId:null;
+      if(editionId){
+        editionRef=store.collection(SCRATCH_EDITION_COLLECTION).doc(editionId);
+        const editionSnap=await tx.get(editionRef);
+        if(editionSnap.exists&&editionSnap.data()?.status==='active')edition=editionSnap.data();
+      }
       let result;
       try{
-        result=buyScratchTicket(walletSnap.exists?walletSnap.data():null,
-          treeSnap.exists?treeSnap.data():null,
-          {tier:body.tier,variantId:body.variantId,commandId:body.commandId,free:body.free===true,voucher:body.voucher===true},
-          {clock:()=>clock(),now:()=>clock(),settings});
+        result=edition?
+          issueEditionTicket(edition,walletSnap.exists?walletSnap.data():null,tree,request,
+            {now:()=>clock(),settings}):
+          buyScratchTicket(walletSnap.exists?walletSnap.data():null,tree,request,
+            {now:()=>clock(),settings});
       }catch(e){
-        throw error(e.message==='SCRATCH_NOT_ENOUGH_COINS'||e.message==='SCRATCH_DAILY_ALREADY_USED'?409:400,e.message);
+        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|EDITION_SOLD_OUT|EDITION_NO_AVAILABLE_UNLOCK)$/.test(e.message);
+        throw error(conflict?409:400,e.message);
       }
-      if(!result.unchanged)tx.set(accountRef,result.wallet);
-      return {result:result.result,replayed:result.unchanged,scratch:result.status};
+      if(!result.unchanged){
+        tx.set(accountRef,result.wallet);
+        if(editionRef&&result.doc)tx.set(editionRef,result.doc);
+      }
+      return {result:result.result,replayed:result.unchanged,scratch:result.status,
+        ...(edition?{edition:{id:edition.id,remaining:500-(result.doc?.issued??edition.issued)}}:{})};
     });
     return award;
   }));
