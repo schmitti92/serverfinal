@@ -107,16 +107,24 @@ export function validateEditionConfig(input){
    const min=Number(row?.min),max=Number(row?.max),maxTotal=Number(row?.maxTotal);
    const minTotal=Number(row?.minTotal??0);
    const chancePer1000=id==='lights'?Number(row?.chancePer1000??0):null;
+   const ticketCount=id==='lights'&&row?.ticketCount!==null&&row?.ticketCount!==undefined&&
+    row?.ticketCount!==''?Number(row.ticketCount):null;
    const smallest=id==='gift'?0:1;
    const largest=id==='gift'?20:50000000;
    if(!Number.isSafeInteger(min)||min<smallest||min>largest||
     !Number.isSafeInteger(max)||max<min||max>largest||
     !Number.isSafeInteger(minTotal)||minTotal<0||minTotal>maxTotal||
     !Number.isSafeInteger(maxTotal)||maxTotal<0||maxTotal>(id==='gift'?500:1000000000000)||
-    (id==='lights'&&!cleanInt(chancePer1000,0,1000)))
+    (id==='lights'&&(!cleanInt(chancePer1000,0,1000)||
+      (ticketCount!==null&&!cleanInt(ticketCount,0,printSize)))))
     throw Error('EDITION_SYMBOL_BUDGET_INVALID_'+id);
-   symbolBudgets[id]={min,max,minTotal,maxTotal,...(id==='lights'?{chancePer1000}:{})};
+   symbolBudgets[id]={min,max,minTotal,maxTotal,...(id==='lights'?{chancePer1000,ticketCount}:{})};
   }
+ }
+ if(symbolBudgets.lights?.ticketCount!==null&&symbolBudgets.lights?.ticketCount!==undefined){
+  const lights=symbolBudgets.lights;
+  if(lights.ticketCount*lights.min>lights.maxTotal||
+    (lights.ticketCount===0&&lights.minTotal>0))throw Error('EDITION_LIGHT_QUOTA_BUDGET');
  }
  const ticketPrice=input.ticketPrice===undefined?
   (variantId==='number_one_20'?500:DOG_SCRATCH_TIERS[ticketTier(variantId)].price):
