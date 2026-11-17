@@ -284,6 +284,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     const amount=lightRange.min+draw(maxAllowed-lightRange.min+1);
     sample.winnings.push({type:'lights',symbol:'⭐',amount,bonus:true,lightField:true});
     sample.totalLights=amount;
+    sample.lightBadgeIndex=draw(sample.board.cells.length);
     if(sample.type==='none')sample.type='lights';
    }
   }
