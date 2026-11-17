@@ -4,7 +4,7 @@ import {normalizeScratchSettings} from '../dog/christmas-scratch-settings.js';
 import {verifyScratchPrizes} from '../dog/christmas-scratch-grid.js';
 import {
  SCRATCH_PRINT_SIZE,validateEditionConfig,planScratchEdition,
- newEditionDocument,unpackEditionTickets,editionPublic,issueEditionTicket,scratchEditionCatalog
+ newEditionDocument,unpackEditionTickets,editionPublic,issueEditionTicket,scratchEditionCatalog,editionMinimumBudget
 } from '../dog/christmas-scratch-editions.js';
 
 const settings=normalizeScratchSettings(null);
@@ -416,5 +416,58 @@ test('five specifically reserved eight-win Lucky Number cards are guaranteed in 
  for(const card of tickets){
   assert.equal(verifyScratchPrizes(card.board),true);
   if(card.winnings.length===8)assert.equal(card.board.hitPer1000,400);
+ }
+});
+
+test('budget preflight proves a lower bound without changing the exact 33 two-win quota',()=>{
+ const input={...simple(),maxTotalCoins:600,maxPerTicketCoins:1000,maxUnlocks:0,
+  quotas:{2:33},targetTotalCoins:null};
+ const estimate=editionMinimumBudget(input,settings);
+ assert.equal(estimate.minimumCoins,660);
+ assert.equal(estimate.fixedTickets,33);
+ assert.throws(()=>planScratchEdition(input,settings),
+  /EDITION_BUDGET_MIN_REQUIRED_660_AVAILABLE_600/);
+ assert.equal(editionMinimumBudget({...input,maxTotalCoins:1000},settings).minimumCoins,660);
+});
+test('premium four real cash rows set a safe minimum budget for every print',()=>{
+ const input={variantId:'premium_27',title:'Minimum',maxTotalCoins:399999,
+  maxPerTicketCoins:10000,maxPrizesPerTicket:10,maxUnlocks:0,quotas:{}};
+ const floor=editionMinimumBudget(input,settings);
+ assert.equal(floor.minimumCoins,500*4*200);
+ assert.throws(()=>planScratchEdition(input,settings),
+  /EDITION_BUDGET_MIN_REQUIRED_400000_AVAILABLE_399999/);
+});
+test('unsupported exact counts fail immediately and zero-sized quotas do not reserve a count',()=>{
+ assert.throws(()=>validateEditionConfig({...simple(),maxPrizesPerTicket:20,
+  quotas:{15:1}}),/EDITION_UNSUPPORTED_WIN_COUNT_15/);
+ const accepted=validateEditionConfig({...simple(),quotas:{0:0,2:33}});
+ assert.deepEqual(accepted.quotas,{2:33});
+});
+test('all 500 Lucky Number eight-hit boards can be printed even when regular odds are zero',()=>{
+ const input={variantId:'number_one_20',title:'20 Reihen exakt',
+  maxTotalCoins:2000000,maxPerTicketCoins:100000,maxPrizesPerTicket:20,
+  maxUnlocks:0,quotas:{8:500},
+  gameSettings:{...settings.numberOne20,coinAmounts:[10,20,30],
+   symbolWeights:[1000,0,0,0],hitPer1000:0}};
+ const plan=planScratchEdition(input,settings);
+ assert.equal(plan.summary.byWins[8],500);
+ for(const card of unpackEditionTickets(plan.packed)){
+  assert.equal(card.winnings.length,8);
+  assert.equal(card.board.cells.filter((n,i)=>i%2===1&&n===1).length,8);
+  assert.equal(verifyScratchPrizes(card.board),true);
+ }
+});
+test('Finde DOG exact eight-hit quotas use actual DOG boards even at zero random chance',()=>{
+ const input={variantId:'dog_jackpot_9',title:'DOG Garantie',
+  maxTotalCoins:1000000,maxPerTicketCoins:10000,maxPrizesPerTicket:8,
+  maxUnlocks:0,quotas:{8:500},
+  gameSettings:{coinAmounts:[10,20,30],symbolWeights:[1000,0,0,0],
+   dogChancePer1000:0,giftFallbackCoins:1500}};
+ const plan=planScratchEdition(input,settings);
+ assert.equal(plan.summary.byWins[8],500);
+ for(const card of unpackEditionTickets(plan.packed)){
+  assert.equal(card.board.cells.includes('DOG'),true);
+  assert.equal(card.winnings.length,8);
+  assert.equal(verifyScratchPrizes(card.board),true);
  }
 });
