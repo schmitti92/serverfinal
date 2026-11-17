@@ -580,7 +580,7 @@ function validScratchProgress(value){
   rows.reduce((n,row)=>n+row.duds,0)===value.duds&&
   value.winTickets+value.duds===value.tracked;
 }
-function addScratchProgress(progress,result){
+export function addScratchProgress(progress,result){
  if(!result||typeof result!=='object')return;
  const variant=result.board?.variantId;
  const row=SCRATCH_PROGRESS_VARIANTS.includes(variant)?progress.byVariant[variant]:progress.other;
