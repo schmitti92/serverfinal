@@ -333,6 +333,10 @@ test('every DOG scratch variant prints payable ×2 symbols with immutable verifi
    assert.ok(Number.isSafeInteger(ticket.doubleBadgeIndex));
    assert.ok(ticket.doubleBadgeIndex>=0&&ticket.doubleBadgeIndex<ticket.board.cells.length);
    assert.equal(ticket.doubleWin.symbol,'✖️2');
+   if(variantId==='tic_tac_toe'){
+    const signSquares=new Set((ticket.board.wins||[]).flatMap(x=>x.indices||[]));
+    assert.ok(signSquares.has(ticket.doubleBadgeIndex),'x2 must share an actual Circle/Cross winning square');
+   }
    const doubled=ticket.winnings.filter(p=>p.x2);
    assert.ok(doubled.length>0);
    for(const prize of doubled)assert.equal(prize.amount,prize.baseAmount*2);
