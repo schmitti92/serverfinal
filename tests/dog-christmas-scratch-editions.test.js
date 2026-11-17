@@ -97,3 +97,45 @@ test('DOG Jackpot edition accepts custom DOG frequency and exact 8-win quotas',(
   assert.equal(verifyScratchPrizes(ticket.board),true);
  }
 });
+
+
+test('budget target guides 500 different scratch payouts within tolerance',()=>{
+ const config={...simple(),quotas:{0:100},maxTotalCoins:60000,
+  maxPerTicketCoins:1000,targetTotalCoins:45000,targetTolerancePercent:10};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.summary.byWins[0],100);
+ assert.equal(plan.summary.tickets,500);
+ assert.equal(plan.summary.targetTotalCoins,45000);
+ assert.ok(Math.abs(plan.summary.deltaToTarget)<=4500);
+ assert.ok(plan.summary.totalCoins<=60000);
+ const distribution=plan.summary.byWins.filter(n=>n>0);
+ assert.ok(distribution.length>=2,'different levels of winning tickets');
+});
+test('premium print reserves exact ten-win tickets with all 27 symbols, no accidental full boards',()=>{
+ const config={variantId:'premium_27',title:'Lichtertal Gold 27/27',
+  maxTotalCoins:30000000,maxPerTicketCoins:80000,
+  maxPrizesPerTicket:10,maxUnlocks:15,premiumFull27Tickets:3,
+  quotas:{10:3,4:497}};
+ const plan=planScratchEdition(config,settings);
+ assert.equal(plan.summary.premiumFull27Tickets,3);
+ assert.equal(plan.summary.byWins[10],3);
+ assert.equal(plan.summary.byWins[4],497);
+ let full=0;
+ for(const ticket of unpackEditionTickets(plan.packed)){
+  assert.equal(verifyScratchPrizes(ticket.board),true);
+  if(ticket.board.cells.every(s=>s!=='🧊')){
+   full++;
+   assert.equal(ticket.winnings.length,10);
+   assert.ok(ticket.winnings.some(w=>w.milestone==='premium-24'));
+   assert.ok(ticket.winnings.some(w=>w.milestone==='gold-20'));
+  }
+ }
+ assert.equal(full,3);
+});
+test('premium full27 printing rejects impossible prize/quantity constraints',()=>{
+ assert.throws(()=>validateEditionConfig({
+  variantId:'premium_27',title:'bad',maxTotalCoins:1000000,
+  maxPerTicketCoins:100000,maxPrizesPerTicket:6,maxUnlocks:0,
+  premiumFull27Tickets:1,quotas:{10:1}
+ }),/EDITION_FULL27_NEEDS_TEN_WINS_AND_UNLOCKS/);
+});
