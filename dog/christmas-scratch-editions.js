@@ -502,7 +502,7 @@ function personalizeTemplate(template,rawWallet,tree,tier){
   result.prize={...substitutions.get(result.prize.unlockId)};
  return result;
 }
-export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date.now}={}){
+export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date.now,discountPercent=0}={}){
  if(doc?.status!=='active'||!cleanInt(doc.issued,0,SCRATCH_PRINT_SIZE))
   throw Error('EDITION_INVALID_STATE');
  if(doc.variantId!==request.variantId||doc.tier!==request.tier)
@@ -523,7 +523,7 @@ export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date
  // daily limit, voucher redemption, and receipt idempotency.
  const purchase=buyScratchTicket(rawWallet,tree,request,
   {settings:doc.settingsSnapshot??settings,editionSpecial:doc.specialSnapshot??null,
-   editionPrice:doc.config?.ticketPrice??null,now});
+   editionPrice:doc.config?.ticketPrice??null,discountPercent,now});
  if(purchase.unchanged)return {unchanged:true,doc,wallet:purchase.wallet,
   result:purchase.result,status:purchase.status};
  const wallet=purchase.wallet,result=template;

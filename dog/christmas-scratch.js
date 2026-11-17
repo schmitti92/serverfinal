@@ -664,7 +664,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
 export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
  doubleMainPer1000:1,mainMultiplierPer1000:1,multiplierPer1000:110
 });
-export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null,printControl=null,editionPrice=null}={}){
+export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null,printControl=null,editionPrice=null,discountPercent=0}={}){
  const liveSettings=normalizeScratchSettings(settings);
  const tier=request?.tier;
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
@@ -688,7 +688,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // request fields never override the public shop price.
  if(editionPrice!==null&&(!Number.isSafeInteger(editionPrice)||editionPrice<0||editionPrice>1000000))
   throw Error('SCRATCH_EDITION_PRICE_INVALID');
- const price=free||voucher?0:(editionPrice===null?ticketPrice:editionPrice);
+ const safeDiscount=Number.isInteger(discountPercent)?Math.max(0,Math.min(20,discountPercent)):0;
+ const facePrice=editionPrice===null?ticketPrice:editionPrice;
+ const price=free||voucher?0:Math.max(0,Math.ceil(facePrice*(100-safeDiscount)/100));
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
  const random=max=>{
   const value=draw(max);

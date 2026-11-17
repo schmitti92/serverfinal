@@ -5,7 +5,8 @@
  * verwalteten Dorfvorrat. Diese reine Berechnung bucht selbst nichts ab
  * und darf kein Event freischalten oder lokale Vorschau als Besitz werten.
  */
-export const CHRISTMAS_BUILDING_IDS=Object.freeze(['tower','workshop','bakery','inn']);
+export const CHRISTMAS_TREE_BUILDING_IDS=Object.freeze(['tower','workshop','bakery','inn']);
+export const CHRISTMAS_BUILDING_IDS=Object.freeze([...CHRISTMAS_TREE_BUILDING_IDS,'luckhouse','academy']);
 export const CHRISTMAS_BUILDING_MIN_LEVEL=1;
 export const CHRISTMAS_BUILDING_MAX_LEVEL=5;
 export const CHRISTMAS_BASE_UPGRADE_COST=15;

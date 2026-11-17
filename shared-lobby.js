@@ -14,7 +14,7 @@ import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus} from './dog/player-levels.js';
-import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
 import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket,scratchEditionCatalog,validateEditionConfig} from './dog/christmas-scratch-editions.js';
@@ -786,15 +786,17 @@ function finishEisstock(ch,members){
   // and share the existing 10 tree entitlements to avoid duplicated art.
   app.get('/api/hub/scratch',authentication,handler(async req=>{
      const identity=req.hubIdentity,store=db();
-     const [snap,tree,settingsSnap]=await Promise.all([
+     const [snap,tree,settingsSnap,villageSnap]=await Promise.all([
        store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
-       store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get()
+       store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
+       dogVillageFor(store).get()
      ]);
      // The event odds are global, and every authenticated player may edit them
      // even if they did not open a shared room. No room document read needed.
      return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,
-       clock(),settingsSnap.exists?settingsSnap.data():null),canManageScratch:true};
+       clock(),settingsSnap.exists?settingsSnap.data():null),
+       discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1),canManageScratch:true};
    }));
    // Authenticate all writes, but do not require host/room membership:
    // DOG Christmas settings are intentionally shared by all online players.
@@ -943,12 +945,13 @@ function finishEisstock(ch,members){
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
     const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    const sharedVillageRef=dogVillageFor(store);
     const editionPointerRef=body.variantId?
       store.collection(SCRATCH_EDITION_POINTERS).doc(body.variantId):null;
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap,settingsSnap,pointerSnap]=await Promise.all([
+      const [walletSnap,treeSnap,settingsSnap,pointerSnap,villageSnap]=await Promise.all([
         tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),
-        editionPointerRef?tx.get(editionPointerRef):Promise.resolve(null)]);
+        editionPointerRef?tx.get(editionPointerRef):Promise.resolve(null),tx.get(sharedVillageRef)]);
       const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
       const request={tier:body.tier,variantId:body.variantId,commandId:body.commandId,
         free:body.free===true,voucher:body.voucher===true};
@@ -968,7 +971,7 @@ function finishEisstock(ch,members){
       let result;
       try{
         result=issueEditionTicket(edition,walletSnap.exists?walletSnap.data():null,tree,request,
-          {now:()=>clock(),settings});
+          {now:()=>clock(),settings,discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)});
       }catch(e){
         const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|EDITION_SOLD_OUT|EDITION_NO_AVAILABLE_UNLOCK)$/.test(e.message);
         throw error(conflict?409:400,e.message==='EDITION_SOLD_OUT'?
@@ -976,16 +979,16 @@ function finishEisstock(ch,members){
       }
       let village=null;
       if(!result.unchanged&&Number.isSafeInteger(result.result?.totalLights)&&result.result.totalLights>0){
-        const villageRef=dogVillageFor(store),villageSnap=await tx.get(villageRef);
         village=creditDogVillage(villageSnap.exists?villageSnap.data():null,
           DOG_GLOBAL_VILLAGE_ID,null,result.result.totalLights*10);
-        tx.set(villageRef,village);
+        tx.set(sharedVillageRef,village);
       }
       if(!result.unchanged){
         tx.set(accountRef,result.wallet);
         if(result.doc)tx.set(editionRef,result.doc);
       }
-      return {result:result.result,replayed:result.unchanged,scratch:result.status,
+      return {result:result.result,replayed:result.unchanged,
+        scratch:{...result.status,discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)},
         edition:{id:edition.id,remaining:500-(result.doc?.issued??edition.issued)},
         ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
@@ -1380,7 +1383,8 @@ function finishEisstock(ch,members){
         completedDogStats=humans.map((p,i)=>({
           ref:docs[i],data:dogCompletedPlayerStats(
             snapshots[i].exists?snapshots[i].data():null,
-            p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock())
+            p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock(),
+            event?.enabled?dogAcademyXpPercent(event.levels?.academy):0)
         }));
         match.dogCounters.recorded=true;
       }

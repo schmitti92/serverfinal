@@ -4,6 +4,9 @@
  */
 import {randomInt} from 'node:crypto';
 import {CHRISTMAS_BUILDING_IDS,CHRISTMAS_BUILDING_MAX_LEVEL,christmasUpgradeCost} from './christmas-building-costs.js';
+/** New village bonuses. Level one preserves the original economy. */
+export const dogLuckhouseDiscountPercent=level=>5*Math.max(0,Math.min(4,(Number.isInteger(level)?level:1)-1));
+export const dogAcademyXpPercent=level=>10*Math.max(0,Math.min(4,(Number.isInteger(level)?level:1)-1));
 /** Event lifecycle belongs to the server, never to a player or a room.
  * Active by default while the Christmas event is available. Operators can
  * end it centrally via DOG_CHRISTMAS_EVENT_ENABLED=false on Render.
@@ -79,7 +82,9 @@ export function dogVillagePublic(raw,hostUid){
    workshopExtraChancePercent:5*v.levels.workshop,
    bakeryExtraPercent:10*(v.levels.bakery-1),
    innPerFinishedGame:v.levels.inn-1,
-   innScratchFields:dogInnScratchFieldCount(v.levels.inn)
+   innScratchFields:dogInnScratchFieldCount(v.levels.inn),
+   luckhouseDiscountPercent:dogLuckhouseDiscountPercent(v.levels.luckhouse),
+   academyXpPercent:dogAcademyXpPercent(v.levels.academy)
   }
  };
 }
