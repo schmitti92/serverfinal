@@ -286,6 +286,15 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     useSpecial[id]={...fallback,coinAmounts:chosenAmounts};
    }
   }
+  // Exact win quotas on the 20-number ticket need a matching trial rate.
+  // With its ordinary 10% row hit chance, eight wins at once would almost
+  // never occur, even though the user may explicitly reserve such tickets.
+  // Only preprinted quota candidates receive this per-board probability;
+  // unreserved cards retain the host's chosen ordinary probability.
+  if(config.variantId==='number_one_20'&&Number.isInteger(forced)&&forced>=0&&forced<=20){
+   useSettings=structuredClone(useSettings);
+   useSettings.numberOne20.hitPer1000=Math.round(forced*1000/20);
+  }
   const printControl=isClassic?{
    disableRandomDouble:true,
    ...(forced===null?{}:{forcedWins:forced}),
