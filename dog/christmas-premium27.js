@@ -232,7 +232,13 @@ function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false,excludeF
     giftRows.length+(milestonePremium?1:0))
   throw Error('PREMIUM27_FOUR_MONEY_ROWS_INVALID');
  const fixedRows=[...(milestonePremium?[milestonePremium]:[]),...rowPrizes];
- const targetReal=milestonePremium?24+choose(4,draw):
+ // A published edition can reserve an EXACT number of fully uncovered
+ // 27-symbol tickets. Other premium cards are explicitly excluded from 27.
+ if(forceFull27&&excludeFull27)throw Error('PREMIUM27_CONFLICTING_FULL_CONTROL');
+ if(forceFull27&&(!milestonePremium||!milestoneGold))
+  throw Error('PREMIUM27_FULL_REQUIRES_BOTH_MILESTONES');
+ const targetReal=forceFull27?27:
+  milestonePremium?24+choose(excludeFull27?3:4,draw):
   milestoneGold?20+choose(4,draw):13+choose(7,draw);
  // Money icons are part of the actual premium scratch field, not merely
  // the prize legend. Guarantee all three icons on every NEW ticket, even if
