@@ -442,7 +442,10 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   // Fixed winner-count quotas are strict, but a failed random candidate is
   // not evidence that the requested card is impossible. Search further only
   // when the ordinary attempts cannot find an eligible ticket.
-  const rescueTries=rule.wins!=='any'?(isClassic?360:120):0;
+  // A fast first pass must not be mistaken for proof that an automatic
+  // ticket cannot be printed. Rescue flexible slots across legal win counts.
+  const rescueTries=rule.wins!=='any'?(isClassic?360:120):
+   target!==null?(isClassic?160:100):80;
   for(let attempt=0;attempt<tries+rescueTries;attempt++){
    if(attempt===tries&&best)break;
    let forced=rule.wins==='any'?null:rule.wins-(rule.mustLight?1:0);
@@ -458,10 +461,14 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     const desired=Math.round(pace*variety/meanWin);
     forced=Math.max(minWins,Math.min(maxWins,
       desired+(attempt%3===0?draw(3)-1:0)));
-    if(reserved.has(forced)){
-     const alternatives=Array.from({length:maxWins-minWins+1},(_,i)=>i+minWins)
-      .filter(count=>!reserved.has(count));
-     if(!alternatives.length)continue;
+    const alternatives=Array.from({length:maxWins-minWins+1},(_,i)=>i+minWins)
+     .filter(count=>!reserved.has(count));
+    if(!alternatives.length)continue;
+    if(attempt>=tries){
+     // Search all unreserved legal counts, without relaxing fixed quotas.
+     alternatives.sort((a,b)=>Math.abs(a-desired)-Math.abs(b-desired)||a-b);
+     forced=alternatives[(attempt-tries)%alternatives.length];
+    }else if(reserved.has(forced)){
      forced=alternatives.reduce((a,b)=>Math.abs(a-desired)<=Math.abs(b-desired)?a:b);
     }
    }
@@ -509,8 +516,9 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    if(objective<score){score=objective;best=sample}
    if(score<Math.max(1,pace)*0.05)break;
   }
-  if(!best)throw Error('EDITION_GENERATION_EXHAUSTED_SLOT_'+(slot+1)+
-   '_WINS_'+rule.wins+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
+  if(!best)throw Error((rule.wins==='any'?
+   'EDITION_AUTO_DISTRIBUTION_EXHAUSTED_SLOT_':'EDITION_GENERATION_EXHAUSTED_SLOT_')+
+   (slot+1)+'_WINS_'+rule.wins+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
   const accepted=removeReceiptFields(best),count=prizeCount(accepted);
   byWins[count]++;totalCoins+=accepted.totalCoins||0;
   if(accepted.doubleWin){
