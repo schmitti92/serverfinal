@@ -264,3 +264,31 @@ test('gift symbol has an independent 500-ticket quantity cap and lights can dema
  assert.throws(()=>planScratchEdition(impossible,settings),
   /EDITION_SYMBOL_MIN_TOTAL_UNREACHABLE_lights/);
 });
+
+
+test('Christmas light badges can be printed in each of the seven scratch-game formats',()=>{
+ const variants=[
+  ['gifts','simple'],['snow_collect','simple'],['elf','medium'],
+  ['premium_27','premium'],['tic_tac_toe','medium'],
+  ['number_one_20','medium'],['dog_jackpot_9','premium']
+ ];
+ for(const [variantId,tier] of variants){
+  const config={variantId,title:'Lichter-Edition '+variantId,
+   ticketPrice:100,maxTotalCoins:100000000,maxPerTicketCoins:1000000,
+   maxPrizesPerTicket:20,maxUnlocks:500,
+   symbolBudgets:{lights:{min:1,max:4,minTotal:1,maxTotal:2000,chancePer1000:1000}},
+   quotas:{}};
+  const plan=planScratchEdition(config,settings);
+  assert.equal(plan.config.tier,tier);
+  assert.ok(plan.summary.totalLights>0,variantId+' must contain star rewards');
+  assert.ok(plan.summary.totalLights<=2000);
+  assert.equal(plan.summary.tickets,500);
+  const cards=unpackEditionTickets(plan.packed);
+  const winner=cards.find(ticket=>ticket.totalLights>0);
+  assert.ok(winner,variantId+' must have at least one payable light ticket');
+  assert.ok(winner.winnings.some(win=>win.type==='lights'&&win.symbol==='⭐'));
+  assert.ok(winner.lightBadgeIndex>=0);
+  assert.ok(winner.lightBadgeIndex<winner.board.cells.length);
+  assert.equal(verifyScratchPrizes(winner.board),true);
+ }
+});
