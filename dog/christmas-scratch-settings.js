@@ -21,7 +21,9 @@ const defaultCoins=Object.freeze({
 export const DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS=Object.freeze([334,333,333]);
 export const DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS=Object.freeze([200,200,200,200,200]);
 const defaults=Object.freeze({
- gifts:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.gifts,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
+ gifts:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,
+  price:200,doubleChancePer1000:110,lightChancePer1000:100,lightMin:1,lightMax:10,
+  coinAmounts:defaultCoins.gifts,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  snow_collect:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.snow_collect,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  elf:Object.freeze({weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40,maxPrizes:3,coinAmounts:defaultCoins.elf,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  premium_27:Object.freeze({weights:Object.freeze({none:200,coins:760,unlock:40}),extraCoinChance:50,maxPrizes:6,coinAmounts:defaultCoins.premium_27,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS})
@@ -75,7 +77,15 @@ function validVariant(config,id){
   (config.coinAmounts===undefined||validScratchCoinAmounts(config.coinAmounts))&&
   (config.moneySymbolWeights===undefined||validScratchSymbolWeights(config.moneySymbolWeights,3))&&
   (config.giftSymbolWeights===undefined||validScratchSymbolWeights(config.giftSymbolWeights,5)||
-    validScratchSymbolWeights(config.giftSymbolWeights,4));
+    validScratchSymbolWeights(config.giftSymbolWeights,4))&&
+  (id!=='gifts'||(
+    (config.price===undefined||integer(config.price,0,1000000))&&
+    (config.doubleChancePer1000===undefined||integer(config.doubleChancePer1000,0,1000))&&
+    (config.lightChancePer1000===undefined||integer(config.lightChancePer1000,0,1000))&&
+    (config.lightMin===undefined||integer(config.lightMin,1,100))&&
+    (config.lightMax===undefined||integer(config.lightMax,1,100))&&
+    (config.lightMin??1)<=(config.lightMax??10)
+  ));
 }
 function validNumberOne20(value){
  return value&&typeof value==='object'&&!Array.isArray(value)&&
@@ -109,7 +119,11 @@ export function normalizeScratchSettings(raw){
    extraCoinChance:v.extraCoinChance,maxPrizes:id==='premium_27'?Math.max(6,v.maxPrizes):v.maxPrizes,
    coinAmounts:[...(v.coinAmounts??defaultCoins[id])],
    moneySymbolWeights:[...(v.moneySymbolWeights??DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS)],
-   giftSymbolWeights:normalizeFiveGiftWeights(v.giftSymbolWeights)};
+   giftSymbolWeights:normalizeFiveGiftWeights(v.giftSymbolWeights),
+   ...(id==='gifts'?{
+     price:v.price??200,doubleChancePer1000:v.doubleChancePer1000??110,
+     lightChancePer1000:v.lightChancePer1000??100,lightMin:v.lightMin??1,lightMax:v.lightMax??10
+   }:{})};
  }
  return {version:1,freeEnabled:raw?.freeEnabled===true,variants,
   numberOne20:normalizeNumberOne20(raw?.numberOne20)};
