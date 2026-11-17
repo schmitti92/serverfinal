@@ -19,7 +19,7 @@ const defaultCoins=Object.freeze({
 // Probabilities are conditional on the main ticket category: money or unlock.
 // Values use per-mille precision, allowing independent 0.1% increments.
 export const DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS=Object.freeze([334,333,333]);
-export const DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS=Object.freeze([250,250,250,250]);
+export const DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS=Object.freeze([200,200,200,200,200]);
 const defaults=Object.freeze({
  gifts:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.gifts,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
  snow_collect:Object.freeze({weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30,maxPrizes:3,coinAmounts:defaultCoins.snow_collect,moneySymbolWeights:DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS,giftSymbolWeights:DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS}),
@@ -74,7 +74,8 @@ function validVariant(config,id){
   // Allow older stored settings and cached host clients to migrate safely.
   (config.coinAmounts===undefined||validScratchCoinAmounts(config.coinAmounts))&&
   (config.moneySymbolWeights===undefined||validScratchSymbolWeights(config.moneySymbolWeights,3))&&
-  (config.giftSymbolWeights===undefined||validScratchSymbolWeights(config.giftSymbolWeights,4));
+  (config.giftSymbolWeights===undefined||validScratchSymbolWeights(config.giftSymbolWeights,5)||
+    validScratchSymbolWeights(config.giftSymbolWeights,4));
 }
 function validNumberOne20(value){
  return value&&typeof value==='object'&&!Array.isArray(value)&&
@@ -89,6 +90,15 @@ function normalizeNumberOne20(value){
   giftFallbackCoins:source.giftFallbackCoins??1500,
   coinAmounts:[...source.coinAmounts],symbolWeights:[...source.symbolWeights]};
 }
+// Safely migrate old four-symbol chances. Existing relative weights keep their
+// proportion, with the fifth jackpot symbol getting a 10% entry chance.
+export function normalizeFiveGiftWeights(old){
+ if(!Array.isArray(old))return [...DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS];
+ if(validScratchSymbolWeights(old,5))return [...old];
+ if(!validScratchSymbolWeights(old,4))return [...DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS];
+ const scaled=old.map(n=>Math.floor(n*.9));
+ return [...scaled,1000-scaled.reduce((a,b)=>a+b,0)];
+}
 /** Read stored settings defensively, retaining defaults for older documents. */
 export function normalizeScratchSettings(raw){
  const variants={};
@@ -99,7 +109,7 @@ export function normalizeScratchSettings(raw){
    extraCoinChance:v.extraCoinChance,maxPrizes:id==='premium_27'?Math.max(6,v.maxPrizes):v.maxPrizes,
    coinAmounts:[...(v.coinAmounts??defaultCoins[id])],
    moneySymbolWeights:[...(v.moneySymbolWeights??DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS)],
-   giftSymbolWeights:[...(v.giftSymbolWeights??DOG_SCRATCH_DEFAULT_GIFT_WEIGHTS)]};
+   giftSymbolWeights:normalizeFiveGiftWeights(v.giftSymbolWeights)};
  }
  return {version:1,freeEnabled:raw?.freeEnabled===true,variants,
   numberOne20:normalizeNumberOne20(raw?.numberOne20)};
