@@ -63,7 +63,7 @@ export function scratchEditionCatalog(settings=null){
   const activeSettings=normalized.variants?.[variantId]||
    (variantId==='number_one_20'?normalized.numberOne20:null);
   return {variantId,tier,...rule,jackpotSymbols:[...SCRATCH_GIFT_SYMBOLS],
-   payoutSymbols:[...SCRATCH_PAYOUT_ORDER.slice(0,3),'⭐',...SCRATCH_GIFT_SYMBOLS],
+   payoutSymbols:[...SCRATCH_PAYOUT_ORDER.slice(0,3),'⭐','✖️2',...SCRATCH_GIFT_SYMBOLS],
    boardRows:SCRATCH_GRID_VARIANTS[variantId]?.rows??null,
    boardCols:SCRATCH_GRID_VARIANTS[variantId]?.cols??null,
    standardPrice:variantId==='number_one_20'?normalized.numberOne20.price:DOG_SCRATCH_TIERS[tier].price,
@@ -82,6 +82,19 @@ export function validateEditionConfig(input){
  const maxPerTicketCoins=Number(input.maxPerTicketCoins);
  const maxPrizesPerTicket=Number(input.maxPrizesPerTicket);
  const maxUnlocks=Number(input.maxUnlocks);
+ // Print-only ×2 bonus: exact ticket count cap, optional minimum and chance.
+ // Existing print runs without this field retain their historical payouts.
+ const requestedDouble=input.doubleWin??{};
+ const doubleWin={
+  chancePer1000:Number(requestedDouble.chancePer1000??0),
+  minTickets:Number(requestedDouble.minTickets??0),
+  maxTickets:Number(requestedDouble.maxTickets??0)
+ };
+ if(!cleanInt(doubleWin.chancePer1000,0,1000)||
+  !cleanInt(doubleWin.minTickets,0,500)||
+  !cleanInt(doubleWin.maxTickets,0,500)||
+  doubleWin.minTickets>doubleWin.maxTickets)
+  throw Error('EDITION_DOUBLE_INVALID');
  const symbolBudgets={};
  if(input.symbolBudgets!==undefined&&input.symbolBudgets!==null){
   if(!input.symbolBudgets||typeof input.symbolBudgets!=='object'||
@@ -154,7 +167,7 @@ export function validateEditionConfig(input){
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
-  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,symbolBudgets,
+  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,symbolBudgets,doubleWin,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
@@ -228,6 +241,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const symbolTotals={coin:0,note:0,case:0,lights:0,gift:0};
  const symbolHitCounts={coin:0,note:0,case:0,lights:0,gift:0};
  let totalCoins=0,totalLights=0,unlocks=0,biggest=0,winners=0,full27Count=0;
+ let doubleWinTickets=0,doubleExtraCoins=0,doubleExtraLights=0;
  const target=config.targetTotalCoins;
  const isClassic=['gifts','snow_collect','elf','premium_27'].includes(config.variantId);
  const amounts=isClassic?runSettings.variants[config.variantId].coinAmounts:
@@ -254,7 +268,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   }
   throw Error('EDITION_SYMBOL_RANGES_OVERLAP');
  };
- const sampleTicket=(slot,attempt,forced,full27)=>{
+ const sampleTicket=(slot,attempt,forced,full27,applyDouble)=>{
   let useSettings=runSettings,useSpecial=editionSpecial;
   if(['coin','note','case'].some(id=>config.symbolBudgets[id])){
    const chosenAmounts=amountsForCandidate();
@@ -273,6 +287,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    }
   }
   const printControl=isClassic?{
+   disableRandomDouble:true,
    ...(forced===null?{}:{forcedWins:forced}),
    ...(config.variantId==='premium_27'?{
     forceFull27:full27,excludeFull27:!full27,
@@ -297,10 +312,34 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     if(sample.type==='none')sample.type='lights';
    }
   }
+  // A ×2 is an independent visible bonus, not a fake winning line.
+  // Keep the original verified board untouched; only the printed receipt
+  // and its payout are multiplied. This cannot create two unlocks.
+  if(applyDouble){
+   const cash=(sample.winnings||[]).filter(p=>p.type==='coins');
+   const stars=(sample.winnings||[]).filter(p=>p.type==='lights');
+   if(cash.length||stars.length){
+    const beforeCoins=sample.totalCoins||0,beforeLights=sample.totalLights||0;
+    for(const prize of [...cash,...stars]){
+     prize.baseAmount=prize.amount;
+     prize.amount*=2;
+     prize.x2=true;
+    }
+    sample.totalCoins=beforeCoins*2;
+    sample.totalLights=beforeLights*2;
+    sample.doubleWin={symbol:'✖️2',baseCoins:beforeCoins,extraCoins:beforeCoins,
+     baseLights:beforeLights,extraLights:beforeLights};
+    sample.doubleBadgeIndex=draw(sample.board.cells.length);
+   }
+  }
   return sample;
  };
  for(const [slot,rule] of requested.entries()){
   const remaining=SCRATCH_PRINT_SIZE-slot;
+  const requiredDouble=Math.max(0,config.doubleWin.minTickets-doubleWinTickets);
+  const canDouble=doubleWinTickets<config.doubleWin.maxTickets;
+  const forceDouble=requiredDouble>=remaining&&canDouble;
+  const tryDouble=canDouble&&(forceDouble||draw(1000)<config.doubleWin.chancePer1000);
   const unspent=target===null?null:target-totalCoins;
   const pace=target===null?null:Math.max(0,unspent*payoutWeights[slot]/Math.max(0.00001,suffixWeights[slot]));
   let best=null,score=Infinity;
@@ -323,8 +362,9 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     }
    }
    let sample;
-   try{sample=sampleTicket(slot,attempt,forced,rule.full27)}
+   try{sample=sampleTicket(slot,attempt,forced,rule.full27,tryDouble)}
    catch(e){if(/^SCRATCH_|^PREMIUM27_/.test(e.message))continue;throw e}
+   if(forceDouble&&!sample.doubleWin)continue;
    const wins=prizeCount(sample),coins=sample.totalCoins||0,cosmetics=unlockCount(sample);
    const candidateTotals={coin:0,note:0,case:0,lights:0,gift:0};
    let outsideLimits=false;
@@ -364,6 +404,11 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    '_WINS_'+rule.wins+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
   const accepted=removeReceiptFields(best),count=prizeCount(accepted);
   byWins[count]++;totalCoins+=accepted.totalCoins||0;
+  if(accepted.doubleWin){
+   doubleWinTickets++;
+   doubleExtraCoins+=accepted.doubleWin.extraCoins;
+   doubleExtraLights+=accepted.doubleWin.extraLights;
+  }
   for(const prize of accepted.winnings||[]){
    const id=categoryFor(prize);
    if(id){symbolTotals[id]+=categoryAmount(prize);symbolHitCounts[id]++}
@@ -375,6 +420,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   if(config.variantId==='premium_27'&&accepted.board.cells.every(s=>s!=='🧊'))full27Count++;
   tickets.push(accepted);
  }
+ if(doubleWinTickets<config.doubleWin.minTickets)
+  throw Error('EDITION_DOUBLE_MIN_UNREACHABLE');
  if(target!==null&&Math.abs(totalCoins-target)>Math.max(1,target*config.targetTolerancePercent/100))
   throw Error('EDITION_TARGET_NOT_REACHED_'+totalCoins+'_OF_'+target);
  for(const [id,range] of Object.entries(config.symbolBudgets)){
@@ -387,6 +434,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const grossRevenue=config.ticketPrice*SCRATCH_PRINT_SIZE;
  const summary={tickets:SCRATCH_PRINT_SIZE,winners,duds:SCRATCH_PRINT_SIZE-winners,
   totalCoins,totalLights,symbolTotals,symbolHitCounts,unlocks,
+  doubleWinTickets,doubleExtraCoins,doubleExtraLights,
   biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
   ticketPrice:config.ticketPrice,projectedGrossRevenue:grossRevenue,
   projectedNetCoins:grossRevenue-totalCoins,
