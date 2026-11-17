@@ -116,7 +116,7 @@ export function normalizeScratchSettings(raw){
   const candidate=raw?.variants?.[id];
   const v=validVariant(candidate,id)?candidate:defaults[id];
   variants[id]={weights:{none:v.weights.none,coins:v.weights.coins,unlock:v.weights.unlock},
-   extraCoinChance:v.extraCoinChance,maxPrizes:id==='premium_27'?Math.max(6,v.maxPrizes):v.maxPrizes,
+   extraCoinChance:v.extraCoinChance,maxPrizes:id==='gifts'?Math.min(3,v.maxPrizes):id==='premium_27'?Math.max(6,v.maxPrizes):v.maxPrizes,
    coinAmounts:[...(v.coinAmounts??defaultCoins[id])],
    moneySymbolWeights:[...(v.moneySymbolWeights??DOG_SCRATCH_DEFAULT_MONEY_WEIGHTS)],
    giftSymbolWeights:normalizeFiveGiftWeights(v.giftSymbolWeights),
@@ -150,7 +150,7 @@ export function updateGiftScratchSettings(raw,change){
   extraCoinChance,doubleChancePer1000,lightChancePer1000,lightMin,lightMax}=change;
  if(!integer(price,0,1000000)||!integer(nonePer1000,0,1000)||
     !integer(unlockPer1000,0,1000)||nonePer1000+unlockPer1000>1000||
-    !validScratchCoinAmounts(coinAmounts)||!integer(maxPrizes,1,10)||
+    !validScratchCoinAmounts(coinAmounts)||!integer(maxPrizes,1,3)||
     !integer(extraCoinChance,0,100)||!integer(doubleChancePer1000,0,1000)||
     !integer(lightChancePer1000,0,1000)||!integer(lightMin,1,100)||
     !integer(lightMax,1,100)||lightMin>lightMax)
