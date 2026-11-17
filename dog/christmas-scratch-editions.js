@@ -41,6 +41,11 @@ export function validateEditionConfig(input){
   if(count>maxPrizesPerTicket&&value>0)throw Error('EDITION_QUOTA_ABOVE_MAX_'+count);
   quotas[count]=value;
  }
+ if(variantId==='premium_27'&&quotas[0]>0)throw Error('EDITION_PREMIUM_HAS_NO_DUDS');
+ if(variantId==='tic_tac_toe'&&Object.entries(quotas).some(([count,n])=>Number(count)>1&&n>0))
+  throw Error('EDITION_DUEL_ONE_WIN_MAX');
+ if(variantId==='dog_jackpot_9'&&Object.entries(quotas).some(([count,n])=>
+  Number(count)>0&&Number(count)!==8&&n>0))throw Error('EDITION_DOG_ONLY_EIGHT_OR_ZERO');
  if(Object.values(quotas).reduce((a,b)=>a+b,0)>SCRATCH_PRINT_SIZE)
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
@@ -168,13 +173,13 @@ function personalizeTemplate(template,rawWallet,tree,tier){
 export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date.now}={}){
  if(doc?.status!=='active'||!cleanInt(doc.issued,0,SCRATCH_PRINT_SIZE))
   throw Error('EDITION_INVALID_STATE');
- if(doc.issued===SCRATCH_PRINT_SIZE)throw Error('EDITION_SOLD_OUT');
  if(doc.variantId!==request.variantId||doc.tier!==request.tier)
   throw Error('EDITION_WRONG_VARIANT');
  const original=normalizedScratchWallet(rawWallet);
  const replay=original.recent.find(r=>r.commandId===request.commandId);
  if(replay)return {unchanged:true,doc,wallet:original,result:replay.result,
   status:dogScratchStatus(original,tree,now(),settings)};
+ if(doc.issued===SCRATCH_PRINT_SIZE)throw Error('EDITION_SOLD_OUT');
  const tickets=unpackEditionTickets(doc.packed);
  let chosenIndex=-1,template=null;
  for(let i=doc.issued;i<SCRATCH_PRINT_SIZE;i++){
