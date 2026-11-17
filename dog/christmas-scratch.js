@@ -888,7 +888,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
   generatePremium27(winnings,{draw:random,version:5,
-   forceFull27:printControl?.forceFull27===true}):
+   forceFull27:printControl?.forceFull27===true,
+   excludeFull27:printControl?.excludeFull27===true}):
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
    prizeSymbols:winnings.map(w=>w.symbol)}),winnings);
  if(!verifyScratchPrizes(board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
@@ -914,6 +915,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  }
  if(variantId==='premium_27'&&Number.isInteger(printControl?.forcedWins)){
   const expected=printControl.forcedWins;
+  bonusWinnings.length=Math.min(bonusWinnings.length,Math.max(0,expected-winnings.length));
   if(expected<winnings.length||expected>config.maxPrizes||expected>10)
    throw Error('SCRATCH_EDITION_PRIZE_COUNT_UNREACHABLE');
   while(winnings.length+bonusWinnings.length<expected){
