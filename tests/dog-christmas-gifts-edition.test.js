@@ -7,7 +7,7 @@ import {createGiftsEdition,giftsEditionPublic,issueGiftsEditionTicket,GIFTS_EDIT
 
 const base=()=>updateGiftScratchSettings(null,{
  price:200,nonePer1000:0,unlockPer1000:0,
- coinAmounts:[10,50,100],maxPrizes:4,extraCoinChance:20,
+ coinAmounts:[10,50,100],maxPrizes:3,extraCoinChance:20,
  doubleChancePer1000:1000,lightChancePer1000:1000,lightMin:2,lightMax:2
 });
 const dice=()=>{
