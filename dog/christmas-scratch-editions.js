@@ -58,7 +58,8 @@ export function validateEditionConfig(input){
   const value=input?.quotas?.[String(count)];
   if(value===null||value===undefined||value==='')continue;
   if(!cleanInt(value,0,500))throw Error('EDITION_INVALID_QUOTA_'+count);
-  if(count>maxPrizesPerTicket&&value>0)throw Error('EDITION_QUOTA_ABOVE_MAX_'+count);
+  if(count>maxPrizesPerTicket&&value>0&&!(variantId==='premium_27'&&premiumFull27Tickets>0&&count===10))
+   throw Error('EDITION_QUOTA_ABOVE_MAX_'+count);
   quotas[count]=value;
  }
  if(variantId==='premium_27'&&quotas[0]>0)throw Error('EDITION_PREMIUM_HAS_NO_DUDS');
