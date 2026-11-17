@@ -98,6 +98,8 @@ test('every card deal has 10–20 hidden random gift spaces and eight separate s
   assert.equal(new Set([...m.giftFields,...m.scratchFields]).size,m.giftFields.length+8);
   assert.ok([...m.giftFields,...m.scratchFields].every(i=>i>=0&&i<64&&i%16!==0));
   const publicData=publicDogChristmasMatch(m);
+  assert.deepEqual(publicData.visibleGiftFields,m.giftFields);
+  assert.deepEqual(publicData.visibleScratchFields,m.scratchFields);
   assert.ok(!Object.hasOwn(publicData,'giftFields'));
   assert.ok(!Object.hasOwn(publicData,'scratchFields'));
   assert.ok(!Object.hasOwn(publicData,'claimedFields'));
@@ -198,10 +200,17 @@ test('claimed gift and scratch cells are reset after the next card deal, not eve
  const after=field=>({pieces:[{id:1,place:'track',pos:field}]});
  assert.ok(claimDogChristmasGift(match,before(gift),after(gift),{type:'move',pieceId:1},0,()=>99)>0);
  assert.equal(claimDogChristmasScratch(match,before(scratch),after(scratch),{type:'move',pieceId:1},0,()=>20),'simple');
+ const afterClaim=publicDogChristmasMatch(match);
+ assert.ok(!afterClaim.visibleGiftFields.includes(gift),'collected light marker vanishes');
+ assert.ok(!afterClaim.visibleScratchFields.includes(scratch),'collected scratch marker vanishes');
+ assert.equal(afterClaim.visibleGiftFields.length,match.giftFields.length-1);
+ assert.equal(afterClaim.visibleScratchFields.length,match.scratchFields.length-1);
  assert.equal(match.roundGiftCollected,1);assert.equal(match.roundScratchCollected,1);
  assert.equal(refreshDogChristmasDeal(match,1,()=>0),false);
  assert.equal(match.roundGiftCollected,1);assert.equal(match.roundScratchCollected,1);
  assert.equal(refreshDogChristmasDeal(match,2,()=>0),true);
+ assert.deepEqual(publicDogChristmasMatch(match).visibleGiftFields,match.giftFields);
+ assert.deepEqual(publicDogChristmasMatch(match).visibleScratchFields,match.scratchFields);
  assert.equal(match.roundGiftCollected,0);assert.equal(match.roundScratchCollected,0);
  assert.equal(match.giftCount,1);assert.equal(match.scratchCount,1);
 });
