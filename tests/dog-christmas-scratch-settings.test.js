@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol} from '../dog/christmas-scratch-settings.js';
+import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol,updateGiftScratchSettings} from '../dog/christmas-scratch-settings.js';
 import {buyScratchTicket,grantDogScratchVoucher,normalizedScratchWallet,dogScratchStatus} from '../dog/christmas-scratch.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
 const draw=(roll)=>{let first=true;return max=>{if(first){first=false;return roll}return 0}};
@@ -327,4 +327,55 @@ test('earned DOG field tickets enter the personal voucher wallet, not the daily-
   {tier:'premium',voucher:true,variantId:'premium_27',commandId:'dog-hidden-voucher-02'}),/SCRATCH_NO_VOUCHER/);
  assert.throws(()=>grantDogScratchVoucher(null,'unexpected'),/SCRATCH_INVALID_TIER/);
  assert.deepEqual(normalizedScratchWallet({coins:5}).vouchers,{simple:0,medium:0,premium:0});
+});
+
+test('Geschenkelinie settings update only this variant and never changes other tickets',()=>{
+ const before=normalizeScratchSettings(null);
+ const input={price:250,nonePer1000:200,unlockPer1000:150,
+  coinAmounts:[17,77,777],maxPrizes:7,extraCoinChance:45,
+  doubleChancePer1000:230,lightChancePer1000:300,lightMin:2,lightMax:8};
+ const next=updateGiftScratchSettings(before,input);
+ assert.equal(next.variants.gifts.price,250);
+ assert.deepEqual(next.variants.gifts.weights,{none:200,coins:650,unlock:150});
+ assert.deepEqual(next.variants.gifts.coinAmounts,[17,77,777]);
+ assert.equal(next.variants.gifts.maxPrizes,7);
+ assert.equal(next.variants.gifts.doubleChancePer1000,230);
+ assert.equal(next.variants.gifts.lightChancePer1000,300);
+ assert.equal(next.variants.gifts.lightMax,8);
+ assert.deepEqual(next.variants.snow_collect,before.variants.snow_collect);
+ assert.deepEqual(next.variants.elf,before.variants.elf);
+ assert.deepEqual(next.variants.premium_27,before.variants.premium_27);
+ assert.equal(next.freeEnabled,before.freeEnabled);
+ assert.deepEqual(next.variants.gifts.moneySymbolWeights,[334,333,333]);
+ assert.deepEqual(next.variants.gifts.giftSymbolWeights,[200,200,200,200,200]);
+ assert.throws(()=>updateGiftScratchSettings(before,{...input,nonePer1000:900,unlockPer1000:200}),
+  /SCRATCH_GIFTS_SETTINGS_INVALID/);
+ assert.throws(()=>updateGiftScratchSettings(before,{...input,coinAmounts:[100,50,200]}),
+  /SCRATCH_GIFTS_SETTINGS_INVALID/);
+ assert.throws(()=>updateGiftScratchSettings(before,{...input,lightMin:9,lightMax:5}),
+  /SCRATCH_GIFTS_SETTINGS_INVALID/);
+});
+test('Geschenkelinie price, x2 and independent light credit are frozen per purchased ticket',()=>{
+ const cfg=updateGiftScratchSettings(null,{price:250,nonePer1000:0,unlockPer1000:0,
+  coinAmounts:[17,77,777],maxPrizes:3,extraCoinChance:0,
+  doubleChancePer1000:1000,lightChancePer1000:1000,lightMin:3,lightMax:3});
+ let seed=12345;
+ const seeded=max=>{
+  seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+  return Math.floor(seed/4294967296*max);
+ };
+ const request={tier:'simple',variantId:'gifts',commandId:'gifts-custom-settings-01'};
+ const paid=buyScratchTicket({coins:1000},null,request,{settings:cfg,draw:seeded});
+ assert.equal(paid.result.price,250);
+ assert.deepEqual(paid.result.coinAmounts,[17,77,777]);
+ assert.ok(paid.result.winnings.some(w=>w.type==='coins'));
+ assert.equal(paid.result.multiplier,2);
+ assert.equal(paid.result.totalLights,6);
+ assert.equal(paid.status.progress.lightsWon,6);
+ assert.equal(paid.wallet.coins,1000-250+paid.result.totalCoins);
+ const replay=buyScratchTicket(paid.wallet,null,request,{
+  settings:cfg,draw:()=>{throw Error('SAME_RECEIPT_MUST_NOT_REDRAW')}});
+ assert.equal(replay.unchanged,true);
+ assert.deepEqual(replay.result,paid.result);
+ assert.equal(replay.wallet.coins,paid.wallet.coins);
 });
