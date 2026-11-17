@@ -660,7 +660,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
 export const DOG_SCRATCH_BONUS_ODDS=Object.freeze({
  doubleMainPer1000:1,mainMultiplierPer1000:1,multiplierPer1000:110
 });
-export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null,printControl=null}={}){
+export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,settings=null,editionSpecial=null,printControl=null,editionPrice=null}={}){
  const liveSettings=normalizeScratchSettings(settings);
  const tier=request?.tier;
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
@@ -680,7 +680,11 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const today=dogScratchToday(now());
  if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
  const ticketPrice=request?.variantId==='number_one_20'?liveSettings.numberOne20.price:DOG_SCRATCH_TIERS[tier].price;
- const price=free||voucher?0:ticketPrice;
+ // Edition price is trusted only as a server-side argument. Client-supplied
+ // request fields never override the public shop price.
+ if(editionPrice!==null&&(!Number.isSafeInteger(editionPrice)||editionPrice<0||editionPrice>1000000))
+  throw Error('SCRATCH_EDITION_PRICE_INVALID');
+ const price=free||voucher?0:(editionPrice===null?ticketPrice:editionPrice);
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
  const random=max=>{
   const value=draw(max);
