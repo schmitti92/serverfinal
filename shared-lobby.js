@@ -17,7 +17,7 @@ import {dogPlayerLevelStatus} from './dog/player-levels.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
-import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket} from './dog/christmas-scratch-editions.js';
+import {SCRATCH_EDITION_COLLECTION,SCRATCH_EDITION_POINTERS,SCRATCH_EDITION_VARIANTS,planScratchEdition,newEditionDocument,editionPublic,issueEditionTicket,scratchEditionCatalog} from './dog/christmas-scratch-editions.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings} from './dog/christmas-scratch-settings.js';
 
@@ -835,15 +835,18 @@ function finishEisstock(ch,members){
   app.get('/api/hub/scratch/editions',authentication,handler(async req=>{
     const store=db();
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const pointers=await Promise.all(SCRATCH_EDITION_VARIANTS.map(id=>
-      store.collection(SCRATCH_EDITION_POINTERS).doc(id).get()));
+    const [pointers,settingsSnap]=await Promise.all([
+      Promise.all(SCRATCH_EDITION_VARIANTS.map(id=>
+        store.collection(SCRATCH_EDITION_POINTERS).doc(id).get())),
+      store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get()
+    ]);
     const editions=await Promise.all(pointers.map(async(snap,i)=>{
       const id=snap.exists?snap.data()?.editionId:null;
       if(!id)return {variantId:SCRATCH_EDITION_VARIANTS[i],active:null};
       const doc=await store.collection(SCRATCH_EDITION_COLLECTION).doc(id).get();
       return {variantId:SCRATCH_EDITION_VARIANTS[i],active:doc.exists?editionPublic(doc.data()):null};
     }));
-    return {editions,canManage:true,printSize:500};
+    return {editions,catalog:scratchEditionCatalog(settingsSnap.exists?settingsSnap.data():null),canManage:true,printSize:500};
   }));
   app.get('/api/hub/scratch/editions/history/:variantId',authentication,handler(async req=>{
     const variantId=req.params.variantId;
