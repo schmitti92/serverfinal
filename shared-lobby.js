@@ -848,7 +848,7 @@ function finishEisstock(ch,members){
       const doc=await store.collection(SCRATCH_EDITION_COLLECTION).doc(id).get();
       return {variantId:SCRATCH_EDITION_VARIANTS[i],active:doc.exists?editionPublic(doc.data()):null};
     }));
-    return {editions,catalog:scratchEditionCatalog(settingsSnap.exists?settingsSnap.data():null),canManage:true,printSize:500};
+    return {editions,catalog:scratchEditionCatalog(settingsSnap.exists?settingsSnap.data():null),canManage:true,printSize:500,maxPrintSize:500};
   }));
   app.get('/api/hub/scratch/editions/history/:variantId',authentication,handler(async req=>{
     const variantId=req.params.variantId;
@@ -887,11 +887,11 @@ function finishEisstock(ch,members){
     const draft=snap.exists?snap.data():null;
     if(!draft||draft.createdBy!==req.hubIdentity.uid||draft.expiresAt<clock())
       throw error(404,'EDITION_PREVIEW_EXPIRED');
-    const printed=unpackEditionTickets(draft.planned.packed);
+    const printed=unpackEditionTickets(draft.planned.packed,draft.planned.config?.printSize??500);
     // Draw unlabelled samples using server-only random indices. Deliberately
     // avoid a public deterministic mapping between examples and sale positions.
     const sampled=new Set();
-    while(sampled.size<8)sampled.add(randomInt(printed.length));
+    while(sampled.size<Math.min(8,printed.length))sampled.add(randomInt(printed.length));
     const tickets=[...sampled].map(index=>printed[index]);
     return {previewId,count:tickets.length,tickets:tickets.map(ticket=>({
       board:ticket.board,winnings:ticket.winnings,totalCoins:ticket.totalCoins||0,
@@ -925,7 +925,8 @@ function finishEisstock(ch,members){
       const id=prior.exists?prior.data()?.editionId:null;
       if(id){
         const old=await tx.get(store.collection(SCRATCH_EDITION_COLLECTION).doc(id));
-        if(old.exists&&old.data()?.status==='active'&&old.data()?.issued<500)
+        if(old.exists&&old.data()?.status==='active'&&
+          old.data()?.issued<(old.data()?.config?.printSize??500))
           throw error(409,'EDITION_STILL_ACTIVE');
       }
       tx.set(ref,edition);
@@ -1013,7 +1014,8 @@ function finishEisstock(ch,members){
       }
       return {result:result.result,replayed:result.unchanged,
         scratch:{...result.status,discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)},
-        edition:{id:edition.id,remaining:500-(result.doc?.issued??edition.issued)},
+        edition:{id:edition.id,remaining:(edition.config?.printSize??500)-
+          (result.doc?.issued??edition.issued)},
         ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
     return award;
