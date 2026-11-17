@@ -34,6 +34,8 @@ export function validateEditionConfig(input){
   null:Number(input.targetTotalCoins);
  const targetTolerancePercent=input.targetTolerancePercent===undefined?5:Number(input.targetTolerancePercent);
  const premiumFull27Tickets=input.premiumFull27Tickets===undefined?0:Number(input.premiumFull27Tickets);
+ const volatility=input.volatility===undefined?70:Number(input.volatility);
+ if(!cleanInt(volatility,0,100))throw Error('EDITION_VOLATILITY_INVALID');
  if(targetTotalCoins!==null&&(!cleanInt(targetTotalCoins,0,1000000000000)||
    targetTotalCoins>maxTotalCoins||
    targetTotalCoins>maxPerTicketCoins*SCRATCH_PRINT_SIZE))
@@ -75,7 +77,7 @@ export function validateEditionConfig(input){
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
-  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,
+  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
@@ -127,6 +129,21 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  // tickets; shuffle only at the end so the order cannot influence odds.
  requested.sort((a,b)=>Number(b.full27)-Number(a.full27)||
   (b.wins==='any'?-1:b.wins)-(a.wins==='any'?-1:a.wins));
+ // Each free ticket receives a stable budget weight. The weights jointly
+ // sum to the payout target; very small weights create legitimate duds,
+ // high weights create rare ten-prize jackpots. Each follows the same
+ // immutable original ticket rules and every real payout is checked.
+ const variation=config.volatility/100;
+ const payoutWeights=requested.map(rule=>{
+  if(rule.wins!=='any')return 1;
+  const dice=draw(1000);
+  const band=dice<80?0.02:dice>=940?2.8+draw(2200)/1000:
+   0.35+draw(1550)/1000;
+  return (1-variation)+variation*band;
+ });
+ const suffixWeights=Array(requested.length+1).fill(0);
+ for(let i=requested.length-1;i>=0;i--)
+  suffixWeights[i]=suffixWeights[i+1]+payoutWeights[i];
  const tickets=[],byWins=Array(21).fill(0);
  let totalCoins=0,unlocks=0,biggest=0,winners=0,full27Count=0;
  const target=config.targetTotalCoins;
@@ -157,7 +174,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  for(const [slot,rule] of requested.entries()){
   const remaining=SCRATCH_PRINT_SIZE-slot;
   const unspent=target===null?null:target-totalCoins;
-  const pace=target===null?null:Math.max(0,unspent/remaining);
+  const pace=target===null?null:Math.max(0,unspent*payoutWeights[slot]/Math.max(0.00001,suffixWeights[slot]));
   let best=null,score=Infinity;
   // A fixed quota is EXACT. Flexible slots sample multiple legal tickets and
   // choose one that keeps the remaining 500-ticket budget on course.
