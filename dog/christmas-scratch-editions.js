@@ -11,6 +11,7 @@ import {
  DOG_SCRATCH_BASIC_EMOJIS,DOG_SCRATCH_BLOCK_COLORS,DOG_SCRATCH_TIERS
 } from './christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER,SCRATCH_GRID_VARIANTS} from './christmas-scratch-grid.js';
+import {SCRATCH_GIFT_SYMBOLS,SCRATCH_PAYOUT_ORDER} from './christmas-scratch-symbols.js';
 import {normalizeScratchSettings,validateScratchSettings} from './christmas-scratch-settings.js';
 import {validateTicDuelEditionSettings} from './christmas-tictactoe-duel.js';
 import {validateDogJackpotEditionSettings} from './christmas-special-scratch.js';
@@ -61,7 +62,9 @@ export function scratchEditionCatalog(settings=null){
   const rule=SCRATCH_EDITION_RULES[variantId],tier=ticketTier(variantId);
   const activeSettings=normalized.variants?.[variantId]||
    (variantId==='number_one_20'?normalized.numberOne20:null);
-  return {variantId,tier,...rule,boardRows:SCRATCH_GRID_VARIANTS[variantId]?.rows??null,
+  return {variantId,tier,...rule,jackpotSymbols:[...SCRATCH_GIFT_SYMBOLS],
+   payoutSymbols:[...SCRATCH_PAYOUT_ORDER.slice(0,3),'⭐',...SCRATCH_GIFT_SYMBOLS],
+   boardRows:SCRATCH_GRID_VARIANTS[variantId]?.rows??null,
    boardCols:SCRATCH_GRID_VARIANTS[variantId]?.cols??null,
    standardPrice:variantId==='number_one_20'?normalized.numberOne20.price:DOG_SCRATCH_TIERS[tier].price,
    configuredMaxPrizes:normalized.variants?.[variantId]?.maxPrizes??rule.maxWins,
