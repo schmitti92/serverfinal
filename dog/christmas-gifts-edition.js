@@ -63,7 +63,11 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
  if(issued>=GIFTS_EDITION_SIZE)throw Error('SCRATCH_GIFTS_EDITION_SOLD_OUT');
  const left=maxCoins-paid;
  let purchase=null;
- const maxAttempts=24;
+ // When even the smallest money prize cannot fit, make one ordinary draw
+ // (to preserve the chance of a free design), then use the safe zero-coin card.
+ // Never regenerate 500 cards in a single user request.
+ const minCoin=rawEdition.config?.coinAmounts?.[0]??1;
+ const maxAttempts=left<minCoin?1:12;
  for(let i=0;i<maxAttempts;i++){
   const attempt=buyScratchTicket(wallet,tree,request,{...options,settings});
   if(attempt.result.totalCoins<=left){purchase=attempt;break}
