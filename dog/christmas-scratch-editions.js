@@ -8,9 +8,9 @@ import {randomInt,randomUUID} from 'node:crypto';
 import {
  buyScratchTicket,normalizedScratchWallet,dogScratchStatus,addScratchProgress,
  DOG_SCRATCH_PREMIUM_POOL,DOG_SCRATCH_MEDIUM_POOL,
- DOG_SCRATCH_BASIC_EMOJIS,DOG_SCRATCH_BLOCK_COLORS
+ DOG_SCRATCH_BASIC_EMOJIS,DOG_SCRATCH_BLOCK_COLORS,DOG_SCRATCH_TIERS
 } from './christmas-scratch.js';
-import {SCRATCH_VARIANT_IDS_BY_TIER} from './christmas-scratch-grid.js';
+import {SCRATCH_VARIANT_IDS_BY_TIER,SCRATCH_GRID_VARIANTS} from './christmas-scratch-grid.js';
 import {normalizeScratchSettings,validateScratchSettings} from './christmas-scratch-settings.js';
 import {validateTicDuelEditionSettings} from './christmas-tictactoe-duel.js';
 import {validateDogJackpotEditionSettings} from './christmas-special-scratch.js';
@@ -30,6 +30,10 @@ export function validateEditionConfig(input){
  const maxPerTicketCoins=Number(input.maxPerTicketCoins);
  const maxPrizesPerTicket=Number(input.maxPrizesPerTicket);
  const maxUnlocks=Number(input.maxUnlocks);
+ const ticketPrice=input.ticketPrice===undefined?
+  (variantId==='number_one_20'?500:DOG_SCRATCH_TIERS[ticketTier(variantId)].price):
+  Number(input.ticketPrice);
+ if(!cleanInt(ticketPrice,0,1000000))throw Error('EDITION_TICKET_PRICE_INVALID');
  const targetTotalCoins=input.targetTotalCoins===null||input.targetTotalCoins===undefined||input.targetTotalCoins===''?
   null:Number(input.targetTotalCoins);
  const targetTolerancePercent=input.targetTolerancePercent===undefined?5:Number(input.targetTolerancePercent);
@@ -77,7 +81,7 @@ export function validateEditionConfig(input){
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
-  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,
+  targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
@@ -109,9 +113,12 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   else if(config.variantId==='dog_jackpot_9')
    editionSpecial={dogJackpot:validateDogJackpotEditionSettings(config.gameSettings)};
  }
- // Ten individually verified prizes require enough BONUS slots.
- if(config.variantId==='premium_27'&&config.maxPrizesPerTicket>=10)
-  snapshot.variants.premium_27.maxPrizes=Math.max(10,snapshot.variants.premium_27.maxPrizes);
+ // Use the print-run prize cap for EVERY classical card. Up to three
+ // base matches (four premium money rows) stay visible; additional awards
+ // each reference an already verified match on the original grid.
+ if(['gifts','snow_collect','elf','premium_27'].includes(config.variantId))
+  snapshot.variants[config.variantId].maxPrizes=Math.max(
+   snapshot.variants[config.variantId].maxPrizes,Math.min(10,config.maxPrizesPerTicket));
  const runSettings=validateScratchSettings(snapshot);
  const requested=[],reserved=new Set();
  let fullLeft=config.premiumFull27Tickets;
@@ -169,7 +176,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   return buyScratchTicket({coins:1000000000},null,{
    tier:config.tier,variantId:config.variantId,
    commandId:'ed_sample_'+slot+'_'+attempt
-  },{settings:runSettings,editionSpecial,printControl,draw,now:()=>1700000000000}).result;
+  },{settings:runSettings,editionSpecial,printControl,editionPrice:config.ticketPrice,draw,now:()=>1700000000000}).result;
  };
  for(const [slot,rule] of requested.entries()){
   const remaining=SCRATCH_PRINT_SIZE-slot;
@@ -232,8 +239,12 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
  for(let i=tickets.length-1;i>0;i--){
   const j=draw(i+1);[tickets[i],tickets[j]]=[tickets[j],tickets[i]];
  }
+ const grossRevenue=config.ticketPrice*SCRATCH_PRINT_SIZE;
  const summary={tickets:SCRATCH_PRINT_SIZE,winners,duds:SCRATCH_PRINT_SIZE-winners,
   totalCoins,unlocks,biggestTicketCoins:biggest,byWins,premiumFull27Tickets:full27Count,
+  ticketPrice:config.ticketPrice,projectedGrossRevenue:grossRevenue,
+  projectedNetCoins:grossRevenue-totalCoins,
+  payoutRatioPercent:grossRevenue>0?Math.round(totalCoins/grossRevenue*10000)/100:null,
   targetTotalCoins:target,deltaToTarget:target===null?null:totalCoins-target,
   targetDifferencePercent:target>0?Math.round(Math.abs(totalCoins-target)/target*10000)/100:0,
   expectedAverageCoins:Math.round(totalCoins/SCRATCH_PRINT_SIZE),
@@ -312,7 +323,8 @@ export function issueEditionTicket(doc,rawWallet,tree,request,{settings,now=Date
  // This calls the existing wallet engine to enforce exact payment, the free
  // daily limit, voucher redemption, and receipt idempotency.
  const purchase=buyScratchTicket(rawWallet,tree,request,
-  {settings:doc.settingsSnapshot??settings,editionSpecial:doc.specialSnapshot??null,now});
+  {settings:doc.settingsSnapshot??settings,editionSpecial:doc.specialSnapshot??null,
+   editionPrice:doc.config?.ticketPrice??null,now});
  if(purchase.unchanged)return {unchanged:true,doc,wallet:purchase.wallet,
   result:purchase.result,status:purchase.status};
  const wallet=purchase.wallet,result=template;
