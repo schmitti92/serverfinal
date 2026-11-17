@@ -389,3 +389,21 @@ test('a ×2 star ticket doubles the lights credited to the shared village and ke
   results.reduce((sum,card)=>sum+(card.totalLights||0),0));
  assert.ok(plan.summary.totalLights<=5000);
 });
+
+test('five specifically reserved eight-win Lucky Number cards are guaranteed in a 500-card print run',()=>{
+ const plan=planScratchEdition({
+  variantId:'number_one_20',title:'Genau fünf Lose mit acht Gewinnen',
+  maxTotalCoins:100000000,maxPerTicketCoins:1000000,
+  maxPrizesPerTicket:20,maxUnlocks:0,quotas:{8:5},
+  gameSettings:{...settings.numberOne20,hitPer1000:100,
+   coinAmounts:[10,20,30],symbolWeights:[1000,0,0,0]}
+ },settings);
+ const tickets=unpackEditionTickets(plan.packed);
+ assert.equal(tickets.length,500);
+ assert.equal(plan.summary.byWins[8],5,'exactly 5 printed cards have 8 individual payouts');
+ assert.equal(tickets.filter(card=>card.winnings.length===8).length,5);
+ for(const card of tickets){
+  assert.equal(verifyScratchPrizes(card.board),true);
+  if(card.winnings.length===8)assert.equal(card.board.hitPer1000,400);
+ }
+});
