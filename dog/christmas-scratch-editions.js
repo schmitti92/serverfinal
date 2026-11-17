@@ -152,7 +152,7 @@ export function validateEditionConfig(input){
   if(!cleanInt(value,0,500))throw Error('EDITION_INVALID_QUOTA_'+count);
   if(count>maxPrizesPerTicket&&value>0&&!(variantId==='premium_27'&&premiumFull27Tickets>0&&count===10))
    throw Error('EDITION_QUOTA_ABOVE_MAX_'+count);
-  quotas[count]=value;
+  if(value>0)quotas[count]=value;
  }
  if(variantId==='premium_27'&&quotas[0]>0)throw Error('EDITION_PREMIUM_HAS_NO_DUDS');
  if(premiumFull27Tickets&&(maxPrizesPerTicket<10||maxUnlocks<premiumFull27Tickets||
@@ -163,12 +163,47 @@ export function validateEditionConfig(input){
   throw Error('EDITION_DUEL_ONE_WIN_MAX');
  if(variantId==='dog_jackpot_9'&&Object.entries(quotas).some(([count,n])=>
   Number(count)>0&&Number(count)!==8&&n>0))throw Error('EDITION_DOG_ONLY_EIGHT_OR_ZERO');
+ const validCounts=variantId==='tic_tac_toe'?[0,1]:variantId==='dog_jackpot_9'?[0,8]:
+  variantId==='premium_27'?[4,5,6,7,8,9,10]:
+  Array.from({length:variantId==='number_one_20'?21:11},(_,i)=>i);
+ for(const count of Object.keys(quotas))if(!validCounts.includes(Number(count)))
+  throw Error('EDITION_UNSUPPORTED_WIN_COUNT_'+count);
+ if(variantId==='premium_27'&&maxPrizesPerTicket<4)
+  throw Error('EDITION_MINIMUM_FOUR_PREMIUM_WINS');
  if(Object.values(quotas).reduce((a,b)=>a+b,0)>SCRATCH_PRINT_SIZE)
   throw Error('EDITION_QUOTAS_OVER_500');
  return {variantId,tier:ticketTier(variantId),title,printSize:SCRATCH_PRINT_SIZE,
   maxTotalCoins,maxPerTicketCoins,maxPrizesPerTicket,maxUnlocks,quotas,
   targetTotalCoins,targetTolerancePercent,premiumFull27Tickets,volatility,ticketPrice,symbolBudgets,doubleWin,
   gameSettings:gameSettings===null?null:structuredClone(gameSettings)};
+}
+/** Conservative mathematical lower bound: stochastic exhaustion is not proof. */
+export function editionMinimumBudget(input,settings=null){
+ const config=validateEditionConfig(input);
+ const normalized=normalizeScratchSettings(settings);
+ const amounts=['gifts','snow_collect','elf','premium_27'].includes(config.variantId)?
+  (config.gameSettings?.coinAmounts??normalized.variants[config.variantId].coinAmounts):
+  config.variantId==='number_one_20'?(config.gameSettings?.coinAmounts??normalized.numberOne20.coinAmounts):
+  (config.gameSettings?.coinAmounts??(config.variantId==='tic_tac_toe'?[200,450,800]:[100,300,800]));
+ const coinFloor=Math.min(...['coin','note','case'].map((id,i)=>
+  config.symbolBudgets[id]?.min??amounts[i]));
+ const baseWins=config.variantId==='premium_27'?4:0;
+ const star=config.symbolBudgets.lights;
+ const canHaveStar=Boolean(star&&star.chancePer1000>0&&star.maxTotal>=star.min);
+ let mandatoryCoinWins=SCRATCH_PRINT_SIZE*baseWins,optionalCoinWins=0;
+ let singleTicketMinimum=baseWins*coinFloor;
+ for(const [key,count] of Object.entries(config.quotas)){
+  const wins=Number(key),freeStar=canHaveStar&&wins>baseWins?1:0;
+  const unavoidable=Math.max(baseWins,wins-freeStar);
+  optionalCoinWins+=Math.max(0,unavoidable-baseWins)*count;
+  singleTicketMinimum=Math.max(singleTicketMinimum,
+   Math.max(baseWins,unavoidable-config.maxUnlocks)*coinFloor);
+ }
+ mandatoryCoinWins+=Math.max(0,optionalCoinWins-config.maxUnlocks);
+ const minimumCoins=mandatoryCoinWins*coinFloor;
+ return {minimumCoins,minimumPerTicketCoins:singleTicketMinimum,coinFloor,
+  availableCoins:config.maxTotalCoins,availablePerTicketCoins:config.maxPerTicketCoins,
+  fixedTickets:Object.values(config.quotas).reduce((sum,n)=>sum+n,0)};
 }
 const prizeCount=result=>Array.isArray(result.winnings)?result.winnings.length:0;
 const unlockCount=result=>Array.isArray(result.winnings)?
@@ -188,6 +223,11 @@ export function unpackEditionTickets(packed){
 export function planScratchEdition(input,settings,{draw=randomInt}={}){
  const config=validateEditionConfig(input);
  const snapshot=normalizeScratchSettings(settings);
+ const floor=editionMinimumBudget(config,snapshot);
+ if(floor.minimumCoins>config.maxTotalCoins)
+  throw Error('EDITION_BUDGET_MIN_REQUIRED_'+floor.minimumCoins+'_AVAILABLE_'+config.maxTotalCoins);
+ if(floor.minimumPerTicketCoins>config.maxPerTicketCoins)
+  throw Error('EDITION_TICKET_MIN_REQUIRED_'+floor.minimumPerTicketCoins+'_AVAILABLE_'+config.maxPerTicketCoins);
  let editionSpecial=null;
  if(config.gameSettings){
   if(['gifts','snow_collect','elf','premium_27'].includes(config.variantId))
@@ -266,6 +306,11 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    });
    if(picked[0]<picked[1]&&picked[1]<picked[2])return picked;
   }
+  // Deterministic fallback for narrow but legal winning ranges.
+  const values=cats.map((id,i)=>config.symbolBudgets[id]?.min??amounts[i]);
+  const upper=cats.map((id,i)=>config.symbolBudgets[id]?.max??amounts[i]);
+  for(let i=1;i<values.length;i++)values[i]=Math.max(values[i],values[i-1]+1);
+  if(values.every((n,i)=>n<=upper[i]))return values;
   throw Error('EDITION_SYMBOL_RANGES_OVERLAP');
  };
  const sampleTicket=(slot,attempt,forced,full27,applyDouble)=>{
@@ -303,7 +348,8 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
     forcePremiumUnlock:full27,
     forceNoPremiumMilestone:forced===4&&!full27
    }:{})
-  }:null;
+  }:(['number_one_20','dog_jackpot_9'].includes(config.variantId)&&Number.isInteger(forced)?
+   {forcedWins:forced}:null);
   const sample=buyScratchTicket({coins:1000000000},null,{
    tier:config.tier,variantId:config.variantId,
    commandId:'ed_sample_'+slot+'_'+attempt
@@ -363,7 +409,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
   // Fixed winner-count quotas are strict, but a failed random candidate is
   // not evidence that the requested card is impossible. Search further only
   // when the ordinary attempts cannot find an eligible ticket.
-  const rescueTries=rule.wins!=='any'&&target!==null?90:0;
+  const rescueTries=rule.wins!=='any'?(isClassic?360:120):0;
   for(let attempt=0;attempt<tries+rescueTries;attempt++){
    if(attempt===tries&&best)break;
    let forced=rule.wins==='any'?null:rule.wins;
@@ -422,7 +468,7 @@ export function planScratchEdition(input,settings,{draw=randomInt}={}){
    if(objective<score){score=objective;best=sample}
    if(score<Math.max(1,pace)*0.05)break;
   }
-  if(!best)throw Error('EDITION_DISTRIBUTION_IMPOSSIBLE_SLOT_'+(slot+1)+
+  if(!best)throw Error('EDITION_GENERATION_EXHAUSTED_SLOT_'+(slot+1)+
    '_WINS_'+rule.wins+'_BUDGET_'+(config.maxTotalCoins-totalCoins));
   const accepted=removeReceiptFields(best),count=prizeCount(accepted);
   byWins[count]++;totalCoins+=accepted.totalCoins||0;
