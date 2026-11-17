@@ -162,15 +162,16 @@ test('only one authoritative scratch API is installed (no legacy shadow routes)'
  assert.match(purchase,/treeSnap\.exists\?treeSnap\.data\(\):null/);
  assert.match(purchase,/if\(!christmasActive\(\)\)throw error\(409,'DOG_CHRISTMAS_EVENT_ENDED'\)/);
 });
-test('server scratch actions require auth and commit exactly one account document',()=>{
+test('server scratch actions require auth and credit the personal wallet plus optional shared lights atomically',()=>{
  const main=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
  assert.match(main,/app\.get\('\/api\/hub\/scratch',authentication/);
  assert.match(main,/app\.post\('\/api\/hub\/scratch\/buy',authentication/);
  assert.match(main,/if\(!christmasActive\(\)\)/);
  assert.match(main,/store\.runTransaction\(async tx=>/);
- assert.match(main,/if\(!result\.unchanged\)tx\.set\(accountRef,result\.wallet\)/);
+ assert.match(main,/if\(!result\.unchanged\)\{\s*tx\.set\(accountRef,result\.wallet\)/);
+ assert.match(main,/creditDogVillage\(villageSnap\.exists\?villageSnap\.data\(\):null/);
  const start=main.indexOf("app.get('/api/hub/scratch',authentication");
- const end=main.indexOf("app.post('/api/hub/scratch/buy',authentication",start);
+ const end=main.indexOf("app.post('/api/hub/scratch/settings',authentication",start);
  assert.doesNotMatch(main.slice(start,end),/tx\.set\(|runTransaction\(/);
 });
 
