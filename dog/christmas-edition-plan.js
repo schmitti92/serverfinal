@@ -33,32 +33,51 @@ export function createFixedEditionPlan(budget,config,count=500,draw=randomInt){
  if(budget===0)return Array.from({length:count},()=>[]);
  if(config?.weights?.coins===0)
   throw Error('SCRATCH_EDITION_FIXED_BUDGET_UNREACHABLE');
- // Each ticket can contain only one visible triple per coin symbol. A coin
- // symbol's x2 seal doubles the corresponding true visible money prize.
- const perTicketMax=[...amounts].reverse().slice(0,cap).reduce((x,y)=>x+y,0)*2;
+ // One real winning triple per coin symbol per ticket. x2 is a visual
+ // seal on that SAME triple, so it permits two units of the symbol's prize.
+ const [a,b,c]=amounts;
+ const p=Math.min(1000,Math.max(0,config.doubleChancePer1000??0));
+ const allowDouble=p>0;
+ const maxUnits=count*(allowDouble?2:1);
+ const perTicketMax=[...amounts].reverse().slice(0,cap)
+  .reduce((sum,value)=>sum+value,0)*(allowDouble?2:1);
  if(budget>perTicketMax*count)
   throw Error('SCRATCH_EDITION_FIXED_BUDGET_UNREACHABLE');
- const [a,b,c]=amounts;
- let best=null;
  const desired=Math.round(count*(config?.weights?.coins??689)/1000);
- // Solve an exact three-denomination combination. Start with basic triples;
- // converting pairs of identical wins into x2 changes no total payout.
- for(let z=Math.min(count,Math.floor(budget/c));z>=0;z--){
-  const left=budget-z*c;
-  for(let y=Math.min(count,Math.floor(left/b));y>=0;y--){
-   const remainder=left-y*b;
-   if(remainder%a)continue;
-   const x=remainder/a;
-   if(x>count)continue;
-   const units=x+y+z;
-   if(units>count*cap)continue;
-   // Each ticket may show one triple for each symbol, and no more than cap.
-   const required=Math.max(x,y,z,Math.ceil(units/cap));
-   if(required>count)continue;
-   const seats=Math.max(required,Math.min(count,desired));
-   const score=(seats-desired)*100000+Math.abs(units-seats*1.7)*10+
-    Math.abs(x-y)+Math.abs(y-z);
-   if(!best||score<best.score)best={counts:[x,y,z],seats,score};
+ let best=null;
+ // Solve exact integer denominations (max 1 million candidates, bounded by
+ // the 500-ticket run), including denominations that MUST be x2 to fit.
+ for(let z=Math.min(maxUnits,Math.floor(budget/c));z>=0;z--){
+  const rest=budget-z*c;
+  for(let y=Math.min(maxUnits,Math.floor(rest/b));y>=0;y--){
+   const rem=rest-y*b;
+   if(rem%a)continue;
+   const x=rem/a;
+   if(x>maxUnits)continue;
+   const units=[x,y,z];
+   const doubleLimits=units.map(u=>allowDouble?Math.floor(u/2):0);
+   const doubles=units.map((u,i)=>Math.max(allowDouble?Math.max(0,u-count):0,
+    Math.min(doubleLimits[i],Math.round(u*p/(1000+p)))));
+   const codeCount=()=>units.map((u,i)=>u-doubles[i]);
+   let codes=codeCount(),slotsNeeded=codes.reduce((sum,n)=>sum+n,0);
+   // If required, add genuine visible x2 seals until all coin symbols fit
+   // into no more than 500 cards with the user's prize-cap.
+   while(slotsNeeded>count*cap){
+    const candidates=[0,1,2].filter(i=>doubles[i]<doubleLimits[i]);
+    if(!candidates.length)break;
+    const chosen=candidates.sort((i,j)=>codes[j]-codes[i])[0];
+    doubles[chosen]++;
+    codes[chosen]--;
+    slotsNeeded--;
+   }
+   const required=Math.max(...codes,Math.ceil(slotsNeeded/cap));
+   if(required>count||slotsNeeded>count*cap)continue;
+   const seats=Math.max(required,Math.min(count,desired,slotsNeeded));
+   const deviation=doubles.reduce((sum,d,i)=>
+    sum+Math.abs(d*(1000+p)-units[i]*p),0);
+   const score=Math.abs(seats-desired)*1000000+
+    deviation*10+Math.abs(x-y)+Math.abs(y-z);
+   if(!best||score<best.score)best={counts:units,doubles,seats,score};
   }
  }
  if(!best)throw Error('SCRATCH_EDITION_FIXED_BUDGET_UNREACHABLE');
@@ -70,11 +89,9 @@ export function createFixedEditionPlan(budget,config,count=500,draw=randomInt){
   [slots[i],slots[j]]=[slots[j],slots[i]];
  }
  const candidates=slots.slice(0,best.seats);
- const doublePermille=Math.min(1000,Math.max(0,config.doubleChancePer1000??0));
  for(let symbol=0;symbol<3;symbol++){
   const units=best.counts[symbol];
-  const doubles=Math.min(Math.floor(units/2),
-   Math.round(units*doublePermille/(1000+doublePermille)));
+  const doubles=best.doubles[symbol];
   const codes=[...Array(units-2*doubles).fill(symbol),
    ...Array(doubles).fill(symbol+3)];
   // A randomized tie break spreads wins while respecting card capacities.
@@ -88,9 +105,31 @@ export function createFixedEditionPlan(budget,config,count=500,draw=randomInt){
   throw Error('SCRATCH_EDITION_FIXED_BUDGET_UNREACHABLE');
  return plan;
 }
+// Firestore prohibits nested arrays. Store each card's plan as a 0–3 character
+// string of valid money codes; the array itself is a flat array of 500 strings.
+export function encodeFixedEditionPlan(plan){
+ if(!Array.isArray(plan))throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
+ return plan.map(rows=>{
+  if(!Array.isArray(rows)||rows.length>3||
+     rows.some(code=>!Number.isInteger(code)||code<0||code>5)||
+     new Set(rows.map(code=>code%3)).size!==rows.length)
+   throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
+  return rows.join('');
+ });
+}
+export function decodeFixedEditionRows(value){
+ if(typeof value!=='string'||! /^[0-5]{0,3}$/.test(value))
+  throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
+ const codes=value.split('').map(Number);
+ if(new Set(codes.map(v=>v%3)).size!==codes.length)
+  throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
+ return codes;
+}
 export function remainingFixedEditionPlan(raw){
  return Array.isArray(raw?.prizePlan)&&raw.prizePlan.length===500&&
-   raw.prizePlan.every(rows=>Array.isArray(rows)&&rows.every(code=>Number.isInteger(code)&&code>=0&&code<=5));
+   raw.prizePlan.every(value=>{
+    try{decodeFixedEditionRows(value);return true}catch{return false}
+   });
 }
 export function editFixedEdition(raw,{settings,maxTotalCoins,now=Date.now()}){
  if(!raw||raw.variantId!=='gifts'&&raw.variantId!=='snow_collect')
@@ -106,8 +145,9 @@ export function editFixedEdition(raw,{settings,maxTotalCoins,now=Date.now()}){
  const config=settings.variants[raw.variantId];
  const plan=createFixedEditionPlan(maxTotalCoins-paid,config,remaining);
  const prefix=remainingFixedEditionPlan(raw)?raw.prizePlan.slice(0,issued):
-  Array.from({length:issued},()=>[]);
- return {...raw,config,maxTotalCoins,prizePlan:[...prefix,...plan],
+  Array.from({length:issued},()=>'');
+ return {...raw,config,maxTotalCoins,
+  prizePlan:[...prefix,...encodeFixedEditionPlan(plan)],
   budgetMode:'fixed',revision:(Number.isInteger(raw.revision)?raw.revision:0)+1,
   updatedAt:now};
 }
