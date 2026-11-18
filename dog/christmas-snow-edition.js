@@ -6,6 +6,7 @@
  */
 import {buyScratchTicket} from './christmas-scratch.js';
 import {normalizeScratchSettings} from './christmas-scratch-settings.js';
+import {createFixedEditionPlan,remainingFixedEditionPlan} from './christmas-edition-plan.js';
 
 export const SNOW_EDITION_COLLECTION='dog_christmas_snow_editions_v1';
 export const SNOW_EDITION_CURRENT='current';
@@ -21,7 +22,9 @@ export function createSnowEdition({id,createdAt,createdBy,maxTotalCoins,settings
   throw Error('SCRATCH_SNOW_EDITION_INVALID_BUDGET');
  const snow_collect=normalizeScratchSettings(settings).variants.snow_collect;
  return {id,createdAt,createdBy,variantId:'snow_collect',size:SNOW_EDITION_SIZE,
-  issued:0,maxTotalCoins,paidCoins:0,config:snow_collect};
+  issued:0,maxTotalCoins,paidCoins:0,config:snow_collect,
+  budgetMode:'fixed',revision:1,
+  prizePlan:createFixedEditionPlan(maxTotalCoins,snow_collect,SNOW_EDITION_SIZE)};
 }
 
 export function snowEditionPublic(raw){
@@ -32,7 +35,9 @@ export function snowEditionPublic(raw){
  return {id:raw.id,size:SNOW_EDITION_SIZE,issued,remaining:SNOW_EDITION_SIZE-issued,
   maxTotalCoins,paidCoins,remainingCoins:Math.max(0,maxTotalCoins-paidCoins),
   status:issued===SNOW_EDITION_SIZE?'sold_out':'active',
-  createdAt:raw.createdAt,config:raw.config};
+  budgetMode:raw.budgetMode==='fixed'?'fixed':'maximum',
+  revision:Number.isInteger(raw.revision)?raw.revision:0,
+  createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,config:raw.config};
 }
 
 /**
@@ -62,6 +67,27 @@ export function issueSnowEditionTicket(wallet,tree,request,rawEdition,liveSettin
  }
  if(issued>=SNOW_EDITION_SIZE)throw Error('SCRATCH_SNOW_EDITION_SOLD_OUT');
  const left=maxCoins-paid;
+ // Fixed-budget editions reserve each visible money match at publication.
+ // Already issued receipts keep their earlier immutable payouts.
+ if(rawEdition.budgetMode==='fixed'){
+  if(!remainingFixedEditionPlan(rawEdition))
+   throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
+  const plannedRows=rawEdition.prizePlan[issued];
+  const result=buyScratchTicket(wallet,tree,request,{...options,settings,
+   printControl:{...options.printControl,fixedEditionRows:plannedRows}});
+  const actual=plannedRows.reduce((sum,code)=>sum+
+    rawEdition.config.coinAmounts[code%3]*(code>=3?2:1),0);
+  if(result.result.totalCoins!==actual)
+   throw Error('SCRATCH_EDITION_FIXED_PLAN_MISMATCH');
+  const next={...rawEdition,issued:issued+1,paidCoins:paid+actual,
+   revision:(Number.isInteger(rawEdition.revision)?rawEdition.revision:0)+1};
+  if(next.paidCoins>next.maxTotalCoins||
+      (next.issued===SNOW_EDITION_SIZE&&next.paidCoins!==next.maxTotalCoins))
+   throw Error('SCRATCH_EDITION_FIXED_BUDGET_MISMATCH');
+  result.result.snowEditionId=rawEdition.id;
+  result.result.snowEditionNumber=next.issued;
+  return {purchase:result,edition:next};
+ }
  let purchase=null;
  // When even the smallest money prize cannot fit, make one ordinary draw
  // (to preserve the chance of a free design), then use the safe zero-coin card.
