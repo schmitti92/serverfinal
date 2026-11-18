@@ -23,6 +23,7 @@ import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COL
  createGiftsEdition,giftsEditionPublic,issueGiftsEditionTicket} from './dog/christmas-gifts-edition.js';
 import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLECTION,
  createSnowEdition,snowEditionPublic,issueSnowEditionTicket} from './dog/christmas-snow-edition.js';
+import {editFixedEdition} from './dog/christmas-edition-plan.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -941,6 +942,46 @@ function finishEisstock(ch,members){
     });
     return result;
   }));
+  // Only the creator may revise the CURRENT edition. The transaction checks
+  // its expected revision (which advances after every purchase) so a stale
+  // editor never overwrites prizes of tickets sold while the form was open.
+  // History and already issued receipts are strictly immutable.
+  async function reviseChristmasEdition(req,variantId){
+    if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
+    const store=db();
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const gifts=variantId==='gifts';
+    const currentRef=store.collection(gifts?GIFTS_EDITION_COLLECTION:SNOW_EDITION_COLLECTION)
+      .doc(gifts?GIFTS_EDITION_CURRENT:SNOW_EDITION_CURRENT);
+    const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
+    return store.runTransaction(async tx=>{
+      const [editionSnap,settingsSnap]=await Promise.all([tx.get(currentRef),tx.get(settingsRef)]);
+      if(!editionSnap.exists)throw error(404,'SCRATCH_EDITION_MISSING');
+      const current=editionSnap.data(),revision=Number.isInteger(current.revision)?current.revision:0;
+      if(current.variantId!==variantId||current.id!==req.body?.editionId)
+        throw error(409,'SCRATCH_EDITION_CHANGED');
+      if(current.createdBy!==req.hubIdentity.uid)
+        throw error(403,'SCRATCH_EDITION_ONLY_CREATOR');
+      if(current.issued>=500)throw error(409,'SCRATCH_EDITION_ALREADY_COMPLETE');
+      if(!Number.isInteger(req.body?.expectedRevision)||req.body.expectedRevision!==revision)
+        throw error(409,'SCRATCH_EDITION_CHANGED');
+      let settings,next;
+      try{
+        settings=gifts?
+          updateGiftScratchSettings(settingsSnap.exists?settingsSnap.data():null,req.body?.gifts):
+          updateSnowScratchSettings(settingsSnap.exists?settingsSnap.data():null,req.body?.snow);
+        next=editFixedEdition(current,{settings,maxTotalCoins:req.body?.maxTotalCoins,now:clock()});
+      }catch(e){throw error(400,e.message)}
+      tx.set(currentRef,next);
+      tx.set(settingsRef,{...settings,updatedBy:req.hubIdentity.uid,updatedAt:clock()});
+      return {...(gifts?{giftsEdition:giftsEditionPublic(next)}:{snowEdition:snowEditionPublic(next)}),
+        settings};
+    });
+  }
+  app.post('/api/hub/scratch/editions/gifts/edit',authentication,handler(req=>
+    reviseChristmasEdition(req,'gifts')));
+  app.post('/api/hub/scratch/editions/snow_collect/edit',authentication,handler(req=>
+    reviseChristmasEdition(req,'snow_collect')));
   app.post('/api/hub/scratch/buy',authentication,handler(async req=>{
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const body=req.body||{},identity=req.hubIdentity,store=db();
