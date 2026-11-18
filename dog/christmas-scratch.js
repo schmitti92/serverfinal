@@ -902,6 +902,37 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  }
 
  }
+ // A fixed 500-ticket edition has already reserved the exact coin money
+ // combinations in its transactional payout plan. Build an ordinary, visibly
+ // verifiable symbol board from those planned rows rather than performing a
+ // random money draw that could leave budget unclaimed or exceed the limit.
+ // printControl is server-supplied only; never taken from a browser request.
+ if(Array.isArray(printControl?.fixedEditionRows)){
+  if(!['gifts','snow_collect'].includes(variantId))
+   throw Error('SCRATCH_EDITION_FIXED_INVALID_VARIANT');
+  const rows=printControl.fixedEditionRows;
+  if(rows.length>visiblePrizeLimit||
+     rows.some(code=>!Number.isInteger(code)||code<0||code>5)||
+     new Set(rows.map(code=>code%3)).size!==rows.length)
+   throw Error('SCRATCH_EDITION_FIXED_INVALID_PLAN');
+  // Earlier exploratory draws cannot reserve invisible cosmetics.
+  for(const unlockId of newUnlocks)owned.delete(unlockId);
+  winnings.length=0;
+  newUnlocks.length=0;
+  doubleMain=false;
+  rareMainMultiplier=false;
+  for(const code of rows){
+   const index=code%3,doubled=code>=3,amount=config.coinAmounts[index];
+   winnings.push({type:'coins',symbol:SCRATCH_PAYOUT_ORDER[index],
+    amount:doubled?amount*2:amount,
+    ...(doubled?{baseAmount:amount,x2:true}:{})});
+  }
+  // A cosmetic may still appear beside a planned money row, when the board
+  // has capacity. Cosmetics and independent lights do not consume coin budget.
+  if(winnings.length<visiblePrizeLimit&&random(1000)<config.weights.unlock)
+   awardMain();
+  multiplier=rows.some(code=>code>=3)?2:1;
+ }
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
