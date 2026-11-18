@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol,updateGiftScratchSettings} from '../dog/christmas-scratch-settings.js';
+import {DOG_SCRATCH_DEFAULT_SETTINGS,normalizeScratchSettings,validateScratchSettings,pickWeightedScratchSymbol,updateGiftScratchSettings,updateSnowScratchSettings} from '../dog/christmas-scratch-settings.js';
 import {buyScratchTicket,grantDogScratchVoucher,normalizedScratchWallet,dogScratchStatus} from '../dog/christmas-scratch.js';
 import {evaluateScratchGrid} from '../dog/christmas-scratch-grid.js';
 const clone=v=>JSON.parse(JSON.stringify(v));
@@ -23,7 +23,7 @@ test('four scratch variants have independent defaults and validated percentages'
  const premiumOne=clone(s);premiumOne.variants.premium_27.maxPrizes=1;
  assert.equal(validateScratchSettings(premiumOne).variants.premium_27.maxPrizes,6);
  const full=clone(s);for(const id of Object.keys(full.variants))full.variants[id].maxPrizes=10;
- assert.ok(Object.values(validateScratchSettings(full).variants).every(v=>v.maxPrizes===10));
+ assert.deepEqual(Object.keys(validateScratchSettings(full).variants).map(id=>validateScratchSettings(full).variants[id].maxPrizes),[3,3,10,10]);
  assert.equal(normalizeScratchSettings({freeEnabled:true,variants:{gifts:bad.variants.elf}}).freeEnabled,true);
  assert.deepEqual(normalizeScratchSettings({}).variants.premium_27.weights,DOG_SCRATCH_DEFAULT_SETTINGS.variants.premium_27.weights);
 });
@@ -54,7 +54,7 @@ test('per-variant win caps retain verified payout combinations',()=>{
  }
 });
 
-test('Geschenkelinie has only visible winning triples; other cards keep their linked prizes',()=>{
+test('Both simple cards require real visible wins; medium and premium retain linked bonuses',()=>{
  const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
  for(const item of Object.values(config.variants)){
   item.weights={none:0,coins:1000,unlock:0};
@@ -78,12 +78,12 @@ test('Geschenkelinie has only visible winning triples; other cards keep their li
    {tier,commandId:'scratch-ten-'+variant},
    {settings:config,draw:seeded(67439,variantIndex)});
   assert.equal(result.result.board.variantId,variant);
-  if(variant==='gifts')assert.equal(result.result.winnings.length,result.result.board.wins.length,
+  if(['gifts','snow_collect'].includes(variant))assert.equal(result.result.winnings.length,result.result.board.wins.length,
    'Geschenkelinie prizes all require their own visible triple');
   else assert.equal(result.result.winnings.length,10,variant+' should pay ten rewards');
   const wins=result.result.board.wins,bonuses=result.result.winnings.filter(p=>p.bonus);
   assert.ok(wins.length>=1&&wins.length<=(variant==='premium_27'?7:3),variant+' has real visible matches');
-  assert.equal(bonuses.length,variant==='gifts'?0:10-wins.length,variant+' bonus count');
+  assert.equal(bonuses.length,['gifts','snow_collect'].includes(variant)?0:10-wins.length,variant+' bonus count');
   assert.ok(bonuses.every(p=>p.type==='coins'&&p.amount>0&&
    Number.isInteger(p.sourceWin)&&p.sourceWin>=0&&p.sourceWin<wins.length),variant+' linked bonuses');
   assert.equal(result.result.totalCoins,result.result.winnings.filter(p=>p.type==='coins').reduce((n,p)=>n+p.amount,0));
@@ -267,7 +267,7 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
     {settings:config,draw:seeded(index)});
    const prizes=purchase.result.winnings;
    assert.equal(purchase.result.board.variantId,id);
-   assert.equal(prizes.length,id==='gifts'?purchase.result.board.wins.length:10,id+' reward count');
+   assert.equal(prizes.length,['gifts','snow_collect'].includes(id)?purchase.result.board.wins.length:10,id+' reward count');
    assert.ok(id==='premium_27'?['🪙','💵','💼'].every(icon=>prizes.some(x=>x.type==='coins'&&x.symbol===icon)):
    prizes.filter(x=>x.type==='coins').every(x=>x.symbol==='💼'),id+' money weights');
    if(group==='gifts'){
@@ -450,4 +450,28 @@ test('Geschenkelinie ×2 sticker belongs to the middle visible matching money sy
  assert.ok(receipt.doubleWin.extraCoins>0);
  assert.equal(receipt.totalCoins,moneyWin.prize.amount,
   'the original payout is doubled exactly once, not given twice');
+});
+
+test('Schneeflocken-Bingo settings are isolated and match three identical symbols anywhere',()=>{
+ const before=normalizeScratchSettings(null);
+ const updated=updateSnowScratchSettings(before,{
+  price:175,nonePer1000:250,unlockPer1000:75,coinAmounts:[15,60,220],
+  maxPrizes:3,extraCoinChance:38,doubleChancePer1000:280,
+  lightChancePer1000:150,lightMin:3,lightMax:9
+ });
+ assert.equal(updated.variants.snow_collect.price,175);
+ assert.deepEqual(updated.variants.snow_collect.coinAmounts,[15,60,220]);
+ assert.deepEqual(updated.variants.snow_collect.weights,{none:250,coins:675,unlock:75});
+ assert.equal(updated.variants.snow_collect.maxPrizes,3);
+ assert.equal(updated.variants.snow_collect.doubleChancePer1000,280);
+ assert.equal(updated.variants.snow_collect.lightMax,9);
+ assert.deepEqual(updated.variants.gifts,before.variants.gifts,'Geschenkelinie stays unchanged');
+ assert.deepEqual(updated.variants.elf,before.variants.elf);
+ const exact=['🪙','💵','🎁','⭐','🎄','🪙','🔔','🎁','💼','💝','🪙','🍪','❄️','🛍️','🧊','🧤'];
+ const groups=evaluateScratchGrid({variantId:'snow_collect',symbolVersion:3,cells:exact});
+ assert.ok(groups.some(group=>group.symbol==='🪙'&&group.indices.length===3));
+ assert.ok(!groups.some(group=>group.symbol==='🎁'),'two gifts never win');
+ assert.throws(()=>updateSnowScratchSettings(null,{price:200,nonePer1000:0,unlockPer1000:0,
+  coinAmounts:[10,40,100],maxPrizes:4,extraCoinChance:30,doubleChancePer1000:110,
+  lightChancePer1000:100,lightMin:1,lightMax:10}),/SCRATCH_SNOW_SETTINGS_INVALID/);
 });
