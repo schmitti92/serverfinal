@@ -970,9 +970,12 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const doubleWin=variantId==='gifts'&&(extraCoins>0||extraLights>0)?
   {extraCoins,extraLights}:null;
  const lightBadgeIndex=variantId==='gifts'&&totalLights>0?random(board.cells.length):null;
+ // A multiplier label belongs ON a genuinely doubled money symbol.
+ // Never stamp a random, unrelated square when only lights were doubled.
+ // The middle icon of the winning triple receives the overlaid ×2 seal.
  const sourceWin=board.wins.find(win=>win.prize?.type==='coins'&&win.prize?.x2);
- const doubleBadgeIndex=doubleWin?
-  (Number.isInteger(sourceWin?.indices?.[0])?sourceWin.indices[0]:random(board.cells.length)):null;
+ const doubleBadgeIndex=doubleWin?.extraCoins>0&&
+  Number.isInteger(sourceWin?.indices?.[1])?sourceWin.indices[1]:null;
  // Only after generating and verifying the exact visible card, grant awards.
  const stamped=now();
  for(const unlockId of newUnlocks)w.owned[unlockId]=stamped;
