@@ -60,15 +60,14 @@ export function createFixedEditionPlan(budget,config,count=500,draw=randomInt){
     Math.min(doubleLimits[i],Math.round(u*p/(1000+p)))));
    const codeCount=()=>units.map((u,i)=>u-doubles[i]);
    let codes=codeCount(),slotsNeeded=codes.reduce((sum,n)=>sum+n,0);
-   // If required, add genuine visible x2 seals until all coin symbols fit
-   // into no more than 500 cards with the user's prize-cap.
-   while(slotsNeeded>count*cap){
-    const candidates=[0,1,2].filter(i=>doubles[i]<doubleLimits[i]);
-    if(!candidates.length)break;
-    const chosen=candidates.sort((i,j)=>codes[j]-codes[i])[0];
-    doubles[chosen]++;
-    codes[chosen]--;
-    slotsNeeded--;
+   // If required, add genuine x2 seals until all money rows fit the
+   // limited visible-card capacity. At most THREE bulk operations here.
+   // No repeated work for each candidate in the million-candidate search.
+   let excess=Math.max(0,slotsNeeded-count*cap);
+   for(const i of [0,1,2].sort((i,j)=>codes[j]-codes[i])){
+    const add=Math.min(excess,doubleLimits[i]-doubles[i]);
+    if(add>0){doubles[i]+=add;codes[i]-=add;slotsNeeded-=add;excess-=add}
+    if(excess===0)break;
    }
    const required=Math.max(...codes,Math.ceil(slotsNeeded/cap));
    if(required>count||slotsNeeded>count*cap)continue;
