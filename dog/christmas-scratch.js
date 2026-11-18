@@ -684,7 +684,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const today=dogScratchToday(now());
  if(free&&!hostFree&&w.daily===today)throw Error('SCRATCH_DAILY_ALREADY_USED');
  const ticketPrice=request?.variantId==='number_one_20'?liveSettings.numberOne20.price:
-  request?.variantId==='gifts'?liveSettings.variants.gifts.price:DOG_SCRATCH_TIERS[tier].price;
+  ['gifts','snow_collect'].includes(request?.variantId)?liveSettings.variants[request.variantId].price:DOG_SCRATCH_TIERS[tier].price;
  // Edition price is trusted only as a server-side argument. Client-supplied
  // request fields never override the public shop price.
  if(editionPrice!==null&&(!Number.isSafeInteger(editionPrice)||editionPrice<0||editionPrice>1000000))
@@ -879,7 +879,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // When cosmetics are exhausted, use 110/800 to retain 11% overall.
  const rarePossible=remaining.length>=2;
  const ordinaryRoll=baseCategory!=='none'&&!rareMainMultiplier&&
-  (variantId==='gifts'?random(1000)<(config.doubleChancePer1000??110):
+  (['gifts','snow_collect'].includes(variantId)?random(1000)<(config.doubleChancePer1000??110):
    (rarePossible?random(799)<109:random(800)<110));
  // Never show a misleading ×2 if a one-prize cosmetic-only card has no
  // room for the required visible coin prize.
@@ -922,7 +922,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // money is not a separate winning combination on this 3×3 ticket.
  // Other scratch variants keep their own established bonus rules.
  const bonusWinnings=[];
- if(variantId!=='gifts'&&config.maxPrizes>3&&board.wins.length>0&&
+ if(!['gifts','snow_collect'].includes(variantId)&&config.maxPrizes>3&&board.wins.length>0&&
     (variantId!=='premium_27'||baseCategory!=='none')){
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
@@ -959,7 +959,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // 🎄 Independent light bonus: verified and booked with the immutable server
  // receipt. It is separate from the visible three-in-a-row prize limit.
  const lightMin=config.lightMin??1,lightMax=config.lightMax??10;
- const baseLights=variantId==='gifts'&&random(1000)<(config.lightChancePer1000??100)?
+ const baseLights=['gifts','snow_collect'].includes(variantId)&&random(1000)<(config.lightChancePer1000??100)?
   lightMin+random(lightMax-lightMin+1):0;
  const totalLights=baseLights*(multiplier===2?2:1);
  // Show the real server-booked light and x2 bonuses on the scratched ticket.
@@ -967,9 +967,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const extraCoins=allWinnings.filter(prize=>prize?.x2&&Number.isSafeInteger(prize.baseAmount))
   .reduce((sum,prize)=>sum+prize.amount-prize.baseAmount,0);
  const extraLights=multiplier===2?baseLights:0;
- const doubleWin=variantId==='gifts'&&(extraCoins>0||extraLights>0)?
+ const doubleWin=['gifts','snow_collect'].includes(variantId)&&(extraCoins>0||extraLights>0)?
   {extraCoins,extraLights}:null;
- const lightBadgeIndex=variantId==='gifts'&&totalLights>0?random(board.cells.length):null;
+ const lightBadgeIndex=['gifts','snow_collect'].includes(variantId)&&totalLights>0?random(board.cells.length):null;
  // A multiplier label belongs ON a genuinely doubled money symbol.
  // Never stamp a random, unrelated square when only lights were doubled.
  // The middle icon of the winning triple receives the overlaid ×2 seal.
@@ -999,7 +999,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   moneySymbolWeights:[...config.moneySymbolWeights],
   giftSymbolWeights:[...config.giftSymbolWeights],
   winnings:allWinnings,totalCoins,totalLights,board,
-  ...(variantId==='gifts'?{doubleWin,lightBadgeIndex,doubleBadgeIndex}:{}),
+  ...(['gifts','snow_collect'].includes(variantId)?{doubleWin,lightBadgeIndex,doubleBadgeIndex}:{}),
   doubleMain:Boolean(doubleMain),rareMainMultiplier:Boolean(rareMainMultiplier),
   multiplier,commandId,price,free:free||voucher,voucher,at:stamped,balance:w.coins
  };
