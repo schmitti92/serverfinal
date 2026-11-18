@@ -107,7 +107,7 @@ test('server editing requires same current ID/revision and is protected by Fires
  const source=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
  assert.match(source,/SCRATCH_EDITION_ONLY_CREATOR/);
  assert.match(source,/SCRATCH_EDITION_CHANGED/);
- assert.match(source,/req\.body\?\.expectedRevision!==revision/);
+ assert.match(source,/req\.body\.expectedRevision!==revision/);
  assert.match(source,/tx\.set\(currentRef,next\)/);
  assert.match(source,/editions\/gifts\/edit/);
  assert.match(source,/editions\/snow_collect\/edit/);
