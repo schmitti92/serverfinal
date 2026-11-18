@@ -24,7 +24,7 @@ export function createSnowEdition({id,createdAt,createdBy,maxTotalCoins,settings
   issued:0,maxTotalCoins,paidCoins:0,config:snow_collect};
 }
 
-export function snow_collectEditionPublic(raw){
+export function snowEditionPublic(raw){
  if(!raw||raw.variantId!=='snow_collect')return null;
  const issued=Number.isInteger(raw.issued)?Math.max(0,Math.min(500,raw.issued)):0;
  const paidCoins=Number.isSafeInteger(raw.paidCoins)?Math.max(0,raw.paidCoins):0;
