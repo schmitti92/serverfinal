@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createFixedEditionPlan,editFixedEdition,fixedEditionPlanTotal,
- remainingFixedEditionPlan} from '../dog/christmas-edition-plan.js';
+ remainingFixedEditionPlan,decodeFixedEditionRows,encodeFixedEditionPlan} from '../dog/christmas-edition-plan.js';
 import {updateGiftScratchSettings,updateSnowScratchSettings} from '../dog/christmas-scratch-settings.js';
 import {createGiftsEdition,issueGiftsEditionTicket,giftsEditionPublic} from '../dog/christmas-gifts-edition.js';
 import {createSnowEdition,issueSnowEditionTicket,snowEditionPublic} from '../dog/christmas-snow-edition.js';
@@ -25,7 +25,7 @@ const configs=['gifts','snow_collect'];
 
 test('exact fixed budget planner assigns only visible winning triples, including real x2',()=>{
  const settings=config('gifts').variants.gifts;
- for(const amount of [0,10,300,190,60000]){
+ for(const amount of [0,10,300,190,60000,160000]){
   const plan=createFixedEditionPlan(amount,settings);
   assert.equal(plan.length,500);
   assert.equal(fixedEditionPlanTotal(plan,settings),amount);
@@ -46,6 +46,10 @@ for(const variant of configs)test(variant+' pays the EXACT full fixed budget aft
   createSnowEdition({id:'edition-snow',createdAt:1,createdBy:'owner',maxTotalCoins:60000,settings});
  assert.ok(remainingFixedEditionPlan(initial));
  assert.equal(initial.budgetMode,'fixed');
+ assert.equal(initial.prizePlan.length,500);
+ assert.ok(initial.prizePlan.every(card=>typeof card==='string'),'flat string array supported by Firestore');
+ assert.equal(fixedEditionPlanTotal(initial.prizePlan.map(decodeFixedEditionRows),
+   initial.config),60000);
  const issue=variant==='gifts'?issueGiftsEditionTicket:issueSnowEditionTicket;
  const status=variant==='gifts'?giftsEditionPublic:snowEditionPublic;
  const draw=dice();
@@ -53,7 +57,7 @@ for(const variant of configs)test(variant+' pays the EXACT full fixed budget aft
  for(let i=0;i<500;i++){
   const receipt=issue(wallet,null,{tier:'simple',variantId:variant,
    commandId:variant+'-exact-'+i},edition,settings,{draw});
-  const planned=edition.prizePlan[i].reduce((sum,code)=>
+  const planned=decodeFixedEditionRows(edition.prizePlan[i]).reduce((sum,code)=>
    sum+edition.config.coinAmounts[code%3]*(code>=3?2:1),0);
   assert.equal(receipt.purchase.result.totalCoins,planned,'card '+i);
   assert.equal(receipt.edition.paidCoins,edition.paidCoins+planned);
@@ -80,7 +84,7 @@ for(const variant of configs)test(variant+' can revise only unissued rows withou
   edition=result.edition;wallet=result.purchase.wallet;
   receipts.push(result.purchase.result);
  }
- const immutable=edition.prizePlan.slice(0,40).map(row=>[...row]);
+ const immutable=edition.prizePlan.slice(0,40);
  const paid=edition.paidCoins;
  const nextBudget=paid+450;
  const revised=editFixedEdition(edition,{settings,maxTotalCoins:nextBudget,now:12345});
@@ -89,7 +93,8 @@ for(const variant of configs)test(variant+' can revise only unissued rows withou
  assert.equal(revised.id,edition.id);
  assert.deepEqual(revised.prizePlan.slice(0,40),immutable);
  assert.equal(revised.revision,edition.revision+1);
- assert.equal(fixedEditionPlanTotal(revised.prizePlan.slice(40),revised.config),450);
+ assert.equal(fixedEditionPlanTotal(revised.prizePlan.slice(40).map(decodeFixedEditionRows),
+  revised.config),450);
  assert.equal(revised.updatedAt,12345);
  for(let i=40;i<500;i++){
   const result=issue(wallet,null,{tier:'simple',variantId:variant,
@@ -111,4 +116,17 @@ test('server editing requires same current ID/revision and is protected by Fires
  assert.match(source,/tx\.set\(currentRef,next\)/);
  assert.match(source,/editions\/gifts\/edit/);
  assert.match(source,/editions\/snow_collect\/edit/);
+});
+
+test('no Firestore nested arrays and no false payout promises on overfilled wallet',()=>{
+ const settings=config('gifts'),edition=createGiftsEdition({
+  id:'wallet-test',createdAt:1,createdBy:'owner',maxTotalCoins:60000,settings});
+ assert.ok(edition.prizePlan.every(v=>typeof v==='string'));
+ assert.equal(encodeFixedEditionPlan(edition.prizePlan.map(decodeFixedEditionRows)).length,500);
+ let found=edition.prizePlan.findIndex(v=>v.length>0);
+ assert.ok(found>=0);
+ const partiallyIssued={...edition,issued:found};
+ assert.throws(()=>issueGiftsEditionTicket({coins:1000000000},null,{
+  tier:'simple',variantId:'gifts',commandId:'full-wallet-reject'
+ },partiallyIssued,settings,{draw:dice()}),/SCRATCH_EDITION_WALLET_LIMIT/);
 });
