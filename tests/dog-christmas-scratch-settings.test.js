@@ -421,3 +421,33 @@ test('Geschenkelinie uses only exact identical money or jackpot triples; no unse
   lightChancePer1000:100,lightMin:1,lightMax:10
  }),/SCRATCH_GIFTS_SETTINGS_INVALID/);
 });
+
+
+test('Geschenkelinie ×2 sticker belongs to the middle visible matching money symbol',()=>{
+ const settings=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
+ const cfg=settings.variants.gifts;
+ cfg.weights={none:0,coins:1000,unlock:0};
+ cfg.doubleChancePer1000=1000;
+ cfg.lightChancePer1000=1000;
+ cfg.extraCoinChance=0;
+ cfg.maxPrizes=1;
+ let state=719321;
+ const random=max=>{
+  state=(Math.imul(state,1664525)+1013904223)>>>0;
+  return Math.floor(state/4294967296*max);
+ };
+ const purchase=buyScratchTicket({coins:20000},null,
+  {tier:'simple',variantId:'gifts',commandId:'gifts-double-sticker-visible'},
+  {settings,draw:random});
+ const receipt=purchase.result,board=receipt.board;
+ const moneyWin=board.wins.find(win=>win.prize?.type==='coins'&&win.prize.x2);
+ assert.ok(moneyWin,'a real money win must have been doubled');
+ assert.equal(moneyWin.indices.length,3);
+ assert.ok(moneyWin.indices.every(i=>board.cells[i]===moneyWin.symbol),
+  '×2 never changes any of the original three matching symbols');
+ assert.equal(receipt.doubleBadgeIndex,moneyWin.indices[1],
+  '×2 sticker is placed on the middle symbol of the verified winning line');
+ assert.ok(receipt.doubleWin.extraCoins>0);
+ assert.equal(receipt.totalCoins,moneyWin.prize.amount,
+  'the original payout is doubled exactly once, not given twice');
+});
