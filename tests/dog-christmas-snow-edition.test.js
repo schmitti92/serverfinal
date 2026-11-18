@@ -81,7 +81,7 @@ test('the 500th purchase closes the edition, and replay does not consume a secon
 
 test('the server updates the wallet and edition ledger in the same transaction',()=>{
  const source=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
- assert.match(source,/issueSnowEditionTicket\(wallet,tree,request,editionSnap\.data\(\),settings,options\)/);
- assert.match(source,/if\(nextEdition\)tx\.set\(snowEditionRef,nextEdition\)/);
+ assert.match(source,/issueSnowEditionTicket\(wallet,tree,request,snowSnap\.data\(\),settings,options\)/);
+ assert.match(source,/if\(nextSnowEdition\)tx\.set\(snowEditionRef,nextSnowEdition\)/);
  assert.match(source,/SCRATCH_SNOW_EDITION_ACTIVE/);
 });
