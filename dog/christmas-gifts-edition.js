@@ -6,7 +6,8 @@
  */
 import {buyScratchTicket,normalizedScratchWallet} from './christmas-scratch.js';
 import {normalizeScratchSettings} from './christmas-scratch-settings.js';
-import {createFixedEditionPlan,remainingFixedEditionPlan} from './christmas-edition-plan.js';
+import {createFixedEditionPlan,encodeFixedEditionPlan,decodeFixedEditionRows,
+ remainingFixedEditionPlan} from './christmas-edition-plan.js';
 
 export const GIFTS_EDITION_COLLECTION='dog_christmas_gifts_editions_v1';
 export const GIFTS_EDITION_CURRENT='current';
@@ -24,7 +25,8 @@ export function createGiftsEdition({id,createdAt,createdBy,maxTotalCoins,setting
  return {id,createdAt,createdBy,variantId:'gifts',size:GIFTS_EDITION_SIZE,
   issued:0,maxTotalCoins,paidCoins:0,config:gifts,
   budgetMode:'fixed',revision:1,
-  prizePlan:createFixedEditionPlan(maxTotalCoins,gifts,GIFTS_EDITION_SIZE)};
+  prizePlan:encodeFixedEditionPlan(
+    createFixedEditionPlan(maxTotalCoins,gifts,GIFTS_EDITION_SIZE))};
 }
 
 export function giftsEditionPublic(raw){
@@ -72,7 +74,7 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
  if(rawEdition.budgetMode==='fixed'){
   if(!remainingFixedEditionPlan(rawEdition))
    throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
-  const plannedRows=rawEdition.prizePlan[issued];
+  const plannedRows=decodeFixedEditionRows(rawEdition.prizePlan[issued]);
   const result=buyScratchTicket(wallet,tree,request,{...options,settings,
    printControl:{...options.printControl,fixedEditionRows:plannedRows}});
   const actual=plannedRows.reduce((sum,code)=>sum+
