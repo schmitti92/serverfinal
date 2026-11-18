@@ -4,7 +4,7 @@
  * slow 500-ticket preview. Firestore's transaction makes this budget atomic.
  * No other DOG ticket kind is changed.
  */
-import {buyScratchTicket} from './christmas-scratch.js';
+import {buyScratchTicket,normalizedScratchWallet} from './christmas-scratch.js';
 import {normalizeScratchSettings} from './christmas-scratch-settings.js';
 import {createFixedEditionPlan,remainingFixedEditionPlan} from './christmas-edition-plan.js';
 
@@ -79,6 +79,11 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
     rawEdition.config.coinAmounts[code%3]*(code>=3?2:1),0);
   if(result.result.totalCoins!==actual)
    throw Error('SCRATCH_EDITION_FIXED_PLAN_MISMATCH');
+  // A wallet is capped at 1 billion coins. Do not silently record a promised
+  // fixed-edition payout if the player cannot actually receive all its money.
+  const expectedBalance=normalizedScratchWallet(wallet).coins-result.result.price+actual;
+  if(expectedBalance>1000000000||result.wallet.coins!==expectedBalance)
+   throw Error('SCRATCH_EDITION_WALLET_LIMIT');
   const next={...rawEdition,issued:issued+1,paidCoins:paid+actual,
    revision:(Number.isInteger(rawEdition.revision)?rawEdition.revision:0)+1};
   if(next.paidCoins>next.maxTotalCoins||
@@ -108,7 +113,8 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
   if(purchase.result.totalCoins!==0)throw Error('SCRATCH_GIFTS_BUDGET_FALLBACK_FAILED');
  }
  const next={...rawEdition,issued:issued+1,
-  paidCoins:paid+purchase.result.totalCoins};
+  paidCoins:paid+purchase.result.totalCoins,
+  revision:(Number.isInteger(rawEdition.revision)?rawEdition.revision:0)+1};
  if(next.paidCoins>next.maxTotalCoins)throw Error('SCRATCH_GIFTS_EDITION_BUDGET_EXCEEDED');
  // Receipt numbers never influence the authoritative winnings, just display.
  purchase.result.giftsEditionId=rawEdition.id;
