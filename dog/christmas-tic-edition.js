@@ -16,7 +16,7 @@ export const TIC_EDITION_MAX_COINS=1000000000000;
 export const TIC_EDITION_DEFAULT=Object.freeze({
  price:500,coinAmounts:Object.freeze([200,450,800]),
  symbolWeights:Object.freeze([700,250,40,10]),
- maxMultiplier:5,giftFallbackCoins:0,targetNonePer1000:200
+ maxMultiplier:5,giftFallbackCoins:0,targetNonePer1000:200,prizeCategory:2
 });
 const integer=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
 const rand=(fn,max)=>{
@@ -29,12 +29,17 @@ export function validateTicEditionConfig(raw){
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||
   !integer(raw.price,0,1000000)||!integer(raw.targetNonePer1000,0,1000))
   throw Error('SCRATCH_TIC_EDITION_SETTINGS_INVALID');
+ // Older editions created before the category selector keep their
+ // intended medium-tier unlock pool. New edits must choose 1, 2, or 3.
+ const prizeCategory=raw.prizeCategory??2;
+ if(!Number.isInteger(prizeCategory)||prizeCategory<1||prizeCategory>3)
+  throw Error('SCRATCH_TIC_EDITION_PRIZE_CATEGORY_INVALID');
  let setting;
  try{setting=validateTicDuelEditionSettings({
   coinAmounts:raw.coinAmounts,symbolWeights:raw.symbolWeights,
   maxMultiplier:raw.maxMultiplier,giftFallbackCoins:0
  })}catch{throw Error('SCRATCH_TIC_EDITION_SETTINGS_INVALID')}
- return {...setting,price:raw.price,targetNonePer1000:raw.targetNonePer1000};
+ return {...setting,price:raw.price,targetNonePer1000:raw.targetNonePer1000,prizeCategory};
 }
 /**
  * Solve the exact sum of up to 500 single-symbol wins with 1x..5x factors.
