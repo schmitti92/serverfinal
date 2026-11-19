@@ -643,6 +643,14 @@ const treeOwned=tree=>new Set(Object.values(tree?.claims||{}).map(c=>c?.unlockId
 const tierPool=tier=>tier==='premium'?DOG_SCRATCH_PREMIUM_POOL:
  tier==='medium'?DOG_SCRATCH_MEDIUM_POOL:
  [...DOG_SCRATCH_BASIC_EMOJIS,...DOG_SCRATCH_BLOCK_COLORS];
+// The visual ticket's purchase tier is independent from its cosmetic reward
+// category. Only the server-side edition config selects this pool.
+export const SCRATCH_PRIZE_CATEGORY_TIERS=Object.freeze({1:'simple',2:'medium',3:'premium'});
+export function scratchPrizePoolForCategory(category){
+ const tier=SCRATCH_PRIZE_CATEGORY_TIERS[category];
+ if(!tier||!Number.isInteger(category))throw Error('SCRATCH_TIC_EDITION_PRIZE_CATEGORY_INVALID');
+ return tierPool(tier);
+}
 export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
  const w=normalizedScratchWallet(raw);
  const owned=[...new Set([...Object.keys(w.owned),...treeOwned(tree)])];
@@ -705,7 +713,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const specialId=request.variantId;
   if(tier!==(specialId==='dog_jackpot_9'?'premium':'medium'))throw Error('SCRATCH_INVALID_VARIANT');
   const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
-  const pool=specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
+  const pool=specialId==='tic_tac_toe'?
+   scratchPrizePoolForCategory(editionSpecial?.ticTacToe?.prizeCategory??2):
+   specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
   const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
   const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel',settings:editionSpecial?.ticTacToe??null,
@@ -735,7 +745,10 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
    ...(first?.type==='unlock'?{prize:first.prize}:{}),
    coinAmounts:specialId==='tic_tac_toe'?[...(drawn.board.coinAmounts??[200,450,800])]:
     specialId==='number_one_20'?[...drawn.board.coinAmounts]:[...(drawn.board.coinAmounts??[100,300,800])],
-   ...(specialId==='tic_tac_toe'?{symbolWeights:[...(drawn.board.symbolWeights??[700,250,40,10])]}:{}),
+   ...(specialId==='tic_tac_toe'?{
+    symbolWeights:[...(drawn.board.symbolWeights??[700,250,40,10])],
+    prizeCategory:editionSpecial?.ticTacToe?.prizeCategory??2
+   }:{}),
    giftSparksEarned:drawn.giftSparks||0,giftVoucherEarned:earnedVoucher,
    board:drawn.board,winnings:drawn.winnings,totalCoins,at:stamped,balance:w.coins};
   addScratchProgress(w.progress,result);
