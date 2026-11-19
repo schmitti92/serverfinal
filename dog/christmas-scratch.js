@@ -715,15 +715,28 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
   const pool=specialId==='tic_tac_toe'?
    scratchPrizePoolForCategory(editionSpecial?.ticTacToe?.prizeCategory??2):
-   specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
+   editionSpecial?.prizeCategory?
+    scratchPrizePoolForCategory(editionSpecial.prizeCategory):
+    specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
   const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
+  const fixedNumber=Array.isArray(printControl?.fixedNumberSymbols)?
+   printControl.fixedNumberSymbols.map(code=>code==='g'?'g':['🪙','💵','💼'][code]):null;
+  // Add a single authentic cosmetic hit if space permits. It never changes
+  // the exact coin budget, and uses ONLY the selected edition reward pool.
+  if(fixedNumber&&fixedNumber.length<20&&
+   random(1000)<(editionSpecial?.other?.config?.giftPer1000??0))fixedNumber.push('g');
+  const fixedDog=typeof printControl?.fixedDogSymbols==='string'?
+   [...printControl.fixedDogSymbols].map(code=>code==='g'?'g':['🪙','💵','💼'][code]):null;
   const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel',settings:editionSpecial?.ticTacToe??null,
     fixedCode:typeof printControl?.ticFixedCode==='string'?printControl.ticFixedCode:null}):
-   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,settings:liveSettings.numberOne20,
-    forcedHits:Number.isInteger(printControl?.forcedWins)?printControl.forcedWins:null}):
+   specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,
+    settings:editionSpecial?.numberOne20??liveSettings.numberOne20,
+    fixedSymbols:fixedNumber,
+    forcedHits:fixedNumber?null:Number.isInteger(printControl?.forcedWins)?printControl.forcedWins:null}):
    drawDogJackpot9({draw:random,unlock,settings:editionSpecial?.dogJackpot??null,
-    forcedHit:printControl?.forcedWins===8?true:printControl?.forcedWins===0?false:null});
+    fixedSymbols:fixedDog,
+    forcedHit:fixedDog?null:printControl?.forcedWins===8?true:printControl?.forcedWins===0?false:null});
   if(!verifyScratchPrizes(drawn.board))throw Error('SCRATCH_BOARD_PRIZE_MISMATCH');
   const stamped=now();
   if(drawn.unlockId)w.owned[drawn.unlockId]=stamped;
@@ -766,7 +779,16 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   throw Error('SCRATCH_INVALID_VARIANT');
  const variantId=requestedVariant??(tier==='medium'?'elf':tier==='premium'?'premium_27':availableVariants.length===1?
   availableVariants[0]:availableVariants[random(availableVariants.length)]);
- const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId]};
+ const override=editionSpecial?.other?.variantId===variantId?editionSpecial.other.config:null;
+ const config={...DOG_SCRATCH_TIERS[tier],...liveSettings.variants[variantId],
+  ...(override?{
+   coinAmounts:[...override.coinAmounts],maxPrizes:variantId==='premium_27'?6:override.maxPrizes,
+   extraCoinChance:0,
+   weights:{none:override.nonePer1000,
+    coins:1000-override.nonePer1000-override.giftPer1000,
+    unlock:override.giftPer1000},
+   doubleChancePer1000:override.doubleChancePer1000
+  }:{})};
  // The visual card supports three canonical matches. Host caps above three
  // permit extra coin payouts tied to genuine matching symbols, not fake rows.
  const visiblePrizeLimit=variantId==='premium_27'?config.maxPrizes:Math.min(config.maxPrizes,3);
@@ -786,7 +808,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
    random(config.weights.coins)<Math.min(config.weights.coins,
     Math.max(0,PREMIUM_20_MILESTONE_PER_1000-config.weights.unlock))));
  const owned=new Set([...Object.keys(w.owned),...treeOwned(tree)]);
- const remaining=tierPool(tier).filter(p=>!owned.has(p.unlockId));
+ const selectedPool=editionSpecial?.prizeCategory?
+  scratchPrizePoolForCategory(editionSpecial.prizeCategory):tierPool(tier);
+ const remaining=selectedPool.filter(p=>!owned.has(p.unlockId));
  const winnings=[],newUnlocks=[];
  let doubleMain=false,rareMainMultiplier=false,multiplier=1;
  if(premiumMilestone)winnings.push({
@@ -922,7 +946,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // random money draw that could leave budget unclaimed or exceed the limit.
  // printControl is server-supplied only; never taken from a browser request.
  if(Array.isArray(printControl?.fixedEditionRows)){
-  if(!['gifts','snow_collect'].includes(variantId))
+  if(!['gifts','snow_collect','elf'].includes(variantId))
    throw Error('SCRATCH_EDITION_FIXED_INVALID_VARIANT');
   const rows=printControl.fixedEditionRows;
   if(rows.length>visiblePrizeLimit||
@@ -947,6 +971,25 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
    awardMain();
   multiplier=rows.some(code=>code>=3)?2:1;
  }
+ if(variantId==='premium_27'&&typeof printControl?.fixedPremiumCode==='string'){
+  const code=printControl.fixedPremiumCode;
+  if(!/^[012](?:[mg])?$/.test(code))throw Error('SCRATCH_PREMIUM_EDITION_PLAN_INVALID');
+  for(const id of newUnlocks)owned.delete(id);
+  winnings.length=0;newUnlocks.length=0;
+  doubleMain=false;rareMainMultiplier=false;multiplier=1;
+  // Four genuine gold-framed money triples on every Premium card.
+  for(const index of [0,1,2,Number(code[0])])winnings.push({
+   type:'coins',symbol:SCRATCH_PAYOUT_ORDER[index],amount:config.coinAmounts[index]
+  });
+  if(code.length===2){
+   winnings.push({type:'coins',symbol:'🪙',amount:1000,milestone:'gold-20'});
+   if(code[1]==='g'){
+    const canUnlock=awardMain();
+    const gift=canUnlock?winnings.find(p=>p.type==='unlock'):null;
+    if(gift)gift.milestone='premium-24';
+   }
+  }
+ }
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
@@ -967,7 +1010,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // money is not a separate winning combination on this 3×3 ticket.
  // Other scratch variants keep their own established bonus rules.
  const bonusWinnings=[];
- if(!['gifts','snow_collect'].includes(variantId)&&config.maxPrizes>3&&board.wins.length>0&&
+ if(!['gifts','snow_collect'].includes(variantId)&&!printControl?.fixedPremiumCode&&
+    !Array.isArray(printControl?.fixedEditionRows)&&config.maxPrizes>3&&board.wins.length>0&&
     (variantId!=='premium_27'||baseCategory!=='none')){
   for(let slot=winnings.length;slot<config.maxPrizes;slot++){
    if(random(100)>=config.extraCoinChance)continue;
