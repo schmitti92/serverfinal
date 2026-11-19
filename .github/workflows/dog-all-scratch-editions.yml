@@ -5,6 +5,8 @@ on:
     paths:
       - 'dog/christmas-other-editions.js'
       - 'dog/christmas-scratch.js'
+      - 'dog/christmas-gifts-edition.js'
+      - 'dog/christmas-snow-edition.js'
       - 'dog/christmas-special-scratch.js'
       - 'dog/christmas-premium27.js'
       - 'christmas-scratch-api.js'
@@ -20,6 +22,8 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog/christmas-other-editions.js
+      - run: node --check dog/christmas-gifts-edition.js
+      - run: node --check dog/christmas-snow-edition.js
       - run: node --check dog/christmas-scratch.js
       - run: node --check dog/christmas-special-scratch.js
       - run: node --check christmas-scratch-api.js
