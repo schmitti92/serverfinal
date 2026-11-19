@@ -98,7 +98,7 @@ function decorate(board,unlock){
   unlockId:usedUnlock?unlock.unlockId:null
  };
 }
-export function drawNumberOne20({draw,unlock=null,settings=null,forcedHits=null}={}){
+export function drawNumberOne20({draw,unlock=null,settings=null,forcedHits=null,fixedSymbols=null}={}){
  if(typeof draw!=='function')throw Error('SCRATCH_SPECIAL_DRAW_REQUIRED');
  const defaults=[650,280,60,10];
  const weights=Array.isArray(settings?.symbolWeights)?settings.symbolWeights:defaults;
@@ -113,6 +113,13 @@ export function drawNumberOne20({draw,unlock=null,settings=null,forcedHits=null}
   throw Error('SCRATCH_NUMBER_SETTINGS_INVALID');
  const prizePool=NUMBER_PRIZE_WEIGHTS.map((row,i)=>({...row,weight:weights[i],amount:i<3?amounts[i]:null}));
  const cells=[];
+ if(fixedSymbols!==null){
+  if(!Array.isArray(fixedSymbols)||fixedSymbols.length>NUMBER_ROW_COUNT||
+   fixedSymbols.some(symbol=>!['🪙','💵','💼','g'].includes(symbol))||
+   fixedSymbols.filter(symbol=>symbol==='g').length>1)
+   throw Error('SCRATCH_NUMBER_EDITION_PLAN_INVALID');
+  forcedHits=fixedSymbols.length;
+ }
  if(forcedHits!==null&&(!Number.isSafeInteger(forcedHits)||forcedHits<0||forcedHits>NUMBER_ROW_COUNT))
   throw Error('SCRATCH_PRINT_HITS_INVALID');
  // Only the server print engine may force genuine winning rows. Their positions
@@ -122,8 +129,13 @@ export function drawNumberOne20({draw,unlock=null,settings=null,forcedHits=null}
   const j=draw(i+1);[slots[i],slots[j]]=[slots[j],slots[i]];
  }
  const printedHits=forcedHits===null?null:new Set(slots.slice(0,forcedHits));
+ let fixedIndex=0;
  for(let i=0;i<NUMBER_ROW_COUNT;i++){
-  const symbol=pick(prizePool,draw);
+  let symbol=pick(prizePool,draw);
+  if(fixedSymbols!==null&&printedHits.has(i)){
+   const planned=fixedSymbols[fixedIndex++];
+   symbol=planned==='g'?SCRATCH_GIFT_SYMBOLS[draw(SCRATCH_GIFT_SYMBOLS.length)]:planned;
+  }
   // Preserve the default 1..10 uniform roll for older tests and receipts.
   // Custom odds are sampled in thousandths; other numbers remain 2..10.
   let number;
@@ -148,11 +160,18 @@ export function drawNumberOne20({draw,unlock=null,settings=null,forcedHits=null}
  return decorate({variantId:'number_one_20',symbolVersion:SPECIAL_SCRATCH_VERSION,cells,
   coinAmounts:[...amounts],symbolWeights:[...weights],hitPer1000,giftFallbackCoins},unlock);
 }
-export function drawDogJackpot9({draw,unlock=null,settings=null,forcedHit=null}={}){
+export function drawDogJackpot9({draw,unlock=null,settings=null,forcedHit=null,fixedSymbols=null}={}){
  if(typeof draw!=='function')throw Error('SCRATCH_SPECIAL_DRAW_REQUIRED');
  const custom=settings===null?null:validateDogJackpotEditionSettings(settings);
  const roll=draw(1000);
  if(!Number.isInteger(roll)||roll<0||roll>=1000)throw Error('SCRATCH_SPECIAL_RANDOM_INVALID');
+ if(fixedSymbols!==null){
+  if(!Array.isArray(fixedSymbols)||![0,8].includes(fixedSymbols.length)||
+    fixedSymbols.some(symbol=>!['🪙','💵','💼','g'].includes(symbol))||
+    fixedSymbols.filter(x=>x==='g').length>1)
+   throw Error('SCRATCH_DOG_EDITION_PLAN_INVALID');
+  forcedHit=fixedSymbols.length===8;
+ }
  if(forcedHit!==null&&typeof forcedHit!=='boolean')throw Error('SCRATCH_PRINT_DOG_INVALID');
  const dogIndex=(forcedHit===null?
   roll<(custom?.dogChancePer1000??DOG_JACKPOT_CHANCE_PER_1000):forcedHit)?
@@ -161,8 +180,15 @@ export function drawDogJackpot9({draw,unlock=null,settings=null,forcedHit=null}=
   throw Error('SCRATCH_SPECIAL_RANDOM_INVALID');
  const prizes=DOG_PRIZE_WEIGHTS.map((row,i)=>({...row,
   weight:custom?.symbolWeights[i]??row.weight}));
- const cells=Array.from({length:DOG_JACKPOT_FIELD_COUNT},(_,index)=>
-  index===dogIndex?'DOG':pick(prizes,draw));
+ let fixedIndex=0;
+ const cells=Array.from({length:DOG_JACKPOT_FIELD_COUNT},(_,index)=>{
+  if(index===dogIndex)return 'DOG';
+  if(fixedSymbols?.length===8){
+   const planned=fixedSymbols[fixedIndex++];
+   return planned==='g'?SCRATCH_GIFT_SYMBOLS[draw(SCRATCH_GIFT_SYMBOLS.length)]:planned;
+  }
+  return pick(prizes,draw);
+ });
  return decorate({variantId:'dog_jackpot_9',symbolVersion:SPECIAL_SCRATCH_VERSION,cells,
   ...(custom?{coinAmounts:[...custom.coinAmounts],symbolWeights:[...custom.symbolWeights],
    giftFallbackCoins:custom.giftFallbackCoins,
