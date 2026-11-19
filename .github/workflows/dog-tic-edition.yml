@@ -1,0 +1,27 @@
+name: DOG Tic-Tac-Toe Edition
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/christmas-tic-edition.js'
+      - 'dog/christmas-tictactoe-duel.js'
+      - 'dog/christmas-tictactoe.js'
+      - 'dog/christmas-scratch.js'
+      - 'christmas-scratch-api.js'
+      - 'server.js'
+      - 'tests/dog-tic-edition.test.js'
+      - '.github/workflows/dog-tic-edition.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check server.js
+      - run: node --check christmas-scratch-api.js
+      - run: node --check dog/christmas-tic-edition.js
+      - run: node --check dog/christmas-tictactoe-duel.js
+      - run: node --test tests/dog-tic-edition.test.js tests/dog-christmas-tictactoe-duel.test.js
