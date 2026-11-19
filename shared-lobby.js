@@ -1407,6 +1407,71 @@ function finishEisstock(ch,members){
     return {village};
   }));
 
+  // Mission 1 occupies the existing authenticated hub room and its shared
+  // WebSocket stream. It NEVER creates a second room or trusts client wins.
+  app.post('/api/hub/rooms/:code/grinch/launch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase==='playing'){
+        if(room.match?.game==='dog-grinch1'&&!room.match?.grinch?.complete)return {unchanged:true};
+        if(!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
+        archiveCompletedMatch(room);
+      }
+      if(!['lobby','preparing'].includes(room.phase))throw error(409,'ROOM_NOT_READY');
+      const members=room.players.filter(p=>!p.testBot&&!p.bot);
+      if(members.length!==3)throw error(409,'GRINCH_REQUIRES_THREE_HUMAN_PLAYERS');
+      if(!christmasActive())throw error(409,'CHRISTMAS_EVENT_INACTIVE');
+      const villageSnap=await tx.get(dogVillageFor(store));
+      const village=villageSnap.exists?villageSnap.data():null;
+      if(dogTreeLevelFromLevels(village)<10)throw error(409,'GRINCH_TREE_LEVEL_10_REQUIRED');
+      room.players.forEach(p=>{p.participating=members.some(m=>m.uid===p.uid);p.ready=false;});
+      startGrinchMission(room,village);
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/grinch/action',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const {matchId,action,expectedRevision,actionId}=req.body||{};
+    if(!code||typeof matchId!=='string'||matchId.length>100||
+       !Number.isInteger(expectedRevision)||expectedRevision<0||
+       typeof actionId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(actionId)||
+       !action||typeof action!=='object'||Array.isArray(action))
+      throw error(400,'INVALID_GRINCH_ACTION');
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
+      const m=room.match;
+      if(room.phase!=='playing'||m?.game!=='dog-grinch1'||m.id!==matchId)
+        throw error(409,'GRINCH_MATCH_MISMATCH');
+      const seat=m.grinchRoster?.find(p=>p.uid===identity.uid)?.seat;
+      if(!Number.isInteger(seat))throw error(403,'GRINCH_SPECTATOR');
+      if((m.grinchCommands||[]).includes(actionId))return {unchanged:true};
+      if(m.grinch.complete)throw error(409,'GRINCH_ALREADY_COMPLETED');
+      if(m.grinch.revision!==expectedRevision)throw error(409,'GRINCH_STALE_REVISION');
+      try{m.grinch=playGrinchMission1(m.grinch,seat,action);}
+      catch(e){throw error(409,e.message||'GRINCH_ILLEGAL_ACTION');}
+      m.grinchCommands=[...(m.grinchCommands||[]).slice(-69),actionId];
+      // Only the actual final verified move grants progress to all members.
+      if(m.grinch.complete&&!m.grinchCompletionRecorded){
+        if(m.grinchRoster.length!==3||new Set(m.grinchRoster.map(p=>p.uid)).size!==3)
+          throw error(409,'GRINCH_ROSTER_INVALID');
+        const refs=m.grinchRoster.map(p=>store.collection(GRINCH_PROGRESS_COLLECTION).doc(p.uid));
+        const snaps=await Promise.all(refs.map(ref=>tx.get(ref)));
+        const completedAt=clock();
+        m.grinchRoster.forEach((player,i)=>{
+          const prior=snaps[i].exists?snaps[i].data():{};
+          const completed=[...new Set([...(Array.isArray(prior.completedMissions)?prior.completedMissions:[]),1])];
+          tx.set(refs[i],{
+            uid:player.uid,name:player.name,
+            completedMissions:completed,highestUnlocked:Math.max(2,Number(prior.highestUnlocked)||1),
+            lastCompletedMatchId:m.id,updatedAt:completedAt,
+            firstMission1CompletedAt:prior.firstMission1CompletedAt||completedAt
+          });
+        });
+        m.grinchCompletionRecorded=true;
+      }
+    })};
+  }));
+
   // DOG Classic: room membership and authoritative rules in the same Firestore transaction.
   // Opponent hands, draw deck and private card exchanges never leave the server.
   app.post('/api/hub/rooms/:code/dog/action',handler(async req=>{
@@ -1671,7 +1736,8 @@ function finishEisstock(ch,members){
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
         const village=room.game==='dog'&&christmasActive()
-         ?await sharedVillageForMatchStart(tx,store,room.hostUid):null;
+         ?await sharedVillageForMatchStart(tx,store,room.hostUid):
+         room.game==='dog-grinch1'?(await tx.get(dogVillageFor(store))).data()||null:null;
         startGame(room,village);
       }
     })};
@@ -1688,7 +1754,8 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       const village=room.game==='dog'&&christmasActive()
-        ?await sharedVillageForMatchStart(tx,store,room.hostUid):null;
+        ?await sharedVillageForMatchStart(tx,store,room.hostUid):
+        room.game==='dog-grinch1'?(await tx.get(dogVillageFor(store))).data()||null:null;
       startGame(room,village);
     })};
   }));
