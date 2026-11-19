@@ -27,7 +27,7 @@ import { installChristmasHatsApi } from "./christmas-hats-api.js";
 import { installChristophSurpriseApi } from "./christoph-surprise-api.js";
 import { installDogWelcomeGiftApi } from "./dog-welcome-gift.js";
 import { installDogHostGiftApi } from "./dog-host-gifts.js";
-import { installChristmasScratchApi } from "./christmas-scratch-api.js";
+import { installDogScratchEditionApi } from "./christmas-scratch-api.js";
 import { installEngine2Api } from "./engine2/api.js";
 import { installHubBusiness } from "./business-hub.js";
 import { installEisstockOnline } from "./eisstock-online.js";
@@ -4433,7 +4433,7 @@ installDogWelcomeGiftApi(app,{verifyProfile:profileStatsV8.identity,getFirestore
 // Host-triggered 5 wooden chests for all genuine members of the active room.
 installDogHostGiftApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 // Shared Christmas scratch wallet and fixed-budget editions (one atomic transaction per purchase).
-installChristmasScratchApi(app,{admin,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
+installDogScratchEditionApi(app,{admin,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
