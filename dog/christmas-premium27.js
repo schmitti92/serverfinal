@@ -145,7 +145,7 @@ function generatePremium27V3(prizes,{draw,maxAttempts}){
  * All prizes are issued before the grid is built; no client-side award,
  * and no change to historic v1/v2/v3 receipts.
  */
-function generatePremium27V4(prizes,{draw,maxAttempts}){
+function generatePremium27V4(prizes,{draw,maxAttempts,forceFull27=false,excludeFull27=false}){
  const gold=prizes.filter(p=>p.milestone==='gold-20');
  const premium=prizes.filter(p=>p.milestone==='premium-24');
  if(gold.length>1||premium.length>1||
@@ -343,7 +343,7 @@ export function generatePremium27(prizes,{draw=randomInt,maxAttempts=16000,versi
   !Number.isInteger(maxAttempts)||maxAttempts<1||typeof draw!=='function')
   throw Error('PREMIUM27_PRIZES_INVALID');
  if(version===5)return generatePremium27V5(prizes,{draw,maxAttempts,forceFull27,excludeFull27});
- if(version===4)return generatePremium27V4(prizes,{draw,maxAttempts});
+ if(version===4)return generatePremium27V4(prizes,{draw,maxAttempts,forceFull27,excludeFull27});
  if(prizes.every(p=>typeof p.symbol==='string'))
   return generatePremium27V3(prizes,{draw,maxAttempts});
  const coins=prizes.filter(p=>p.type==='coins');
