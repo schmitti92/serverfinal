@@ -35,7 +35,7 @@ export function snowEditionPublic(raw){
  const paidCoins=Number.isSafeInteger(raw.paidCoins)?Math.max(0,raw.paidCoins):0;
  const maxTotalCoins=Number.isSafeInteger(raw.maxTotalCoins)?raw.maxTotalCoins:0;
  const amounts=raw.config?.coinAmounts;
- const remainingMaximum=Array.isArray(raw.prizePlan)&&Array.isArray(amounts)?
+ const remainingMaximum=raw.budgetMode==='fixed'&&Array.isArray(raw.prizePlan)&&Array.isArray(amounts)?
   raw.prizePlan.slice(issued).reduce((maximum,code)=>{
    const sum=decodeFixedEditionRows(code).reduce((total,row)=>
     total+amounts[row%3]*(row>=3?2:1),0);
