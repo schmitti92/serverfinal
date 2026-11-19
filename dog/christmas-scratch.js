@@ -708,7 +708,8 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   const pool=specialId==='number_one_20'?DOG_SCRATCH_MEDIUM_POOL:DOG_SCRATCH_PREMIUM_POOL;
   const remaining=pool.filter(prize=>!owned.has(prize.unlockId));
   const unlock=remaining.length?remaining[random(remaining.length)]:null;
-  const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel',settings:editionSpecial?.ticTacToe??null}):
+  const drawn=specialId==='tic_tac_toe'?drawTicTacToe({draw:random,unlock,mode:'duel',settings:editionSpecial?.ticTacToe??null,
+    fixedCode:typeof printControl?.ticFixedCode==='string'?printControl.ticFixedCode:null}):
    specialId==='number_one_20'?drawNumberOne20({draw:random,unlock,settings:liveSettings.numberOne20,
     forcedHits:Number.isInteger(printControl?.forcedWins)?printControl.forcedWins:null}):
    drawDogJackpot9({draw:random,unlock,settings:editionSpecial?.dogJackpot??null,
