@@ -1,21 +1,40 @@
 /**
- * Personal DOG player progression (levels 1–10).
- * Progress is awarded only on an authoritative, completed online DOG match.
- * Level 1 grants one voucher for EACH of the 4 scratch variants.
- * Level 2 opens the DOG Design-Studio; level 3 unlocks Nikolaus cards.
- * Level 4 unlocks the classic 3D pawns (solid-color pieces are free).
- * Rewards are bound to authenticated, server-verified experience points.
+ * DOG-Spielerpass 1–50. Bestehende XP-Schwellen für 1–10 und bestehende
+ * Freischaltungen bleiben erhalten; Gutscheine werden serverseitig abgeholt.
  */
-export const DOG_LEVEL_MAX=10;
-export const DOG_LEVEL_THRESHOLDS=Object.freeze([0,100,250,450,700,1000,1350,1750,2200,2700]);
+export const DOG_LEVEL_MAX=50;
+export const DOG_LEVEL_THRESHOLDS=Object.freeze(Array.from({length:DOG_LEVEL_MAX},(_,i)=>100*i+25*i*(i-1)));
 export const DOG_LEVEL_XP=Object.freeze({complete:50,win:50,knockout:10,maxCountedKnockouts:5});
+const voucher=(tier,id,count=1)=>Object.freeze({tier,id,count});
+const SIMPLE=['gifts','snow_collect'];
+const MEDIUM=['elf','tic_tac_toe','number_one_20'];
+const PREMIUM=['premium_27','dog_jackpot_9'];
+function scratchPack(n){
+ if(n===1)return [voucher('simple','gifts'),voucher('simple','snow_collect'),
+  voucher('medium','elf'),voucher('premium','premium_27')];
+ const count=n%9===0?3:n%3===0||n%4===0?2:1;
+ const pack=[voucher('simple',SIMPLE[n%2],count)];
+ if(n%5===0&&n%10!==0)pack.push(voucher('medium',MEDIUM[(n/5-1)%MEDIUM.length]));
+ if(n%8===0)pack.push(voucher('medium',MEDIUM[(n/8)%MEDIUM.length]));
+ if(n%10===0)pack.push(voucher('premium',PREMIUM[(n/10-1)%PREMIUM.length]));
+ return pack;
+}
+const SPECIAL=Object.freeze({
+ 2:{type:'feature',id:'dog-design-studio',title:'🎨 Brettdesigner'},
+ 3:{type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'},
+ 4:{type:'pieceShape',id:'dog-pawn-3d',title:'♟️ Klassische 3D-Spielfiguren'}
+});
 export const DOG_LEVEL_REWARDS=Object.freeze(Array.from({length:DOG_LEVEL_MAX},(_,i)=>{
- const reward=i===0?Object.freeze({type:'scratchStarter',id:'scratch-vouchers-4',
-  title:'🎟️ Vier Rubbellos-Gutscheine · je 1 pro Losart'}):
-  i===1?Object.freeze({type:'feature',id:'dog-design-studio',title:'Brettdesigner'}):
-  i===2?Object.freeze({type:'cardEdition',id:'kartendesign-05',title:'🎅 Nikolaus-Kartendeck · Deluxe'}):
-  i===3?Object.freeze({type:'pieceShape',id:'dog-pawn-3d',title:'♟️ Klassische 3D-Spielfiguren'}):null;
- return Object.freeze({level:i+1,id:'dog-player-level-'+(i+1),configured:reward!==null,reward});
+ const n=i+1,bonus=SPECIAL[n],vouchers=Object.freeze(scratchPack(n));
+ const count=vouchers.reduce((sum,v)=>sum+v.count,0);
+ const reward=Object.freeze({
+  type:n===1?'scratchStarter':bonus?.type||'scratchBundle',
+  id:n===1?'scratch-vouchers-4':bonus?.id||'dog-level-scratch-'+n,
+  title:n===1?'🎟️ Vier Rubbellos-Gutscheine · je 1 pro Losart':
+   bonus?.title||('🎟️ '+count+' Rubbellos-'+(count===1?'Gutschein':'Gutscheine')),
+  vouchers
+ });
+ return Object.freeze({level:n,id:'dog-player-level-'+n,configured:true,reward});
 }));
 const safeXp=value=>Number.isSafeInteger(value)&&value>=0?Math.min(value,1000000000):0;
 export function dogLevelFromXp(totalXp){
