@@ -735,7 +735,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
    ...(first?.type==='unlock'?{prize:first.prize}:{}),
    coinAmounts:specialId==='tic_tac_toe'?[...(drawn.board.coinAmounts??[200,450,800])]:
     specialId==='number_one_20'?[...drawn.board.coinAmounts]:[...(drawn.board.coinAmounts??[100,300,800])],
-   ...(specialId==='tic_tac_toe'?{symbolWeights:[360,330,270,40]}:{}),
+   ...(specialId==='tic_tac_toe'?{symbolWeights:[...(drawn.board.symbolWeights??[700,250,40,10])]}:{}),
    giftSparksEarned:drawn.giftSparks||0,giftVoucherEarned:earnedVoucher,
    board:drawn.board,winnings:drawn.winnings,totalCoins,at:stamped,balance:w.coins};
   addScratchProgress(w.progress,result);
