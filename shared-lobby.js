@@ -13,12 +13,12 @@ import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
-import {dogPlayerLevelStatus} from './dog/player-levels.js';
+import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
-import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelOneScratchVouchers} from './dog/christmas-scratch.js';
+import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelScratchVouchers,dogLevelRewardClaimFlags} from './dog/christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings,updateGiftScratchSettings,updateSnowScratchSettings} from './dog/christmas-scratch-settings.js';
 import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COLLECTION,
@@ -1122,11 +1122,9 @@ function finishEisstock(ch,members){
     return {stats:dogPlayerStats(snap.exists?snap.data():null,uid),
       tracking:'from-2026-11-15',scope:'completed-dog-online-matches'};
   }));
-  // Personal 1–10 level progress: read-only, separate from the village and
-  // from the shared Christmas tree. Opens only when the user views their level.
+  // Persönlicher 50-Level-Sammlerpass. Serverseitig bestätigte DOG-XP.
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
-    const store=db();
-    const uid=req.hubIdentity.uid;
+    const store=db(),uid=req.hubIdentity.uid;
     const [snap,walletSnap,villageSnap]=await Promise.all([
       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
       store.collection(DOG_SCRATCH_COLLECTION).doc(uid).get(),
@@ -1134,23 +1132,30 @@ function finishEisstock(ch,members){
     ]);
     return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
       academyXpPercent:christmasActive()?dogAcademyXpPercent(villageSnap.exists?villageSnap.data()?.levels?.academy:1):0,
-      levelRewardClaims:{1:Boolean(walletSnap.exists&&walletSnap.data()?.levelOneStarterClaimedAt)},
+      levelRewardClaims:dogLevelRewardClaimFlags(walletSnap.exists?walletSnap.data():null),
       scope:'verified-dog-online-matches',rewardsConfigured:true};
   }));
-  // Only the authenticated account can redeem its Level-1 starter pack.
-  // One atomic scratch-wallet write guarantees exactly four specific vouchers
-  // despite retry, reconnect, or two devices claiming simultaneously.
+  // Anspruch und XP innerhalb einer Firestore-Transaktion prüfen, vor der
+  // ersten Änderung. Gutscheinpaket und Claimmarker gemeinsam speichern.
   app.post('/api/hub/dog/level/rewards/claim',authentication,handler(async req=>{
-    if(req.body?.level!==1)throw error(400,'DOG_LEVEL_REWARD_INVALID');
-    const store=db(),walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(req.hubIdentity.uid);
-    const receipt=await store.runTransaction(async tx=>{
-      const snap=await tx.get(walletRef);
-      const grant=claimDogLevelOneScratchVouchers(snap.exists?snap.data():null,{now:clock()});
+    const level=req.body?.level;
+    if(!Number.isInteger(level)||level<1||level>DOG_LEVEL_MAX)
+      throw error(400,'DOG_LEVEL_REWARD_INVALID');
+    const store=db(),uid=req.hubIdentity.uid;
+    const walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
+    const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
+    return store.runTransaction(async tx=>{
+      const [statsSnap,walletSnap]=await Promise.all([tx.get(statsRef),tx.get(walletRef)]);
+      const current=dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null);
+      if(current.level<level||current.totalXp<DOG_LEVEL_THRESHOLDS[level-1])
+        throw error(403,'DOG_LEVEL_NOT_REACHED');
+      let grant;
+      try{grant=claimDogLevelScratchVouchers(walletSnap.exists?walletSnap.data():null,level,{now:clock()});}
+      catch(e){throw error(e.message==='SCRATCH_VOUCHER_LIMIT'?409:400,e.message);}
       if(!grant.unchanged)tx.set(walletRef,grant.wallet);
-      return {replayed:grant.unchanged,levelRewardClaims:{1:true},
+      return {replayed:grant.unchanged,levelRewardClaims:dogLevelRewardClaimFlags(grant.wallet),
         scratch:dogScratchStatus(grant.wallet)};
     });
-    return receipt;
   }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
     const store=db(),snap=await dogVillageFor(store).get();
