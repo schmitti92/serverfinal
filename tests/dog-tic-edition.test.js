@@ -4,7 +4,8 @@ import {TIC_EDITION_DEFAULT,createTicFixedPlan,ticPlanTotal,ticTicketAmount,
  createTicEdition,ticEditionPublic,editTicEdition,issueTicEditionTicket}
  from '../dog/christmas-tic-edition.js';
 import {drawTicTacToeDuel,verifyTicTacToeDuel} from '../dog/christmas-tictactoe-duel.js';
-import {DOG_SCRATCH_START_COINS} from '../dog/christmas-scratch.js';
+import {DOG_SCRATCH_START_COINS,scratchPrizePoolForCategory} from '../dog/christmas-scratch.js';
+import {validateTicEditionConfig} from '../dog/christmas-tic-edition.js';
 
 const zero=()=>0;
 const config={...TIC_EDITION_DEFAULT,coinAmounts:[200,450,800],
@@ -67,4 +68,52 @@ test('fixed money wins match the scratched bottom symbol and multiplier',()=>{
  assert.ok(gift.board.prizeSymbol==='🎁'||gift.board.prizeSymbol==='💝');
  assert.equal(gift.winnings[0]?.amount,0);
  assert.equal(verifyTicTacToeDuel(gift.board),true);
+});
+
+test('Tic edition stores, validates and edits the 1/2/3 cosmetic category',()=>{
+ for(const category of [1,2,3]){
+  const conf=validateTicEditionConfig({...config,prizeCategory:category});
+  assert.equal(conf.prizeCategory,category);
+  assert.ok(scratchPrizePoolForCategory(category).length>0);
+  const edition=createTicEdition({id:'tic-category-'+category,createdAt:12345,
+   createdBy:'tester',maxTotalCoins:150000,config:conf,draw:zero});
+  assert.equal(edition.config.prizeCategory,category);
+  assert.equal(ticEditionPublic(edition).config.prizeCategory,category);
+  const changed=editTicEdition(edition,{config:{...conf,prizeCategory:category%3+1},
+   maxTotalCoins:150000,draw:zero,now:12346});
+  assert.equal(changed.config.prizeCategory,category%3+1);
+  assert.equal(changed.issued,edition.issued);
+  assert.equal(ticPlanTotal(changed.prizePlan,changed.config),150000);
+ }
+ for(const invalid of [-1,0,4,1.5,'1','premium']){
+  assert.throws(()=>validateTicEditionConfig({...config,prizeCategory:invalid}),
+   /SCRATCH_TIC_EDITION_PRIZE_CATEGORY_INVALID/);
+ }
+ // Legacy editions (without the field) retain category 2 for safe migration.
+ assert.equal(validateTicEditionConfig({...config,prizeCategory:undefined}).prizeCategory,2);
+});
+test('every fixed Tic gift unlock comes exclusively from its selected reward pool',()=>{
+ const catPools=[1,2,3].map(category=>scratchPrizePoolForCategory(category));
+ const catIds=catPools.map(pool=>new Set(pool.map(item=>item.unlockId)));
+ for(let i=0;i<3;i++)for(let j=i+1;j<3;j++)
+  assert.equal([...catIds[i]].some(id=>catIds[j].has(id)),false,'Pools must not overlap');
+ for(const category of [1,2,3]){
+  const edition=createTicEdition({id:'tic-pool-'+category,createdAt:12345,
+   createdBy:'tester',maxTotalCoins:0,
+   config:{...config,prizeCategory:category},draw:zero});
+  // Force an authentic gift-line ticket into the fixed 500-card budget plan.
+  // It has zero coin payout; all other 499 fixed plans remain untouched.
+  edition.prizePlan[0]='G3';
+  const result=issueTicEditionTicket(null,null,{
+   tier:'medium',variantId:'tic_tac_toe',
+   commandId:'tic-pool-check-0000'+category
+  },edition,null,{draw:zero,now:()=>12345}).purchase.result;
+  assert.equal(result.tier,'medium','Changing gift pool cannot change ticket purchase class');
+  assert.equal(result.prizeCategory,category);
+  assert.equal(result.board.prizeSymbol,'🎁');
+  const gift=result.winnings.find(x=>x.type==='unlock');
+  assert.ok(gift,'Gift needs to create a real category unlock while prizes remain');
+  assert.ok(catIds[category-1].has(gift.prize.unlockId),'Wrong reward category');
+  assert.equal(result.totalCoins,0);
+ }
 });
