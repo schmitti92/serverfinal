@@ -6,6 +6,7 @@
  * Daily: one free simple ticket. New players start with 1000 event coins.
  */
 import {randomInt} from 'node:crypto';
+import {DOG_LEVEL_REWARDS,DOG_LEVEL_MAX} from './player-levels.js';
 import {drawTicTacToe} from './christmas-tictactoe.js';
 import {drawNumberOne20,drawDogJackpot9} from './christmas-special-scratch.js';
 import {SCRATCH_PAYOUT_ORDER,SCRATCH_GIFT_SYMBOLS} from './christmas-scratch-symbols.js';
@@ -520,6 +521,13 @@ const cleanScratchVouchers=raw=>Object.fromEntries(
  ['simple','medium','premium'].map(tier=>[tier,
   Number.isSafeInteger(raw?.[tier])&&raw[tier]>=0?Math.min(raw[tier],10000):0]));
 const STARTER_SCRATCH_VARIANTS=Object.freeze(['gifts','snow_collect','elf','premium_27']);
+const cleanLevelRewardClaims=raw=>Object.fromEntries(
+ Object.entries(raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{})
+ .filter(([level,at])=>/^(?:[1-9]|[1-4][0-9]|50)$/.test(level)&&Number.isSafeInteger(at)&&at>0)
+ .slice(0,DOG_LEVEL_MAX));
+export const dogLevelRewardClaimFlags=wallet=>Object.fromEntries(
+ DOG_LEVEL_REWARDS.map(x=>[x.level,Boolean(wallet?.levelRewardClaims?.[x.level]||
+  (x.level===1&&wallet?.levelOneStarterClaimedAt))]));
 const cleanVariantVouchers=raw=>Object.fromEntries(
  [...STARTER_SCRATCH_VARIANTS,'tic_tac_toe','number_one_20','dog_jackpot_9'].map(id=>[id,Number.isSafeInteger(raw?.[id])&&raw[id]>=0?Math.min(raw[id],10000):0]));
 /**
@@ -527,15 +535,24 @@ const cleanVariantVouchers=raw=>Object.fromEntries(
  * is called INSIDE the existing scratch-wallet Firestore transaction.
  * The marker and four vouchers are committed together, never separately.
  */
-export function claimDogLevelOneScratchVouchers(raw,{now=Date.now()}={}){
+export function claimDogLevelScratchVouchers(raw,level,{now=Date.now()}={}){
+ if(!Number.isInteger(level)||level<1||level>DOG_LEVEL_MAX)throw Error('DOG_LEVEL_REWARD_INVALID');
  const wallet=normalizedScratchWallet(raw);
- if(wallet.levelOneStarterClaimedAt)return {unchanged:true,wallet};
- for(const id of STARTER_SCRATCH_VARIANTS){
-  if(wallet.variantVouchers[id]>=10000)throw Error('SCRATCH_VOUCHER_LIMIT');
-  wallet.variantVouchers[id]++;
+ if(wallet.levelRewardClaims[level]||(level===1&&wallet.levelOneStarterClaimedAt))
+  return {unchanged:true,wallet};
+ const entry=DOG_LEVEL_REWARDS[level-1];
+ if(!entry?.configured||!Array.isArray(entry.reward?.vouchers))throw Error('DOG_LEVEL_REWARD_INVALID');
+ for(const {id,count} of entry.reward.vouchers){
+  if(!Object.hasOwn(wallet.variantVouchers,id)||!Number.isSafeInteger(count)||count<1||
+    wallet.variantVouchers[id]+count>10000)throw Error('SCRATCH_VOUCHER_LIMIT');
+  wallet.variantVouchers[id]+=count;
  }
- wallet.levelOneStarterClaimedAt=now;
+ wallet.levelRewardClaims[level]=now;
+ if(level===1)wallet.levelOneStarterClaimedAt=now;
  return {unchanged:false,wallet};
+}
+export function claimDogLevelOneScratchVouchers(raw,options={}){
+ return claimDogLevelScratchVouchers(raw,1,options);
 }
 /** Call only after a server-verified hidden-field hit, within the move's transaction. */
 export function grantDogScratchVoucher(raw,tier){
@@ -631,6 +648,7 @@ export function normalizedScratchWallet(raw){
   vouchers:cleanScratchVouchers(raw?.vouchers),
   variantVouchers:cleanVariantVouchers(raw?.variantVouchers),
   levelOneStarterClaimedAt:Number.isSafeInteger(raw?.levelOneStarterClaimedAt)&&raw.levelOneStarterClaimedAt>0?raw.levelOneStarterClaimedAt:0,
+  levelRewardClaims:cleanLevelRewardClaims(raw?.levelRewardClaims),
   progress:normalizeScratchProgress(raw?.progress,recent),
   lastResult:raw?.lastResult&&typeof raw.lastResult==='object'?raw.lastResult:null,
   version:1
@@ -657,7 +675,7 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
  const pools=Object.fromEntries(Object.keys(DOG_SCRATCH_TIERS).map(id=>
   [id,{total:tierPool(id).length,remaining:tierPool(id).filter(p=>!owned.includes(p.unlockId)).length}]));
  return {coins:w.coins,giftSparks:w.giftSparks,vouchers:{...w.vouchers},variantVouchers:{...w.variantVouchers},
-  levelOneStarterClaimed:Boolean(w.levelOneStarterClaimedAt),starterCoins:DOG_SCRATCH_START_COINS,
+  levelOneStarterClaimed:Boolean(w.levelOneStarterClaimedAt),levelRewardClaims:dogLevelRewardClaimFlags(w),starterCoins:DOG_SCRATCH_START_COINS,
   dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   settings:normalizeScratchSettings(settings),
