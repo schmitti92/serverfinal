@@ -35,6 +35,6 @@ test('Historic starter claim remains valid; invalid claims and overflow are bloc
  assert.equal(dogLevelRewardClaimFlags(old)[1],true);
  for(const level of [0,51,-1,1.2,'2',null])
   assert.throws(()=>claimDogLevelScratchVouchers(null,level),/DOG_LEVEL_REWARD_INVALID/);
- assert.throws(()=>claimDogLevelScratchVouchers({variantVouchers:{snow_collect:10000}},2),
+ assert.throws(()=>claimDogLevelScratchVouchers({variantVouchers:{gifts:10000}},2),
   /SCRATCH_VOUCHER_LIMIT/);
 });
