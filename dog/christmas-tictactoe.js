@@ -22,8 +22,8 @@ export function evaluateTicTacToe(cells){
  return TIC_TAC_TOE_LINES.filter(indices=>indices.every(i=>cells[i]===cells[indices[0]]))
   .map(indices=>({indices:[...indices],symbol:cells[indices[0]],rule:'tic-line'}));
 }
-export function drawTicTacToe({draw,unlock=null,mode='classic',settings=null}={}){
- if(mode==='duel')return drawTicTacToeDuel({draw,unlock,settings});
+export function drawTicTacToe({draw,unlock=null,mode='classic',settings=null,fixedCode=null}={}){
+ if(mode==='duel')return drawTicTacToeDuel({draw,unlock,settings,fixedCode});
  if(typeof draw!=='function')throw Error('TICTACTOE_RANDOM_REQUIRED');
  const cells=Array.from({length:9},()=>{
   let roll=draw(1000);
