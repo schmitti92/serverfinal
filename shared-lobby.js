@@ -26,6 +26,10 @@ import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COL
 import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLECTION,
  createSnowEdition,snowEditionPublic,issueSnowEditionTicket} from './dog/christmas-snow-edition.js';
 import {editFixedEdition} from './dog/christmas-edition-plan.js';
+import {TIC_EDITION_COLLECTION,TIC_EDITION_CURRENT,ticEditionPublic,issueTicEditionTicket}
+ from './dog/christmas-tic-edition.js';
+import {OTHER_EDITION_VARIANTS,OTHER_EDITION_COLLECTION,otherEditionPublic,issueOtherEditionTicket}
+ from './dog/christmas-other-editions.js';
 
 export const HUB_GAMES = Object.freeze({
   barikade: { title:'Barikade', min:2, max:4 },
@@ -813,13 +817,16 @@ function finishEisstock(ch,members){
   // and share the existing 10 tree entitlements to avoid duplicated art.
   app.get('/api/hub/scratch',authentication,handler(async req=>{
      const identity=req.hubIdentity,store=db();
-     const [snap,tree,settingsSnap,villageSnap,giftsEditionSnap,snowEditionSnap]=await Promise.all([
+     const [snap,tree,settingsSnap,villageSnap,giftsEditionSnap,snowEditionSnap,ticEditionSnap,...otherEditionSnaps]=await Promise.all([
        store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
        dogVillageFor(store).get(),
        store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT).get(),
-       store.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT).get()
+       store.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT).get(),
+       store.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT).get(),
+       ...OTHER_EDITION_VARIANTS.map(variant=>
+        store.collection(OTHER_EDITION_COLLECTION).doc('current_'+variant).get())
      ]);
      // The event odds are global, and every authenticated player may edit them
      // even if they did not open a shared room. No room document read needed.
@@ -828,6 +835,9 @@ function finishEisstock(ch,members){
        discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1),
        giftsEdition:giftsEditionPublic(giftsEditionSnap.exists?giftsEditionSnap.data():null),
        snowEdition:snowEditionPublic(snowEditionSnap.exists?snowEditionSnap.data():null),
+       ticEdition:ticEditionPublic(ticEditionSnap.exists?ticEditionSnap.data():null),
+       otherEditions:Object.fromEntries(OTHER_EDITION_VARIANTS.map((variant,i)=>
+        [variant,otherEditionPublic(otherEditionSnaps[i]?.exists?otherEditionSnaps[i].data():null)])),
        canManageScratch:true};
    }));
    // Authenticate all writes, but do not require host/room membership:
@@ -917,6 +927,10 @@ function finishEisstock(ch,members){
       try{edition=createGiftsEdition({id:randomUUID(),createdAt:clock(),
        createdBy:req.hubIdentity.uid,maxTotalCoins:req.body?.maxTotalCoins,settings})}
       catch(e){throw error(400,e.message)}
+      const prizeCategory=req.body?.prizeCategory??1;
+      if(!Number.isInteger(prizeCategory)||prizeCategory<1||prizeCategory>3)
+       throw error(400,'SCRATCH_EDITION_PRIZE_CATEGORY_INVALID');
+      edition.prizeCategory=prizeCategory;
       if(previous)tx.set(store.collection(GIFTS_EDITION_HISTORY_COLLECTION).doc(previous.id),previous);
       tx.set(settingsRef,{...settings,updatedBy:req.hubIdentity.uid,updatedAt:clock()});
       tx.set(editionRef,edition);
@@ -958,6 +972,10 @@ function finishEisstock(ch,members){
       try{edition=createSnowEdition({id:randomUUID(),createdAt:clock(),
         createdBy:req.hubIdentity.uid,maxTotalCoins:req.body?.maxTotalCoins,settings})}
       catch(e){throw error(400,e.message)}
+      const prizeCategory=req.body?.prizeCategory??1;
+      if(!Number.isInteger(prizeCategory)||prizeCategory<1||prizeCategory>3)
+       throw error(400,'SCRATCH_EDITION_PRIZE_CATEGORY_INVALID');
+      edition.prizeCategory=prizeCategory;
       if(previous)tx.set(store.collection(SNOW_EDITION_HISTORY_COLLECTION).doc(previous.id),previous);
       tx.set(settingsRef,{...settings,updatedBy:req.hubIdentity.uid,updatedAt:clock()});
       tx.set(editionRef,edition);
@@ -994,6 +1012,10 @@ function finishEisstock(ch,members){
           updateGiftScratchSettings(settingsSnap.exists?settingsSnap.data():null,req.body?.gifts):
           updateSnowScratchSettings(settingsSnap.exists?settingsSnap.data():null,req.body?.snow);
         next=editFixedEdition(current,{settings,maxTotalCoins:req.body?.maxTotalCoins,now:clock()});
+        const prizeCategory=req.body?.prizeCategory??current.prizeCategory??1;
+        if(!Number.isInteger(prizeCategory)||prizeCategory<1||prizeCategory>3)
+         throw Error('SCRATCH_EDITION_PRIZE_CATEGORY_INVALID');
+        next.prizeCategory=prizeCategory;
       }catch(e){throw error(400,e.message)}
       tx.set(currentRef,next);
       tx.set(settingsRef,{...settings,updatedBy:req.hubIdentity.uid,updatedAt:clock()});
@@ -1022,19 +1044,25 @@ function finishEisstock(ch,members){
       store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT):null;
     const snowEditionRef=body.variantId==='snow_collect'?
       store.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT):null;
+    const ticEditionRef=body.variantId==='tic_tac_toe'?
+      store.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT):null;
+    const otherEditionRef=OTHER_EDITION_VARIANTS.includes(body.variantId)?
+      store.collection(OTHER_EDITION_COLLECTION).doc('current_'+body.variantId):null;
     const sharedVillageRef=dogVillageFor(store);
     // Regular DOG scratch purchase; no printed editions or 500-ticket queue.
     // The server still verifies prizes and atomically books each purchase.
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap,settingsSnap,villageSnap,editionSnap,snowSnap]=await Promise.all([
+      const [walletSnap,treeSnap,settingsSnap,villageSnap,editionSnap,snowSnap,ticSnap,otherSnap]=await Promise.all([
         tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),tx.get(sharedVillageRef),
         giftsEditionRef?tx.get(giftsEditionRef):Promise.resolve(null),
-        snowEditionRef?tx.get(snowEditionRef):Promise.resolve(null)]);
+        snowEditionRef?tx.get(snowEditionRef):Promise.resolve(null),
+        ticEditionRef?tx.get(ticEditionRef):Promise.resolve(null),
+        otherEditionRef?tx.get(otherEditionRef):Promise.resolve(null)]);
       const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
       const request={tier:body.tier,variantId:body.variantId,commandId:body.commandId,
         free:body.free===true,voucher:body.voucher===true};
       const tree=treeSnap.exists?treeSnap.data():null;
-      let result,nextEdition=null,nextSnowEdition=null;
+      let result,nextEdition=null,nextSnowEdition=null,nextTicEdition=null,nextOtherEdition=null;
       try{
         const wallet=walletSnap.exists?walletSnap.data():null;
         const options={now:()=>clock(),settings,
@@ -1047,9 +1075,15 @@ function finishEisstock(ch,members){
           const issued=issueSnowEditionTicket(wallet,tree,request,snowSnap.data(),settings,options);
           result=issued.purchase;
           nextSnowEdition=issued.edition;
+        }else if(ticEditionRef&&ticSnap?.exists){
+          const issued=issueTicEditionTicket(wallet,tree,request,ticSnap.data(),settings,options);
+          result=issued.purchase;nextTicEdition=issued.edition;
+        }else if(otherEditionRef&&otherSnap?.exists){
+          const issued=issueOtherEditionTicket(wallet,tree,request,otherSnap.data(),settings,options);
+          result=issued.purchase;nextOtherEdition=issued.edition;
         }else result=buyScratchTicket(wallet,tree,request,options);
       }catch(e){
-        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|SCRATCH_NO_VOUCHER|SCRATCH_GIFTS_EDITION_SOLD_OUT|SCRATCH_SNOW_EDITION_SOLD_OUT)$/.test(e.message);
+        const conflict=/^(SCRATCH_NOT_ENOUGH_COINS|SCRATCH_DAILY_ALREADY_USED|SCRATCH_NO_VOUCHER|SCRATCH_GIFTS_EDITION_SOLD_OUT|SCRATCH_SNOW_EDITION_SOLD_OUT|SCRATCH_TIC_EDITION_SOLD_OUT|SCRATCH_OTHER_EDITION_SOLD_OUT|SCRATCH_EDITION_WALLET_LIMIT)$/.test(e.message);
         throw error(conflict?409:400,e.message);
       }
       let village=null;
@@ -1062,12 +1096,17 @@ function finishEisstock(ch,members){
         tx.set(accountRef,result.wallet);
         if(nextEdition)tx.set(giftsEditionRef,nextEdition);
         if(nextSnowEdition)tx.set(snowEditionRef,nextSnowEdition);
+        if(nextTicEdition)tx.set(ticEditionRef,nextTicEdition);
+        if(nextOtherEdition)tx.set(otherEditionRef,nextOtherEdition);
       }
       return {result:result.result,replayed:result.unchanged,
         scratch:{...result.status,settings,
          discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)},
         giftsEdition:giftsEditionPublic(nextEdition||(editionSnap?.exists?editionSnap.data():null)),
         snowEdition:snowEditionPublic(nextSnowEdition||(snowSnap?.exists?snowSnap.data():null)),
+        ticEdition:ticEditionPublic(nextTicEdition||(ticSnap?.exists?ticSnap.data():null)),
+        ...(otherEditionRef?{otherEdition:otherEditionPublic(
+         nextOtherEdition||(otherSnap?.exists?otherSnap.data():null))}:{}),
         ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
     return award;
