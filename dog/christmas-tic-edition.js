@@ -155,8 +155,10 @@ export function ticEditionPublic(raw){
  const maxTotalCoins=integer(raw.maxTotalCoins,0,TIC_EDITION_MAX_COINS)?raw.maxTotalCoins:0;
  const future=Array.isArray(raw.prizePlan)?raw.prizePlan.slice(issued):[];
  const remainingMoney=future.filter(code=>/^[A-O]$/.test(code)).length;
+ const remainingMaximum=future.reduce((max,code)=>Math.max(max,ticTicketAmount(code,raw.config)),0);
  return {id:raw.id,size,issued,remaining:size-issued,paidCoins,maxTotalCoins,
   remainingCoins:Math.max(0,maxTotalCoins-paidCoins),
+  maxTicketCoinsRemaining:remainingMaximum,
   status:issued>=size?'sold_out':'active',revision:raw.revision??0,
   budgetMode:'fixed',createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,
   config:raw.config,moneyTicketsRemaining:remainingMoney,
