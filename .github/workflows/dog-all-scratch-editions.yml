@@ -10,6 +10,9 @@ on:
       - 'dog/christmas-special-scratch.js'
       - 'dog/christmas-premium27.js'
       - 'christmas-scratch-api.js'
+      - 'shared-lobby.js'
+      - 'server.js'
+      - 'tests/dog-scratch-edition-bridge.test.js'
       - 'tests/dog-other-editions.test.js'
       - '.github/workflows/dog-all-scratch-editions.yml'
   workflow_dispatch:
@@ -27,4 +30,6 @@ jobs:
       - run: node --check dog/christmas-scratch.js
       - run: node --check dog/christmas-special-scratch.js
       - run: node --check christmas-scratch-api.js
-      - run: node --test tests/dog-other-editions.test.js tests/dog-tic-edition.test.js
+      - run: node --check shared-lobby.js
+      - run: node --check server.js
+      - run: node --test tests/dog-other-editions.test.js tests/dog-tic-edition.test.js tests/dog-scratch-edition-bridge.test.js
