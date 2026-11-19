@@ -136,7 +136,7 @@ test('all three authenticated players receive an idempotent durable unlock only 
   assert.equal(response.status,200,JSON.stringify(response));
   assert.equal(response.room.match.grinch.seed,null);
   const own=response.room.match.grinch.hands.filter(h=>h.length>0);
-  assert.ok(own.length<=1,'no other player's cards may escape the server');
+  assert.ok(own.length<=1,"no other player's cards may escape the server");
   lastPayload=body;lastActor=who;moves++;
  }
  assert.ok(moves<1400,'the real game finished');
