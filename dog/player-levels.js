@@ -57,6 +57,7 @@ export function dogPlayerLevelStatus(raw){
  const d=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
  return {...dogLevelFromXp(d.xp),rewards:DOG_LEVEL_REWARDS,
    lastEarnedXp:safeXp(d.lastEarnedXp),lastXpBonusPercent:Math.max(0,Math.min(40,Number.isInteger(d.lastXpBonusPercent)?d.lastXpBonusPercent:0)),totalVerifiedMatches:Number.isSafeInteger(d.xpMatches)&&d.xpMatches>=0?d.xpMatches:0,
+   wins:Number.isSafeInteger(d.wins)&&d.wins>=0?d.wins:0,
    xpRules:DOG_LEVEL_XP};
 }
 export function creditDogMatchXp(raw,{won=false,knockedOut=0,matchId,now=Date.now(),bonusPercent=0}={}){
