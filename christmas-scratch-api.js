@@ -131,6 +131,10 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
      const settings=variant==='gifts'?updateGiftScratchSettings(settingsSnap.data(),req.body?.gifts):
       variant==='snow_collect'?updateSnowScratchSettings(settingsSnap.data(),req.body?.snow):
       normalizeScratchSettings(settingsSnap.data());
+     const selectedCategory=['gifts','snow_collect'].includes(variant)?
+      req.body?.prizeCategory??1:null;
+     if(selectedCategory!==null&&(!Number.isInteger(selectedCategory)||
+      selectedCategory<1||selectedCategory>3))throw Error('SCRATCH_EDITION_PRIZE_CATEGORY_INVALID');
      const edition=variant==='gifts'?createGiftsEdition({
       id,createdAt:now,createdBy:uid,maxTotalCoins:rawBudget,settings}):
       variant==='snow_collect'?createSnowEdition({
@@ -139,6 +143,7 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
        createTicEdition({id,createdAt:now,createdBy:uid,maxTotalCoins:rawBudget,config:req.body?.tic}):
        createOtherEdition({id,variant,createdAt:now,createdBy:uid,
         maxTotalCoins:rawBudget,config:req.body?.config});
+     if(selectedCategory!==null)edition.prizeCategory=selectedCategory;
      if(previous)tx.set(db.collection(meta.history).doc(
       OTHER_EDITION_VARIANTS.includes(variant)?variant+'_'+previous.id:previous.id),previous);
      tx.set(editionDoc,edition);
@@ -167,11 +172,16 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
      const settings=variant==='gifts'?updateGiftScratchSettings(settingsSnap.data(),req.body?.gifts):
       variant==='snow_collect'?updateSnowScratchSettings(settingsSnap.data(),req.body?.snow):
       normalizeScratchSettings(settingsSnap.data());
+     const selectedCategory=['gifts','snow_collect'].includes(variant)?
+      req.body?.prizeCategory??current.prizeCategory??1:null;
+     if(selectedCategory!==null&&(!Number.isInteger(selectedCategory)||
+      selectedCategory<1||selectedCategory>3))throw Error('SCRATCH_EDITION_PRIZE_CATEGORY_INVALID');
      const next=variant==='tic_tac_toe'?
       editTicEdition(current,{config:req.body?.tic,maxTotalCoins:req.body?.maxTotalCoins}):
       OTHER_EDITION_VARIANTS.includes(variant)?
       editOtherEdition(current,{config:req.body?.config,maxTotalCoins:req.body?.maxTotalCoins}):
       editFixedEdition(current,{settings,maxTotalCoins:req.body?.maxTotalCoins});
+     if(selectedCategory!==null)next.prizeCategory=selectedCategory;
      tx.set(editionDoc,next);
      if(['gifts','snow_collect'].includes(variant))
       tx.set(settingsDoc,{...settings,updatedBy:uid,updatedAt:Date.now()});
