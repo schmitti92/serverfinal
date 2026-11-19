@@ -38,6 +38,7 @@ export function validateOtherEditionConfig(variant,raw){
    amount.some(x=>!whole(x,1,50000000))||
    !(amount[0]<amount[1]&&amount[1]<amount[2])||
    !whole(raw.price,0,1000000)||
+   (raw.nonePer1000??0)+(raw.giftPer1000??0)>1000||
    !whole(raw.prizeCategory,1,3)||
    !whole(raw.maxPrizes,1,3)||
    !['nonePer1000','giftPer1000','doubleChancePer1000',
@@ -211,9 +212,9 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
   editionSpecial:{prizeCategory:raw.config.prizeCategory,
    other:{variantId:variant,config:raw.config},
    numberOne20:{price:raw.config.price,coinAmounts:[...raw.config.coinAmounts],
-    symbolWeights:[334,333,333,1],hitPer1000:100,giftFallbackCoins:0},
+    symbolWeights:[334,333,333,0],hitPer1000:100,giftFallbackCoins:0},
    dogJackpot:{coinAmounts:[...raw.config.coinAmounts],
-    symbolWeights:[334,333,332,0],dogChancePer1000:raw.config.dogChancePer1000,
+    symbolWeights:[334,333,333,0],dogChancePer1000:raw.config.dogChancePer1000,
     giftFallbackCoins:0}},
   printControl});
  if(purchase.result.totalCoins!==expected)throw Error('SCRATCH_OTHER_EDITION_PAYOUT_MISMATCH');
