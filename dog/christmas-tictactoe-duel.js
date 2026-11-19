@@ -56,13 +56,26 @@ export function evaluateTicTacToeDuel(board){
   .filter(indices=>indices.every(index=>board.cells[index]===board.winningSymbol))
   .map(indices=>({indices:[...indices],symbol:board.winningSymbol,rule:'tic-duel-line'}));
 }
-export function drawTicTacToeDuel({draw,unlock=null,settings=null}={}){
+export function drawTicTacToeDuel({draw,unlock=null,settings=null,fixedCode=null}={}){
  if(typeof draw!=='function')throw Error('TIC_DUEL_DRAW_REQUIRED');
  const custom=settings===null?null:validateTicDuelEditionSettings(settings);
+ // Fixed series codes originate exclusively from the transactional server
+ // ledger, never from a browser-supplied ticket or prize.
+ let fixed=null;
+ if(fixedCode!==null){
+  if(typeof fixedCode!=='string'||!(/^([A-O]|[GN][1-5])$/.test(fixedCode)))
+   throw Error('TIC_DUEL_FIXED_CODE_INVALID');
+  if(/^[A-O]$/.test(fixedCode)){
+   const idx=fixedCode.charCodeAt(0)-65;
+   fixed={kind:'coins',symbol:TIC_DUEL_REWARD_WEIGHTS[Math.floor(idx/5)].symbol,
+    multiplier:idx%5+1};
+  }else fixed={kind:fixedCode[0]==='G'?'gift':'none',multiplier:Number(fixedCode[1])};
+  if(fixed.multiplier>(custom?.maxMultiplier??5))throw Error('TIC_DUEL_FIXED_CODE_INVALID');
+ }
  const weights=custom?.symbolWeights??TIC_DUEL_REWARD_WEIGHTS.map(row=>row.weight);
  const amounts=custom?.coinAmounts??TIC_DUEL_REWARD_WEIGHTS.slice(0,3).map(row=>row.coins);
  const fallback=custom?.giftFallbackCoins??TIC_DUEL_GIFT_FALLBACK;
- const multiplier=1+validDraw(draw,custom?.maxMultiplier??5);
+ const multiplier=fixed?.multiplier??(1+validDraw(draw,custom?.maxMultiplier??5));
  const winningSymbol=TIC_DUEL_SIGNS[validDraw(draw,2)];
  const prizeRoll=validDraw(draw,1000);
  let cursor=prizeRoll,prizeSymbol=null;
@@ -71,8 +84,25 @@ export function drawTicTacToeDuel({draw,unlock=null,settings=null}={}){
   cursor-=weights[i];
  }
  if(!prizeSymbol)throw Error('TIC_DUEL_WEIGHTS_INVALID');
+ if(fixed?.kind==='coins')prizeSymbol=fixed.symbol;
+ if(fixed?.kind==='gift')prizeSymbol='🎁';
  if(prizeSymbol==='🎁')prizeSymbol=SCRATCH_GIFT_SYMBOLS[validDraw(draw,SCRATCH_GIFT_SYMBOLS.length)];
- const cells=Array.from({length:9},()=>TIC_DUEL_SIGNS[validDraw(draw,2)]);
+ let cells=Array.from({length:9},()=>TIC_DUEL_SIGNS[validDraw(draw,2)]);
+ if(fixed?.kind==='none'){
+  // A losing edition card must truly have NO matching three-sign line.
+  // Try random valid nought/cross boards, then a safe opposite-sign fallback.
+  for(let attempt=0;attempt<128;attempt++){
+   if(!TIC_DUEL_LINES.some(line=>line.every(index=>cells[index]===winningSymbol)))break;
+   cells=Array.from({length:9},()=>TIC_DUEL_SIGNS[validDraw(draw,2)]);
+  }
+  if(TIC_DUEL_LINES.some(line=>line.every(index=>cells[index]===winningSymbol)))
+   cells=Array(9).fill(TIC_DUEL_SIGNS.find(s=>s!==winningSymbol));
+ }
+ if(fixed&&(fixed.kind==='coins'||fixed.kind==='gift')){
+  // One genuine visible three-in-a-row. Extra accidental matching lines
+  // still pay the chosen prize once, consistent with standard Duel rules.
+  cells.splice(0,3,winningSymbol,winningSymbol,winningSymbol);
+ }
  const board={variantId:'tic_tac_toe',symbolVersion:TIC_DUEL_VERSION,
   cells,multiplier,winningSymbol,prizeSymbol,wins:[],
   ...(custom?{coinAmounts:[...amounts],symbolWeights:[...weights],
