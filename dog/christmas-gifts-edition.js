@@ -39,7 +39,8 @@ export function giftsEditionPublic(raw){
   status:issued===GIFTS_EDITION_SIZE?'sold_out':'active',
   budgetMode:raw.budgetMode==='fixed'?'fixed':'maximum',
   revision:Number.isInteger(raw.revision)?raw.revision:0,
-  createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,config:raw.config};
+  createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,
+  prizeCategory:raw.prizeCategory??1,config:raw.config};
 }
 
 /**
@@ -63,8 +64,10 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
  const normalized=normalizeScratchSettings(liveSettings);
  const settings={...normalized,
   variants:{...normalized.variants,gifts:rawEdition.config}};
+ const ticketOptions={...options,settings,
+  editionSpecial:{...options.editionSpecial,prizeCategory:rawEdition.prizeCategory??1}};
  if(saved){
-  const replay=buyScratchTicket(wallet,tree,request,{...options,settings});
+  const replay=buyScratchTicket(wallet,tree,request,{...ticketOptions});
   return {purchase:replay,edition:rawEdition};
  }
  if(issued>=GIFTS_EDITION_SIZE)throw Error('SCRATCH_GIFTS_EDITION_SOLD_OUT');
@@ -75,7 +78,7 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
   if(!remainingFixedEditionPlan(rawEdition))
    throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
   const plannedRows=decodeFixedEditionRows(rawEdition.prizePlan[issued]);
-  const result=buyScratchTicket(wallet,tree,request,{...options,settings,
+  const result=buyScratchTicket(wallet,tree,request,{...ticketOptions,
    printControl:{...options.printControl,fixedEditionRows:plannedRows}});
   const actual=plannedRows.reduce((sum,code)=>sum+
     rawEdition.config.coinAmounts[code%3]*(code>=3?2:1),0);
@@ -102,7 +105,7 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
  const minCoin=rawEdition.config?.coinAmounts?.[0]??1;
  const maxAttempts=left<minCoin?1:12;
  for(let i=0;i<maxAttempts;i++){
-  const attempt=buyScratchTicket(wallet,tree,request,{...options,settings});
+  const attempt=buyScratchTicket(wallet,tree,request,{...ticketOptions});
   if(attempt.result.totalCoins<=left){purchase=attempt;break}
  }
  if(!purchase){
@@ -111,7 +114,7 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
   const noMoneyGifts={...settings.variants.gifts,
    weights:{none:1000,coins:0,unlock:0},extraCoinChance:0,doubleChancePer1000:0};
   const safeSettings={...settings,variants:{...settings.variants,gifts:noMoneyGifts}};
-  purchase=buyScratchTicket(wallet,tree,request,{...options,settings:safeSettings});
+  purchase=buyScratchTicket(wallet,tree,request,{...ticketOptions:safeSettings});
   if(purchase.result.totalCoins!==0)throw Error('SCRATCH_GIFTS_BUDGET_FALLBACK_FAILED');
  }
  const next={...rawEdition,issued:issued+1,
