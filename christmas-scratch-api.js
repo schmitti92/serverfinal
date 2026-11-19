@@ -10,6 +10,9 @@ import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLEC
 import {editFixedEdition} from './dog/christmas-edition-plan.js';
 import {TIC_EDITION_COLLECTION,TIC_EDITION_CURRENT,TIC_EDITION_HISTORY_COLLECTION,
  createTicEdition,ticEditionPublic,editTicEdition,issueTicEditionTicket} from './dog/christmas-tic-edition.js';
+import {OTHER_EDITION_VARIANTS,OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,
+ createOtherEdition,otherEditionPublic,editOtherEdition,issueOtherEditionTicket}
+ from './dog/christmas-other-editions.js';
 
 /**
  * Authenticated shared Christmas scratch service. Edition and wallet writes
@@ -24,7 +27,11 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
   snow_collect:{collection:SNOW_EDITION_COLLECTION,history:SNOW_EDITION_HISTORY_COLLECTION,
    public:snowEditionPublic,response:'snowEdition'},
   tic_tac_toe:{collection:TIC_EDITION_COLLECTION,history:TIC_EDITION_HISTORY_COLLECTION,
-   public:ticEditionPublic,response:'ticEdition'}
+   public:ticEditionPublic,response:'ticEdition'},
+  ...Object.fromEntries(OTHER_EDITION_VARIANTS.map(variant=>[variant,{
+   collection:OTHER_EDITION_COLLECTION,history:OTHER_EDITION_HISTORY,
+   public:otherEditionPublic,response:'otherEdition'
+  }]))
  };
  async function user(req,res){
   const header=String(req.get('authorization')||'');
@@ -50,7 +57,9 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
  const refs=db=>({
   gifts:db.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT),
   snow_collect:db.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT),
-  tic_tac_toe:db.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT)
+  tic_tac_toe:db.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT),
+  ...Object.fromEntries(OTHER_EDITION_VARIANTS.map(variant=>
+   [variant,db.collection(OTHER_EDITION_COLLECTION).doc('current_'+variant)]))
  });
  const normalizedEdition=(variant,snap)=>variants[variant].public(snap?.data());
  const editionResponse=(gifts,snow,tic)=>({
@@ -62,14 +71,17 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
   const db=store(res);if(!db)return;
   try{
    const list=refs(db);
-   const [wallet,settings,gifts,snow,tic]=await Promise.all([
+   const [wallet,settings,gifts,snow,tic,...other]=await Promise.all([
     db.collection(DOG_SCRATCH_COLLECTION).doc(uid).get(),
     db.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
-    list.gifts.get(),list.snow_collect.get(),list.tic_tac_toe.get()
+    list.gifts.get(),list.snow_collect.get(),list.tic_tac_toe.get(),
+    ...OTHER_EDITION_VARIANTS.map(variant=>list[variant].get())
    ]);
    res.set('Cache-Control','no-store').json({ok:true,canManageScratch:true,
     scratch:dogScratchStatus(wallet.exists?wallet.data():null,null,Date.now(),settings.data()),
-    ...editionResponse(gifts.data(),snow.data(),tic.data())});
+    ...editionResponse(gifts.data(),snow.data(),tic.data()),
+    otherEditions:Object.fromEntries(OTHER_EDITION_VARIANTS.map((variant,i)=>
+     [variant,otherEditionPublic(other[i]?.data())]))});
   }catch(e){fail(res,e)}
  });
  app.post(base+'/settings',async(req,res)=>{
@@ -102,8 +114,9 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
   });
  }
  for(const variant of Object.keys(variants)){
-  const meta=variants[variant],key=variant==='gifts'?'gifts':variant==='snow_collect'?'snow':'tic';
-  const editionRef=db=>db.collection(meta.collection).doc('current');
+  const meta=variants[variant];
+  const editionRef=db=>db.collection(meta.collection).doc(
+   OTHER_EDITION_VARIANTS.includes(variant)?'current_'+variant:'current');
   app.post(base+'/editions/'+variant,async(req,res)=>{
    const uid=await user(req,res);if(!uid)return;
    const db=store(res);if(!db)return;
@@ -114,7 +127,7 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
      const [oldSnap,settingsSnap]=await Promise.all([tx.get(editionDoc),tx.get(settingsDoc)]);
      const previous=oldSnap.data();
      if(previous&&previous.issued<500)throw Error('SCRATCH_'+
-      (variant==='gifts'?'GIFTS':variant==='snow_collect'?'SNOW':'TIC')+'_EDITION_ACTIVE');
+      (variant==='gifts'?'GIFTS':variant==='snow_collect'?'SNOW':variant==='tic_tac_toe'?'TIC':'OTHER')+'_EDITION_ACTIVE');
      const settings=variant==='gifts'?updateGiftScratchSettings(settingsSnap.data(),req.body?.gifts):
       variant==='snow_collect'?updateSnowScratchSettings(settingsSnap.data(),req.body?.snow):
       normalizeScratchSettings(settingsSnap.data());
@@ -122,10 +135,14 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
       id,createdAt:now,createdBy:uid,maxTotalCoins:rawBudget,settings}):
       variant==='snow_collect'?createSnowEdition({
        id,createdAt:now,createdBy:uid,maxTotalCoins:rawBudget,settings}):
-      createTicEdition({id,createdAt:now,createdBy:uid,maxTotalCoins:rawBudget,config:req.body?.tic});
-     if(previous)tx.set(db.collection(meta.history).doc(previous.id),previous);
+      variant==='tic_tac_toe'?
+       createTicEdition({id,createdAt:now,createdBy:uid,maxTotalCoins:rawBudget,config:req.body?.tic}):
+       createOtherEdition({id,variant,createdAt:now,createdBy:uid,
+        maxTotalCoins:rawBudget,config:req.body?.config});
+     if(previous)tx.set(db.collection(meta.history).doc(
+      OTHER_EDITION_VARIANTS.includes(variant)?variant+'_'+previous.id:previous.id),previous);
      tx.set(editionDoc,edition);
-     if(variant!=='tic_tac_toe')
+     if(['gifts','snow_collect'].includes(variant))
       tx.set(settingsDoc,{...settings,updatedBy:uid,updatedAt:now});
      return {edition,settings};
     });
@@ -152,9 +169,11 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
       normalizeScratchSettings(settingsSnap.data());
      const next=variant==='tic_tac_toe'?
       editTicEdition(current,{config:req.body?.tic,maxTotalCoins:req.body?.maxTotalCoins}):
+      OTHER_EDITION_VARIANTS.includes(variant)?
+      editOtherEdition(current,{config:req.body?.config,maxTotalCoins:req.body?.maxTotalCoins}):
       editFixedEdition(current,{settings,maxTotalCoins:req.body?.maxTotalCoins});
      tx.set(editionDoc,next);
-     if(variant!=='tic_tac_toe')
+     if(['gifts','snow_collect'].includes(variant))
       tx.set(settingsDoc,{...settings,updatedBy:uid,updatedAt:Date.now()});
      return {edition:next,settings};
     });
@@ -187,6 +206,9 @@ export function installChristmasScratchApi(app,{getFirestore,admin}){
      bought=outcome.purchase;next=outcome.edition;
     }else if(raw&&variant==='tic_tac_toe'){
      const outcome=issueTicEditionTicket(walletSnap.data(),null,req.body,raw,settings);
+     bought=outcome.purchase;next=outcome.edition;
+    }else if(raw&&OTHER_EDITION_VARIANTS.includes(variant)){
+     const outcome=issueOtherEditionTicket(walletSnap.data(),null,req.body,raw,settings);
      bought=outcome.purchase;next=outcome.edition;
     }else bought=buyScratchTicket(walletSnap.data(),null,req.body,{settings});
     if(!bought.unchanged){
