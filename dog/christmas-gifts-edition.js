@@ -114,7 +114,7 @@ export function issueGiftsEditionTicket(wallet,tree,request,rawEdition,liveSetti
   const noMoneyGifts={...settings.variants.gifts,
    weights:{none:1000,coins:0,unlock:0},extraCoinChance:0,doubleChancePer1000:0};
   const safeSettings={...settings,variants:{...settings.variants,gifts:noMoneyGifts}};
-  purchase=buyScratchTicket(wallet,tree,request,{...ticketOptions:safeSettings});
+  purchase=buyScratchTicket(wallet,tree,request,{...ticketOptions,settings:safeSettings});
   if(purchase.result.totalCoins!==0)throw Error('SCRATCH_GIFTS_BUDGET_FALLBACK_FAILED');
  }
  const next={...rawEdition,issued:issued+1,
