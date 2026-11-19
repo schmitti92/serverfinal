@@ -170,8 +170,10 @@ export function otherEditionPublic(raw){
  const paid=whole(raw.paidCoins,0,OTHER_EDITION_MAX_COINS)?raw.paidCoins:0;
  const budget=whole(raw.maxTotalCoins,0,OTHER_EDITION_MAX_COINS)?raw.maxTotalCoins:0;
  const future=Array.isArray(raw.prizePlan)?raw.prizePlan.slice(issued):[];
+ const remainingMaximum=future.reduce((max,code)=>Math.max(max,otherTicketAmount(raw.variantId,code,raw.config)),0);
  return {id:raw.id,variantId:raw.variantId,size:500,issued,remaining:500-issued,
   paidCoins:paid,maxTotalCoins:budget,remainingCoins:Math.max(0,budget-paid),
+  maxTicketCoinsRemaining:Array.isArray(raw.prizePlan)?remainingMaximum:null,
   status:issued>=500?'sold_out':'active',revision:raw.revision??0,
   budgetMode:'fixed',createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,
   config:raw.config,
