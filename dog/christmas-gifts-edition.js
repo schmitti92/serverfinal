@@ -36,7 +36,7 @@ export function giftsEditionPublic(raw){
  const maxTotalCoins=Number.isSafeInteger(raw.maxTotalCoins)?raw.maxTotalCoins:0;
  // Display only a verified prize ceiling from unsold, server-reserved tickets.
  const amounts=raw.config?.coinAmounts;
- const remainingMaximum=Array.isArray(raw.prizePlan)&&Array.isArray(amounts)?
+ const remainingMaximum=raw.budgetMode==='fixed'&&Array.isArray(raw.prizePlan)&&Array.isArray(amounts)?
   raw.prizePlan.slice(issued).reduce((maximum,code)=>{
    const sum=decodeFixedEditionRows(code).reduce((total,row)=>
     total+amounts[row%3]*(row>=3?2:1),0);
