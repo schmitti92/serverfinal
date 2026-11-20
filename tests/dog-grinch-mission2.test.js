@@ -66,3 +66,52 @@ test('Slot effects preserve 110 cards, board positions, piece count and revision
   }
  }
 });
+
+
+test('Mission 2 removes exactly one ADDITIONAL figure with a hidden trap, like Mission 1',()=>{
+ const s=newGame(94161,['Rot','Blau','Gelb']);
+ const seat=0;
+ const starting=s.pieces.filter(p=>p.seat===seat);
+ assert.equal(starting.filter(p=>p.place==='lost').length,1,'one previously lost in Mission 1');
+ assert.equal(starting.filter(p=>p.place==='track'||p.place==='home').length,4);
+ assert.equal(s.players[seat].m2Lost,false);
+ assert.equal(s.players[seat].m2LostPieceId,undefined,'trap victim remains secret');
+ // Arrange a fully legal, non-protected landing for the next ordinary card.
+ s.current=seat;s.players[seat].moves=1;s.seven=null;
+ Object.assign(s.m2,{cardCurse:null,frozen:{},hazards:[],forcedCard:null,forcedPiece:null,
+  lockedCard:null,portalUntil:-1,noSwapUntil:-1,afterMovePush:0,frostLands:0});
+ const card=s.hands[seat][0];card.type='5';
+ const legal=legalMoves(s,seat,card);
+ const step=legal.find(m=>m.kind==='move'&&m.pieceId==='p3'&&m.distance===5);
+ assert.ok(step,'a normal five-step move from the protected start is available');
+ const after=play(s,seat,step);
+ assert.equal(after.players[seat].m2Lost,true);
+ assert.equal(after.players[seat].m2LostPieceId,'p3');
+ assert.equal(after.pieces.find(p=>p.id==='p3').place,'lost');
+ assert.equal(after.pieces.filter(p=>p.seat===seat&&p.place==='lost').length,2);
+ assert.equal(after.pieces.filter(p=>p.seat===seat&&['home','track','teleported'].includes(p.place)).length,3);
+ assert.match(after.lastEvent?.message||after.history.join(' '),/verliert die vierte verbleibende Figur/);
+ assert.equal(s.players[seat].m2Lost,false,'immutable authoritative transition');
+});
+test('Mission 2 blocks the third portal rescue until the fourth figure has vanished',()=>{
+ const s=newGame(2007,['Rot','Blau','Gelb']);
+ s.current=0;s.seven=null;
+ Object.assign(s.m2,{cardCurse:null,frozen:{},hazards:[],forcedCard:null,forcedPiece:null,
+  lockedCard:null,portalUntil:-1,noSwapUntil:-1,afterMovePush:0,frostLands:0});
+ const p=id=>s.pieces.find(x=>x.id===id);
+ for(const id of ['p0','p1']){p(id).place='teleported';p(id).steps=64;}
+ p('p2').place='track';p('p2').steps=63;
+ p('p3').place='track';p('p3').steps=6;
+ const c=s.hands[0][0];c.type='1/11';
+ const moves=legalMoves(s,0,c);
+ assert.equal(moves.some(m=>m.pieceId==='p2'&&m.targetSteps===64),false,
+  'the last rescue is barred while four pieces still belong to the mission');
+ p('p3').place='lost';p('p3').steps=-1;s.players[0].m2Lost=true;s.players[0].m2LostPieceId='p3';
+ const allowed=legalMoves(s,0,c);
+ assert.equal(allowed.some(m=>m.pieceId==='p2'&&m.targetSteps===64),true,
+  'the last survivor can reach Mission 3 after exactly two permanent losses');
+ const third=allowed.find(m=>m.pieceId==='p2'&&m.targetSteps===64);
+ const finishedSeat=play(s,0,third);
+ assert.equal(finishedSeat.pieces.filter(x=>x.seat===0&&x.place==='teleported').length,3);
+ assert.equal(finishedSeat.pieces.filter(x=>x.seat===0&&x.place==='lost').length,2);
+});
