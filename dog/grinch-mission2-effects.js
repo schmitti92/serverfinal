@@ -86,17 +86,23 @@ function hazard(s,type,n,duration=3){
  return fields.length;
 }
 const noMoves=s=>active(s).length===0;
-function eligible(s,id){
+function playableCards(s,seat,legalOptions){
+ if(typeof legalOptions!=='function')return [];
+ return s.hands[seat].map(card=>({card,moves:legalOptions(seat,card)})).filter(x=>x.moves.length);
+}
+function eligible(s,id,legalOptions){
  if(id>=1&&id<=5||id===9||id===10)return active(s).some(p=>p.steps>0);
  if(id===6||id===21||id===22||id===38)return active(s).length>0;
  if(id===7)return active(s).length>=2;
  if(id===8)return !!s.m2.lastMotion;
- if(id===31||id===32||id===33||id===34||id===35||id===37)return s.hands.some(h=>h.length>0);
+ if(id===34)return [0,1,2].some(seat=>playableCards(s,seat,legalOptions).length>=2);
+ if(id===35||id===38)return [0,1,2].some(seat=>playableCards(s,seat,legalOptions).length>0);
+ if(id===31||id===32||id===33||id===37)return s.hands.some(h=>h.length>0);
  if(id===39)return s.hands.some(h=>numbers(h).length>0);
  if(id===25||id===26||id===27||id===24||id===29)return unoccupied(s).length>=3;
  return true;
 }
-function record(s,id){
+function record(s,id,legalOptions){
  if(!Number.isInteger(id)||id<1||id>40)throw Error('INVALID_GRINCH_EFFECT');
  const name=EFFECT_NAMES[id-1];
  let detail='';
@@ -131,7 +137,11 @@ function record(s,id){
     s.m2.frozen[p.id]=true;
    }break;
   }
-  case 23:s.m2.skipSeat=pick(s,[0,1,2]);break;
+  case 23:{
+   const seat=pick(s,[0,1,2]);
+   if(seat!==null)s.m2.skipSeats.push(seat);
+   break;
+  }
   case 24:hazard(s,'endblock',2);break;
   case 25:hazard(s,'slip',3,999);break;
   case 26:hazard(s,'trap',3,999);break;
@@ -142,11 +152,39 @@ function record(s,id){
   case 31:{const seat=pick(s,[0,1,2].filter(i=>s.hands[i].length));if(seat!==null)replaceCard(s,seat,h=>Math.floor(rand(s)*h.length));break;}
   case 32:{const two=[0,1,2].filter(i=>s.hands[i].length);if(two.length>=2){const a=pick(s,two),b=pick(s,two.filter(i=>i!==a));const ai=Math.floor(rand(s)*s.hands[a].length),bi=Math.floor(rand(s)*s.hands[b].length);[s.hands[a][ai],s.hands[b][bi]]=[s.hands[b][bi],s.hands[a][ai]];}break;}
   case 33:{if(s.hands.every(h=>h.length)){const indexes=s.hands.map(h=>Math.floor(rand(s)*h.length));const picked=s.hands.map((h,i)=>h[indexes[i]]);s.hands[0][indexes[0]]=picked[2];s.hands[1][indexes[1]]=picked[0];s.hands[2][indexes[2]]=picked[1];}break;}
-  case 34:{const seat=pick(s,[0,1,2].filter(i=>s.hands[i].length));if(seat!==null)s.m2.lockedCard={seat,id:pick(s,s.hands[seat]).id};break;}
-  case 35:{const seat=pick(s,[0,1,2].filter(i=>s.hands[i].length));if(seat!==null)s.m2.forcedCard={seat,id:pick(s,s.hands[seat]).id};break;}
+  case 34:{
+   // Never lock the only card that can actually be played.
+   const seats=[0,1,2].filter(i=>playableCards(s,i,legalOptions).length>=2);
+   const seat=pick(s,seats);
+   if(seat!==null){
+    const selected=pick(s,playableCards(s,seat,legalOptions));
+    if(selected)s.m2.lockedCard={seat,id:selected.card.id};
+   }
+   break;
+  }
+  case 35:{
+   const seats=[0,1,2].filter(i=>playableCards(s,i,legalOptions).length>0);
+   const seat=pick(s,seats);
+   if(seat!==null){
+    const selected=pick(s,playableCards(s,seat,legalOptions));
+    if(selected)s.m2.forcedCard={seat,id:selected.card.id};
+   }
+   break;
+  }
   case 36:s.m2.reverse=true;break;
-  case 37:s.m2.skipSeat=pick(s,[0,1,2].filter(i=>s.hands[i].length));break;
-  case 38:{const seat=pick(s,[0,1,2].filter(i=>active(s).some(p=>p.seat===i)));if(seat!==null)s.m2.forcedPiece={seat,id:pick(s,active(s).filter(p=>p.seat===seat)).id};break;}
+  case 37:{
+   const seat=pick(s,[0,1,2].filter(i=>s.hands[i].length));
+   if(seat!==null)s.m2.skipSeats.push(seat);
+   break;
+  }
+  case 38:{
+   const options=[0,1,2].flatMap(seat=>playableCards(s,seat,legalOptions)
+    .flatMap(x=>x.moves.filter(move=>move.pieceId&&active(s).some(p=>p.id===move.pieceId))
+     .map(move=>({seat,id:move.pieceId}))));
+   const forced=pick(s,options);
+   if(forced)s.m2.forcedPiece=forced;
+   break;
+  }
   case 39:for(let seat=0;seat<3;seat++)replaceCard(s,seat,hand=>{const arr=numbers(hand).sort((a,b)=>b.value-a.value);return arr[0]?.i??-1;});break;
   case 40:s.m2.noSwapUntil=s.turn+3;break;
  }
@@ -154,21 +192,24 @@ function record(s,id){
  return {id,name,category:group(id)};
 }
 export function initializeMission2(s){
- s.m2={counter:0,spins:[],cardCurse:null,hazards:[],frozen:{},skipSeat:null,afterMovePush:0,portalUntil:-1,noSwapUntil:-1,
+ s.m2={counter:0,spins:[],cardCurse:null,hazards:[],frozen:{},skipSeats:[],afterMovePush:0,portalUntil:-1,noSwapUntil:-1,
   forcedCard:null,forcedPiece:null,lockedCard:null,reverse:false,frostLands:0,lastMotion:null};
  return s;
 }
-export function slotForNewPhase(s){
+export function slotForNewPhase(s,legalOptions){
  if(!s.m2)initializeMission2(s);
  const m=s.m2;
- m.cardCurse=null;m.hazards=[];m.frozen={};m.skipSeat=null;m.afterMovePush=0;m.portalUntil=-1;m.noSwapUntil=-1;
+ // Hazards with a future expiry survive the next card phase.
+ m.cardCurse=null;m.hazards=m.hazards.filter(h=>!h.used&&h.until>s.turn);
+ m.frozen={};m.skipSeats=[];m.afterMovePush=0;m.portalUntil=-1;m.noSwapUntil=-1;
  m.forcedCard=null;m.forcedPiece=null;m.lockedCard=null;m.reverse=false;m.frostLands=0;
- const available=EFFECT_IDS.filter(id=>eligible(s,id));
- const first=pick(s,available),effects=[record(s,first)];
+ const available=EFFECT_IDS.filter(id=>eligible(s,id,legalOptions));
+ const first=pick(s,available),effects=[record(s,first,legalOptions)];
  const double=rand(s)<BONUS_PROBABILITY;
  if(double){
-  const second=pick(s,EFFECT_IDS.filter(id=>group(id)!==group(first)&&eligible(s,id)));
-  if(second)effects.push(record(s,second));
+  // Re-check after the first effect, since legal cards and pawns may change.
+  const second=pick(s,EFFECT_IDS.filter(id=>group(id)!==group(first)&&eligible(s,id,legalOptions)));
+  if(second)effects.push(record(s,second,legalOptions));
  }
  m.spins.push({round:s.round,effects,double:effects.length===2});
  m.spins=m.spins.slice(-4);
@@ -244,16 +285,22 @@ export function afterMission2Card(s,seat,chosen,originalPiece){
 }
 export function mission2TurnAdvance(s,seat){
  const m=s.m2;if(!m)return false;
- if(m.skipSeat!==seat)return false;
- m.skipSeat=null;
+ if(!Array.isArray(m.skipSeats))m.skipSeats=m.skipSeat===null||m.skipSeat===undefined?[]:[m.skipSeat];
+ const index=m.skipSeats.indexOf(seat);
+ if(index<0)return false;
+ m.skipSeats.splice(index,1);m.skipSeat=null;
  const card=s.hands[seat].shift();
  if(card)s.discard.push(card);
  log(s,'⏸️ '+s.players[seat].name+' muss aussetzen und legt eine Karte ab.');
  return true;
 }
 export function mission2TurnDirection(s){return s.m2?.reverse?-1:1;}
-export function projectedMission2(s){
+export function projectedMission2(s,viewerSeat=null){
  if(!s?.m2)return;
  delete s.m2.lastMotion;delete s.m2.counter;
- // No future events or player cards are included in mission2 metadata.
+ for(const key of ['forcedCard','lockedCard']){
+  const field=s.m2[key];
+  if(field&&field.seat!==viewerSeat)s.m2[key]={seat:field.seat,active:true};
+ }
+ // Never send another player's identifiable hand-card ID.
 }
