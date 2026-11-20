@@ -294,18 +294,22 @@ export function mission2Values(s,type,original){
  if(type==='7'||type==='swap'||type==='joker')return [];
  return /^\d+$/.test(type)?[Number(type)]:[];
 }
-export function moveAllowedByCurse(s,seat,card,pieceId,type,fromSteps,toSteps,distance){
+export function moveAllowedByCurse(s,seat,card,pieceId,type,fromSteps,toSteps,distance,viaPortal=false){
  const m=s.m2;
  if(!m)return true;
+ const boardSeat=s.pieces.find(p=>p.id===pieceId)?.seat??seat;
  if(m.lockedCard?.seat===seat&&m.lockedCard.id===card.id)return false;
  if(m.forcedCard?.seat===seat&&m.forcedCard.id!==card.id)return false;
  if(m.forcedPiece?.seat===seat&&m.forcedPiece.id!==pieceId)return false;
  if(type==='swap'&&s.turn<m.noSwapUntil)return false;
- if(toSteps===64&&s.turn<m.portalUntil)return false;
- if(toSteps>=0&&toSteps<64&&m.hazards.some(h=>h.type==='endblock'&&h.until>s.turn&&h.field===mod(start[seat]+toSteps)))return false;
+ if(viaPortal&&s.turn<m.portalUntil)return false;
+ if(!viaPortal&&toSteps>=0&&toSteps<64&&m.hazards.some(h=>h.type==='endblock'&&h.until>s.turn&&h.field===mod(start[boardSeat]+toSteps)))return false;
  if(fromSteps!==null&&distance!==null){
   for(let i=1;i<=Math.abs(distance);i++){
-   const p=mod(start[seat]+fromSteps+i*Math.sign(distance));
+   // The first portal sits off the circular track. Its arrival cell cannot
+   // be blocked by a wall on the normal circular path.
+   if(viaPortal&&fromSteps<0&&toSteps===1&&i===Math.abs(distance))break;
+   const p=mod(start[boardSeat]+fromSteps+i*Math.sign(distance));
    if(m.hazards.some(h=>h.type==='wall'&&h.until>s.turn&&h.field===p))return false;
   }
  }
