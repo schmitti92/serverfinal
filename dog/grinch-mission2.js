@@ -81,6 +81,7 @@ function log(s,message){s.history.unshift(message);s.history=s.history.slice(0,1
 function nextTurn(s){
  s.current=(s.current+mission2TurnDirection(s)+SEATS)%SEATS;s.turn++;
  if(isTurnDone(s))refill(s);
+ if(s.m2?.pendingSlotRound)return; // wait before skipping into another phase
  // Discard impossible hands, rather than soft-locking an active player.
  let guard=0;
  // A whole deal can contain no playable starting or movement cards.
@@ -88,7 +89,7 @@ function nextTurn(s){
  while(guard++<500&&!s.complete){
   if(mission2TurnAdvance(s,s.current)){
    s.current=(s.current+mission2TurnDirection(s)+SEATS)%SEATS;s.turn++;
-   if(isTurnDone(s))refill(s);
+   if(isTurnDone(s)){refill(s);return;}
    continue;
   }
   const hand=s.hands[s.current];
@@ -96,7 +97,7 @@ function nextTurn(s){
   if(can)break;
   if(hand.length){log(s,LABELS[s.current]+' kann nicht ziehen – Karten abgelegt');s.discard.push(...hand.splice(0));}
   s.current=(s.current+mission2TurnDirection(s)+SEATS)%SEATS;s.turn++;
-  if(isTurnDone(s))refill(s);
+  if(isTurnDone(s)){refill(s);return;}
  }
  if(guard>=500)throw Error('Keine legalen Kartenaktionen gefunden.');
 }
@@ -118,8 +119,7 @@ export function newGame(seed=Math.floor(Math.random()*2147483647),names=LABELS){
  };
  initializeMission2(s);
  refill(s);
- // The first player may have no starting card. Skip impossible openings automatically.
- if(!s.hands[s.current].some(card=>legalMoves(s,s.current,card).length))nextTurn(s);
+ // Never run an automatic turn before the initial slot has been acknowledged.
  return s;
 }
 export function pieceCoord(p){return p.place==='track'?pos(homeIndex(p.seat)+p.steps):-1;}
@@ -270,7 +270,9 @@ export function acknowledgeMission2Slot(original,seat,round){
   if(!original||original.complete||seat!==original.current)throw Error('GRINCH_SLOT_NOT_YOUR_TURN');
   if(!Number.isInteger(round)||original.m2?.pendingSlotRound!==round||round!==original.round)
     throw Error('GRINCH_SLOT_NOT_PENDING');
-  const s=clone(original);s.m2.pendingSlotRound=null;s.revision++;
+  const s=clone(original);s.m2.pendingSlotRound=null;
+  if(!s.hands[s.current].some(c=>legalMoves(s,s.current,c).length))nextTurn(s);
+  s.revision++;
   return s;
 }
 export function play(original,seat,action){
