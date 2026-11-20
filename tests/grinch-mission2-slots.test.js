@@ -54,7 +54,7 @@ test('hazards and longer bans survive a card-phase switch',()=>{
  assert.ok(s.m2.noSwapUntil>=25);
 });
 
-test('two skip effects queue without losing either player's skipped action',()=>{
+test("two skip effects queue without losing either player's skipped action",()=>{
  const s=newGame(1713);safe(s);
  s.m2.skipSeats=[0,2];
  const before=cardCount(s);
