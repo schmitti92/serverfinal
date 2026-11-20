@@ -175,7 +175,7 @@ test('bonus effects cannot strand a formerly playable forced card, pawn or locke
  assert.equal(locked.m2.lockedCard,null,'a lock cannot remove the only playable card');
  const pawn=make(),other=pawn.pieces.find(p=>p.id==='p0');
  other.place='track';other.steps=5;
- pawn.hands[0].forEach(c=>{c.type='12';});
+ pawn.hands[0].forEach(c=>{c.type='2';});
  pawn.m2.forcedPiece={seat:0,id:'p3'};
  ensurePlayableSlotConstraints(pawn,(seat,card)=>legalFor(pawn,seat,card));
  assert.equal(pawn.m2.forcedPiece?.id,'p0');
