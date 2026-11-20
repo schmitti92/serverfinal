@@ -4,7 +4,7 @@
  * Never reads/writes official DOG rooms, village currency or mission progress.
  */
 // Immutable snapshot of the campaign parameters, supplied by the trusted server.
-export const MISSION_2=Object.freeze({"id":2,"slug":"verfluchter-aufstieg","title":"Der verfluchte Aufstieg","subtitle":"Grinchs Chaos-Slots","playersMax":3,"piecesPerPlayer":4,"forcedLossesPerPlayer":1,"goal":"Pro Spieler genau ein Portal-Zielfeld. Jede der vier geretteten Figuren wird dort sofort nach Welt 2 teleportiert.","goalType":"single-portal-per-player","teleportAtTrackSteps":64,"teleportCountToComplete":3,"theme":"mountain-road","trailHints":[],"effects":{"quakeEvery":12,"fogEvery":7,"clueEvery":9},"enabled":true});
+export const MISSION_2=Object.freeze({"id":2,"slug":"verfluchter-aufstieg","title":"Der verfluchte Aufstieg","subtitle":"Grinchs Chaos-Slots","playersMax":3,"piecesPerPlayer":4,"forcedLossesPerPlayer":1,"goal":"Pro Spieler eine weitere Figur verlieren und die übrigen drei durch das eigene Portal nach Welt 3 retten.","goalType":"single-portal-per-player","teleportAtTrackSteps":64,"teleportCountToComplete":3,"theme":"mountain-road","trailHints":[],"effects":{"quakeEvery":12,"fogEvery":7,"clueEvery":9},"enabled":true});
 import {rememberMission2Event,initializeMission2,slotForNewPhase,effectiveCardTypes,mission2Values,moveAllowedByCurse,afterMission2Card,mission2TurnAdvance,mission2TurnDirection,projectedMission2} from './grinch-mission2-effects.js';
 import {initLossMarkers,shouldCaptureAfterLanding,validCampaignSurvivors} from './grinch-loss-policy.js';
 export const SEATS=3,TRACK=64,GOAL=1;
