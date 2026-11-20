@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {newGame,legalMoves,play,publicMissionState} from '../dog/grinch-mission2.js';
+import {newGame as createGame,acknowledgeMission2Slot,legalMoves,play,publicMissionState} from '../dog/grinch-mission2.js';
+const newGame=(...args)=>{const s=createGame(...args);return acknowledgeMission2Slot(s,s.current,s.round);};
 import {slotForNewPhase,mission2TurnAdvance} from '../dog/grinch-mission2-effects.js';
 
 const legalFor=(s,seat,card)=>{
@@ -108,10 +109,26 @@ test('repeatable game simulation: every action preserves cards and split-seven p
    assert.ok(options.length>0,'game '+seed+' action '+n+' must be legal');
    const action=options[(n*19+seed)%options.length];
    s=play(s,s.current,action);
+   if(s.m2.pendingSlotRound)s=acknowledgeMission2Slot(s,s.current,s.round);
    assert.equal(cardCount(s),110);
    if(s.seven)
     assert.ok(s.hands[s.current].some(c=>legalMoves(s,s.current,c).length>0),
       'a partially played seven cannot strand the remaining steps');
   }
  }
+});
+
+test('server slot barrier rejects moves until exactly one active-seat acknowledgement',()=>{
+ const s=createGame(13557),seat=s.current;
+ const possible=s.hands[seat].flatMap(c=>legalMoves(s,seat,c));
+ assert.ok(possible.length>0);
+ assert.equal(s.m2.pendingSlotRound,s.round);
+ assert.throws(()=>play(s,seat,possible[0]),/GRINCH_SLOT_PENDING/);
+ assert.throws(()=>acknowledgeMission2Slot(s,(seat+1)%3,s.round),/GRINCH_SLOT_NOT_YOUR_TURN/);
+ assert.throws(()=>acknowledgeMission2Slot(s,seat,s.round+1),/GRINCH_SLOT_NOT_PENDING/);
+ const ready=acknowledgeMission2Slot(s,seat,s.round);
+ assert.equal(ready.revision,s.revision+1);
+ assert.equal(ready.m2.pendingSlotRound,null);
+ assert.throws(()=>acknowledgeMission2Slot(ready,seat,s.round),/GRINCH_SLOT_NOT_PENDING/);
+ assert.equal(s.m2.pendingSlotRound,s.round,'original match state is immutable');
 });
