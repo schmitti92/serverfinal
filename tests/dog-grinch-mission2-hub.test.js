@@ -119,3 +119,47 @@ test('mission 2: protected turn, one-time actions and true effects',async()=>{
  const progress=await h.call('GET','/api/hub/grinch/progress','alice');
  assert.deepEqual(progress.progress.completedMissions,[1],'no fabricated mission 2 completion from early move');
 });
+
+
+test('mission 2: verified nine-portal victory records mission 2 exactly once for all three, never pays fake tickets',async()=>{
+ const h=makeHarness();await three(h);grantMission1(h);
+ const started=await h.call('POST',route+'/launch2');
+ assert.equal(started.status,200);
+ const saved=h.docs.get('spielesammlung_hub_v1/123');
+ const g=saved.match.grinch;
+ // Arrange a near-complete server-owned match. Only one legitimate last step
+ // remains; the server must still calculate and verify that final card action.
+ g.players.forEach(info=>{info.lost=true;info.m2Lost=true;info.moves=12;});
+ g.pieces.forEach(p=>{
+  const i=Number(p.id.slice(1))%5;
+  if(i===4||i===3){p.place='lost';p.steps=-1;}
+  else if(p.seat===2&&i===2){p.place='track';p.steps=63;}
+  else{p.place='teleported';p.steps=64;}
+ });
+ g.current=2;g.seven=null;
+ g.hands[2][0].type='1/11';
+ g.m2.cardCurse=null;g.m2.frozen={};g.m2.hazards=[];
+ g.m2.portalUntil=-1;g.m2.noSwapUntil=-1;g.m2.lockedCard=null;g.m2.forcedCard=null;
+ g.m2.forcedPiece=null;g.m2.afterMovePush=0;g.m2.frostLands=0;
+ const legal=g.hands[2].flatMap(c=>legalMoves(g,2,c));
+ const action=legal.find(m=>m.pieceId==='p12'&&m.kind==='move'&&m.distance===1&&m.targetSteps===64);
+ assert.ok(action,'last genuine 1-step portal move exists');
+ const player=h.people.cara;
+ const body={matchId:saved.match.id,expectedRevision:g.revision,actionId:'grinch-m2-final-001',action};
+ const final=await h.call('POST',route+'/action','cara',body);
+ assert.equal(final.status,200,JSON.stringify(final));
+ assert.equal(final.room.match.grinch.complete,true);
+ const persisted=h.docs.get('spielesammlung_hub_v1/123');
+ assert.equal(persisted.match.grinchCompletionRecorded,true);
+ assert.equal(persisted.match.grinch.pieces.filter(p=>p.place==='teleported').length,9);
+ assert.equal(persisted.match.grinch.pieces.filter(p=>p.place==='lost').length,6);
+ for(const person of ['alice','bob','cara']){
+  const progress=await h.call('GET','/api/hub/grinch/progress',person);
+  assert.deepEqual(progress.progress.completedMissions,[1,2]);
+  assert.equal(progress.progress.highestUnlocked,3);
+ }
+ const replay=await h.call('POST',route+'/action','cara',body);
+ assert.equal(replay.status,200);
+ assert.equal(h.docs.get('spielesammlung_hub_v1/123').match.grinch.revision,
+  persisted.match.grinch.revision,'duplicate victory cannot reapply the action');
+});
