@@ -177,10 +177,10 @@ export function slotForNewPhase(s){
 export function effectiveCardTypes(s,card,types){
  const curse=s.m2?.cardCurse;
  if(curse===19&&card.type==='joker')return types.filter(t=>t!=='swap'&&t!=='7');
- if(card.type==='joker')return types; // Joker chooses original types; value rules adapt below.
  const swaps={11:{'7':'8'},12:{'8':'7'},13:{'2':'12','12':'2'},
   14:{'5':'10','10':'5'},18:{swap:'6'},20:{'3':'9','9':'3'}};
- return types.map(type=>swaps[curse]?.[type]||type);
+ // Joker choices obey the same temporary Mission-2 card curse as real cards.
+ return [...new Set(types.map(type=>swaps[curse]?.[type]||type))];
 }
 export function mission2Values(s,type,original){
  const curse=s.m2?.cardCurse;
