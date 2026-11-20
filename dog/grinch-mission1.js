@@ -5,6 +5,7 @@
  */
 // Immutable snapshot of the campaign parameters, supplied by the trusted server.
 export const MISSION_1=Object.freeze({"id":1,"slug":"weg-zum-berg","title":"Der Weg zum Berg","subtitle":"Was ist mit Weihnachten geschehen?","playersMax":3,"piecesPerPlayer":5,"forcedLossesPerPlayer":1,"goal":"Pro Spieler genau ein Portal-Zielfeld. Jede der vier geretteten Figuren wird dort sofort nach Welt 2 teleportiert.","goalType":"single-portal-per-player","teleportAtTrackSteps":64,"teleportCountToComplete":4,"theme":"mountain-road","trailHints":[{"field":8,"icon":"🔎","title":"Die ersten Spuren","message":"Im Schnee sind merkwürdige Spuren zu sehen. Sie führen in Richtung Berg."},{"field":24,"icon":"🌫️","title":"Der Nebelpass","message":"Zwischen den Felsen schwebt dichter Nebel. Ein leises Dröhnen liegt in der Luft."},{"field":40,"icon":"⚡","title":"Das grüne Leuchten","message":"Ein grüner Energiestrahl zuckt über den Bergkamm. Jemand muss hier eine gewaltige Maschine bedienen."},{"field":56,"icon":"❄️","title":"Der eisige Weg","message":"Im Eis steckt ein Stück Weihnachtsschmuck. Hier muss jemand vor euch entlanggekommen sein."}],"effects":{"quakeEvery":12,"fogEvery":7,"clueEvery":9},"enabled":true});
+import {initLossMarkers,shouldCaptureAfterLanding,validCampaignSurvivors} from './grinch-loss-policy.js';
 export const SEATS=3,TRACK=64,GOAL=1;
 export const COLORS=['#e65f58','#4c9bfa','#e8b84e'];
 export const LABELS=['Rot','Blau','Gelb'];
@@ -21,6 +22,7 @@ const homeIndex=s=>MISSION_STARTS[s];
 function seeded(seed){let x=(seed>>>0)||1;return ()=>((x=(Math.imul(x,1664525)+1013904223)>>>0)/4294967296);}
 function shuffle(xs,rng){const list=[...xs];for(let i=list.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[list[i],list[j]]=[list[j],list[i]];}return list;}
 function deck(rng){let id=0;return shuffle(TYPES.flatMap(type=>Array.from({length:type==='joker'?6:8},()=>({id:++id,type}))),rng);}
+const rescueCountFor=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='teleported').length;
 function pieceAtTrack(s,absolute,except){return s.pieces.find(p=>p.id!==except&&p.place==='track'&&pos(homeIndex(p.seat)+p.steps)===absolute);}
 function isProtectedStart(p){
  return p?.place==='track'&&pos(homeIndex(p.seat)+p.steps)===homeIndex(p.seat);
@@ -81,8 +83,9 @@ function nextTurn(s){
 function assignLosses(seed){return shuffle(LOSS_TYPES,seeded(seed+77));}
 export function newGame(seed=Math.floor(Math.random()*2147483647),names=LABELS){
  const rng=seeded(seed);
+ const lossMarkers=initLossMarkers(seed,1,SEATS);
  const s={
-  version:5,mission:MISSION_1.id,seed,players:LABELS.map((name,seat)=>({seat,name:String(names[seat]||name).slice(0,25),lossType:assignLosses(seed)[seat],lost:false,moves:0})),
+  version:5,mission:MISSION_1.id,seed,players:LABELS.map((name,seat)=>({seat,name:String(names[seat]||name).slice(0,25),lossType:assignLosses(seed)[seat],lost:false,moves:0,lossTriggerAt:lossMarkers[seat].triggerAt,lossEligibleLandings:0})),
   // Figure 5 of EVERY player is genuinely in play from the opening move.
   // Other four begin inside the original four home holes.
   pieces:Array.from({length:15},(_,i)=>({
@@ -106,6 +109,8 @@ function route(s,p,distance,hitEvery=false){
  if(!p||p.place!=='track'||!Number.isInteger(distance)||distance===0)return null;
  const target=p.steps+distance;
  if(target>TRACK||target < -TRACK*4)return null;
+ // No fourth rescue until the one randomly timed, mandatory disappearance.
+ if(target===TRACK&&(!s.players[p.seat].lost&&rescueCountFor(s,p.seat)>=3))return null;
  const captures=[];
  for(let n=1;n<=Math.abs(distance);n++){
   const relative=p.steps+n*Math.sign(distance);
@@ -204,13 +209,14 @@ function ensureSingleLoss(s,seat,movedId){
  // Only the pawn that actually FINISHED a card move can reveal a trap.
  // Start squares and public story-hint squares remain safe.
  const info=s.players[seat];
- if(info.lost||info.moves<2)return;
+ if(info.lost)return;
  const p=s.pieces.find(p=>p.id===movedId&&p.seat===seat);
  if(!p||p.place!=='track')return;
  const trackPosition=pieceCoord(p);
  // All four colored start squares stay safe, even if a visiting pawn lands there.
  if(trackPosition%16===0||MISSION_1.trailHints.some(h=>h.field===trackPosition))return;
- p.place='lost';p.steps=-1;info.lost=true;
+ if(!shouldCaptureAfterLanding(info,{seed:s.seed,mission:1,seat,rescued:rescueCountFor(s,seat)}))return;
+ p.place='lost';p.steps=-1;info.lost=true;info.lostPieceId=p.id;
  const names={collapse:'Der Boden bricht ein!',abduction:'Eine Figur wird entführt!',freeze:'Ein Eisfluch schlägt zu!'};
  const msg=names[info.lossType]+' '+info.name+' verliert eine Figur.';
  // The position becomes public ONLY in the activation event, never in the
@@ -234,7 +240,7 @@ function maybeEffects(s){
 }
 function checkComplete(s){
  // One permanent loss per player; the remaining four reach the SAME reusable portal.
- s.complete=s.players.every(info=>info.lost&&s.pieces.filter(p=>p.seat===info.seat&&p.place==='teleported').length===4);
+ s.complete=s.players.every(info=>info.lost&&validCampaignSurvivors(s.pieces,info.seat,1));
  if(s.complete){s.lastEvent={type:'win',message:'Alle zwölf Figuren wurden durch die drei Portal-Ziele nach Welt 2 teleportiert. Drei Freunde bleiben verschollen.',turn:s.turn};log(s,s.lastEvent.message);}
 }
 export function play(original,seat,action){
@@ -321,7 +327,7 @@ export function publicMissionState(raw,viewerSeat=null){
  projected.draw=[];
  projected.discard=[];
  projected.seed=null;
- projected.players=projected.players.map(({lossType,...rest})=>rest);
+ projected.players=projected.players.map(({lossType,lossTriggerAt,lossEligibleLandings,...rest})=>rest);
  projected.viewerSeat=seat;
  projected.online=true;
  return projected;
