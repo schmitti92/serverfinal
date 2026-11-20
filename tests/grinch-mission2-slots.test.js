@@ -132,3 +132,22 @@ test('server slot barrier rejects moves until exactly one active-seat acknowledg
  assert.throws(()=>acknowledgeMission2Slot(ready,seat,s.round),/GRINCH_SLOT_NOT_PENDING/);
  assert.equal(s.m2.pendingSlotRound,s.round,'original match state is immutable');
 });
+
+
+test('impossible opening hands never bypass an unacknowledged next slot',()=>{
+ const s=createGame(928641);
+ // Create a deterministic three-seat hand that cannot move; preserve card IDs.
+ s.hands.forEach(hand=>hand.forEach(c=>{c.type='2';}));
+ s.m2.cardCurse=null;s.m2.frozen={p3:true,p8:true,p13:true};
+ s.m2.lockedCard=null;s.m2.forcedCard=null;s.m2.forcedPiece=null;
+ assert.ok(s.hands.every((hand,seat)=>{
+  const original=s.current;s.current=seat;
+  try{return hand.every(c=>legalMoves(s,seat,c).length===0);}
+  finally{s.current=original;}
+ }));
+ const confirmed=acknowledgeMission2Slot(s,s.current,s.round);
+ assert.equal(confirmed.round,s.round+1,'a new deal may be required after impossible hands');
+ assert.equal(confirmed.m2.pendingSlotRound,confirmed.round,'the next deal must pause for a new slot');
+ assert.equal(confirmed.m2.spins.at(-1).round,confirmed.round);
+ assert.equal(confirmed.revision,s.revision+1);
+});
