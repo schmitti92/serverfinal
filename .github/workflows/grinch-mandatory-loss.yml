@@ -28,5 +28,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - run: node --test tests/grinch-campaign-mandatory-loss.test.js tests/dog-grinch-mission1.test.js tests/dog-grinch-mission2.test.js tests/dog-grinch-mission2-hub.test.js
