@@ -73,6 +73,7 @@ function refill(s){
  if(mission2TurnAdvance(s,s.current)){
   s.current=(s.current+mission2TurnDirection(s)+SEATS)%SEATS;s.turn++;
  }
+ s.m2.pendingSlotRound=s.round;
  s.lastEvent={type:'slot',round:s.round,effects,message:'🎰 Der Grinch löst '+effects.length+' Gemeinheit(en) aus!',turn:s.turn};
  rememberMission2Event(s,s.lastEvent);
 }
@@ -265,7 +266,15 @@ function checkComplete(s){
  s.complete=s.players.every(info=>info.m2Lost&&validCampaignSurvivors(s.pieces,info.seat,2));
  if(s.complete){s.lastEvent={type:'win',message:'Genau eine weitere Figur je Spieler ist verschwunden. Die übrigen neun Figuren (3 pro Spieler) sind nach Welt 3 gerettet!',turn:s.turn};log(s,s.lastEvent.message);}
 }
+export function acknowledgeMission2Slot(original,seat,round){
+  if(!original||original.complete||seat!==original.current)throw Error('GRINCH_SLOT_NOT_YOUR_TURN');
+  if(!Number.isInteger(round)||original.m2?.pendingSlotRound!==round||round!==original.round)
+    throw Error('GRINCH_SLOT_NOT_PENDING');
+  const s=clone(original);s.m2.pendingSlotRound=null;s.revision++;
+  return s;
+}
 export function play(original,seat,action){
+ if(original.m2?.pendingSlotRound)throw Error('GRINCH_SLOT_PENDING');
  if(original.complete||seat!==original.current)throw Error('Nicht dein Zug.');
  const valid=original.hands[seat].flatMap(card=>legalMoves(original,seat,card));
  const chosen=valid.find(m=>m.kind===action.kind&&m.cardId===action.cardId&&m.as===action.as&&m.pieceId===action.pieceId&&m.targetId===action.targetId&&m.distance===action.distance);
