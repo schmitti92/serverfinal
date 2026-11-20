@@ -225,7 +225,7 @@ function ensureSingleLoss(s,seat,movedId){
  if(!p||p.place!=='track')return;
  const trackPosition=pieceCoord(p);
  // All four colored start squares stay safe, even if a visiting pawn lands there.
- if(trackPosition%16===0||MISSION_2.trailHints.some(h=>h.field===trackPosition))return;
+ if(trackPosition%16===0||(MISSION_2.trailHints||[]).some(h=>h.field===trackPosition))return;
  p.place='lost';p.steps=-1;info.m2Lost=true;
  const names={collapse:'Der Boden bricht ein!',abduction:'Eine Figur wird entführt!',freeze:'Ein Eisfluch schlägt zu!'};
  const msg='🌀 Grinchs verfluchtes Siegel! '+info.name+' verliert eine weitere Figur.';
