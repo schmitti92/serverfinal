@@ -6,6 +6,7 @@
 // Immutable snapshot of the campaign parameters, supplied by the trusted server.
 export const MISSION_2=Object.freeze({"id":2,"slug":"verfluchter-aufstieg","title":"Der verfluchte Aufstieg","subtitle":"Grinchs Chaos-Slots","playersMax":3,"piecesPerPlayer":4,"forcedLossesPerPlayer":1,"goal":"Pro Spieler genau ein Portal-Zielfeld. Jede der vier geretteten Figuren wird dort sofort nach Welt 2 teleportiert.","goalType":"single-portal-per-player","teleportAtTrackSteps":64,"teleportCountToComplete":3,"theme":"mountain-road","trailHints":[],"effects":{"quakeEvery":12,"fogEvery":7,"clueEvery":9},"enabled":true});
 import {initializeMission2,slotForNewPhase,effectiveCardTypes,mission2Values,moveAllowedByCurse,afterMission2Card,mission2TurnAdvance,mission2TurnDirection,projectedMission2} from './grinch-mission2-effects.js';
+import {initLossMarkers,shouldCaptureAfterLanding,validCampaignSurvivors} from './grinch-loss-policy.js';
 export const SEATS=3,TRACK=64,GOAL=1;
 export const COLORS=['#e65f58','#4c9bfa','#e8b84e'];
 export const LABELS=['Rot','Blau','Gelb'];
@@ -24,6 +25,7 @@ function shuffle(xs,rng){const list=[...xs];for(let i=list.length-1;i>0;i--){con
 function deck(rng){let id=0;return shuffle(TYPES.flatMap(type=>Array.from({length:type==='joker'?6:8},()=>({id:++id,type}))),rng);}
 const rescuedCount=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='teleported').length;
 const permanentLossCount=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='lost').length;
+const rescueCountFor=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='teleported').length;
 function pieceAtTrack(s,absolute,except){return s.pieces.find(p=>p.id!==except&&p.place==='track'&&pos(homeIndex(p.seat)+p.steps)===absolute);}
 function isProtectedStart(p){
  return p?.place==='track'&&pos(homeIndex(p.seat)+p.steps)===homeIndex(p.seat);
@@ -91,8 +93,9 @@ function nextTurn(s){
 function assignLosses(seed){return shuffle(LOSS_TYPES,seeded(seed+77));}
 export function newGame(seed=Math.floor(Math.random()*2147483647),names=LABELS){
  const rng=seeded(seed);
+ const lossMarkers=initLossMarkers(seed,2,SEATS);
  const s={
-  version:6,mission:MISSION_2.id,seed,players:LABELS.map((name,seat)=>({seat,name:String(names[seat]||name).slice(0,25),lossType:assignLosses(seed)[seat],lost:true,m2Lost:false,moves:0})),
+  version:6,mission:MISSION_2.id,seed,players:LABELS.map((name,seat)=>({seat,name:String(names[seat]||name).slice(0,25),lossType:assignLosses(seed)[seat],lost:true,m2Lost:false,moves:0,lossTriggerAt:lossMarkers[seat].triggerAt,lossEligibleLandings:0})),
   // Mission 1 already took figure 5 from each player. Four remain:
   // figure 4 starts protected, figures 1-3 start at home. Exactly one more
   // player-owned figure must disappear in Mission 2, leaving three for Mission 3.
@@ -228,12 +231,13 @@ function ensureSingleLoss(s,seat,movedId){
  // Only the pawn that actually FINISHED a card move can reveal a trap.
  // Start squares and public story-hint squares remain safe.
  const info=s.players[seat];
- if(info.m2Lost||info.moves<2)return;
+ if(info.m2Lost)return;
  const p=s.pieces.find(p=>p.id===movedId&&p.seat===seat);
  if(!p||p.place!=='track')return;
  const trackPosition=pieceCoord(p);
  // All four colored start squares stay safe, even if a visiting pawn lands there.
  if(trackPosition%16===0||(MISSION_2.trailHints||[]).some(h=>h.field===trackPosition))return;
+ if(!shouldCaptureAfterLanding(info,{seed:s.seed,mission:2,seat,rescued:rescueCountFor(s,seat)}))return;
  p.place='lost';p.steps=-1;info.m2Lost=true;info.m2LostPieceId=p.id;
  const names={collapse:'Der Boden bricht ein!',abduction:'Eine Figur wird entführt!',freeze:'Ein Eisfluch schlägt zu!'};
  const msg=names[info.lossType]+' '+info.name+' verliert die vierte verbleibende Figur. Drei Figuren bleiben für Mission 3.';
@@ -246,9 +250,7 @@ function maybeEffects(s){ /* Only the slot machine triggers Mission 2 effects. *
 function checkComplete(s){
  // Mission 1: 1 lost/4 rescued. Mission 2: one ADDITIONAL permanent loss;
  // exactly 3 rescued/5 original figures in total, no extra figures on board.
- s.complete=s.players.every(info=>info.m2Lost&&permanentLossCount(s,info.seat)===2&&
-  rescuedCount(s,info.seat)===3&&s.pieces.filter(p=>p.seat===info.seat&&
-  (p.place==='home'||p.place==='track')).length===0);
+ s.complete=s.players.every(info=>info.m2Lost&&validCampaignSurvivors(s.pieces,info.seat,2));
  if(s.complete){s.lastEvent={type:'win',message:'Genau eine weitere Figur je Spieler ist verschwunden. Die übrigen neun Figuren (3 pro Spieler) sind nach Welt 3 gerettet!',turn:s.turn};log(s,s.lastEvent.message);}
 }
 export function play(original,seat,action){
@@ -337,7 +339,7 @@ export function publicMissionState(raw,viewerSeat=null){
  projected.draw=[];
  projected.discard=[];
  projected.seed=null;
- projected.players=projected.players.map(({lossType,...rest})=>rest);
+ projected.players=projected.players.map(({lossType,lossTriggerAt,lossEligibleLandings,...rest})=>rest);
  projected.viewerSeat=seat;
  projected.online=true;
  projectedMission2(projected);
