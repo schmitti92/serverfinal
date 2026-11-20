@@ -26,6 +26,13 @@ function deck(rng){let id=0;return shuffle(TYPES.flatMap(type=>Array.from({lengt
 const rescuedCount=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='teleported').length;
 const permanentLossCount=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='lost').length;
 const rescueCountFor=(s,seat)=>s.pieces.filter(p=>p.seat===seat&&p.place==='teleported').length;
+export const canAssistAllies=(s,seat)=>s.players[seat]?.m2Lost===true&&rescuedCount(s,seat)===3;
+function controllablePieces(s,seat){
+ const owners=canAssistAllies(s,seat)
+  ?s.players.filter(p=>p.seat!==seat&&rescuedCount(s,p.seat)<3).map(p=>p.seat)
+  :[seat];
+ return s.pieces.filter(p=>owners.includes(p.seat));
+}
 function pieceAtTrack(s,absolute,except){return s.pieces.find(p=>p.id!==except&&p.place==='track'&&pos(homeIndex(p.seat)+p.steps)===absolute);}
 function isProtectedStart(p){
  return p?.place==='track'&&pos(homeIndex(p.seat)+p.steps)===homeIndex(p.seat);
@@ -127,16 +134,21 @@ export function pieceCoord(p){return p.place==='track'?pos(homeIndex(p.seat)+p.s
 // Pure, mission-only adaptation of the classic DOG movement rules.
 // Special cards (split 7, independent SWAP, joker), protection and the
 // exact-hit portal are deliberately separate from the normal 4-seat engine.
-function route(s,p,distance,hitEvery=false){
+function route(s,p,distance,hitEvery=false,intoPortal=false){
  if(!p||p.place!=='track'||!Number.isInteger(distance)||distance===0)return null;
  const target=p.steps+distance;
  if(target>TRACK||target < -TRACK*4)return null;
+ // Classic DOG: after walking backwards behind own start, crossing forward
+ // opens the first portal as an OPTIONAL alternative to the circular track.
+ const shortPortal=intoPortal&&p.steps<0&&distance>0&&target===1;
+ if(intoPortal&&!shortPortal)return null;
+ const entersPortal=target===TRACK||shortPortal;
  // Exactly 3 survivors can cross into Mission 3. The fourth remaining
  // figure MUST be lost through the same concealed, once-only trap as Mission 1.
  // Block the third rescue until the second permanent loss has occurred.
- if(target===TRACK&&((!s.players[p.seat].m2Lost&&rescuedCount(s,p.seat)>=2)||
+ if(entersPortal&&((!s.players[p.seat].m2Lost&&rescuedCount(s,p.seat)>=2)||
    rescuedCount(s,p.seat)>=3))return null;
- if(s.m2&&target===TRACK&&s.turn<s.m2.portalUntil)return null;
+ if(s.m2&&entersPortal&&s.turn<s.m2.portalUntil)return null;
  const captures=[];
  for(let n=1;n<=Math.abs(distance);n++){
   const relative=p.steps+n*Math.sign(distance);
@@ -145,6 +157,7 @@ function route(s,p,distance,hitEvery=false){
    if(relative===TRACK&&n===Math.abs(distance)&&distance>0)break;
    return null;
   }
+  if(shortPortal&&relative===1&&n===Math.abs(distance))break;
   const coordinate=pos(homeIndex(p.seat)+relative);
   if(s.m2?.hazards?.some(h=>h.type==='wall'&&h.until>s.turn&&h.field===coordinate))return null;
   if(n===Math.abs(distance)&&s.m2?.hazards?.some(h=>h.type==='endblock'&&h.until>s.turn&&h.field===coordinate))return null;
@@ -152,12 +165,12 @@ function route(s,p,distance,hitEvery=false){
   if(at&&isProtectedStart(at))return null;
   if(at&&(hitEvery||n===Math.abs(distance)))captures.push(at.id);
  }
- return {targetSteps:target,captureIds:[...new Set(captures)]};
+ return {targetSteps:target,viaPortal:entersPortal,captureIds:[...new Set(captures)]};
 }
 function applyRoute(s,m){
  const pawn=s.pieces.find(p=>p.id===m.pieceId);
  if(!pawn||pawn.place!=='track')throw Error('Spielfigur kann nicht laufen.');
- const routeMove=route(s,pawn,m.distance,m.kind==='seven');
+ const routeMove=route(s,pawn,m.distance,m.kind==='seven',Boolean(m.viaPortal&&m.targetSteps!==TRACK));
  if(!routeMove)throw Error('Ungültige Kartenbewegung.');
  for(const id of routeMove.captureIds){
   const victim=s.pieces.find(p=>p.id===id);
@@ -165,16 +178,17 @@ function applyRoute(s,m){
   victim.place='home';victim.steps=-1;
  }
  pawn.steps=routeMove.targetSteps;
- pawn.place=pawn.steps===TRACK?'teleported':'track';
+ pawn.place=routeMove.viaPortal?'teleported':'track';
 }
 function sevenCandidates(s,seat,left,cardId,as){
  const moves=[];
- for(const p of s.pieces.filter(p=>p.seat===seat&&p.place==='track')){
-  for(let n=1;n<=left;n++){
-   const r=route(s,p,n,true);
+ for(const p of controllablePieces(s,seat).filter(p=>p.place==='track')){
+  for(let n=1;n<=left;n++)for(const portal of [false,true]){
+   if(portal&&!(p.steps<0&&p.steps+n===1))continue;
+   const r=route(s,p,n,true,portal);
    const card=s.hands[seat]?.find(c=>c.id===cardId);
-   if(r&&(!card||moveAllowedByCurse(s,seat,card,p.id,as,p.steps,r.targetSteps,n)))
-    moves.push({kind:'seven',pieceId:p.id,cardId,as,distance:n,targetSteps:r.targetSteps,captureIds:r.captureIds});
+   if(r&&(!card||moveAllowedByCurse(s,seat,card,p.id,as,p.steps,r.targetSteps,n,r.viaPortal)))
+    moves.push({kind:'seven',pieceId:p.id,cardId,as,distance:n,targetSteps:r.targetSteps,viaPortal:r.viaPortal,captureIds:r.captureIds});
   }
  }
  return moves;
@@ -209,18 +223,18 @@ export function legalMoves(s,seat,card){
   }
   if(pending)continue;
   if(START_CARDS.has(type)){
-   for(const p of s.pieces.filter(p=>p.seat===seat&&p.place==='home')){
-    const at=pieceAtTrack(s,homeIndex(seat),p.id);
-    // Mission-only exception: launching another OWN pawn sends the previous
-    // protected start pawn back to its house, not to a lost/captured state.
-    if(!at||at.seat===seat)
+   for(const p of controllablePieces(s,seat).filter(p=>p.place==='home')){
+    const at=pieceAtTrack(s,homeIndex(p.seat),p.id);
+    // Classic DOG: own protected starter blocks launch; an unprotected
+    // foreign visitor on this colored start can be sent home.
+    if(!at||!isProtectedStart(at))
      moves.push({kind:'start',pieceId:p.id,cardId:card.id,as:type});
    }
   }
   if(type==='swap'){
    let found=false;
-   for(const a of s.pieces.filter(p=>p.seat===seat&&p.place==='track'&&!isProtectedStart(p)))
-    for(const b of s.pieces.filter(p=>p.seat!==seat&&p.place==='track'&&!isProtectedStart(p))){
+   for(const a of controllablePieces(s,seat).filter(p=>p.place==='track'&&!isProtectedStart(p)))
+    for(const b of s.pieces.filter(p=>p.seat!==a.seat&&p.place==='track'&&!isProtectedStart(p))){
       moves.push({kind:'swap',pieceId:a.id,targetId:b.id,cardId:card.id,as:type});
       found=true;
     }
@@ -228,14 +242,16 @@ export function legalMoves(s,seat,card){
    continue;
   }
   for(const distance of values(s,type))
-   for(const p of s.pieces.filter(p=>p.seat===seat&&p.place==='track')){
-    const r=route(s,p,distance,false);
-    if(r)moves.push({kind:'move',pieceId:p.id,cardId:card.id,as:type,distance,targetSteps:r.targetSteps,captureIds:r.captureIds});
-   }
+   for(const p of controllablePieces(s,seat).filter(p=>p.place==='track'))
+    for(const portal of [false,true]){
+     if(portal&&!(p.steps<0&&distance>0&&p.steps+distance===1))continue;
+     const r=route(s,p,distance,false,portal);
+     if(r)moves.push({kind:'move',pieceId:p.id,cardId:card.id,as:type,distance,targetSteps:r.targetSteps,viaPortal:r.viaPortal,captureIds:r.captureIds});
+    }
  }
  return moves.filter(m=>{
   const p=s.pieces.find(p=>p.id===m.pieceId);
-  return moveAllowedByCurse(s,seat,card,m.pieceId,m.as,p?.place==='track'?p.steps:null,m.targetSteps??null,m.distance??null);
+  return moveAllowedByCurse(s,seat,card,m.pieceId,m.as,p?.place==='track'?p.steps:null,m.targetSteps??null,m.distance??null,Boolean(m.viaPortal));
  });
 }
 function ensureSingleLoss(s,seat,movedId){
@@ -279,16 +295,16 @@ export function play(original,seat,action){
  if(original.m2?.pendingSlotRound)throw Error('GRINCH_SLOT_PENDING');
  if(original.complete||seat!==original.current)throw Error('Nicht dein Zug.');
  const valid=original.hands[seat].flatMap(card=>legalMoves(original,seat,card));
- const chosen=valid.find(m=>m.kind===action.kind&&m.cardId===action.cardId&&m.as===action.as&&m.pieceId===action.pieceId&&m.targetId===action.targetId&&m.distance===action.distance);
+ const chosen=valid.find(m=>m.kind===action.kind&&m.cardId===action.cardId&&m.as===action.as&&m.pieceId===action.pieceId&&m.targetId===action.targetId&&m.distance===action.distance&&Boolean(m.viaPortal)===Boolean(action.viaPortal));
  if(!chosen)throw Error('Ungültiger Zug');
  const s=clone(original),p=s.pieces.find(p=>p.id===chosen.pieceId);
  const originalPiece=p?{...p}:null;
  if(chosen.kind==='start'){
-  const previous=pieceAtTrack(s,homeIndex(seat),p.id);
+  const previous=pieceAtTrack(s,homeIndex(p.seat),p.id);
   if(previous){
-   if(previous.seat!==seat)throw Error('Geschütztes gegnerisches Startfeld.');
+   if(isProtectedStart(previous))throw Error('Ein eigenes geschütztes Startfeld ist belegt.');
    previous.place='home';previous.steps=-1;
-   log(s,s.players[seat].name+' setzt eine eigene Figur vom Startfeld ins Haus zurück.');
+   log(s,s.players[seat].name+' schlägt eine ungeschützte Figur auf dem Startfeld von '+s.players[p.seat].name+'.');
   }
   p.place='track';p.steps=0;
  }else if(chosen.kind==='move'||chosen.kind==='seven'){
@@ -308,10 +324,10 @@ export function play(original,seat,action){
  if(completesCard)s.players[seat].moves++;
  s.lastEvent=null;
  if(completesCard)afterMission2Card(s,seat,chosen,originalPiece);
- if(completesCard&&chosen.kind!=='emptySwap')ensureSingleLoss(s,seat,p?.id);
+ if(completesCard&&chosen.kind!=='emptySwap'&&p)ensureSingleLoss(s,p.seat,p.id);
  if(p?.place==='teleported'){
-  log(s,s.players[seat].name+' teleportiert eine Figur nach Welt 3');
-  if(!s.lastEvent)s.lastEvent={type:'teleport',seat,pieceId:p.id,message:'✨ '+s.players[seat].name+' teleportiert eine Figur nach Welt 3!',turn:s.turn};
+  log(s,s.players[p.seat].name+' teleportiert eine Figur nach Welt 3'+(p.seat!==seat?' (Hilfe durch '+s.players[seat].name+')':''));
+  if(!s.lastEvent)s.lastEvent={type:'teleport',seat:p.seat,pieceId:p.id,message:'✨ '+s.players[p.seat].name+' teleportiert eine Figur nach Welt 3!',turn:s.turn};
  }
  if(!s.lastEvent&&p?.place==='track'){
   const clue=(MISSION_2.trailHints||[]).find(h=>h.field===pieceCoord(p));
