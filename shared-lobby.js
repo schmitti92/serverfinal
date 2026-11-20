@@ -16,7 +16,7 @@ import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
-import {newGame as newGrinchMission2,play as playGrinchMission2,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
+import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelScratchVouchers,dogLevelRewardClaimFlags} from './dog/christmas-scratch.js';
@@ -1516,6 +1516,29 @@ function finishEisstock(ch,members){
         throw error(409,'GRINCH_MISSION1_REQUIRED_FOR_ALL_PLAYERS');
       room.players.forEach(p=>{p.participating=members.some(m=>m.uid===p.uid);p.ready=false;});
       startGrinchMission2(room,village);
+    })};
+  }));
+  // Only the current participant may release the server-selected slot outcome.
+  // The stored match and revision remain authoritative; remote spectators and
+  // clients cannot bypass a slot or select its result.
+  app.post('/api/hub/rooms/:code/grinch/ack2',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const {matchId,round,expectedRevision}=req.body||{};
+    if(!code||typeof matchId!=='string'||matchId.length>100||
+       !Number.isInteger(round)||round<1||
+       !Number.isInteger(expectedRevision)||expectedRevision<0)
+      throw error(400,'INVALID_GRINCH_SLOT_ACK');
+    return {room:await mutate(code,identity,room=>{
+      const m=room.match;
+      if(room.phase!=='playing'||m?.game!=='dog-grinch2'||m.id!==matchId)
+        throw error(409,'GRINCH_MATCH_MISMATCH');
+      const seat=m.grinchRoster?.find(p=>p.uid===identity.uid)?.seat;
+      if(!Number.isInteger(seat))throw error(403,'GRINCH_SPECTATOR');
+      if(m.grinch?.m2?.pendingSlotRound===null&&m.grinch.round===round)
+        return {unchanged:true}; // idempotent acknowledgement after lost response
+      if(m.grinch.revision!==expectedRevision)throw error(409,'GRINCH_STALE_REVISION');
+      try{m.grinch=acknowledgeMission2Slot(m.grinch,seat,round);}
+      catch(e){throw error(409,e.message||'GRINCH_SLOT_ACK_REJECTED');}
     })};
   }));
   app.post('/api/hub/rooms/:code/grinch/action',handler(async req=>{
