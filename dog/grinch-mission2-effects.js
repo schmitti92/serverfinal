@@ -213,10 +213,11 @@ export function afterMission2Card(s,seat,chosen,originalPiece){
  if(!m)return;
  const p=s.pieces.find(x=>x.id===chosen.pieceId);
  if(chosen.kind==='move'||chosen.kind==='seven'){
-  if(p?.place==='track'&&originalPiece?.place==='track'&&!(chosen.captureIds||[]).length)
+  if(chosen.kind==='move'&&p?.place==='track'&&originalPiece?.place==='track'&&!(chosen.captureIds||[]).length)
    m.lastMotion={pieceId:p.id,fromSteps:originalPiece.steps,toSteps:p.steps};
   else m.lastMotion=null;
  }
+ const previousFrost=new Set(Object.keys(m.frozen));
  if(p?.place==='track'){
   if(m.afterMovePush){retreat(s,p,m.afterMovePush);m.afterMovePush=0;}
   const field=at(p);
@@ -237,7 +238,7 @@ export function afterMission2Card(s,seat,chosen,originalPiece){
  // Freeze lasts only through its owner's next completed turn.
  for(const [id] of Object.entries(m.frozen)){
   const pawn=s.pieces.find(p=>p.id===id);
-  if(pawn?.seat===seat)delete m.frozen[id];
+  if(pawn?.seat===seat&&previousFrost.has(id))delete m.frozen[id];
  }
  m.hazards=m.hazards.filter(h=>!h.used&&h.until>s.turn);
 }
