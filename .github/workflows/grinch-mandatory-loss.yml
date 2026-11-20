@@ -12,6 +12,7 @@ on:
       - 'tests/dog-grinch-mission2.test.js'
       - 'tests/dog-grinch-mission2-hub.test.js'
       - 'tests/grinch-mission2-slots.test.js'
+      - 'tests/grinch-mission2-handcards.test.js'
       - '.github/workflows/grinch-mandatory-loss.yml'
   pull_request:
     paths:
@@ -31,4 +32,4 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --no-audit --no-fund
-      - run: node --test tests/grinch-campaign-mandatory-loss.test.js tests/dog-grinch-mission1.test.js tests/dog-grinch-mission2.test.js tests/dog-grinch-mission2-hub.test.js tests/grinch-mission2-slots.test.js
+      - run: node --test tests/grinch-campaign-mandatory-loss.test.js tests/dog-grinch-mission1.test.js tests/dog-grinch-mission2.test.js tests/dog-grinch-mission2-hub.test.js tests/grinch-mission2-slots.test.js tests/grinch-mission2-handcards.test.js
