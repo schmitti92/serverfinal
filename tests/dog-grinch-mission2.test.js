@@ -52,7 +52,8 @@ test('Slot effects preserve 110 cards, board positions, piece count and revision
    const action=options[Math.floor(n*17%options.length)];
    const moved=play(s,s.current,action);
    const next=moved.m2.pendingSlotRound?acknowledgeMission2Slot(moved,moved.current,moved.round):moved;
-   assert.equal(next.revision,s.revision+1);
+   assert.equal(moved.revision,s.revision+1,'one revision for the verified card action');
+   assert.equal(next.revision,moved.revision+(moved.m2.pendingSlotRound?1:0),'one additional revision only when the new slot is acknowledged');
    assert.equal(next.pieces.length,15);
    assert.equal(cardCount(next),110,'Cannot invent or destroy DOG cards');
    const positions=fields(next);
