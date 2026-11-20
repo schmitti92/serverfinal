@@ -201,9 +201,16 @@ function record(s,id,legalOptions){
  log(s,'🎰 '+name+(detail?' · '+detail:''));
  return {id,name,category:group(id)};
 }
+export function rememberMission2Event(s,event){
+ if(!s.m2||!event||!['slot','loss'].includes(event.type))return;
+ if(!Array.isArray(s.m2.eventLog))s.m2.eventLog=[];
+ s.m2.nextEventId=(Number(s.m2.nextEventId)||0)+1;
+ s.m2.eventLog.push({...event,eventId:s.m2.nextEventId});
+ s.m2.eventLog=s.m2.eventLog.slice(-18);
+}
 export function initializeMission2(s){
  s.m2={counter:0,spins:[],cardCurse:null,hazards:[],frozen:{},skipSeats:[],afterMovePush:0,portalUntil:-1,noSwapUntil:-1,
-  forcedCard:null,forcedPiece:null,lockedCard:null,reverse:false,frostLands:0,lastMotion:null};
+  forcedCard:null,forcedPiece:null,lockedCard:null,reverse:false,frostLands:0,lastMotion:null,eventLog:[],nextEventId:0};
  return s;
 }
 export function slotForNewPhase(s,legalOptions){
