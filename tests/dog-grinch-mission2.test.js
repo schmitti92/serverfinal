@@ -78,6 +78,7 @@ test('Mission 2 removes exactly one ADDITIONAL figure with a hidden trap, like M
  assert.equal(s.players[seat].m2LostPieceId,undefined,'trap victim remains secret');
  // Arrange a fully legal, non-protected landing for the next ordinary card.
  s.current=seat;s.players[seat].moves=1;s.seven=null;
+ const firstActive=s.pieces.find(p=>p.id==='p3');firstActive.place='track';firstActive.steps=0;
  Object.assign(s.m2,{cardCurse:null,frozen:{},hazards:[],forcedCard:null,forcedPiece:null,
   lockedCard:null,portalUntil:-1,noSwapUntil:-1,afterMovePush:0,frostLands:0});
  const card=s.hands[seat][0];card.type='5';
