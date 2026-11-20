@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {GRINCH_LOSS_MISSIONS,LOSS_TRIGGER_WINDOW,randomLossThresholds,shouldCaptureAfterLanding,validCampaignSurvivors} from '../dog/grinch-loss-policy.js';
 import {newGame as mission1New,legalMoves as mission1Moves,play as mission1Play,publicMissionState as m1Public} from '../dog/grinch-mission1.js';
-import {newGame as mission2New,legalMoves as mission2Moves,play as mission2Play,publicMissionState as m2Public} from '../dog/grinch-mission2.js';
+import {newGame as mission2Factory,acknowledgeMission2Slot,legalMoves as mission2Moves,play as mission2Play,publicMissionState as m2Public} from '../dog/grinch-mission2.js';
 
+const mission2New=(...args)=>{const s=mission2Factory(...args);return acknowledgeMission2Slot(s,s.current,s.round);};
 test('all three missions share exact 5→4→3→2 survivor contract',()=>{
  assert.deepEqual(Object.keys(GRINCH_LOSS_MISSIONS),['1','2','3']);
  for(let mission=1;mission<=3;mission++){
