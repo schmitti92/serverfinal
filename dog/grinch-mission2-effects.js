@@ -213,6 +213,48 @@ export function initializeMission2(s){
   forcedCard:null,forcedPiece:null,lockedCard:null,reverse:false,frostLands:0,lastMotion:null,eventLog:[],nextEventId:0};
  return s;
 }
+/**
+ * A second Grinch effect may invalidate the card or pawn selected by the
+ * first. Repair only those forced selections that would leave the affected
+ * seat without any legal action. Never alter the slot's 40-effect outcome.
+ */
+export function ensurePlayableSlotConstraints(s,legalOptions){
+ if(!s?.m2||typeof legalOptions!=='function')return;
+ const m=s.m2;
+ if(m.forcedCard){
+  const prev=m.forcedCard;
+  const stillPlayable=playableCards(s,prev.seat,legalOptions).some(x=>x.card.id===prev.id);
+  if(!stillPlayable){
+   m.forcedCard=null;
+   const candidates=playableCards(s,prev.seat,legalOptions);
+   const replacement=pick(s,candidates);
+   if(replacement)m.forcedCard={seat:prev.seat,id:replacement.card.id};
+  }
+ }
+ if(m.forcedPiece){
+  const prev=m.forcedPiece;
+  const possible=playableCards(s,prev.seat,legalOptions)
+   .flatMap(x=>x.moves.filter(move=>move.pieceId===prev.id));
+  if(!possible.length){
+   m.forcedPiece=null;
+   const options=playableCards(s,prev.seat,legalOptions).flatMap(x=>x.moves)
+    .filter(move=>move.pieceId&&active(s).some(p=>p.id===move.pieceId));
+   const chosen=pick(s,options);
+   if(chosen)m.forcedPiece={seat:prev.seat,id:chosen.pieceId};
+  }
+ }
+ if(m.lockedCard){
+  const prev=m.lockedCard;
+  if(!playableCards(s,prev.seat,legalOptions).length){
+   m.lockedCard=null;
+   const cards=playableCards(s,prev.seat,legalOptions);
+   if(cards.length>=2){
+    const chosen=pick(s,cards);
+    if(chosen)m.lockedCard={seat:prev.seat,id:chosen.card.id};
+   }
+  }
+ }
+}
 export function slotForNewPhase(s,legalOptions){
  if(!s.m2)initializeMission2(s);
  const m=s.m2;
@@ -230,6 +272,7 @@ export function slotForNewPhase(s,legalOptions){
   const second=pick(s,EFFECT_IDS.filter(id=>group(id)!==group(first)&&eligible(s,id,legalOptions)));
   if(second)effects.push(record(s,second,legalOptions));
  }
+ ensurePlayableSlotConstraints(s,legalOptions);
  m.spins.push({round:s.round,effects,double:effects.length===2});
  m.spins=m.spins.slice(-4);
  return effects;
