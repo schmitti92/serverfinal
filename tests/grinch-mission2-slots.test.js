@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {newGame as createGame,acknowledgeMission2Slot,legalMoves,play,publicMissionState} from '../dog/grinch-mission2.js';
 const newGame=(...args)=>{const s=createGame(...args);return acknowledgeMission2Slot(s,s.current,s.round);};
-import {slotForNewPhase,mission2TurnAdvance} from '../dog/grinch-mission2-effects.js';
+import {slotForNewPhase,mission2TurnAdvance,ensurePlayableSlotConstraints} from '../dog/grinch-mission2-effects.js';
 
 const legalFor=(s,seat,card)=>{
  const previous=s.current;
@@ -150,4 +150,34 @@ test('impossible opening hands never bypass an unacknowledged next slot',()=>{
  assert.equal(confirmed.m2.pendingSlotRound,confirmed.round,'the next deal must pause for a new slot');
  assert.equal(confirmed.m2.spins.at(-1).round,confirmed.round);
  assert.equal(confirmed.revision,s.revision+1);
+});
+
+test('bonus effects cannot strand a formerly playable forced card, pawn or locked card',()=>{
+ const seed=11081;
+ const make=()=>{
+  const s=newGame(seed);safe(s);s.current=0;
+  const p=s.pieces.find(p=>p.id==='p3');p.place='track';p.steps=63;
+  const home=s.pieces.find(p=>p.id==='p0');home.place='home';home.steps=-1;
+  s.hands[0].forEach((c,i)=>{c.type=i===0?'12':'1/11';});
+  return s;
+ };
+ const forced=make(),bad=forced.hands[0][0];
+ forced.m2.forcedCard={seat:0,id:bad.id};
+ assert.equal(forced.hands[0].reduce((n,c)=>n+legalMoves(forced,0,c).length,0),0);
+ ensurePlayableSlotConstraints(forced,(seat,card)=>legalFor(forced,seat,card));
+ assert.ok(forced.m2.forcedCard,'constraint still has a valid playable card');
+ assert.notEqual(forced.m2.forcedCard.id,bad.id);
+ assert.ok(forced.hands[0].some(c=>legalMoves(forced,0,c).length>0));
+ const locked=make();locked.hands[0][0].type='1/11';
+ locked.hands[0].slice(1).forEach(c=>{c.type='12';});
+ locked.m2.lockedCard={seat:0,id:locked.hands[0][0].id};
+ ensurePlayableSlotConstraints(locked,(seat,card)=>legalFor(locked,seat,card));
+ assert.equal(locked.m2.lockedCard,null,'a lock cannot remove the only playable card');
+ const pawn=make(),other=pawn.pieces.find(p=>p.id==='p0');
+ other.place='track';other.steps=5;
+ pawn.hands[0].forEach(c=>{c.type='12';});
+ pawn.m2.forcedPiece={seat:0,id:'p3'};
+ ensurePlayableSlotConstraints(pawn,(seat,card)=>legalFor(pawn,seat,card));
+ assert.equal(pawn.m2.forcedPiece?.id,'p0');
+ assert.ok(pawn.hands[0].some(c=>legalMoves(pawn,0,c).length));
 });
