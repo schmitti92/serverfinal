@@ -5,7 +5,7 @@
  */
 // Immutable snapshot of the campaign parameters, supplied by the trusted server.
 export const MISSION_2=Object.freeze({"id":2,"slug":"verfluchter-aufstieg","title":"Der verfluchte Aufstieg","subtitle":"Grinchs Chaos-Slots","playersMax":3,"piecesPerPlayer":4,"forcedLossesPerPlayer":1,"goal":"Pro Spieler genau ein Portal-Zielfeld. Jede der vier geretteten Figuren wird dort sofort nach Welt 2 teleportiert.","goalType":"single-portal-per-player","teleportAtTrackSteps":64,"teleportCountToComplete":3,"theme":"mountain-road","trailHints":[],"effects":{"quakeEvery":12,"fogEvery":7,"clueEvery":9},"enabled":true});
-import {initializeMission2,slotForNewPhase,effectiveCardTypes,mission2Values,moveAllowedByCurse,afterMission2Card,mission2TurnAdvance,mission2TurnDirection,projectedMission2} from './grinch-mission2-effects.js';
+import {rememberMission2Event,initializeMission2,slotForNewPhase,effectiveCardTypes,mission2Values,moveAllowedByCurse,afterMission2Card,mission2TurnAdvance,mission2TurnDirection,projectedMission2} from './grinch-mission2-effects.js';
 import {initLossMarkers,shouldCaptureAfterLanding,validCampaignSurvivors} from './grinch-loss-policy.js';
 export const SEATS=3,TRACK=64,GOAL=1;
 export const COLORS=['#e65f58','#4c9bfa','#e8b84e'];
@@ -74,6 +74,7 @@ function refill(s){
   s.current=(s.current+mission2TurnDirection(s)+SEATS)%SEATS;s.turn++;
  }
  s.lastEvent={type:'slot',round:s.round,effects,message:'🎰 Der Grinch löst '+effects.length+' Gemeinheit(en) aus!',turn:s.turn};
+ rememberMission2Event(s,s.lastEvent);
 }
 function log(s,message){s.history.unshift(message);s.history=s.history.slice(0,10);}
 function nextTurn(s){
@@ -255,6 +256,7 @@ function ensureSingleLoss(s,seat,movedId){
  // pre-trigger board markup, cards or player status.
  s.lastEvent={type:'loss',seat,pieceId:p.id,lossType:info.lossType,position:trackPosition,concealedUntilTriggered:true,message:msg,turn:s.turn};
  log(s,msg);
+ rememberMission2Event(s,s.lastEvent);
 }
 function maybeEffects(s){ /* Only the slot machine triggers Mission 2 effects. */ }
 function checkComplete(s){
