@@ -19,6 +19,11 @@ const start=[0,16,48],mod=x=>(x%64+64)%64,at=p=>mod(start[p.seat]+p.steps);
 const active=s=>s.pieces.filter(p=>p.place==='track'&&at(p)%16!==0);
 const occupied=s=>new Set(s.pieces.filter(p=>p.place==='track').map(at));
 const ownProtected=p=>p?.place==='track'&&at(p)===start[p.seat];
+function canRetreat(s,p){
+ if(!p||p.place!=='track'||p.steps<=0)return false;
+ const field=mod(start[p.seat]+p.steps-1);
+ return field%16!==0&&!occupied(s).has(field);
+}
 const rand=s=>{s.m2.counter++;let x=(Math.imul((s.seed^Math.imul(s.round,7919)^s.m2.counter)>>>0,1664525)+1013904223)>>>0;return x/4294967296;};
 const pick=(s,items)=>items.length?items[Math.floor(rand(s)*items.length)]:null;
 const group=id=>Math.floor((id-1)/10);
@@ -91,10 +96,15 @@ function playableCards(s,seat,legalOptions){
  return s.hands[seat].map(card=>({card,moves:legalOptions(seat,card)})).filter(x=>x.moves.length);
 }
 function eligible(s,id,legalOptions){
- if(id>=1&&id<=5||id===9||id===10)return active(s).some(p=>p.steps>0);
- if(id===6||id===21||id===22||id===38)return active(s).length>0;
+ if(id===1||id===2||id===5||id===10)return active(s).some(p=>canRetreat(s,p));
+ if(id===3||id===4||id===9)return active(s).some(p=>p.steps>0);
+ if(id===6||id===21||id===22)return active(s).length>0;
  if(id===7)return active(s).length>=2;
- if(id===8)return !!s.m2.lastMotion;
+ if(id===8){
+  const old=s.m2.lastMotion,p=s.pieces.find(p=>p.id===old?.pieceId);
+  return !!(old&&p?.place==='track'&&p.steps===old.toSteps&&
+   !occupied(s).has(mod(start[p.seat]+old.fromSteps)));
+ }
  if(id===34)return [0,1,2].some(seat=>playableCards(s,seat,legalOptions).length>=2);
  if(id===35||id===38)return [0,1,2].some(seat=>playableCards(s,seat,legalOptions).length>0);
  if(id===31||id===32||id===33||id===37)return s.hands.some(h=>h.length>0);
@@ -111,7 +121,7 @@ function record(s,id,legalOptions){
   case 2:detail=quake(s,1)+' Schritte erzwungen';break;
   case 3:for(let seat=0;seat<3;seat++){const p=active(s).filter(p=>p.seat===seat).sort((a,b)=>b.steps-a.steps)[0];retreat(s,p,5);}break;
   case 4:for(let seat=0;seat<3;seat++){const p=active(s).filter(p=>p.seat===seat).sort((a,b)=>a.steps-b.steps)[0];retreat(s,p,3);}break;
-  case 5:retreat(s,pick(s,active(s)),8);break;
+  case 5:retreat(s,pick(s,active(s).filter(p=>canRetreat(s,p))),8);break;
   case 6:clearField(pick(s,active(s)));break;
   case 7:{
    const one=pick(s,active(s)),two=pick(s,active(s).filter(p=>p.id!==one?.id));
@@ -127,7 +137,7 @@ function record(s,id,legalOptions){
    break;
   }
   case 9:s.m2.afterMovePush=2;break;
-  case 10:retreat(s,active(s).sort((a,b)=>b.steps-a.steps)[0],6);break;
+  case 10:retreat(s,active(s).filter(p=>canRetreat(s,p)).sort((a,b)=>b.steps-a.steps)[0],6);break;
   case 11:case 12:case 13:case 14:case 15:case 16:case 17:case 18:case 19:case 20:
    s.m2.cardCurse=id;detail='Bis zum Ende der Kartenphase';break;
   case 21:case 22:{
@@ -201,7 +211,9 @@ export function slotForNewPhase(s,legalOptions){
  const m=s.m2;
  // Hazards with a future expiry survive the next card phase.
  m.cardCurse=null;m.hazards=m.hazards.filter(h=>!h.used&&h.until>s.turn);
- m.frozen={};m.skipSeats=[];m.afterMovePush=0;m.portalUntil=-1;m.noSwapUntil=-1;
+ m.frozen={};m.skipSeats=[];m.afterMovePush=0;
+ m.portalUntil=m.portalUntil>s.turn?m.portalUntil:-1;
+ m.noSwapUntil=m.noSwapUntil>s.turn?m.noSwapUntil:-1;
  m.forcedCard=null;m.forcedPiece=null;m.lockedCard=null;m.reverse=false;m.frostLands=0;
  const available=EFFECT_IDS.filter(id=>eligible(s,id,legalOptions));
  const first=pick(s,available),effects=[record(s,first,legalOptions)];
@@ -260,7 +272,7 @@ export function afterMission2Card(s,seat,chosen,originalPiece){
  }
  const previousFrost=new Set(Object.keys(m.frozen));
  if(p?.place==='track'){
-  if(m.afterMovePush){retreat(s,p,m.afterMovePush);m.afterMovePush=0;}
+  if(m.afterMovePush&&!ownProtected(p)){if(retreat(s,p,m.afterMovePush))m.afterMovePush=0;}
   const field=at(p);
   for(const hazard of m.hazards){
    if(hazard.used||hazard.until<=s.turn||hazard.field!==field)continue;
@@ -271,7 +283,7 @@ export function afterMission2Card(s,seat,chosen,originalPiece){
    log(s,'❄️ '+(hazardNames[hazard.type]||'Grinch-Effekt')+' auf Feld '+hazard.field);
    break;
   }
-  if(m.frostLands>0&&p.place==='track'){m.frostLands--;m.frozen[p.id]=true;}
+  if(m.frostLands>0&&p.place==='track'&&at(p)%16!==0){m.frostLands--;m.frozen[p.id]=true;}
  }
  if(m.forcedCard?.seat===seat)m.forcedCard=null;
  if(m.forcedPiece?.seat===seat)m.forcedPiece=null;
