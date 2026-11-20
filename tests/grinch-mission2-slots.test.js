@@ -181,3 +181,30 @@ test('bonus effects cannot strand a formerly playable forced card, pawn or locke
  assert.equal(pawn.m2.forcedPiece?.id,'p0');
  assert.ok(pawn.hands[0].some(c=>legalMoves(pawn,0,c).length));
 });
+
+
+test('70 fully automated 130-turn campaigns reach all 40 effects without card or pawn corruption',()=>{
+ const seen=new Set();
+ let actions=0;
+ for(let seed=1;seed<=70;seed++){
+  let s=createGame(seed*17353);
+  for(let turn=0;turn<130&&!s.complete;turn++){
+   if(s.m2.pendingSlotRound)s=acknowledgeMission2Slot(s,s.current,s.round);
+   const options=s.hands[s.current].flatMap(c=>legalMoves(s,s.current,c));
+   assert.ok(options.length>0,'a player must be able to act after slot confirmation');
+   s=play(s,s.current,options[(seed*17+turn*37)%options.length]);
+   actions++;
+   assert.equal(cardCount(s),110,'no cards appear or disappear');
+   const fields=s.pieces.filter(p=>p.place==='track').map(p=>
+    (([0,16,48][p.seat]+p.steps)%64+64)%64);
+   assert.equal(new Set(fields).size,fields.length,'no two pawns overlap');
+   for(let seat=0;seat<3;seat++){
+    assert.ok(s.pieces.filter(p=>p.seat===seat&&p.place==='lost').length<=2);
+    assert.ok(s.pieces.filter(p=>p.seat===seat&&p.place==='teleported').length<=3);
+   }
+   for(const effect of s.m2.spins.at(-1)?.effects||[])seen.add(effect.id);
+  }
+ }
+ assert.ok(actions>=8000);
+ assert.deepEqual([...seen].sort((a,b)=>a-b),Array.from({length:40},(_,i)=>i+1));
+});
