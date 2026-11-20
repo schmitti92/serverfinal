@@ -71,6 +71,16 @@ function grantMission1(h){
    {uid:who.uid,name:who.name,completedMissions:[1],highestUnlocked:2});
  }
 }
+async function approveCurrentSlot(h){
+ const match=h.docs.get('spielesammlung_hub_v1/123').match;
+ const engine=match.grinch;
+ const who=Object.keys(h.people).find(name=>h.people[name].uid===match.grinchRoster[engine.current].uid);
+ const payload={matchId:match.id,round:engine.round,expectedRevision:engine.revision};
+ const ack=await h.call('POST',route+'/ack2',who,payload);
+ assert.equal(ack.status,200,JSON.stringify(ack));
+ assert.equal(h.docs.get('spielesammlung_hub_v1/123').match.grinch.m2.pendingSlotRound,null);
+ return {ack,who,payload};
+}
 test('mission 2: only the host can start, and EVERY real player must finish mission 1',async()=>{
  const h=makeHarness();await three(h);
  let res=await h.call('POST',route+'/launch2','bob');assert.equal(res.status,403);
@@ -100,9 +110,18 @@ test('mission 2: protected turn, one-time actions and true effects',async()=>{
  const started=await h.call('POST',route+'/launch2');
  assert.equal(started.status,200);
  const saved=h.docs.get('spielesammlung_hub_v1/123');
- const g=saved.match.grinch,seat=g.current;
+ const initial=saved.match.grinch,seat=initial.current;
  const actor=saved.match.grinchRoster[seat].uid;
  const who=Object.keys(h.people).find(x=>h.people[x].uid===actor);
+ const pendingMove=initial.hands[seat].flatMap(c=>legalMoves(initial,seat,c))[0];
+ assert.ok(pendingMove);
+ const pending=await h.call('POST',route+'/action',who,{
+  matchId:saved.match.id,actionId:'m2-pending-test-001',expectedRevision:initial.revision,action:pendingMove
+ });
+ assert.equal(pending.status,409,'no move may bypass the slot acknowledgement');
+ assert.equal(pending.error,'GRINCH_SLOT_PENDING');
+ await approveCurrentSlot(h);
+ const g=h.docs.get('spielesammlung_hub_v1/123').match.grinch;
  const opts=g.hands[seat].flatMap(c=>legalMoves(g,seat,c));
  assert.ok(opts.length);
  const invalid=await h.call('POST',route+'/action',who,{
@@ -126,7 +145,8 @@ test('mission 2: verified nine-portal victory records mission 2 exactly once for
  const started=await h.call('POST',route+'/launch2');
  assert.equal(started.status,200);
  const saved=h.docs.get('spielesammlung_hub_v1/123');
- const g=saved.match.grinch;
+ await approveCurrentSlot(h);
+ const g=h.docs.get('spielesammlung_hub_v1/123').match.grinch;
  // Arrange a near-complete server-owned match. Only one legitimate last step
  // remains; the server must still calculate and verify that final card action.
  g.players.forEach(info=>{info.lost=true;info.m2Lost=true;info.moves=12;});
@@ -162,4 +182,27 @@ test('mission 2: verified nine-portal victory records mission 2 exactly once for
  assert.equal(replay.status,200);
  assert.equal(h.docs.get('spielesammlung_hub_v1/123').match.grinch.revision,
   persisted.match.grinch.revision,'duplicate victory cannot reapply the action');
+});
+
+test('slot acknowledgement is seat-bound, idempotent and does not change the chosen slot',async()=>{
+ const h=makeHarness();await three(h);grantMission1(h);
+ const launch=await h.call('POST',route+'/launch2');
+ assert.equal(launch.status,200);
+ const match=h.docs.get('spielesammlung_hub_v1/123').match;
+ const before=match.grinch,seat=before.current;
+ const who=Object.keys(h.people).find(name=>h.people[name].uid===match.grinchRoster[seat].uid);
+ const others=Object.keys(h.people).find(name=>name!=='outsider'&&name!==who);
+ const payload={matchId:match.id,round:before.round,expectedRevision:before.revision};
+ const outsider=await h.call('POST',route+'/ack2','outsider',payload);
+ assert.equal(outsider.status,403);
+ const forbidden=await h.call('POST',route+'/ack2',others,payload);
+ assert.equal(forbidden.status,409);
+ const first=await h.call('POST',route+'/ack2',who,payload);
+ assert.equal(first.status,200);
+ const after=h.docs.get('spielesammlung_hub_v1/123').match.grinch;
+ assert.deepEqual(after.m2.spins,before.m2.spins);
+ assert.equal(after.revision,before.revision+1);
+ const repeat=await h.call('POST',route+'/ack2',who,payload);
+ assert.equal(repeat.status,200);
+ assert.equal(h.docs.get('spielesammlung_hub_v1/123').match.grinch.revision,after.revision);
 });
