@@ -156,7 +156,7 @@ function record(s,id,legalOptions){
   case 25:hazard(s,'slip',3,999);break;
   case 26:hazard(s,'trap',3,999);break;
   case 27:hazard(s,'home',1,999);break;
-  case 28:s.m2.portalUntil=s.turn+3;break;
+  case 28:s.m2.portalUntil=Math.max(s.m2.portalUntil,s.turn+3);break;
   case 29:hazard(s,'wall',2);break;
   case 30:s.m2.frostLands=3;break;
   case 31:{const seat=pick(s,[0,1,2].filter(i=>s.hands[i].length));if(seat!==null)replaceCard(s,seat,h=>Math.floor(rand(s)*h.length));break;}
@@ -196,7 +196,7 @@ function record(s,id,legalOptions){
    break;
   }
   case 39:for(let seat=0;seat<3;seat++)replaceCard(s,seat,hand=>{const arr=numbers(hand).sort((a,b)=>b.value-a.value);return arr[0]?.i??-1;});break;
-  case 40:s.m2.noSwapUntil=s.turn+3;break;
+  case 40:s.m2.noSwapUntil=Math.max(s.m2.noSwapUntil,s.turn+3);break;
  }
  log(s,'🎰 '+name+(detail?' · '+detail:''));
  return {id,name,category:group(id)};
