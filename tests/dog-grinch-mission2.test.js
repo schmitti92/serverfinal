@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {newGame,legalMoves,play,publicMissionState,TRACK} from '../dog/grinch-mission2.js';
+import {newGame as createGame,acknowledgeMission2Slot,legalMoves,play,publicMissionState,TRACK} from '../dog/grinch-mission2.js';
+const newGame=(...args)=>{const s=createGame(...args);return acknowledgeMission2Slot(s,s.current,s.round);};
 import {EFFECT_IDS,EFFECT_NAMES,NEVER_WINNABLE,BONUS_PROBABILITY} from '../dog/grinch-mission2-effects.js';
 
 const fields=s=>s.pieces.filter(p=>p.place==='track').map(p=>((([0,16,48][p.seat]+p.steps)%64)+64)%64);
@@ -49,7 +50,8 @@ test('Slot effects preserve 110 cards, board positions, piece count and revision
    const options=s.hands[s.current].flatMap(c=>legalMoves(s,s.current,c));
    assert.ok(options.length>0,'Seed '+seed+' turn '+n+' needs a legal move');
    const action=options[Math.floor(n*17%options.length)];
-   const next=play(s,s.current,action);
+   const moved=play(s,s.current,action);
+   const next=moved.m2.pendingSlotRound?acknowledgeMission2Slot(moved,moved.current,moved.round):moved;
    assert.equal(next.revision,s.revision+1);
    assert.equal(next.pieces.length,15);
    assert.equal(cardCount(next),110,'Cannot invent or destroy DOG cards');
