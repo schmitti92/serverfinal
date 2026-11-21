@@ -1265,6 +1265,44 @@ test('SKYJO read-only seat cache saves Firestore reads but never caches mutation
 });
 
 
+
+test('Concurrent hub HTTP GETs share one Firestore read, but all callers get their own auth projection',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ let firestoreGets=0;
+ const originalCollection=h.store.collection;
+ h.store.collection=name=>{
+  const collection=originalCollection(name);
+  return {doc:docId=>{
+   const ref=collection.doc(docId);
+   return {...ref,get:async()=>{
+    if(name==='spielesammlung_hub_v1')firestoreGets++;
+    await Promise.resolve(); // Keep concurrent requests overlapping.
+    return ref.get();
+   }};
+  }};
+ };
+ const [a,b,outsider]=await Promise.all([
+  h.api('GET','/api/hub/rooms/'+code,'alice'),
+  h.api('GET','/api/hub/rooms/'+code,'bob'),
+  h.api('GET','/api/hub/rooms/'+code,'cara')
+ ]);
+ assert.equal(a.status,200);assert.equal(b.status,200);
+ assert.equal(a.room.host,true);
+ assert.equal(b.room.host,false);
+ assert.equal(outsider.status,403,'coalescing must never share authorization');
+ assert.equal(firestoreGets,1,'three concurrent HTTP GETs must hit Firestore once');
+ const health=await h.api('GET','/api/hub/health');
+ assert.equal(health.hubHttpReadCoalescing.coalesced,2);
+ assert.equal(health.hubHttpReadCoalescing.syncTtlMs,12000);
+ assert.equal((await h.api('GET','/api/hub/rooms/'+code,'alice')).status,200);
+ assert.equal(firestoreGets,2,'finished GET must not be kept as a lasting room cache');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ const after=await h.api('GET','/api/hub/rooms/'+code,'bob');
+ assert.equal(after.room.game,'dog','mutation must be immediately visible');
+ assert.equal(firestoreGets,3);
+});
+
 test('Render-first hub sync combines ongoing polls without Firestore transactions',async()=>{
  const h=harness(),created=await h.api('POST','/api/hub/rooms'),code=created.room.code;
  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
@@ -1295,8 +1333,11 @@ test('Render-first hub sync combines ongoing polls without Firestore transaction
  assert.equal(transactions,0,'ongoing games never start Firestore transactions on each poll');
  assert.equal((await h.api('POST',route,'cara',{matchId})).status,403,'nonmember cannot access cached room');
  await h.api('POST',route,'alice',{matchId});
- assert.equal(reads,1,'same-room polling remains in Render RAM for 2.5 seconds');
+ assert.equal(reads,1,'same-room completion preflight is reused for 12 seconds');
  h.advance(2501);
+ await h.api('POST',route,'bob',{matchId});
+ assert.equal(reads,1,'preflight cache remains valid between seven-second checks');
+ h.advance(9500);
  const after=await h.api('POST',route,'bob',{matchId});
  assert.equal(after.room.revision,started.revision);
  assert.equal(reads,2,'expired cache reloads Firestore');
