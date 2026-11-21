@@ -30,10 +30,10 @@ export function dogPlayerStats(raw,uid){
  return {uid,played:nonnegative(d.played),wins:nonnegative(d.wins),
   knockedOut:nonnegative(d.knockedOut),wasKnockedOut:nonnegative(d.wasKnockedOut)};
 }
-export function dogCompletedPlayerStats(raw,uid,displayName,seat,counters,winner,matchId,now,xpBonusPercent=0,research={}){
+export function dogCompletedPlayerStats(raw,uid,displayName,seat,counters,winner,matchId,now,xpBonusPercent=0,research={},mode='teams4'){
  const old=dogPlayerStats(raw,uid);
  const v=counters?.seats?.[seat]||{};
- const win=winner===seat%2?1:0;
+ const win=(mode==='solo3'?winner===seat:winner===seat%2)?1:0;
  // Bonus research is counted only on a server-confirmed complete match.
  // Europe/Berlin day controls the first game and third game of each day.
  const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Berlin',
