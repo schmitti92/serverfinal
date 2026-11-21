@@ -72,7 +72,7 @@ test('Legacy form retains all four saved sections using one GET and one validate
  assert.equal(h.counts.reads,1,'one Firestore document read rather than four');
  assert.equal(h.counts.writes,1,'the existing settings write remains durable');
  const after=h.stored();
- assert.equal(after.freeEnabled,true,'legacy client's new change is saved');
+ assert.equal(after.freeEnabled,true,"legacy client new change is saved");
  assert.deepEqual(after.variants.gifts.coinAmounts,[8,18,38]);
  assert.deepEqual(after.variants.elf.moneySymbolWeights,[100,200,700]);
  assert.deepEqual(after.variants.premium_27.giftSymbolWeights,[100,100,100,100,600]);
