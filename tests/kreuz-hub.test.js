@@ -13,13 +13,13 @@ const createKreuz=runInNewContext(source.slice(begin,end+6)+'\ncreateKreuzKunter
 });
 
 function makeStore(){
- const docs=new Map();let pending=Promise.resolve();
+ const docs=new Map();let pending=Promise.resolve(),writes=0;
  const snapshot=v=>({exists:!!v,data:()=>structuredClone(v)});
- return {docs,collection(name){return {doc(code){const path=name+'/'+code;return {path,get:async()=>snapshot(docs.get(path)),set:async value=>{docs.set(path,structuredClone(value));}};}};},
+ return {docs,getWrites:()=>writes,collection(name){return {doc(code){const path=name+'/'+code;return {path,get:async()=>snapshot(docs.get(path)),set:async value=>{writes++;docs.set(path,structuredClone(value));}};}};},
  async runTransaction(fn){
   const job=pending.catch(()=>{}).then(async()=>{
    const ops=[];
-   const tx={get:async ref=>snapshot(docs.get(ref.path)),set:(ref,value)=>ops.push(()=>docs.set(ref.path,structuredClone(value)))};
+   const tx={get:async ref=>snapshot(docs.get(ref.path)),set:(ref,value)=>ops.push(()=>{writes++;docs.set(ref.path,structuredClone(value));})};
    const value=await fn(tx);ops.forEach(f=>f());return value;
   });pending=job.catch(()=>{});return job;
  }};
@@ -92,4 +92,69 @@ test('Hub players reconnect by Firebase identity after engine restarts',async()=
  room.phase='over';room.finished=true;
  assert.equal(await restarted.isHubMatchFinished(h.match),true);
  assert.equal(await restarted.isHubMatchFinished({...h.match,id:'wrong'}),false);
+});
+
+
+test('KreuzKunter: hub reconnects, disconnects and presence fan-out produce zero additional Firestore writes',async()=>{
+ const h=rig(),server=h.create(),aliceSock=socket(),bobSock=socket();
+ server.handle(aliceSock);server.handle(bobSock);
+ aliceSock.receive({action:'hubJoin',gameCode:h.match.gameCode,matchId:h.match.id,profileIdToken:'alice'});
+ bobSock.receive({action:'hubJoin',gameCode:h.match.gameCode,matchId:h.match.id,profileIdToken:'bob'});
+ await pause();
+ assert.equal(h.store.getWrites(),1,'only initial hub room transaction is durable');
+ const documentId='kreuzkunter_rooms/'+h.match.gameCode;
+ const originalStoredRevision=h.store.docs.get(documentId).revision;
+ const room=server.rooms.get(h.match.gameCode);
+ assert.equal(room.revision,originalStoredRevision,'presence must not advance durable revision');
+ assert.deepEqual(bobSock.responses.at(-1).connected,[true,true]);
+ aliceSock.close();await pause();
+ assert.equal(h.store.getWrites(),1,'disconnect changes WebSocket presence, not gameplay');
+ assert.equal(room.revision,originalStoredRevision,'durable revision remains stable on disconnect');
+ assert.deepEqual(bobSock.responses.at(-1).connected,[false,true]);
+
+ const newAlice=socket();server.handle(newAlice);
+ newAlice.receive({action:'hubJoin',gameCode:h.match.gameCode,matchId:h.match.id,profileIdToken:'alice'});
+ await pause();
+ assert.equal(h.store.getWrites(),1,'reconnect must not rewrite room');
+ assert.deepEqual(bobSock.responses.at(-1).connected,[true,true]);
+ assert.equal(newAlice.responses.find(x=>x.type==='state')?.revision,originalStoredRevision);
+
+ newAlice.receive({action:'roll'});await pause();
+ assert.equal(h.store.getWrites(),2,'actual dice action must persist');
+ assert.equal(h.store.docs.get(documentId).turn,1);
+ assert.equal(h.store.docs.get(documentId).phase,'select');
+
+ const restarted=h.create(),reconnected=socket();restarted.handle(reconnected);
+ reconnected.receive({action:'hubJoin',gameCode:h.match.gameCode,matchId:h.match.id,profileIdToken:'bob'});
+ await pause();
+ assert.equal(h.store.getWrites(),2,'restoring and reconnecting must still be read-only');
+ assert.equal(reconnected.responses.find(x=>x.type==='state')?.game.phase,'select');
+ assert.equal(reconnected.responses.find(x=>x.type==='state')?.revision,h.store.docs.get(documentId).revision);
+});
+
+test('KreuzKunter: independent lobby stores actual joins and host transfers, not reconnects',async()=>{
+ const h=rig(),server=h.create(),a=socket(),b=socket();
+ server.handle(a);
+ a.receive({action:'create',boardId:'KK-2026-V6-STAR-EQUAL',profileIdToken:'alice'});
+ await pause();
+ const created=a.responses.find(x=>x.type==='welcome');
+ assert(created,'room creation succeeds');
+ assert.equal(h.store.getWrites(),1,'creation is durable');
+ server.handle(b);
+ b.receive({action:'join',boardId:'KK-2026-V6-STAR-EQUAL',code:created.code,profileIdToken:'bob'});
+ await pause();
+ const joined=b.responses.find(x=>x.type==='welcome');
+ assert(joined,'new member joined');
+ assert.equal(h.store.getWrites(),2,'new member must be durably persisted');
+ b.close();await pause();
+ assert.equal(h.store.getWrites(),2,'non-host disconnect is presence only');
+ const b2=socket();server.handle(b2);
+ b2.receive({action:'join',boardId:'KK-2026-V6-STAR-EQUAL',code:created.code,token:joined.token,profileIdToken:'bob'});
+ await pause();
+ assert.equal(h.store.getWrites(),2,'known member returning requires no write');
+ a.close();await pause();
+ assert.equal(h.store.getWrites(),3,'host transfer is durably persisted');
+ const room=server.rooms.get(created.code),stored=h.store.docs.get('kreuzkunter_rooms/'+created.code);
+ assert.equal(room.host,joined.token);
+ assert.equal(stored.host,joined.token);
 });
