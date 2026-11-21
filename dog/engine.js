@@ -195,6 +195,13 @@ function sevenCandidates(s,seat){
   }
   return moves;
 }
+// Only the last unfinished pawn reaching its goal may burn unused 7 steps.
+// This is evaluated on the transition, not just on an already finished side.
+function completesLastPawn(before,after,owner){
+  const ours=before.pieces.filter(p=>p.owner===owner);
+  return ours.length===4&&ours.filter(p=>p.place!=='goal').length===1&&
+    after.pieces.filter(p=>p.owner===owner).every(p=>p.place==='goal');
+}
 function canSeven(s,seat,left,depth=0){
   if(left===0)return true;
   if(depth>=7)return false;
@@ -204,6 +211,7 @@ function canSeven(s,seat,left,depth=0){
     const path=stepPath(s,p.id,n,via,true);
     if(!path||via&&!path.viaGoal)continue;
     const next=clone(s);applyMovement(next,path,true);
+    if(n<left&&completesLastPawn(s,next,own))return true;
     if(canSeven(next,seat,left-n,depth+1))return true;
   }
   return false;
@@ -215,7 +223,9 @@ function winningSevenMoves(s,seat,left){
     const path=stepPath(s,m.pieceId,m.steps,m.viaGoal,true);
     if(!path)continue;
     const next=clone(s);applyMovement(next,path,true);
-    if(canSeven(next,seat,left-m.steps))good.push({...m,captures:path.captures});
+    if((m.steps<left&&completesLastPawn(s,next,moverOwner(s,seat)))||
+       canSeven(next,seat,left-m.steps))
+      good.push({...m,captures:path.captures});
   }
   return good;
 }
@@ -224,7 +234,12 @@ export function legalActions(s,seat=s.current){
   if(s.phase==='exchange')return s.exchanges[seat]===null?s.hands[seat].map(c=>({type:'exchange',cardId:c.id})): [];
   if(s.phase==='seven'){
     if(s.current!==seat)return [];
-    return winningSevenMoves(s,seat,7-s.seven.spent);
+    const rest=7-s.seven.spent;
+    const moves=winningSevenMoves(s,seat,rest);
+    // Explicit choice: spend the remainder with the partner or let it lapse.
+    // No other pawn can ever make this action available.
+    if(s.seven.canForfeit&&rest>0)moves.push({type:'seven-finish',remaining:rest});
+    return moves;
   }
   // A drawn rescue card may ONLY take a figure out of the house.
   // The remaining hand is not playable during this special opportunity.
@@ -309,16 +324,28 @@ export function takeAction(original,seat,action,rng=Math.random){
     s.revision++;return s;
   }
   if(s.phase==='seven'){
-    const p=stepPath(s,action.pieceId,action.steps,!!action.viaGoal,true);
-    applyMovement(s,p,true);
-    s.seven.spent+=action.steps;
-    history(s,s.players[seat].name+' teilt die 7: '+action.steps+' Felder');
-    if(s.seven.spent===7){
+    if(action.type==='seven-finish'){
+      if(!s.seven.canForfeit||s.seven.spent>=7)throw Error('SEVEN_REMAINDER_MUST_BE_USED');
+      const rest=7-s.seven.spent;
       discardCard(s,seat,s.seven.cardId);s.seven=null;
+      history(s,s.players[seat].name+' lässt nach der letzten Zielfigur '+rest+' Schritte der 7 verfallen');
       s.phase='play';s.current=nextSeat(s,seat);settle(s,rng);
+    }else{
+      const owner=moverOwner(s,seat);
+      const p=stepPath(s,action.pieceId,action.steps,!!action.viaGoal,true);
+      applyMovement(s,p,true);
+      // Forfeiting is possible only immediately after finishing the last
+      // pawn; a normal partial move never grants this exception.
+      s.seven.canForfeit=completesLastPawn(original,s,owner);
+      s.seven.spent+=action.steps;
+      history(s,s.players[seat].name+' teilt die 7: '+action.steps+' Felder');
+      if(s.seven.spent===7){
+        discardCard(s,seat,s.seven.cardId);s.seven=null;
+        s.phase='play';s.current=nextSeat(s,seat);settle(s,rng);
+      }
     }
   }else if(action.type==='seven'){
-    s.phase='seven';s.seven={cardId:action.cardId,spent:0,snapshot:clone(s.pieces)};
+    s.phase='seven';s.seven={cardId:action.cardId,spent:0,canForfeit:false,snapshot:clone(s.pieces)};
     history(s,s.players[seat].name+' spielt eine 7');
   }else{
     const c=cardFor(s,seat,action.cardId);
@@ -346,7 +373,17 @@ export function takeAction(original,seat,action,rng=Math.random){
     if(s.phase==='rescue'){s.phase='play';s.rescue=null;}
     s.current=nextSeat(s,seat);settle(s,rng);
   }
-  finishIfWon(s);s.revision++;
+  finishIfWon(s);
+  // In solo3, or when the last team pawn finishes, the game ends before a
+  // seven-finish button could be pressed. Discard the card atomically here.
+  if(s.phase==='finished'&&s.seven){
+    if(s.seven.spent<7&&!s.seven.canForfeit)throw Error('SEVEN_REMAINDER_MUST_BE_USED');
+    const rest=7-s.seven.spent;
+    discardCard(s,seat,s.seven.cardId);
+    s.seven=null;
+    if(rest>0)history(s,'Letzte Zielfigur erreicht: '+rest+' Restschritte der 7 verfallen');
+  }
+  s.revision++;
   return s;
 }
 export function cancelSeven(original,seat){
