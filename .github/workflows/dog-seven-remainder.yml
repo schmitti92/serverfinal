@@ -1,0 +1,20 @@
+name: DOG split-seven remainder
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/engine.js'
+      - 'tests/dog-seven-last-pawn-remainder.test.js'
+      - 'tests/dog-seven-goal-entry.test.js'
+      - '.github/workflows/dog-seven-remainder.yml'
+  workflow_dispatch:
+jobs:
+  seven-remainder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/engine.js
+      - run: node --test tests/dog-seven-last-pawn-remainder.test.js tests/dog-seven-goal-entry.test.js
