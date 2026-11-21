@@ -274,8 +274,8 @@ function tickFreeze(s,seat){
   if(p.frozenTurns===0)record(s,'❄️ '+s.players[seat].name+': Figur '+(Number(p.id.slice(1))+1)+' ist aufgetaut.');
  }
 }
-function advance(s){
- tickFreeze(s,s.current);
+function advance(s,spentCard=true){
+ if(spentCard)tickFreeze(s,s.current);
  if(s.current===3){
   s.grinchActionsLeft--;
   if(s.grinchActionsLeft>0&&s.hands[3].length)return;
@@ -291,7 +291,8 @@ function settle(s){
   if(s.seven)return;
   if(s.current===3&&s.grinchActionsLeft<=0)s.grinchActionsLeft=s.stageAtDeal+1;
   if(s.hands[s.current].length&&mission3LegalMoves(s,s.current).length)return;
-  if(s.hands[s.current].length){
+  const spentCard=s.hands[s.current].length>0;
+  if(spentCard){
    // One card per pass. Frozen pawns must thaw after exactly TWO OWN turns,
    // not after an entire discarded hand.
    const card=s.hands[s.current].shift();
@@ -299,7 +300,7 @@ function settle(s){
    record(s,s.players[s.current].name+' setzt mit '+card.type+' aus (kein erlaubter Zug).');
   }
   if(s.current===3)s.grinchActionsLeft=1;
-  advance(s);
+  advance(s,spentCard);
  }
  throw Error('Mission 3: Kein gültiger Zug nach mehreren Kartenphasen.');
 }
