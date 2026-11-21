@@ -14,6 +14,7 @@ import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
+import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearchLevel,dogResearchTicketMs,dogResearchPityThreshold} from './dog/christmas-research.js';
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
 import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
@@ -1137,16 +1138,83 @@ function finishEisstock(ch,members){
     return {stats:dogPlayerStats(snap.exists?snap.data():null,uid),
       tracking:'from-2026-11-15',scope:'completed-dog-online-matches'};
   }));
+  // Weihnachtliche Forschung: all spends and timed claims are transactional.
+  // In particular the player never submits XP, earned points or upgrade levels.
+  app.get('/api/hub/dog/research',authentication,handler(async req=>{
+    const store=db(),uid=req.hubIdentity.uid;
+    const [stats,research]=await Promise.all([
+      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
+      store.collection(DOG_RESEARCH_COLLECTION).doc(uid).get()
+    ]);
+    return {research:dogResearchStatus(research.exists?research.data():null,
+      stats.exists?stats.data()?.xp:0,clock())};
+  }));
+  app.post('/api/hub/dog/research/upgrade',authentication,handler(async req=>{
+    const id=req.body?.id;
+    if(typeof id!=='string'||!/^[a-z_]{2,32}$/.test(id))throw error(400,'RESEARCH_UNKNOWN');
+    const store=db(),uid=req.hubIdentity.uid,now=clock();
+    const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
+    const researchRef=store.collection(DOG_RESEARCH_COLLECTION).doc(uid);
+    return store.runTransaction(async tx=>{
+      const [statsSnap,researchSnap]=await Promise.all([tx.get(statsRef),tx.get(researchRef)]);
+      const xp=statsSnap.exists?statsSnap.data()?.xp:0;
+      let next;
+      try{next=dogResearchUpgrade(researchSnap.exists?researchSnap.data():null,xp,id,now);}
+      catch(e){throw error(409,e.message);}
+      tx.set(researchRef,next);
+      return {research:dogResearchStatus(next,xp,now)};
+    });
+  }));
+  app.post('/api/hub/dog/research/claim',authentication,handler(async req=>{
+    const type=req.body?.type,tier=req.body?.tier;
+    if(type!=='free_ticket'&&type!=='builder')throw error(400,'RESEARCH_INVALID_CLAIM');
+    if(type==='free_ticket'&&!['simple','medium'].includes(tier))throw error(400,'RESEARCH_INVALID_TIER');
+    const store=db(),uid=req.hubIdentity.uid,now=clock();
+    const researchRef=store.collection(DOG_RESEARCH_COLLECTION).doc(uid);
+    const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
+    const walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
+    const villageRef=dogVillageFor(store);
+    return store.runTransaction(async tx=>{
+      const [researchSnap,statsSnap,rewardSnap]=await Promise.all([
+        tx.get(researchRef),tx.get(statsRef),
+        type==='free_ticket'?tx.get(walletRef):tx.get(villageRef)
+      ]);
+      const research=researchSnap.exists?researchSnap.data():null;
+      const rank=dogResearchLevel(research,type);
+      if(rank<1)throw error(403,'RESEARCH_NOT_UNLOCKED');
+      const key=type==='free_ticket'?'freeTicketAt':'builderAt';
+      const eligibleAt=Number.isSafeInteger(research?.[key])?research[key]:now+(
+        type==='free_ticket'?dogResearchTicketMs(rank):7200000);
+      if(now<eligibleAt)throw error(409,'RESEARCH_COOLDOWN');
+      const next={...research,[key]:now+(type==='free_ticket'?dogResearchTicketMs(rank):7200000),updatedAt:now};
+      if(type==='free_ticket'){
+        let wallet;
+        try{wallet=grantDogScratchVoucher(rewardSnap.exists?rewardSnap.data():null,tier);}
+        catch(e){throw error(409,e.message);}
+        tx.set(walletRef,wallet);
+      }else{
+        const earned=rank;
+        const village=creditDogVillage(rewardSnap.exists?rewardSnap.data():null,DOG_GLOBAL_VILLAGE_ID,null,earned*10);
+        tx.set(villageRef,village);
+      }
+      tx.set(researchRef,next);
+      return {research:dogResearchStatus(next,statsSnap.exists?statsSnap.data()?.xp:0,now),
+        claimed:type,tier:type==='free_ticket'?tier:null,lights:type==='builder'?rank:0};
+    });
+  }));
   // Persönlicher 50-Level-Sammlerpass. Serverseitig bestätigte DOG-XP.
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
     const store=db(),uid=req.hubIdentity.uid;
-    const [snap,walletSnap,villageSnap]=await Promise.all([
+    const [snap,walletSnap,villageSnap,researchSnap]=await Promise.all([
       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
       store.collection(DOG_SCRATCH_COLLECTION).doc(uid).get(),
-      dogVillageFor(store).get()
+      dogVillageFor(store).get(),
+      store.collection(DOG_RESEARCH_COLLECTION).doc(uid).get()
     ]);
     return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
       academyXpPercent:christmasActive()?dogAcademyXpPercent(villageSnap.exists?villageSnap.data()?.levels?.academy:1):0,
+      researchXpPercent:10*dogResearchLevel(researchSnap.exists?researchSnap.data():null,'xp'),
+      researchWinXpPercent:30*dogResearchLevel(researchSnap.exists?researchSnap.data():null,'win_xp'),
       levelRewardClaims:dogLevelRewardClaimFlags(walletSnap.exists?walletSnap.data():null),
       scope:'verified-dog-online-matches',rewardsConfigured:true};
   }));
@@ -1650,12 +1718,18 @@ function finishEisstock(ch,members){
         if(!match.dogCounters)match.dogCounters=newDogMatchCounters();
         const humans=match.dogRoster.filter(p=>!p.bot);
         const docs=humans.map(p=>store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid));
-        const snapshots=await Promise.all(docs.map(ref=>tx.get(ref)));
+        const researchRefs=humans.map(p=>store.collection(DOG_RESEARCH_COLLECTION).doc(p.uid));
+        const [snapshots,researchSnaps]=await Promise.all([
+          Promise.all(docs.map(ref=>tx.get(ref))),
+          Promise.all(researchRefs.map(ref=>tx.get(ref)))
+        ]);
         completedDogStats=humans.map((p,i)=>({
           ref:docs[i],data:dogCompletedPlayerStats(
             snapshots[i].exists?snapshots[i].data():null,
             p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock(),
-            event?.enabled?dogAcademyXpPercent(event.levels?.academy):0)
+            event?.enabled?dogAcademyXpPercent(event.levels?.academy):0,
+            {xpPercent:10*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'xp'),
+             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp')})
         }));
         match.dogCounters.recorded=true;
       }
