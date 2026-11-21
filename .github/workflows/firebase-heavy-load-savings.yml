@@ -6,6 +6,8 @@ on:
       - 'server.js'
       - 'shared-lobby.js'
       - 'dog-shared-read-coordinator.js'
+      - 'firebase-read-request-diagnostics.js'
+      - 'tests/firebase-read-request-diagnostics.test.js'
       - 'tests/firebase-skyjo-business-write-noops.test.js'
       - 'tests/firebase-dog-read-cache-budget.test.js'
       - 'tests/firebase-dog-leaderboard-shared-reads-offline.test.js'
@@ -22,4 +24,5 @@ jobs:
       - run: node --check server.js
       - run: node --check shared-lobby.js
       - run: node --check dog-shared-read-coordinator.js
-      - run: node --test tests/firebase-skyjo-business-write-noops.test.js tests/firebase-dog-read-cache-budget.test.js tests/firebase-dog-leaderboard-shared-reads-offline.test.js tests/firebase-hub-noop-cache-offline.test.js tests/firebase-dog-write-diagnostics-offline.test.js
+      - run: node --check firebase-read-request-diagnostics.js
+      - run: node --test tests/firebase-skyjo-business-write-noops.test.js tests/firebase-dog-read-cache-budget.test.js tests/firebase-dog-leaderboard-shared-reads-offline.test.js tests/firebase-hub-noop-cache-offline.test.js tests/firebase-dog-write-diagnostics-offline.test.js tests/firebase-read-request-diagnostics.test.js
