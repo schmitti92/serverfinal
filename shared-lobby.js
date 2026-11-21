@@ -867,10 +867,13 @@ function finishEisstock(ch,members){
       throw e;
     }
   }
+  const hubMutationReadCacheStats={committed:0,noops:0,avoidedInvalidations:0};
   async function mutate(code,identity,change){
     const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=documentFor(store,code);
-    const outcome=await store.runTransaction(async tx=>{
+    // The transaction result carries its own committed-write flag: retries
+    // cannot leak a previous attempt's decision into cache invalidation.
+    const {value,changed}=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const result=await change(room,tx,store);
@@ -888,16 +891,24 @@ function finishEisstock(ch,members){
         });
         game.statsRecorded=true;
       }
-      if(result?.remove){tx.delete(ref);return result.value;}
-      if(result?.unchanged)return expose(room,identity);
+      if(result?.remove){tx.delete(ref);return {value:result.value,changed:true};}
+      if(result?.unchanged)return {value:expose(room,identity),changed:false};
       room.revision=(Number(room.revision)||0)+1;
       room.updatedAt=clock();room.expiresAt=clock()+TTL_MS;
       tx.set(ref,room);
-      return expose(room,identity);
+      return {value:expose(room,identity),changed:true};
     });
-    // A successful authoritative transaction supersedes any earlier RAM view.
-    invalidateHubReadCache(code);
-    return outcome;
+    // Only an actual committed room write/delete supersedes the recent
+    // Firestore stream or completion preflight. No-op requests still read
+    // Firestore for authorization but must not cause fresh follower GETs.
+    if(changed){
+      hubMutationReadCacheStats.committed++;
+      invalidateHubReadCache(code);
+    }else{
+      hubMutationReadCacheStats.noops++;
+      hubMutationReadCacheStats.avoidedInvalidations++;
+    }
+    return value;
   }
   const handler=fn=>async(req,res)=>{
     try{const result=await fn(req);return res.json({ok:true,...result});}
@@ -908,6 +919,7 @@ function finishEisstock(ch,members){
     // Counters are Render RAM only; never fetch Firebase to report them.
     hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size},
     hubHttpReadCoalescing:{...hubHttpReadCounts,inFlight:hubHttpReadsInFlight.size,syncTtlMs:SYNC_ROOM_READ_TTL_MS},
+    hubMutationCache:{...hubMutationReadCacheStats},
     dogMetaInFlightReads:dogMetaReadCoordinator.stats()
   }));
   // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
