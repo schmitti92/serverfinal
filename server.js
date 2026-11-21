@@ -21,6 +21,7 @@ import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
+import {installChrisChristmasResetApi} from "./dog-christmas-chris-personal-reset.js";
 import {deferChristmasResetOnSafePreflight} from "./dog-christmas-startup-policy.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
@@ -4464,6 +4465,9 @@ installDogWelcomeGiftApi(app,{verifyProfile:profileStatsV8.identity,getFirestore
 installDogHostGiftApi(app,{verifyProfile:profileStatsV8.identity,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 // Shared Christmas scratch wallet and fixed-budget editions (one atomic transaction per purchase).
 installDogScratchEditionApi(app,{admin,getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
+// Personal Lichtertal restart is always tied to the signed-in Chris account.
+installChrisChristmasResetApi(app,{verifyProfile:profileStatsV8.identity,
+ getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}});
 let hubBusinessApi=null;
 // Independent central lobby. The legacy game protocols remain untouched.
 const sharedLobby=installSharedLobby(app,{
