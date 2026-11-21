@@ -1,8 +1,8 @@
 /**
- * DOG Grinch campaign – Mission 3, isolated gameplay foundation (packages 1 & 2).
- * This module has NO imports from, or writes to, classic DOG or missions 1–2.
- * Campaign tasks, scripted attacks, smart AI, official online launch and rewards
- * are intentionally not activated in this foundation.
+ * DOG Grinch campaign – Mission 3, isolated gameplay core (packages 1–4).
+ * No imports from, or writes to, classic DOG or missions 1–2.
+ * Official online launch, campaign rewards and cooperative task completion
+ * remain disabled until their respective implementation packages.
  */
 export const MISSION3_ID=3;
 export const MISSION3_TRACK=64;
@@ -31,6 +31,84 @@ function cardSteps(type){
  if(type==='1/11')return [1,11];
  if(type==='swap'||type==='joker'||type==='7')return [];
  return /^\d+$/.test(type)?[Number(type)]:[];
+}
+/** Seeded, server-replayable event randomness; no Math.random in match progression. */
+function eventRandom(s,salt=0){
+ return random((s.seed>>>0)^Math.imul(s.phase,73856093)^Math.imul(s.turn+1,19349663)^(salt>>>0));
+}
+function captureOrder(s){
+ if(!Array.isArray(s.captureOrder)||s.captureOrder.length!==3)
+  s.captureOrder=shuffle([0,1,2],random(s.seed^0x43415054));
+ if(!Array.isArray(s.capturesByStage))s.capturesByStage=[null,null,null];
+ return s.captureOrder;
+}
+function captureForStage(s,stage,rng){
+ const order=captureOrder(s);
+ if(stage<0||stage>2||s.capturesByStage[stage])return null;
+ // Stage N must abduct a different player, exactly one pawn.
+ const owner=order[stage];
+ if(s.capturedPerHuman[owner]>=1)return null;
+ const candidates=owned(s,owner).filter(p=>p.place==='track'||p.place==='home');
+ if(!candidates.length)return null;
+ const victim=candidates[Math.floor(rng()*candidates.length)];
+ victim.place='captured';victim.pos=-1;victim.frozenTurns=0;victim.captured=true;
+ s.capturedPerHuman[owner]=1;s.capturesByStage[stage]=victim.id;
+ s.lastCapture={type:'abduction',stage,owner,pieceId:victim.id,phase:s.phase};
+ record(s,'🔒 Grinch entführt '+s.players[owner].name+' – Figur '+(Number(victim.id.slice(1))+1)+' bleibt bis Ende von Mission 4 gefangen!');
+ return victim;
+}
+/** Idempotent completion guard for package 5's future cooperative task engine. */
+export function mission3GuaranteeStageCapture(original,stage){
+ if(!Number.isInteger(stage)||stage!==original?.stage||stage<0||stage>2)
+  throw Error('Die Gefangennahme muss zur aktuell abgeschlossenen Aufgabe gehören.');
+ const s=copy(original);
+ captureForStage(s,stage,eventRandom(s,0x53544147));
+ s.revision++;
+ return s;
+}
+function knockBack(s,pawn,rng,requestedSteps=null){
+ if(!pawn||pawn.place!=='track'||mission3Protected(pawn))return null;
+ const original=pawn.pos,steps=requestedSteps??(2+Math.floor(rng()*5));
+ // Keep the official board free from overlapping pieces after a curse.
+ const candidates=[steps,...[2,3,4,5,6].filter(x=>x!==steps)];
+ const picked=candidates.find(amount=>!onField(s,mod(original-amount),pawn.id));
+ if(picked===undefined)return null;
+ pawn.pos=mod(original-picked);
+ return picked;
+}
+function phaseCurse(s,rng){
+ const active=s.pieces.filter(p=>p.owner<3&&p.place==='track');
+ const back=active.filter(p=>!mission3Protected(p));
+ const fresh=active.filter(p=>p.frozenTurns===0);
+ const preference=rng()<.5?'knockback':'freeze';
+ const mode=(preference==='knockback'&&back.length)?'knockback':
+  (preference==='freeze'&&fresh.length)?'freeze':back.length?'knockback':fresh.length?'freeze':null;
+ if(!mode){s.lastCurse={type:'none',phase:s.phase};record(s,'🎲 Der Grinch findet kein mögliches Fluchziel.');return;}
+ const candidates=mode==='freeze'?fresh:back;
+ const target=candidates[Math.floor(rng()*candidates.length)];
+ if(mode==='knockback'){
+  const amount=knockBack(s,target,rng);
+  if(amount===null){target.frozenTurns=2;
+   s.lastCurse={type:'freeze',owner:target.owner,pieceId:target.id,turns:2,phase:s.phase};
+   record(s,'❄️ Grinch friert '+s.players[target.owner].name+' Figur '+(Number(target.id.slice(1))+1)+' für zwei eigene Züge ein.');
+  }else{
+   s.lastCurse={type:'knockback',owner:target.owner,pieceId:target.id,distance:amount,phase:s.phase};
+   record(s,'💥 Grinch wirft '+s.players[target.owner].name+' Figur '+(Number(target.id.slice(1))+1)+' '+amount+' Felder zurück.');
+  }
+ }else{
+  target.frozenTurns=2;
+  s.lastCurse={type:'freeze',owner:target.owner,pieceId:target.id,turns:2,phase:s.phase};
+  record(s,'❄️ Grinch friert '+s.players[target.owner].name+' Figur '+(Number(target.id.slice(1))+1)+' für zwei eigene Züge ein.');
+ }
+}
+function endPhase(s){
+ if(s.phase<=0)return;
+ const rng=eventRandom(s,0x43555253);
+ // One special event after the LAST hand card is played or legally passed.
+ phaseCurse(s,rng);
+ // Surprise abduction is permitted only once in the current cooperative task.
+ // Completion of the task later forces it if the RNG has not done so yet.
+ if(rng()<.28)captureForStage(s,s.stageAtDeal,rng);
 }
 function deal(s){
  s.phase++;
@@ -66,7 +144,8 @@ export function createMission3(seed=Math.floor(Math.random()*2147483647),names=[
   current:0,turn:0,phase:0,stage:0,stageAtDeal:0,
   draw:newDeck(rng),discard:[],hands:[[],[],[],[]],seven:null,
   grinchActionsLeft:0,grinchUsed:[],history:[],lastPlayedCard:null,lastEvent:null,
-  capturedPerHuman:[0,0,0],tasks:null,revision:0};
+  capturedPerHuman:[0,0,0],captureOrder:shuffle([0,1,2],rng),capturesByStage:[null,null,null],
+  lastCapture:null,lastCurse:null,tasks:null,revision:0};
  deal(s);settle(s);
  return s;
 }
@@ -74,7 +153,13 @@ function relocate(s,victim,attackerOwner,reservedLanding=null){
  if(attackerOwner===MISSION3_GRINCH){
   const gate=mission3Start(victim.owner);
   const occupied=onField(s,gate,victim.id);
-  if(occupied||gate===reservedLanding){victim.place='home';victim.pos=-1;return 'Haus';}
+  // Only OWN pawns force the victim into the house. Other humans standing
+  // illegally on this start are displaced; the invincible Grinch may not be.
+  if(gate===reservedLanding||occupied?.owner===victim.owner||occupied?.owner===3){
+   victim.place='home';victim.pos=-1;return 'Haus';
+  }
+  if(occupied){occupied.place='home';occupied.pos=-1;
+   record(s,s.players[occupied.owner].name+' weicht dem Rückwurf auf das fremde Startfeld.');}
   victim.place='track';victim.pos=gate;return 'Startfeld';
  }
  victim.place='home';victim.pos=-1;return 'Haus';
@@ -118,7 +203,7 @@ function applyMovement(s,pieceId,distance,split){
 }
 function sevenOptions(s,seat,remaining,cardId){
  const result=[];
- for(const p of owned(s,seat).filter(p=>p.place==='track'&&(seat!==3||!s.grinchUsed.includes(p.id)))){
+ for(const p of owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0&&(seat!==3||!s.grinchUsed.includes(p.id)))){
   for(let distance=1;distance<=remaining;distance++){
    const route=path(s,p,distance,true);
    if(route)result.push({kind:'seven',pieceId:p.id,cardId,as:'7',distance,to:route.to,captureIds:route.captureIds});
@@ -156,15 +241,15 @@ export function mission3LegalMoves(s,seat=s?.current){
    }
    if(pending)continue;
    if((as==='1/11'||as==='13')&&seat!==MISSION3_GRINCH){
-    for(const pawn of owned(s,seat).filter(p=>p.place==='home')){
+    for(const pawn of owned(s,seat).filter(p=>p.place==='home'&&p.frozenTurns===0)){
      const at=onField(s,MISSION3_STARTS[seat],pawn.id);
      if(!at||(!mission3Protected(at)&&at.owner!==MISSION3_GRINCH))
       result.push({kind:'start',cardId:card.id,as,pieceId:pawn.id});
     }
    }
    if(as==='swap'){
-    const sources=owned(s,seat).filter(p=>p.place==='track'&&!mission3Protected(p)&&!s.grinchUsed.includes(p.id));
-    const targets=s.pieces.filter(p=>p.owner!==seat&&p.place==='track'&&!mission3Protected(p)&&
+    const sources=owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0&&!mission3Protected(p)&&!s.grinchUsed.includes(p.id));
+    const targets=s.pieces.filter(p=>p.owner!==seat&&p.place==='track'&&p.frozenTurns===0&&!mission3Protected(p)&&
       (seat===MISSION3_GRINCH||p.owner!==MISSION3_GRINCH));
     let total=0;
     for(const a of sources)for(const b of targets){
@@ -173,7 +258,7 @@ export function mission3LegalMoves(s,seat=s?.current){
     if(!total)result.push({kind:'emptySwap',cardId:card.id,as});
     continue;
    }
-   for(const distance of cardSteps(as))for(const p of owned(s,seat).filter(p=>p.place==='track')){
+   for(const distance of cardSteps(as))for(const p of owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0)){
     if(seat===MISSION3_GRINCH&&s.grinchUsed.includes(p.id))continue;
     const r=path(s,p,distance);
     if(r)result.push({kind:'move',cardId:card.id,as,pieceId:p.id,distance,to:r.to,captureIds:r.captureIds});
@@ -182,7 +267,15 @@ export function mission3LegalMoves(s,seat=s?.current){
  }
  return result;
 }
+function tickFreeze(s,seat){
+ if(seat<0||seat>2)return;
+ for(const p of owned(s,seat))if(p.frozenTurns>0){
+  p.frozenTurns--;
+  if(p.frozenTurns===0)record(s,'❄️ '+s.players[seat].name+': Figur '+(Number(p.id.slice(1))+1)+' ist aufgetaut.');
+ }
+}
 function advance(s){
+ tickFreeze(s,s.current);
  if(s.current===3){
   s.grinchActionsLeft--;
   if(s.grinchActionsLeft>0&&s.hands[3].length)return;
@@ -194,15 +287,17 @@ function advance(s){
 }
 function settle(s){
  for(let guard=0;guard<360;guard++){
-  if(s.hands.every(h=>h.length===0)){deal(s);continue;}
+  if(s.hands.every(h=>h.length===0)){endPhase(s);deal(s);continue;}
   if(s.seven)return;
   if(s.current===3&&s.grinchActionsLeft<=0)s.grinchActionsLeft=s.stageAtDeal+1;
   if(s.hands[s.current].length&&mission3LegalMoves(s,s.current).length)return;
   if(s.hands[s.current].length){
-   record(s,s.players[s.current].name+' kann nicht ziehen und legt '+s.hands[s.current].length+' Karte(n) ab.');
-   s.discard.push(...s.hands[s.current].splice(0));
+   // One card per pass. Frozen pawns must thaw after exactly TWO OWN turns,
+   // not after an entire discarded hand.
+   const card=s.hands[s.current].shift();
+   s.discard.push(card);s.lastPlayedCard=card.type;
+   record(s,s.players[s.current].name+' setzt mit '+card.type+' aus (kein erlaubter Zug).');
   }
-  if(s.hands.every(h=>h.length===0)){deal(s);continue;}
   if(s.current===3)s.grinchActionsLeft=1;
   advance(s);
  }
@@ -256,7 +351,7 @@ export function mission3NextPreviewDeal(original){
  const s=copy(original);
  for(const hand of s.hands)s.discard.push(...hand);
  s.hands=[[],[],[],[]];s.seven=null;
- deal(s);settle(s);s.revision++;
+ endPhase(s);deal(s);settle(s);s.revision++;
  if(mission3CardTotal(s)!==110)throw Error('DOG-Kartenbestand beschädigt.');
  return s;
 }
@@ -416,7 +511,7 @@ export function mission3Projection(raw,viewerSeat=null){
  s.handCounts=s.hands.map(hand=>hand.length);
  s.hands=s.hands.map((hand,i)=>i===seat?hand:[]);
  s.drawCount=s.draw.length;s.discardCount=s.discard.length;
- s.draw=[];s.discard=[];s.seed=null;s.viewerSeat=seat;
+ s.draw=[];s.discard=[];s.seed=null;s.captureOrder=null;s.viewerSeat=seat;
  return s;
 }
 export function mission3Validate(s){
@@ -424,5 +519,10 @@ export function mission3Validate(s){
   !Array.isArray(s.hands)||s.hands.length!==4||!Array.isArray(s.players)||s.players.length!==4)return false;
  if(!s.pieces.every(p=>['track','home','captured'].includes(p.place)||p.place==='lost'))return false;
  const occupied=s.pieces.filter(p=>p.place==='track').map(p=>p.pos);
- return occupied.length===new Set(occupied).size&&mission3CardTotal(s)===110;
+ const captives=[0,1,2].map(owner=>owned(s,owner).filter(p=>p.place==='captured').length);
+ return occupied.every(n=>Number.isInteger(n)&&n>=0&&n<64)&&
+  occupied.length===new Set(occupied).size&&
+  captives.every((n,i)=>n<=1&&n===s.capturedPerHuman?.[i])&&
+  s.pieces.every(p=>Number.isInteger(p.frozenTurns)&&p.frozenTurns>=0&&p.frozenTurns<=2)&&
+  mission3CardTotal(s)===110;
 }
