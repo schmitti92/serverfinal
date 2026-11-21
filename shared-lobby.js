@@ -96,6 +96,14 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   // shared results in the write/transaction paths.
   const dogMetaReadCoordinator=createDogSharedReadCoordinator();
   const dogWriteDiagnostics=createDogWriteDiagnostics({clock});
+  // Render-only aggregate write reports. No player details and no Firestore I/O.
+  const dogWriteLogTimer=setInterval(()=>{
+    const report=dogWriteDiagnostics.snapshot();
+    if(report.writeCalls)console.info('[dog-firestore/10min]',JSON.stringify({
+      writes:report.writeCalls,byCollection:report.byCollection,byKind:report.byKind
+    }));
+  },60000);
+  dogWriteLogTimer.unref?.();
   const readDogMeta=(store,ref)=>dogMetaReadCoordinator.read(store,ref);
   const christmasActive=()=>christmasEventActive()===true;
   const grinchActive=()=>grinchOnlineEnabled===true;
@@ -1350,7 +1358,7 @@ function finishEisstock(ch,members){
   app.post('/api/hub/dog/christmas-intro/complete',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
     const reference=introRef(store,uid);
-    return store.runTransaction(async tx=>{
+    return dogWriteDiagnostics.transaction(store,'dog-intro-complete',async tx=>{
       const [stats,intro]=await Promise.all([
         tx.get(store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
         tx.get(reference)
@@ -1482,7 +1490,7 @@ function finishEisstock(ch,members){
     // legacy document first and skip the global read when nothing can migrate.
     // Existing API clients still receive the full village response by default.
     const metadataOnly=req.body?.metadataOnly===true;
-    const result=await store.runTransaction(async tx=>{
+    const result=await dogWriteDiagnostics.transaction(store,'dog-village-import',async tx=>{
       const oldSnap=await tx.get(oldRef);
       const alreadyMerged=oldSnap.exists&&oldSnap.data()?.mergedToGlobal===DOG_GLOBAL_VILLAGE_ID;
       if(metadataOnly&&(!oldSnap.exists||alreadyMerged))
@@ -1767,7 +1775,7 @@ function finishEisstock(ch,members){
     if(!Number.isInteger(level)||level<1||level>10)throw error(400,'INVALID_TREE_LEVEL');
     const roomRef=documentFor(store,code);
     const accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
-    const result=await store.runTransaction(async tx=>{
+    const result=await dogWriteDiagnostics.transaction(store,'dog-room-tree-claim',async tx=>{
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
       if(room.game!=='dog'&&room.match?.game!=='dog')throw error(409,'DOG_NOT_SELECTED');
