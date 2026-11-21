@@ -832,6 +832,13 @@ function finishEisstock(ch,members){
     hubStreamReadCounts.misses++;
     return null;
   }
+  function hubCacheHasDifferentRevision(code,revision){
+    const cached=syncRoomReads.get(code)?.room;
+    const streamed=roomStreams.get(code);
+    // Re-check both already known revisions; do not add any Firestore reads.
+    return !!(cached&&cached.revision!==revision||
+      streamed?.hasSnapshot&&streamed.room&&streamed.room.revision!==revision);
+  }
   function invalidateHubReadCache(code){
     hubHttpReadEpochs.set(code,(hubHttpReadEpochs.get(code)||0)+1);
     hubHttpReadsInFlight.delete(code);
@@ -867,7 +874,7 @@ function finishEisstock(ch,members){
       throw e;
     }
   }
-  const hubMutationReadCacheStats={committed:0,noops:0,avoidedInvalidations:0};
+  const hubMutationReadCacheStats={committed:0,noops:0,joinCommitted:0,joinNoops:0,avoidedInvalidations:0};
   async function mutate(code,identity,change){
     const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=documentFor(store,code);
@@ -909,11 +916,7 @@ function finishEisstock(ch,members){
       // A no-op transaction has still read the latest Firestore document.
       // If another Render instance committed a newer revision, drop any
       // older short-lived preflight cache instead of trusting stale RAM.
-      const cached=syncRoomReads.get(code)?.room;
-      const streamed=roomStreams.get(code);
-      const staleSync=cached&&cached.revision!==revision;
-      const staleStream=streamed?.hasSnapshot&&streamed.room&&streamed.room.revision!==revision;
-      if(staleSync||staleStream){
+      if(hubCacheHasDifferentRevision(code,revision)){
         invalidateHubReadCache(code);
       }else{
         hubMutationReadCacheStats.avoidedInvalidations++;
@@ -1589,20 +1592,20 @@ function finishEisstock(ch,members){
     const identity=req.hubIdentity,code=validCode(req.params.code);
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     const store=db(),ref=documentFor(store,code);
-    const room=await store.runTransaction(async tx=>{
+    const {room,changed}=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref),r=snap.exists?snap.data():null;
       if(!r||r.expiresAt<=clock())throw error(404,'ROOM_NOT_FOUND');
       let p=r.players.find(x=>x.uid===identity.uid);
       if(r.phase==='playing'){
         if(!p)throw error(409,'ROOM_ALREADY_PLAYING');
-        return r;
+        return {room:r,changed:false};
       }
       // A returning member with unchanged name/avatar is already in the room.
       // Avoid a needless room rewrite (and all onSnapshot billable fan-out).
       // Still refresh the 24-hour room TTL when less than six hours remain.
       if(p&&p.name===identity.name&&
          (!validDogAvatar(req.body?.dogAvatar)||p.dogAvatar===req.body.dogAvatar)&&
-         r.expiresAt-clock()>=6*60*60*1000)return r;
+         r.expiresAt-clock()>=6*60*60*1000)return {room:r,changed:false};
       if(!p){if(r.players.length>=6)throw error(409,'ROOM_FULL');
         // A full game may still have spectators in the central room.
         const seatAvailable=!!r.game&&r.players.filter(x=>x.participating).length<HUB_GAMES[r.game].max;
@@ -1612,11 +1615,18 @@ function finishEisstock(ch,members){
       p.name=identity.name;
       if(validDogAvatar(req.body?.dogAvatar))p.dogAvatar=req.body.dogAvatar;
       r.revision++;r.updatedAt=clock();r.expiresAt=clock()+TTL_MS;
-      tx.set(ref,r);return r;
+      tx.set(ref,r);return {room:r,changed:true};
     });
-    // The join endpoint is an independent transaction, not mutate().
-    // Do not serve a pre-join socket snapshot before the change is broadcast.
-    invalidateHubReadCache(code);
+    // Same rule as mutate(): only a committed room update invalidates a
+    // follower's short-lived sync read. Rejoins are already authenticated.
+    if(changed){
+      hubMutationReadCacheStats.joinCommitted++;
+      invalidateHubReadCache(code);
+    }else{
+      hubMutationReadCacheStats.joinNoops++;
+      if(hubCacheHasDifferentRevision(code,room.revision))invalidateHubReadCache(code);
+      else hubMutationReadCacheStats.avoidedInvalidations++;
+    }
     return {room:expose(room,identity)};
   }));
   app.get('/api/hub/rooms/:code',handler(async req=>{
