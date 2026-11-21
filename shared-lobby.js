@@ -3020,10 +3020,22 @@ function finishEisstock(ch,members){
        if(Object.values(l.players).filter(v=>v.alive).length<=1)finishLava(ch,room.match.members);
        return;
      }
-     const now=clock(),dt=p.lastAt?Math.min(1,(now-p.lastAt)/1000):.25;
+     const now=clock(),dt=p.lastAt?Math.min(2.25,(now-p.lastAt)/1000):.25;
      if(p.lastAt&&now-p.lastAt<65)return {unchanged:true};
      const nx=Math.max(13,Math.min(587,x)),ny=Math.max(13,Math.min(587,y));
      if(p.lastAt&&Math.hypot(nx-p.x,ny-p.y)>190*Math.max(dt,.1)+65)throw error(409,'LAVA_SPEED_LIMIT');
+     // Older clients can send hundreds of identical standing-still packets.
+     // If there is no collapsing tile, active bot or player in danger, they
+     // cannot change the game. Never persist a new seq/lastAt for those.
+     // First contact with an untouched tile must still start its countdown.
+     const stationary=p.x===nx&&p.y===ny&&p.jump===Math.max(0,Math.min(1.3,jump));
+     const standingTile=l.tiles[Math.floor(ny/60)*10+Math.floor(nx/60)];
+     const activeTile=l.tiles.some(tile=>tile.state===1);
+     const activeBot=room.match.members.some(m=>m.uid.startsWith('testbot:')&&l.players[m.uid]?.alive);
+     const exposed=Object.values(l.players).some(other=>other.alive&&
+       l.tiles[Math.floor(other.y/60)*10+Math.floor(other.x/60)]?.state===2);
+     if(stationary&&standingTile?.state!==0&&!activeTile&&!activeBot&&!exposed)
+       return {unchanged:true};
      p.x=nx;p.y=ny;p.jump=Math.max(0,Math.min(1.3,jump));p.seq=seq;p.lastAt=now;
      advanceLavaTiles(ch,now);
      tickLavaBots(ch,room.match.members,now);
