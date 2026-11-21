@@ -176,7 +176,7 @@ test('DOG official: protected and goal figures must never be swap candidates',()
  position(s,4,'track',16); // protected blue
  position(s,8,'goal',0);   // green partner already safe
  assert.equal(legalActions(s,0).some(a=>a.type==='swap'),false);
- assert.equal(legalActions(s,0).some(a=>a.type==='emptySwap'),true);
+ assert.equal(legalActions(s,0).some(a=>a.type==='discardDraw'),true);
  position(s,4,'track',21);
  assert.ok(legalActions(s,0).some(a=>a.type==='swap'&&a.targetId===4));
 });
@@ -221,26 +221,90 @@ test('DOG official: forged move with wrong distance or wrong card identity is de
 });
 
 
-test('DOG official: unplayable complete hands are discarded, never selectively retained',()=>{
+test('DOG: blocked hand stays intact until one chosen card is discarded',()=>{
  let s=createGame({rng:()=>0.17,bots:[false,false,false,false]});
- s.hands=Array.from({length:4},(_,seat)=>[{id:2000+seat,type:'3'}]);
+ s.hands=Array.from({length:4},(_,seat)=>[
+   {id:2000+seat*2,type:'3'},{id:2001+seat*2,type:'4'}]);
  for(let seat=0;seat<4;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
- // Nobody has a pawn on the track and no one has a start card.
- // All four hands are forfeited and a new round is dealt.
- assert.equal(s.round,2);
- assert.equal(s.phase,'exchange');
- assert.equal(s.starter,1);
- assert.equal(s.hands[0].length,5);
- assert.ok(s.discard.some(c=>c.id===2000));
- assert.ok(s.discard.some(c=>c.id===2003));
+ assert.equal(s.round,1);
+ assert.equal(s.phase,'play');
+ assert.equal(s.hands[0].length,2,'Never auto-discard the whole hand');
+ assert.equal(legalActions(s,0).filter(m=>m.type==='discardDraw').length,2);
+ const chosen=s.hands[0][1].id,remaining=s.hands[0][0].id;
+ s.deck=[{id:9000,type:'12'}];
+ s=takeAction(s,0,{type:'discardDraw',cardId:chosen});
+ assert.equal(s.hands[0].length,1);
+ assert.equal(s.hands[0][0].id,remaining);
+ assert.equal(s.discard.some(c=>c.id===chosen),true);
+ assert.equal(s.discard.some(c=>c.id===9000),true);
+ assert.equal(s.lastPlayedCard.type,'12');
+ assert.equal(s.current,1);
+ assert.equal(s.phase,'play');
 });
 
-test('DOG official: card counts cycle 6,5,4,3,2,6 and the dealer/starter rotates',()=>{
+test('DOG: drawn 13 is playable immediately but only to leave home',()=>{
+ let s=fixture('3');
+ s.hands[0].push({id:1000,type:'4'});
+ s.deck=[{id:1001,type:'13'}];
+ assert.equal(legalActions(s,0).length,2);
+ assert.throws(()=>takeAction(s,0,{type:'discardDraw',cardId:9999}),/ILLEGAL_ACTION/);
+ s=takeAction(s,0,{type:'discardDraw',cardId:1000});
+ assert.equal(s.phase,'rescue');
+ assert.equal(s.current,0);
+ assert.equal(s.rescue.cardId,1001);
+ assert.equal(s.hands[0].some(c=>c.id===999),true);
+ assert.equal(publicState(s,1).rescue,undefined,'No deck ID leakage');
+ assert.equal(publicState(s,0).rescue.cardId,1001);
+ assert.ok(legalActions(s,0).length>0);
+ assert.ok(legalActions(s,0).every(m=>m.type==='start'&&m.cardId===1001));
+ assert.throws(()=>takeAction(s,0,{type:'move',cardId:1001,as:'13',pieceId:0,steps:13}),/ILLEGAL_ACTION/);
+ s=takeAction(s,0,legalActions(s,0)[0]);
+ assert.equal(s.pieces[0].place,'track');
+ assert.equal(s.phase,'play');
+ assert.equal(s.rescue,null);
+ assert.equal(s.current,1);
+});
+
+test('DOG: drawn Joker can only start, drawn 12 is automatically thrown away',()=>{
+ let s=fixture('3');
+ s.deck=[{id:1003,type:'joker'}];
+ s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.equal(s.phase,'rescue');
+ assert.ok(legalActions(s,0).every(m=>m.type==='start'&&['1/11','13'].includes(m.as)));
+ let t=fixture('3');
+ t.deck=[{id:1002,type:'12'}];
+ t=takeAction(t,0,{type:'discardDraw',cardId:999});
+ assert.equal(t.phase,'play');
+ assert.equal(t.current,1);
+ assert.equal(t.hands[0].length,0);
+ assert.equal(t.discard.at(-1).id,1002);
+});
+
+test('DOG: blocked starting square stops a drawn 13, even if 13 could move',()=>{
+ let s=fixture('swap');
+ position(s,0,'track',0); // own protected start, other three still at home
+ s.deck=[{id:1004,type:'13'}];
+ assert.ok(legalActions(s,0).some(m=>m.type==='discardDraw'));
+ s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.equal(s.phase,'play');
+ assert.equal(s.current,1);
+ assert.equal(s.discard.at(-1).id,1004);
+ assert.equal(s.pieces[0].pos,0);
+});
+
+test('DOG: card counts still cycle 6,5,4,3,2,6 with manual rescue discards',()=>{
  let s=createGame({rng:()=>0.3,bots:[false,false,false,false]});
  assert.deepEqual({round:s.round,starter:s.starter,hand:s.hands[0].length},{round:1,starter:0,hand:6});
  for(const [index,want] of [5,4,3,2,6].entries()){
    s.hands=Array.from({length:4},(_,seat)=>[{id:3000+index*4+seat,type:'3'}]);
+   s.deck=Array.from({length:40},(_,n)=>({id:5000+index*100+n,type:'3'}));
    for(let seat=0;seat<4;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
+   assert.equal(s.phase,'play');
+   for(let n=0;n<4;n++){
+     const move=legalActions(s,s.current).find(m=>m.type==='discardDraw');
+     assert.ok(move);
+     s=takeAction(s,s.current,move);
+   }
    assert.equal(s.round,index+2);
    assert.equal(s.starter,(index+1)%4);
    assert.equal(s.current,s.starter);
@@ -271,34 +335,19 @@ test('DOG official: voluntary pass, shortened card or direct goal entry are reje
 });
 
 
-test('DOG Phase 1: reshuffling the discard pile after exchange respects the supplied deterministic RNG',()=>{
- let s=createGame({rng:()=>0.27,bots:[false,false,false,false]});
- s.hands=Array.from({length:4},(_,seat)=>[{id:2000+seat,type:'3'}]);
- s.deck=[];s.discard=makeDeck();
+test('DOG: exhausting the draw pile reshuffles discard using deterministic RNG',()=>{
+ let s=fixture('3');
+ s.deck=[];
+ s.discard=[{id:4500,type:'3'},{id:4501,type:'3'},{id:4502,type:'3'}];
  let draws=0;
  const random=()=>{draws++;return 0;};
- for(let seat=0;seat<3;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id,random);
- assert.equal(draws,0,'No reshuffle before all partner cards are exchanged');
- s=exchangeCard(s,3,s.hands[3][0].id,random);
- assert.equal(s.round,2);
- assert.equal(s.phase,'exchange');
- assert.equal(s.hands[0].length,5);
- assert.equal(draws,113,'The exhausted deck must be reshuffled with the provided RNG');
- assert.equal(s.hands[0][0].id,1,'The seeded shuffle has an unambiguous first dealt card');
-});
-
-test('DOG Phase 1: takeAction must forward the seeded RNG during partner exchange',()=>{
- let s=createGame({rng:()=>0.17,bots:[false,false,false,false]});
- s.hands=Array.from({length:4},(_,seat)=>[{id:3000+seat,type:'3'}]);
- s.deck=[];s.discard=makeDeck();
- let called=0;
- const random=()=>{called++;return 0;};
- for(let seat=0;seat<4;seat++){
-   s=takeAction(s,seat,{type:'exchange',cardId:s.hands[seat][0].id},random);
- }
- assert.equal(s.round,2);
- assert.equal(called,113);
- assert.equal(s.hands[0][0].id,1);
+ s=takeAction(s,0,{type:'discardDraw',cardId:999},random);
+ assert.ok(draws>0,'The replacement draw uses the injected RNG');
+ assert.equal(s.phase,'play');
+ assert.equal(s.current,1);
+ assert.equal(s.hands[0].length,0);
+ assert.equal(s.discard.length,2,'Selected card and unusable replacement remain in discard');
+ assert.equal(s.deck.length,2);
 });
 
 test('DOG Phase 1: turns preserve the original 110-card inventory and disallow two figures per square',()=>{
