@@ -676,7 +676,9 @@ export function dogScratchStatus(raw,tree=null,now=Date.now(),settings=null){
   [id,{total:tierPool(id).length,remaining:tierPool(id).filter(p=>!owned.includes(p.unlockId)).length}]));
  return {coins:w.coins,giftSparks:w.giftSparks,vouchers:{...w.vouchers},variantVouchers:{...w.variantVouchers},
   levelOneStarterClaimed:Boolean(w.levelOneStarterClaimedAt),levelRewardClaims:dogLevelRewardClaimFlags(w),starterCoins:DOG_SCRATCH_START_COINS,
-  dailyFreeAvailable:w.daily!==dogScratchToday(now),today:dogScratchToday(now),
+  // Daily complimentary purchases are intentionally disabled. Earned
+  // vouchers and the starter coin balance remain separate benefits.
+  dailyFreeAvailable:false,today:dogScratchToday(now),
   tiers:DOG_SCRATCH_TIERS,pools,ownedUnlockIds:owned,
   settings:normalizeScratchSettings(settings),
   purchased:w.purchased,
@@ -702,6 +704,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  const voucher=request?.voucher===true;
  const free=request?.free===true;
  if(voucher&&free)throw Error('SCRATCH_INVALID_PAYMENT');
+ // The legacy daily-free route and old cached clients must not mint tickets
+ // after the feature is turned off. Paid coins and earned vouchers still work.
+ if(free)throw Error('SCRATCH_FREE_DISABLED');
  const hostFree=free&&liveSettings.freeEnabled;
  const variantRequested=request?.variantId;
  const variantVoucherAvailable=variantRequested!==undefined&&w.variantVouchers[variantRequested]>0;
