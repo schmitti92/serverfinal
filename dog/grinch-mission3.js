@@ -444,7 +444,10 @@ export function mission3SetPreviewStage(original,stage){
  // Developer-only fast-forward for legacy card tests. Official progression
  // never uses this; the real mission advances after collection of targets.
  if(s.tasks&&s.tasks.stage!==stage){
-  for(let i=0;i<stage;i++)s.tasks.progress[i]=MISSION3_TASK_TARGETS[i];
+  for(let i=0;i<stage;i++){
+   s.tasks.progress[i]=MISSION3_TASK_TARGETS[i];
+   captureForStage(s,i,eventRandom(s,0x53544147^Math.imul(i+1,117)));
+  }
   s.tasks.completedStages=Array.from({length:stage},(_,i)=>i);
   mission3NewTask(s,stage);
  }
