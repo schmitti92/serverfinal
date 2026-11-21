@@ -188,3 +188,20 @@ test('Kniffel statistics coalesce concurrent per-player GETs after membership va
  assert.equal(fresh.stats[0].wins,4);
  assert.equal(h.count(statsAlice),2,'stale read-only comparison expires after 30 seconds');
 });
+
+test('successful Christmas intro write invalidates the in-memory read cache immediately',async()=>{
+ const h=harness();await h.setup();
+ h.docs.set('dog_christmas_event_access_v1/alice',{uid:'alice',access:true});
+ const intro='dog_christmas_intro_unlock_v1/alice';
+ const before=await h.call('GET','/api/hub/dog/christmas-intro','alice');
+ assert.equal(before.completed,false);
+ const again=await h.call('GET','/api/hub/dog/christmas-intro','alice');
+ assert.equal(again.completed,false);
+ assert.equal(h.count(intro),1,'duplicate status view uses the cached read');
+ const acknowledged=await h.call('POST','/api/hub/dog/christmas-intro/complete','alice');
+ assert.equal(acknowledged.status,200);
+ assert.equal(acknowledged.completed,true);
+ const after=await h.call('GET','/api/hub/dog/christmas-intro','alice');
+ assert.equal(after.completed,true,'successful mutation must clear stale read-only views');
+ assert.equal(h.count(intro),2);
+});
