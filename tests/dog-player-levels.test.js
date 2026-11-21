@@ -16,11 +16,18 @@ test('50 levels preserve all previous ten XP thresholds and feature unlocks',()=
  assert.equal(dogLevelFromXp(999999999).level,50);
  assert.equal(DOG_LEVEL_REWARDS.length,50);
  assert.ok(DOG_LEVEL_REWARDS.every(x=>x.configured&&x.reward?.vouchers?.length));
- assert.deepEqual(DOG_LEVEL_REWARDS[0].reward.vouchers.map(x=>x.id),
-  ['gifts','snow_collect','elf','premium_27']);
- for(const [i,id] of [[1,'dog-design-studio'],[2,'kartendesign-05'],[3,'dog-pawn-3d']])
+ assert.deepEqual(DOG_LEVEL_REWARDS[0].reward.vouchers,
+  [{tier:'simple',id:'gifts',count:4}]);
+ for(const [i,id] of [[1,'dog-design-studio'],[3,'dog-pawn-3d'],[19,'kartendesign-05']])
   assert.equal(DOG_LEVEL_REWARDS[i].reward.id,id);
  assert.equal(DOG_LEVEL_REWARDS[49].level,50);
+ assert.notEqual(DOG_LEVEL_REWARDS[2].reward.id,'kartendesign-05');
+ for(const entry of DOG_LEVEL_REWARDS){
+  for(const v of entry.reward.vouchers){
+   const min={snow_collect:3,tic_tac_toe:6,elf:7,dog_jackpot_9:8}[v.id]||1;
+   assert.ok(entry.level>=min,`Level ${entry.level} grants prematurely locked ${v.id}`);
+  }
+ }
  const packs=DOG_LEVEL_REWARDS.flatMap(x=>x.reward.vouchers);
  assert.ok(packs.filter(x=>x.tier==='simple').length>packs.filter(x=>x.tier!=='simple').length);
  assert.equal(DOG_LEVEL_THRESHOLDS[49],63700);
