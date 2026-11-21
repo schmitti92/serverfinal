@@ -87,7 +87,7 @@ export function createGame(options={}){
     bot:!missing.includes(seat)&&!!bots[seat],inactive:missing.includes(seat),team:mode==='solo3'?seat:seat%2}));
   const s={schemaVersion:1,ruleset:RULESET.id,mode,phase:'exchange',round:0,revision:0,starter:0,current:0,players,
     pieces:Array.from({length:16},(_,i)=>({id:i,owner:Math.floor(i/4),place:'home',pos:-1})).filter(p=>!players[p.owner].inactive),
-    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,winner:null,history:[]};
+    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,rescue:null,winner:null,history:[]};
   deal(s,rng);return s;
 }
 function history(s,text){s.history.unshift(text);s.history.length=Math.min(s.history.length,12);}
@@ -97,7 +97,7 @@ function deal(s,rng){
   const seats=activeSeats(s);
   s.starter=seats[(s.round-1)%seats.length];s.current=s.starter;s.phase='exchange';
   s.exchanges=s.players.map(p=>p.inactive?true:null);
-  s.seven=null;
+  s.seven=null;s.rescue=null;
   s.hands=[[],[],[],[]];
   for(let n=0;n<count;n++)for(const seat of seats){
     if(s.deck.length===0)s.deck=shuffle(s.discard.splice(0),rng);
@@ -216,6 +216,16 @@ export function legalActions(s,seat=s.current){
     if(s.current!==seat)return [];
     return winningSevenMoves(s,seat,7-s.seven.spent);
   }
+  // A drawn rescue card may ONLY take a figure out of the house.
+  // The remaining hand is not playable during this special opportunity.
+  if(s.phase==='rescue'){
+    if(s.current!==seat||!Number.isInteger(s.rescue?.cardId))return [];
+    const card=s.hands[seat].find(c=>c.id===s.rescue.cardId);
+    if(!card)return [];
+    const types=card.type==='joker'?['1/11','13']:[card.type];
+    return types.flatMap(as=>startCards.has(as)?
+      candidateMoves(s,seat,card,as).filter(m=>m.type==='start'):[]);
+  }
   if(s.phase!=='play'||s.current!==seat)return [];
   const list=[];
   for(const card of s.hands[seat])for(const as of card.type==='joker'?CARD_TYPES.filter(t=>t!=='joker'):[card.type]){
@@ -223,7 +233,10 @@ export function legalActions(s,seat=s.current){
       if(canSeven(s,seat,7))list.push({type:'seven',cardId:card.id,as});
     }else list.push(...candidateMoves(s,seat,card,as));
   }
-  return list;
+  // A swap with nobody to exchange is not a genuine move. If the entire
+  // hand is blocked, ANY held card may be discarded for one replacement draw.
+  return list.some(m=>m.type!=='emptySwap')?list:
+    s.hands[seat].map(card=>({type:'discardDraw',cardId:card.id}));
 }
 function finishIfWon(s){
   if(soloThree(s)){
@@ -249,10 +262,9 @@ function settle(s,rng=Math.random){
   while(s.phase==='play'&&++guard<30){
     if(s.hands.every(h=>h.length===0)){deal(s,rng);return;}
     if(s.hands[s.current].length===0){s.current=nextSeat(s,s.current);continue;}
-    const acts=legalActions(s,s.current);
-    if(acts.length)break;
-    s.discard.push(...s.hands[s.current].splice(0));
-    history(s,s.players[s.current].name+' kann nicht ziehen und legt die Hand ab');
+    // Blocked players must be allowed to choose which ONE card to discard.
+    // legalActions() exposes their discardDraw actions and waits for input.
+    if(legalActions(s,s.current).length)break;
     s.current=nextSeat(s,s.current);
   }
   if(guard>=30)throw Error('TURN_LOOP');
@@ -266,6 +278,26 @@ export function takeAction(original,seat,action,rng=Math.random){
   const avail=legalActions(s,seat);
   const found=avail.find(m=>m.type===action.type&&m.cardId===action.cardId&&m.as===action.as&&m.pieceId===action.pieceId&&m.targetId===action.targetId&&m.steps===action.steps&&m.viaGoal===action.viaGoal);
   if(!found)throw Error('ILLEGAL_ACTION');
+  if(action.type==='discardDraw'){
+    discardCard(s,seat,action.cardId);
+    if(!s.deck.length&&s.discard.length)s.deck=shuffle(s.discard.splice(0),rng);
+    if(!s.deck.length)throw Error('NO_CARDS');
+    const drawn=s.deck.pop();
+    const types=drawn.type==='joker'?['1/11','13']:[drawn.type];
+    const canExit=types.some(as=>startCards.has(as)&&
+      candidateMoves(s,seat,drawn,as).some(m=>m.type==='start'));
+    if(canExit){
+      s.hands[seat].push(drawn);
+      s.phase='rescue';s.rescue={cardId:drawn.id};
+      history(s,s.players[seat].name+' wirft eine Karte ab und zieht eine Startkarte');
+    }else{
+      s.discard.push(drawn);
+      s.lastPlayedCard={type:drawn.type,seat};
+      history(s,s.players[seat].name+' wirft eine Karte ab; Ersatzkarte kann nicht heraussetzen');
+      s.current=nextSeat(s,seat);settle(s,rng);
+    }
+    s.revision++;return s;
+  }
   if(s.phase==='seven'){
     const p=stepPath(s,action.pieceId,action.steps,!!action.viaGoal,true);
     applyMovement(s,p,true);
@@ -300,7 +332,8 @@ export function takeAction(original,seat,action,rng=Math.random){
     }
     discardCard(s,seat,action.cardId);
     history(s,s.players[seat].name+' spielt '+(c.type==='joker'?'Joker als '+action.as:action.as));
-    s.current=(seat+1)%4;settle(s,rng);
+    if(s.phase==='rescue'){s.phase='play';s.rescue=null;}
+    s.current=nextSeat(s,seat);settle(s,rng);
   }
   finishIfWon(s);s.revision++;
   return s;
