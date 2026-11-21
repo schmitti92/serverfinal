@@ -89,9 +89,17 @@ export async function resetDogChristmasEventOnce(db,log=console){
   throw Error('CHRISTMAS_RESET_TOO_MANY_DOCUMENTS_'+entries.length);
  // No event progress is reset while a live DOG or Grinch match may still pay
  // late rewards. All non-DOG rooms stay untouched.
- const rooms=(roomSnapshot.docs||[]).map(doc=>({id:doc.id,ref:db.collection(HUB_ROOM_COLLECTION).doc(doc.id)}));
- if(rooms.length>200)throw Error('CHRISTMAS_RESET_TOO_MANY_ROOMS');
- const now=Date.now(),archive=db.collection(CHRISTMAS_RESET_ARCHIVES);
+ // Old/expired hub rooms may remain in Firestore for a long time.
+ // Only VALID LIVE DOG matches can credit Christmas rewards after this reset.
+ const now=Date.now();
+ const rooms=(roomSnapshot.docs||[]).filter(doc=>{
+  const room=doc.data();
+  return room?.phase==='playing'&&
+   ['dog','dog-grinch1','dog-grinch2'].includes(room.game)&&
+   Number(room.expiresAt)>now;
+ }).map(doc=>({id:doc.id,ref:db.collection(HUB_ROOM_COLLECTION).doc(doc.id)}));
+ if(rooms.length>200)throw Error('CHRISTMAS_RESET_TOO_MANY_LIVE_DOG_ROOMS');
+ const archive=db.collection(CHRISTMAS_RESET_ARCHIVES);
  return db.runTransaction(async tx=>{
   // Firestore requires all reads before ANY write.
   const [marker,...snapshotsNow]=await Promise.all([
