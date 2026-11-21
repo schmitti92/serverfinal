@@ -63,7 +63,7 @@ function harness(options={}){
  return {api,store,docs,identities,advance:ms=>now+=ms,adapter,watchStats:()=>({starts:watchStarts,stops:watchStops}),setFinished(value){finished=value;},bootstraps:()=>skyjoBootstraps};
 }
 
-test('DOG three distinct online profiles share one authoritative match with a fourth server bot',async()=>{
+test('DOG three distinct online profiles share one authoritative match without a fourth bot',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
  for(const who of ['bob','cara']){
   const joined=await h.api('POST','/api/hub/rooms/'+code+'/join',who);
@@ -81,9 +81,12 @@ test('DOG three distinct online profiles share one authoritative match with a fo
  assert.equal(launched.room.phase,'playing');
  const matchId=launched.room.match.id;
  assert.equal(launched.room.match.dog.players.length,4);
- assert.deepEqual(launched.room.match.dog.players.map(p=>p.bot),[false,false,false,true]);
+ assert.deepEqual(launched.room.match.dog.players.map(p=>p.bot),[false,false,false,false]);
+ assert.deepEqual(launched.room.match.dog.players.map(p=>!!p.inactive),[false,false,false,true]);
+ assert.equal(launched.room.match.dog.mode,'solo3');
+ assert.equal(launched.room.match.dog.pieces.length,12);
  assert.equal(launched.room.match.dog.phase,'exchange');
- assert.equal(launched.room.match.dog.exchanges[3],true,'only the missing seat has a server-selected exchange');
+ assert.equal(launched.room.match.dog.exchanges[3],true,'the empty seat must never wait for or select a card');
 
  for(const [seat,who] of ['alice','bob','cara'].entries()){
   const state=(await h.api('GET','/api/hub/rooms/'+code,who)).room;
@@ -95,8 +98,8 @@ test('DOG three distinct online profiles share one authoritative match with a fo
   assert.equal(state.match.dog.discard,undefined);
   for(let other=0;other<4;other++){
    if(other!==seat){
-    assert.equal(Array.isArray(state.match.dog.hands[other]),false,'opponent and bot hands are never exposed');
-    assert.equal(state.match.dog.hands[other].count,other===3?5:6,'server bot has already set aside its private exchange card');
+    assert.equal(Array.isArray(state.match.dog.hands[other]),false,'opponent hands are never exposed');
+    assert.equal(state.match.dog.hands[other].count,other===3?0:6,'the empty fourth seat has no hand');
    }
   }
  }
@@ -117,7 +120,9 @@ test('DOG three distinct online profiles share one authoritative match with a fo
   assert.equal(sent.room.match.id,matchId);
  }
  const final=(await h.api('GET','/api/hub/rooms/'+code,'cara')).room;
- assert.equal(final.match.dog.phase,'play','three real exchanges and one server bot complete the phase');
- assert.equal(final.match.dog.players.filter(p=>p.bot).length,1);
+ assert.equal(final.match.dog.phase,'play','only three verified human exchanges complete the phase');
+ assert.equal(final.match.dog.players.filter(p=>p.bot).length,0);
+ assert.equal(final.match.dog.players.filter(p=>!p.inactive).length,3);
+ assert.equal(final.match.dog.current,0);
  assert.equal(final.match.id,matchId);
 });
