@@ -37,6 +37,7 @@ import { installFallingOnline } from "./falling-online.js";
 import { validHubSkyjoState } from "./skyjo-hub-policy.js";
 import { skyjoHubMatchFinished } from "./skyjo-special-engine.js";
 import { randomBytes as kkRandomBytes } from "node:crypto";
+import {barikadeWriteFingerprint} from "./barikade-write-fingerprint.js";
 
 /*
  * KreuzKunter V23: Multiplayer engine is kept WITHIN this server.js.
@@ -4141,38 +4142,56 @@ function normalizeImportedGameState(room){
   }catch(_e){}
 }
 
+// Diagnostic counters are RAM-only: /health never reads or writes Firebase.
+// The digest is keyed by the in-memory room, never by a shared/user account.
+const barikadePersistDigests=new WeakMap();
+const barikadePersistCounters={
+  firestoreWrites:0,firestoreFailures:0,noopsSkipped:0,diskWrites:0
+};
 async function persistRoomState(room){
-  // Disk persistence (kept as fallback)
+  if(!room?.code||!room?.state)return;
+  const seats=persistedSeatSnapshot(room);
+  const signature=barikadeWriteFingerprint(room.state,seats,room.hostToken);
+  if(signature&&barikadePersistDigests.get(room)===signature){
+    barikadePersistCounters.noopsSkipped++;
+    return;
+  }
+
+  // Only genuine durable changes advance a room revision.
+  if(typeof room.state.rev!=="number")room.state.rev=0;
+  room.state.rev+=1;
+  const now=Date.now();
+  let diskSaved=false;
   try{
-    if(!room || !room.code || !room.state) return;
+    const file=savePathForRoom(room.code);
+    const payload={code:room.code,ts:now,state:room.state,
+      seats,hostToken:room.hostToken||null};
+    fs.writeFileSync(file,JSON.stringify(payload));
+    barikadePersistCounters.diskWrites++;
+    diskSaved=true;
+  }catch(e){
+    console.warn("[barikade/disk] persist failed:",e?.message||e);
+  }
 
-    // Revision counter (monotonic, used for stale snapshot protection)
-    if (typeof room.state.rev !== "number") room.state.rev = 0;
-    room.state.rev += 1;
-
-    const file = savePathForRoom(room.code);
-    const payload = { code: room.code, ts: Date.now(), state: room.state, seats: persistedSeatSnapshot(room), hostToken: room.hostToken || null };
-    fs.writeFileSync(file, JSON.stringify(payload));
-  }catch(_e){}
-
-  // Firestore persistence (durable)
   try{
     initFirebaseIfConfigured();
-    if(!firestore || !room?.code || !room?.state) return;
-    const docId = docIdForRoom(room.code);
-    const now = Date.now();
+    if(!firestore){
+      // Disk remains the best available durability fallback.
+      if(diskSaved&&signature)barikadePersistDigests.set(room,signature);
+      return;
+    }
+    const docId=docIdForRoom(room.code);
     await firestore.collection(FIREBASE_COLLECTION).doc(docId).set({
-      code: room.code,
-      ts: now,
-      rev: room.state.rev,
-      state: room.state,
-      seats: persistedSeatSnapshot(room),
-      hostToken: room.hostToken || null,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+      code:room.code,ts:now,rev:room.state.rev,state:room.state,seats,
+      hostToken:room.hostToken||null,
+      updatedAt:admin.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    barikadePersistCounters.firestoreWrites++;
+    if(signature)barikadePersistDigests.set(room,signature);
   }catch(e){
-    // We do NOT throw: game continues. Disk fallback still exists.
-    console.warn("[firebase] persist failed:", e?.message || e);
+    barikadePersistCounters.firestoreFailures++;
+    // Do not remember a failed write: a subsequent save must retry it.
+    console.warn("[firebase] persist failed:",e?.message||e);
   }
 }
 
@@ -4491,6 +4510,7 @@ app.get("/health", (_req, res) =>
     skyjoFirebaseWorkers:skyjoFirebaseWorkers.size,
     businessCacheRooms:businessCache.size,
     businessFirebaseWorkers:businessFirebaseWorkers.size,
+    barikadeFirestoreWrites:{...barikadePersistCounters},
     profileIdentityCache:profileStatsV8.identityCacheStats(),
     dogSharedReadCache:dogSharedReadCoordinator.stats(),
     // Rolling per-route counters are Render RAM only; no Firebase access.
