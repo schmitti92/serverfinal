@@ -8077,5 +8077,5 @@ async function startServerWithChristmasReset(){
 }
 startServerWithChristmasReset().catch(err=>{
   console.error('[christmas-reset] startup aborted; no game server exposed:',err?.message||err);
-  process.exitCode=1;
+  process.exit(1); // Never leave startup intervals alive after an aborted migration.
 });
