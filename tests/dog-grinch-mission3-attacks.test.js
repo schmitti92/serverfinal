@@ -58,6 +58,7 @@ test('ice prevents moving a specific piece for exactly TWO of its owner card tur
 test('a fully frozen human gets ONE card passed, not their whole hand discarded',()=>{
  let s=spacedBoard(421);
  for(const p of s.pieces.filter(p=>p.owner===0))p.frozenTurns=2;
+ s.hands[0].forEach(card=>{card.type='5';});
  s.current=3;s.grinchActionsLeft=1;s.grinchUsed=[];
  s.hands[3].forEach(c=>{c.type='3';});
  s=move(s,m=>m.kind==='move'&&m.pieceId==='g0'&&m.distance===3);
