@@ -1538,6 +1538,29 @@ function finishEisstock(ch,members){
         claimed:type,tier:type==='free_ticket'?tier:null,lights:type==='builder'?rank:0};
     });
   }));
+  // Lightweight server-verified DOG cosmetics. The game itself needs only
+  // the player's earned unlock IDs and current XP level. Never load the
+  // complete scratch shop, ticket editions, village and research for this.
+  // Authentication precedes all private reads; no room membership required.
+  app.get('/api/hub/dog/cosmetics',authentication,handler(async req=>{
+    const store=db(),uid=req.hubIdentity.uid;
+    const [walletSnap,treeSnap,statsSnap]=await Promise.all([
+      readDogMeta(store,store.collection(DOG_SCRATCH_COLLECTION).doc(uid)),
+      readDogMeta(store,store.collection(DOG_TREE_REWARDS_COLLECTION).doc(uid)),
+      readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid))
+    ]);
+    const wallet=walletSnap.exists?walletSnap.data():null;
+    const tree=treeSnap.exists?treeSnap.data():null;
+    const status=dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null);
+    return {
+      ownedUnlockIds:dogScratchStatus(wallet,tree,clock()).ownedUnlockIds,
+      level:status.level,
+      nikolausCardRewardConfigured:status.rewards.some(entry=>
+        entry.level===20&&entry.configured===true&&
+        entry.reward?.id==='kartendesign-05'),
+      scope:'verified-personal-dog-cosmetics'
+    };
+  }));
   // Persönlicher 50-Level-Sammlerpass. Serverseitig bestätigte DOG-XP.
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
     const store=db(),uid=req.hubIdentity.uid;
