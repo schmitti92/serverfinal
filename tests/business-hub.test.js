@@ -142,3 +142,18 @@ test('Business rejects invalid bank, dice and roll counters without changing the
  assert.equal((await h.request('GET',url,'alice')).rev,1);
  assert.equal((await h.request('POST',url+'/state','alice',{baseRev:1,game:{...initial,rolls:1,dice:[6,6,6,6,6]}})).status,200);
 });
+
+
+test('Business retries of identical state are read-only and retain the authoritative revision',async()=>{
+ const h=suite(),root=await h.start(),url=`/api/hub/business/${root.gameCode}`;
+ const created=await h.request('POST',url+'/bootstrap','alice',{matchId:root.matchId,game:root.game});
+ assert.equal(created.status,200);
+ const unchanged=await h.request('POST',url+'/state','alice',{baseRev:1,game:structuredClone(root.game)});
+ assert.equal(unchanged.status,200,unchanged.error);
+ assert.equal(unchanged.unchanged,true);
+ assert.equal(unchanged.rev,1);
+ assert.equal((await h.request('GET',url,'alice')).rev,1);
+ const changed=await h.request('POST',url+'/state','alice',{baseRev:1,game:{...root.game,bank:1010}});
+ assert.equal(changed.status,200,changed.error);
+ assert.equal(changed.rev,2,'real changes still persist exactly once');
+});
