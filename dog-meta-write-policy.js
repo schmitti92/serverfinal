@@ -11,3 +11,15 @@ export function dogMetadataWasWritten(kind,writeCounts,roomCollection){
  return Object.entries(writeCounts).some(([collection,count])=>
   collection!==roomCollection&&Number.isSafeInteger(count)&&count>0);
 }
+
+/**
+ * Return precisely which non-room documents were durably written, or null
+ * when path evidence is incomplete and a full cache flush is safer.
+ * Never accept client-supplied paths: writePaths must come from the tracked
+ * server-side Firestore transaction AFTER a successful commit.
+ */
+export function dogWrittenMetadataPaths(kind,writePaths,roomCollection){
+ if(kind!=='dog-match'||!Array.isArray(writePaths))return null;
+ if(writePaths.some(path=>typeof path!=='string'||!path.includes('/')))return null;
+ return [...new Set(writePaths)].filter(path=>path.split('/')[0]!==roomCollection);
+}
