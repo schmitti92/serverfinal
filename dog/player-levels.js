@@ -56,19 +56,25 @@ export function dogMatchXp({won=false,knockedOut=0}={}){
 export function dogPlayerLevelStatus(raw){
  const d=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
  return {...dogLevelFromXp(d.xp),rewards:DOG_LEVEL_REWARDS,
-   lastEarnedXp:safeXp(d.lastEarnedXp),lastXpBonusPercent:Math.max(0,Math.min(40,Number.isInteger(d.lastXpBonusPercent)?d.lastXpBonusPercent:0)),totalVerifiedMatches:Number.isSafeInteger(d.xpMatches)&&d.xpMatches>=0?d.xpMatches:0,
+   lastEarnedXp:safeXp(d.lastEarnedXp),lastXpBonusPercent:Math.max(0,Math.min(140,Number.isInteger(d.lastXpBonusPercent)?d.lastXpBonusPercent:0)),
+   lastWinXpBonusPercent:Math.max(0,Math.min(300,Number.isInteger(d.lastWinXpBonusPercent)?d.lastWinXpBonusPercent:0)),totalVerifiedMatches:Number.isSafeInteger(d.xpMatches)&&d.xpMatches>=0?d.xpMatches:0,
    wins:Number.isSafeInteger(d.wins)&&d.wins>=0?d.wins:0,
    xpRules:DOG_LEVEL_XP};
 }
-export function creditDogMatchXp(raw,{won=false,knockedOut=0,matchId,now=Date.now(),bonusPercent=0}={}){
+export function creditDogMatchXp(raw,{won=false,knockedOut=0,matchId,now=Date.now(),bonusPercent=0,researchPercent=0,winBonusPercent=0}={}){
  const old=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
  // A complete DOG match must always have a real, server-generated match ID.
  if(typeof matchId!=='string'||!matchId.trim()||matchId.length>128)throw Error('DOG_LEVEL_INVALID_MATCH');
  if(old.xpLastMatchId===matchId)return {...old,credited:false,xp:safeXp(old.xp),lastEarnedXp:0};
  const base=dogMatchXp({won,knockedOut});
- const safeBonus=Number.isInteger(bonusPercent)?Math.max(0,Math.min(40,bonusPercent)):0;
- const earned=base+Math.round(base*safeBonus/100);
- return {...old,lastXpBonusPercent:safeBonus,xp:Math.min(1000000000,safeXp(old.xp)+earned),
+ const academy=Number.isInteger(bonusPercent)?Math.max(0,Math.min(40,bonusPercent)):0;
+ const research=Number.isInteger(researchPercent)?Math.max(0,Math.min(100,researchPercent)):0;
+ const winBonus=Number.isInteger(winBonusPercent)?Math.max(0,Math.min(300,winBonusPercent)):0;
+ const safeBonus=academy+research;
+ // The win talent multiplies only the original 50 win XP, not the whole match.
+ const earned=base+Math.round(base*safeBonus/100)+(won?Math.round(DOG_LEVEL_XP.win*winBonus/100):0);
+ return {...old,lastXpBonusPercent:safeBonus,lastWinXpBonusPercent:winBonus,
+   xp:Math.min(1000000000,safeXp(old.xp)+earned),
    lastEarnedXp:earned,xpLastMatchId:matchId,
    xpMatches:(Number.isSafeInteger(old.xpMatches)&&old.xpMatches>=0?old.xpMatches:0)+1,
    xpUpdatedAt:now,credited:true};
