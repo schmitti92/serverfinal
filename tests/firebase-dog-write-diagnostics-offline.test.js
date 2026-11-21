@@ -126,7 +126,8 @@ test('Repeated unchanged DOG game selection is no longer an extra Firestore room
  assert.equal(duplicate.room.revision,firstRevision);
  assert.equal(h.counters.writes,writes,'identical DOG preparation must not rewrite room');
  const health=await h.request('GET','/api/hub/health');
- assert.equal(health.hubMutationCache.dogAutoNoops,1);
+ // Duplicate selection returns an explicit no-op before the automatic diff guard.
+  assert.equal(health.hubMutationCache.dogAutoNoops,0);
  assert.equal(health.dogWrites10m.byKind['dog-lobby'].noops,1);
  assert.equal(health.dogWrites10m.byKind['dog-lobby'].writeCalls,0,
   'the original select was made from an unselected room, not yet counted as a DOG write');
