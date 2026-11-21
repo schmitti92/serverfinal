@@ -53,8 +53,8 @@ test('DOG 7 last red pawn entering goal may use only 2 steps and forfeit 5',()=>
  s=takeAction(s,0,needed(s,m=>m.type==='seven-finish'&&m.remaining===5));
  assert.equal(s.seven,null);
  assert.notEqual(s.phase,'seven');
- assert.equal(s.hands[0].length,0);
- assert.equal(s.discard.at(-1).id,999);
+ assert.equal(s.hands[0].some(card=>card.id===999),false,'7 is no longer held, even if a fresh round starts');
+ assert.equal(s.discard.some(card=>card.id===999),true,'7 is discarded once');
  assert.ok(s.history.some(t=>t.includes('5 Schritte')));
 });
 test('DOG 7 offers partner moves instead of forcing forfeit when own last pawn finishes',()=>{
