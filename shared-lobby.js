@@ -876,13 +876,13 @@ function finishEisstock(ch,members){
       throw e;
     }
   }
-  const hubMutationReadCacheStats={committed:0,noops:0,joinCommitted:0,joinNoops:0,avoidedInvalidations:0};
+  const hubMutationReadCacheStats={committed:0,noops:0,joinCommitted:0,joinNoops:0,avoidedInvalidations:0,dogAutoNoops:0};
   async function mutate(code,identity,change){
     const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=documentFor(store,code);
     // The transaction result carries its own committed-write flag: retries
     // cannot leak a previous attempt's decision into cache invalidation.
-    const {value,changed,revision,dogWriteKind,writeCounts}=await store.runTransaction(async tx=>{
+    const {value,changed,revision,dogWriteKind,writeCounts,dogAutoNoop}=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const game=room.match?.game||room.game;
@@ -893,6 +893,10 @@ function finishEisstock(ch,members){
       // transaction retry or a failed validation as a committed write.
       const tracked=dogWriteKind?dogWriteDiagnostics.counter(tx):null;
       const writeTx=tracked?.tx||tx;
+      // Snapshot ONLY DOG's durable room, before the change callback. Some
+      // callers return normally without changing anything; that is not a turn.
+      // Other games remain untouched and valid DOG changes still commit.
+      const dogBefore=dogWriteKind?JSON.stringify(room):null;
       const result=await change(room,writeTx,store);
       // Record each completed match exactly once, in the same transaction as its final move.
       if(room.match?.game==='kniffel'&&room.match.kniffel?.finished&&!room.match.kniffel.statsRecorded){
@@ -915,6 +919,14 @@ function finishEisstock(ch,members){
       if(result?.unchanged)
         return {value:expose(room,identity),changed:false,revision:room.revision,
           dogWriteKind,writeCounts:tracked?.counts()};
+      // A legacy/optional DOG command can also silently leave the room
+      // unchanged. Never bill a full hub-document write for that no-op.
+      // Do NOT suppress a transaction that explicitly awarded another
+      // Firestore document (vouchers, village credits, player stats).
+      if(dogBefore!==null && dogBefore===JSON.stringify(room) &&
+         Object.keys(tracked?.counts()||{}).length===0)
+        return {value:expose(room,identity),changed:false,revision:room.revision,
+          dogWriteKind,writeCounts:{},dogAutoNoop:true};
       room.revision=(Number(room.revision)||0)+1;
       room.updatedAt=clock();room.expiresAt=clock()+TTL_MS;
       writeTx.set(ref,room);
@@ -922,6 +934,7 @@ function finishEisstock(ch,members){
         dogWriteKind,writeCounts:tracked?.counts()};
     });
     if(dogWriteKind)dogWriteDiagnostics.record(dogWriteKind,writeCounts,changed);
+    if(dogAutoNoop)hubMutationReadCacheStats.dogAutoNoops++;
     // Only an actual committed room write/delete supersedes any earlier
     // Firestore stream or completion preflight. No-op requests still read
     // Firestore for authorization but must not cause fresh follower GETs.
