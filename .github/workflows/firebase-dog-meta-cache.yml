@@ -1,0 +1,24 @@
+name: Firebase DOG metadata read-cache policy
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-meta-write-policy.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-meta-write-policy.test.js'
+      - '.github/workflows/firebase-dog-meta-cache.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dog-meta-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js
+      - run: node --check dog-meta-write-policy.js
+      - run: node --test tests/dog-meta-write-policy.test.js tests/firebase-dog-read-cache-budget.test.js tests/firebase-dog-leaderboard-shared-reads-offline.test.js
