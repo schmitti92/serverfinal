@@ -10,7 +10,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  * Deliberately DOES NOT launch legacy games until they have safe room adapters.
  */
 import { randomInt, randomUUID } from 'node:crypto';
-import {createGame as createDogGame,exchangeCard as dogExchangeCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
+import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
@@ -93,6 +93,31 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
   const dogVillageFor=store=>store.collection(DOG_VILLAGE_COLLECTION).doc(DOG_GLOBAL_VILLAGE_ID);
   const legacyDogVillageFor=(store,uid)=>store.collection(DOG_VILLAGE_COLLECTION).doc(uid);
+  // Snapshot abilities at match creation: no extra database reads per move.
+  async function matchResearchForPlayers(room,tx,store){
+    if(room.game!=='dog')return null;
+    const players=activeSeats(room).filter(p=>!p.testBot&&!p.bot);
+    const snaps=await Promise.all(players.map(p=>tx.get(store.collection(DOG_RESEARCH_COLLECTION).doc(p.uid))));
+    return Object.fromEntries(players.map((p,i)=>[p.uid,
+      Object.fromEntries(['card_swap','future_sight','spot_ticket','spot_light','lights_bonus','gift_magnet','elf_luck']
+        .map(id=>[id,dogResearchLevel(snaps[i].exists?snaps[i].data():null,id)]))]));
+  }
+  function privateChristmasMarks(match,uid){
+    if(!match?.christmas?.enabled||!match.dogResearchSkills?.[uid])return {};
+    const research=match.dogResearchSkills[uid],event=match.christmas;
+    const choose=(fields,salt)=>{
+      if(!fields.length)return [];
+      let hash=2166136261;
+      for(const c of String(uid)+':'+match.id+':'+event.round+':'+salt)
+        hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;
+      return [fields[hash%fields.length]];
+    };
+    return {
+      visibleGiftFields:research.spot_light?choose((event.giftFields||[]).filter(p=>!(event.claimedFields||[]).includes(p)),'light'):[],
+      visibleScratchFields:research.spot_ticket?choose((event.scratchFields||[]).filter(p=>!(event.claimedScratchFields||[]).includes(p)),'scratch'):[]
+    };
+  }
+
   // Preserve old host-village balances on the next DOG game started by that
   // host, even if they have never opened the new meta-village page.
   async function sharedVillageForMatchStart(tx,store,hostUid){
@@ -672,7 +697,14 @@ function finishEisstock(ch,members){
         grinchSeat:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         grinchRoster:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.map(({seat,uid,name})=>({seat,uid,name})):null,
         grinchCompletionRecorded:['dog-grinch1','dog-grinch2'].includes(room.match.game)&&room.match.grinchCompletionRecorded===true,
-        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?publicDogChristmasMatch(room.match.christmas):null,
+        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?
+          {...publicDogChristmasMatch(room.match.christmas),...privateChristmasMarks(room.match,identity.uid)}:null,
+        dogResearch:room.match.game==='dog'?{
+          ...(room.match.dogResearchSkills?.[identity.uid]||{}),
+          usedSwap:!!room.match.dog?.researchSwapped?.[room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat],
+          peeksUsed:room.match.dogResearchUsed?.[identity.uid]?.peeks||0,
+          peekedCard:room.match.dogResearchUsed?.[identity.uid]?.lastPeek||null
+        }:null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogSeatColors:room.match.game==='dog'?room.match.dogRoster.map(r=>DOG_LOBBY_COLORS[r.seat]):null,
         dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
@@ -1706,6 +1738,15 @@ function finishEisstock(ch,members){
       if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
       if(match.dog.revision!==expectedRevision)throw error(409,'DOG_STALE_REVISION');
+      const ability=match.dogResearchSkills?.[identity.uid]||{};
+      const uses=match.dogResearchUsed?.[identity.uid]||{};
+      if(action.type==='research-swap'&&(!ability.card_swap||match.dog.phase!=='exchange'))
+        throw error(403,'RESEARCH_SWAP_UNAVAILABLE');
+      if(action.type==='research-peek'){
+        if(!ability.future_sight)throw error(403,'RESEARCH_NOT_UNLOCKED');
+        if((uses.peeks||0)>=ability.future_sight)throw error(409,'RESEARCH_PEEK_LIMIT');
+        if(match.dog.phase==='finished')throw error(409,'RESEARCH_GAME_ENDED');
+      }
       // Upgrade old in-progress DOG rooms to the automatic event on their next
       // verified move. Already completed moves do not receive retroactive gifts.
       const seasonal=christmasActive();
@@ -1737,7 +1778,15 @@ function finishEisstock(ch,members){
         creditedTenths+=finishDogChristmasMatch(event,after);
       };
       try{
-        if(action.type==='exchange'){
+        if(action.type==='research-peek'){
+          const top=match.dog.deck?.at(-1);
+          if(!top)throw Error('RESEARCH_DECK_EMPTY');
+          match.dogResearchUsed={...(match.dogResearchUsed||{}),
+           [identity.uid]:{...uses,peeks:(uses.peeks||0)+1,lastPeek:top.type}};
+          match.dog.revision++;
+        }else if(action.type==='research-swap'){
+          match.dog=dogResearchSwapCard(match.dog,seat,action.cardId);
+        }else if(action.type==='exchange'){
           const prior=match.dog;
           match.dog=dogExchangeCard(match.dog,seat,action.cardId);
           if(prior.round!==match.dog.round)newDeal(match.dog.round);
@@ -1962,10 +2011,12 @@ function finishEisstock(ch,members){
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
+        const research=await matchResearchForPlayers(room,tx,store);
         const village=room.game==='dog'&&christmasActive()
          ?await sharedVillageForMatchStart(tx,store,room.hostUid):
          room.game==='dog-grinch1'?(await tx.get(dogVillageFor(store))).data()||null:null;
         startGame(room,village);
+        if(room.match?.game==='dog')room.match.dogResearchSkills=research||{};
       }
     })};
   }));
@@ -1980,10 +2031,12 @@ function finishEisstock(ch,members){
       const active=room.players.filter(p=>p.participating);
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
+      const research=await matchResearchForPlayers(room,tx,store);
       const village=room.game==='dog'&&christmasActive()
         ?await sharedVillageForMatchStart(tx,store,room.hostUid):
         room.game==='dog-grinch1'?(await tx.get(dogVillageFor(store))).data()||null:null;
       startGame(room,village);
+      if(room.match?.game==='dog')room.match.dogResearchSkills=research||{};
     })};
   }));
   // Merk-Matrix uses the shared hub and its authenticated members; no game-specific room.
