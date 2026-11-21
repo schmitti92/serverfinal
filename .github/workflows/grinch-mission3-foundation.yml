@@ -5,11 +5,13 @@ on:
     paths:
       - 'dog/grinch-mission3.js'
       - 'tests/dog-grinch-mission3-foundation.test.js'
+      - 'tests/dog-grinch-mission3-ai.test.js'
       - '.github/workflows/grinch-mission3-foundation.yml'
   pull_request:
     paths:
       - 'dog/grinch-mission3.js'
       - 'tests/dog-grinch-mission3-foundation.test.js'
+      - 'tests/dog-grinch-mission3-ai.test.js'
       - '.github/workflows/grinch-mission3-foundation.yml'
   workflow_dispatch:
 jobs:
@@ -20,4 +22,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test tests/dog-grinch-mission3-foundation.test.js
+      - run: node --test tests/dog-grinch-mission3-foundation.test.js tests/dog-grinch-mission3-ai.test.js
