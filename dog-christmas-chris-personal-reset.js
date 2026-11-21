@@ -219,7 +219,14 @@ export function installChrisChristmasResetApi(app,{verifyProfile,getFirestore,cl
   if(req.body?.confirmation!=='CHRIS_WEIHNACHT_NEUSTART')
    return res.status(400).json({ok:false,error:'RESET_CONFIRMATION_REQUIRED'});
   try{
-   const result=await resetChrisChristmasOnce(store(),req.resetChrisUid,{clock});
+   // A signed-in Chris can explicitly confirm that his old DOG matches
+   // have ended. This bypasses only stale room guards, never identity checks
+   // or the one-time marker/archiving rules.
+   const completedMatchesConfirmed=req.body?.completedMatchesConfirmed===true;
+   const result=await resetChrisChristmasOnce(store(),req.resetChrisUid,{
+    clock,...(completedMatchesConfirmed?
+     {ignoreActiveRooms:true,verifyChrisProfileInTransaction:true}:{})
+   });
    res.set('Cache-Control','no-store');
    return res.json({ok:true,resetCompleted:true,...result});
   }catch(e){return respondError(res,e);}
