@@ -579,7 +579,7 @@ function finishEisstock(ch,members){
         const prior=s;
         s=dogExchangeCard(s,seat,move.cardId);
         if(s.round!==prior.round)onNewDeal(s.round);
-      }else if((s.phase==='play'||s.phase==='seven')&&s.players[s.current]?.bot){
+      }else if(['play','seven','rescue'].includes(s.phase)&&s.players[s.current]?.bot){
         const move=dogBotAction(s,s.current);
         if(!move)throw Error('DOG_BOT_MOVE_FAILED');
         const before=s,seat=s.current;
