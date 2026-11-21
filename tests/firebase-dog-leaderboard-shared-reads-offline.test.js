@@ -7,7 +7,7 @@ import {DOG_TREE_REWARDS_COLLECTION} from '../dog/christmas-tree-rewards.js';
 
 function harness(){
  const docs=new Map(),routes=new Map(),reads=new Map(),holds=new Map();
- let transaction=Promise.resolve();
+ let transaction=Promise.resolve(),now=1000000;
  const snapshot=key=>({exists:docs.has(key),data:()=>structuredClone(docs.get(key))});
  const store={
   collection:name=>({doc:id=>{
@@ -41,7 +41,7 @@ function harness(){
   use(){}
  };
  installSharedLobby(app,{getFirestore:()=>store,verifyProfile:async()=>({uid:'alice',name:'Alice'}),
-  codeGenerator:()=> '123',clock:()=>1000000,christmasEventActive:()=>true});
+  codeGenerator:()=> '123',clock:()=>now,christmasEventActive:()=>true});
  async function call(method,url,user='alice',body={}){
   const parts=url.split('/');
   const found=[...routes.entries()].find(([key])=>{
@@ -51,7 +51,8 @@ function harness(){
   assert.ok(found,'HTTP route exists: '+method+' '+url);
   const [registered,handlers]=found,patterns=registered.split(' ')[1].split('/');
   const params=Object.fromEntries(patterns.flatMap((s,i)=>s.startsWith(':')?[[s.slice(1),parts[i]]]:[]));
-  const req={hubIdentity:{uid:user,name:user[0].toUpperCase()+user.slice(1)},params,body,get:()=>''};
+  const req={method,route:{path:registered.split(' ')[1]},
+   hubIdentity:{uid:user,name:user[0].toUpperCase()+user.slice(1)},params,body,get:()=>''};
   const res={statusCode:200,status(status){this.statusCode=status;return this},
    json(payload){this.body=payload;return this}};
   await handlers.at(-1)(req,res);
@@ -68,7 +69,8 @@ function harness(){
   assert.equal((await call('POST','/api/hub/rooms','alice')).status,200);
   assert.equal((await call('POST','/api/hub/rooms/123/join','bob')).status,200);
  }
- return {setup,docs,hold,count,reads,leaderboard,store,call};
+ return {setup,docs,hold,count,reads,leaderboard,store,call,
+  advance:ms=>{now+=ms}};
 }
 const roomPath='spielesammlung_hub_v1/123';
 const statsA=DOG_PLAYER_STATS_COLLECTION+'/alice';
@@ -104,15 +106,19 @@ test('Concurrent player statistics for two authorized viewers share 1 physical r
  assert.equal('uid' in left.players[0],false,'no UID in public comparison');
 });
 
-test('After an in-flight shared read completes, the next request sees freshly credited winnings',async()=>{
+test('DOG read-only stats reuse a brief cache and refresh after 30 seconds',async()=>{
  const h=harness();await h.setup();
  h.docs.set(statsA,{played:3,wins:1});
  assert.equal((await h.leaderboard()).players.find(x=>x.name==='Alice').dog.wins,1);
  h.docs.set(statsA,{played:4,wins:2});
+ const cached=await h.leaderboard();
+ assert.equal(cached.players.find(x=>x.name==='Alice').dog.wins,1);
+ assert.equal(h.count(statsA),1,'repeated browsing should not bill a new Firestore read');
+ h.advance(30001);
  const latest=await h.leaderboard();
  assert.equal(latest.players.find(x=>x.name==='Alice').dog.wins,2);
- assert.equal(h.count(statsA),2,'no TTL or persistent score caching');
- assert.equal(h.count(roomPath),2,'member validation reads current room');
+ assert.equal(h.count(statsA),2,'bounded cache expires after 30 seconds');
+ assert.equal(h.count(roomPath),2,'member validation remains authoritative');
 });
 
 test('Nonmembers never reach a private player statistic, wallet, or reward document',async()=>{
@@ -145,8 +151,12 @@ test('DOG village and tree reward views coalesce only simultaneous GLOBAL reads 
  assert.ok(b.treeRewards,'personal tree rewards still projected by server');
  h.docs.set(globalVillage,{lightsTenths:700});
  const next=await h.call('GET','/api/hub/rooms/123/dog/village','alice');
- assert.equal(next.village.lightsTenths,700,'no cached or stale wallet balances');
- assert.equal(h.count(globalVillage),2,'next request reloads fresh global balance');
+ assert.equal(next.village.lightsTenths,250,'brief read-only projection cache prevents repeated Firestore GETs');
+ assert.equal(h.count(globalVillage),1);
+ h.advance(30001);
+ const refreshed=await h.call('GET','/api/hub/rooms/123/dog/village','alice');
+ assert.equal(refreshed.village.lightsTenths,700,'eventual cross-instance updates are visible after TTL');
+ assert.equal(h.count(globalVillage),2);
 });
 
 test('Kniffel statistics coalesce concurrent per-player GETs after membership validation',async()=>{
@@ -170,7 +180,11 @@ test('Kniffel statistics coalesce concurrent per-player GETs after membership va
  assert.equal(denied.status,403);
  assert.equal(h.count(statsAlice),1,'outsider does not reach financial or stats docs');
  h.docs.set(statsAlice,{wins:4,played:5});
+ const cached=await h.call('GET','/api/hub/rooms/123/kniffel/stats','alice');
+ assert.equal(cached.stats[0].wins,2);
+ assert.equal(h.count(statsAlice),1);
+ h.advance(30001);
  const fresh=await h.call('GET','/api/hub/rooms/123/kniffel/stats','alice');
  assert.equal(fresh.stats[0].wins,4);
- assert.equal(h.count(statsAlice),2,'finished GET never leaves a stored cache');
+ assert.equal(h.count(statsAlice),2,'stale read-only comparison expires after 30 seconds');
 });
