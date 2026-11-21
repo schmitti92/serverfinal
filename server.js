@@ -21,6 +21,7 @@ import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
+import {deferChristmasResetOnSafePreflight} from "./dog-christmas-startup-policy.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
 import { installChristmasIceApi } from "./christmas-ice-api.js";
@@ -8071,7 +8072,15 @@ async function startServerWithChristmasReset(){
     if(!profileProjectMatches||!firestore)
       throw Error('CHRISTMAS_RESET_ABORT: verified Firestore project is unavailable');
     console.info('[christmas-reset] starting safe archived launch reset');
-    await resetDogChristmasEventOnce(firestore,console);
+    try{
+      await resetDogChristmasEventOnce(firestore,console);
+    }catch(err){
+      if(!deferChristmasResetOnSafePreflight(err))throw err;
+      // The safe reset preflight rejected this run without committing data.
+      // Keep the existing event records; serving the game is safer than an
+      // indefinitely blocked Render release. Never silently delete user data.
+      console.warn('[christmas-reset] DEFERRED: safety preflight blocked reset; no archived player state was modified. The service remains available. Reason:',err.message);
+    }
   }
   server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
 }
