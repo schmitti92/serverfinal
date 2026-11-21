@@ -260,16 +260,146 @@ export function mission3NextPreviewDeal(original){
  if(mission3CardTotal(s)!==110)throw Error('DOG-Kartenbestand beschädigt.');
  return s;
 }
+
+/**
+ * Grinch tactical AI – package 3.
+ *
+ * Completely deterministic. A bounded beam search evaluates the Grinch's own
+ * 6/12/18 hidden cards and up to three distinct-pawn card actions. It never
+ * reads a human's private hand. Only board positions and its OWN cards matter.
+ * Human task target fields may later be passed as tasks.activeFields.
+ */
+export const MISSION3_AI_VERSION='tactical-beam-v1';
+const AI_WIDTH=5;
+function aiTargets(s){
+ // Empty in the foundation build; once task objectives are introduced,
+ // this optional visible-field contract lets the Grinch defend them.
+ const values=s.tasks?.activeFields;
+ return Array.isArray(values)?values.filter(n=>Number.isInteger(n)&&n>=0&&n<64):[];
+}
+function aiBoardValue(s){
+ const green=s.pieces.filter(p=>p.owner===3&&p.place==='track');
+ const humans=s.pieces.filter(p=>p.owner<3);
+ let result=0;
+ for(const human of humans){
+  if(human.place==='home'){result+=15;continue;}
+  if(human.place!=='track')continue;
+  if(mission3Protected(human))continue;
+  if(!green.length)continue;
+  const forward=Math.min(...green.map(g=>mod(human.pos-g.pos)));
+  // The Grinch wants an attackable pawn within the usual DOG 1–13 range.
+  if(forward>0&&forward<=13)result+=10+(14-forward)*2.1;
+  else result+=Math.max(0,32-forward)*.3;
+ }
+ for(const field of aiTargets(s)){
+  // A future light/key/rune field is worth guarding, but striking pawns
+  // is more important than occupying objectives.
+  const closest=green.length?Math.min(...green.map(p=>Math.min(mod(field-p.pos),mod(p.pos-field)))):32;
+  result+=Math.max(0,10-closest)*2.3;
+  if(green.some(p=>p.pos===field))result+=10;
+ }
+ return result;
+}
+function aiKey(s,move){
+ const card=s.hands[3].find(c=>c.id===move.cardId);
+ return [card?.type,move.kind,move.as,move.pieceId||'',move.targetId||'',move.distance||0].join(':');
+}
+function aiPreview(s,move){
+ const next=copy(s),pawn=next.pieces.find(p=>p.id===move.pieceId);
+ const before=next.pieces.filter(p=>p.owner<3).map(p=>({id:p.id,place:p.place,pos:p.pos}));
+ if(move.kind==='move'||move.kind==='seven')applyMovement(next,move.pieceId,move.distance,move.kind==='seven');
+ else if(move.kind==='swap'){
+  const target=next.pieces.find(p=>p.id===move.targetId);
+  const tmp=pawn.pos;pawn.pos=target.pos;target.pos=tmp;
+ }
+ if(move.kind==='seven'){
+  if(!next.seven)next.seven={seat:3,cardId:move.cardId,as:'7',spent:0};
+  next.seven.spent+=move.distance;
+  if(next.seven.spent<7)return {state:next,finishedCard:false,before};
+  next.seven=null;
+ }
+ const index=next.hands[3].findIndex(c=>c.id===move.cardId);
+ if(index<0)throw Error('Grinch-AI: Karte nicht vorhanden');
+ next.discard.push(next.hands[3].splice(index,1)[0]);
+ if(move.pieceId&&!next.grinchUsed.includes(move.pieceId))next.grinchUsed.push(move.pieceId);
+ next.grinchActionsLeft=Math.max(0,next.grinchActionsLeft-1);
+ return {state:next,finishedCard:true,before};
+}
+function aiGain(s,move,preview){
+ const next=preview.state;
+ let gain=(aiBoardValue(next)-aiBoardValue(s))*.95;
+ const card=s.hands[3].find(c=>c.id===move.cardId);
+ const hitCount=(move.captureIds||[]).length;
+ for(const before of preview.before){
+  const after=next.pieces.find(p=>p.id===before.id);
+  if(before.place==='track'&&after?.place==='home')gain+=155;
+  else if(before.place==='track'&&after?.place==='track'&&after.pos!==before.pos)gain+=107;
+ }
+ // Prioritize striking a human over merely repositioning and do not
+ // consume highly flexible cards for a marginal improvement.
+ gain+=hitCount*12;
+ if(card?.type==='joker')gain-=7;
+ if(card?.type==='7')gain-=1;
+ if(move.kind==='emptySwap')gain-=65;
+ if(move.kind==='swap')gain-=8;
+ if(!preview.finishedCard)gain+=.2;
+ return gain;
+}
+function aiRankedMoves(s,width=AI_WIDTH){
+ const legal=mission3LegalMoves(s,3);
+ const seen=new Set(),ranked=[];
+ for(const m of legal){
+  const key=aiKey(s,m);
+  if(seen.has(key))continue;
+  seen.add(key);
+  const sim=aiPreview(s,m);
+  ranked.push({move:m,next:sim.state,gain:aiGain(s,m,sim)});
+ }
+ ranked.sort((a,b)=>b.gain-a.gain||
+   a.move.cardId-b.move.cardId||
+   String(a.move.pieceId).localeCompare(String(b.move.pieceId))||
+   (a.move.distance||0)-(b.move.distance||0));
+ return ranked.slice(0,width);
+}
+/**
+ * Return a short multi-card plan. Each candidate branch is simulated without
+ * dealing, triggering other player turns or mutating the real match.
+ * Partial split-seven steps do not consume one of the 1/2/3 card actions.
+ */
+export function mission3PlanGrinchTurn(s){
+ if(!s||s.current!==3||s.grinchActionsLeft<=0)return {moves:[],score:0};
+ const depth=Math.min(5,s.grinchActionsLeft+2);
+ let beam=[{state:s,moves:[],score:0}];
+ const completed=[];
+ for(let ply=0;ply<depth;ply++){
+  const expanded=[];
+  for(const path of beam){
+   if(path.state.grinchActionsLeft<=0&&!path.state.seven){
+    completed.push(path);continue;
+   }
+   const options=aiRankedMoves(path.state);
+   if(!options.length){completed.push(path);continue;}
+   for(const option of options){
+    expanded.push({
+     state:option.next,moves:[...path.moves,option.move],
+     score:path.score+option.gain*Math.pow(.84,ply)
+    });
+   }
+  }
+  if(!expanded.length)break;
+  expanded.sort((a,b)=>b.score-a.score||
+    (a.moves[0]?.cardId||0)-(b.moves[0]?.cardId||0));
+  beam=expanded.slice(0,AI_WIDTH);
+ }
+ completed.push(...beam);
+ // A full plan beats one that stops in the middle of an unfinished split 7.
+ const finished=completed.filter(x=>!x.state.seven&&x.moves.length);
+ const choices=finished.length?finished:completed.filter(x=>x.moves.length);
+ choices.sort((a,b)=>b.score-a.score||a.moves[0].cardId-b.moves[0].cardId);
+ return {moves:choices[0]?.moves||[],score:Math.round((choices[0]?.score||0)*100)/100};
+}
 export function mission3ChooseGrinchMove(s){
- if(s.current!==3)return null;
- const moves=mission3LegalMoves(s,3);
- if(!moves.length)return null;
- // Baseline bot for the local foundation ONLY. Tactical lookahead follows in package 3.
- return [...moves].sort((a,b)=>{
-  const score=x=>(x.captureIds?.length||0)*100+(x.kind==='swap'?12:0)+
-   (x.kind==='move'&&x.distance>0?x.distance:0)+(x.kind==='seven'?x.distance:0);
-  return score(b)-score(a)||a.cardId-b.cardId||String(a.pieceId).localeCompare(String(b.pieceId));
- })[0];
+ return mission3PlanGrinchTurn(s).moves[0]||null;
 }
 export function mission3AutoGrinch(original){
  let s=original;let guard=0;
