@@ -1,0 +1,20 @@
+name: DOG scratch no daily freebies
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/christmas-scratch.js'
+      - 'tests/dog-christmas-scratch.test.js'
+      - 'tests/dog-christmas-scratch-settings.test.js'
+      - '.github/workflows/dog-scratch-no-freebies.yml'
+  workflow_dispatch:
+jobs:
+  no-daily-free:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/christmas-scratch.js
+      - run: node --test tests/dog-christmas-scratch.test.js tests/dog-christmas-scratch-settings.test.js
