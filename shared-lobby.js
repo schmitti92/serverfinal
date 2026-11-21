@@ -1528,8 +1528,8 @@ function finishEisstock(ch,members){
     if(!grinchActive())return {progress:{completedMissions:[],highestUnlocked:1},treeLevel:0,canStartMission1:false,available:false};
     const store=db();
     const [progressSnap,villageSnap]=await Promise.all([
-      store.collection(GRINCH_PROGRESS_COLLECTION).doc(req.hubIdentity.uid).get(),
-      dogVillageFor(store).get()
+      readDogMeta(store,store.collection(GRINCH_PROGRESS_COLLECTION).doc(req.hubIdentity.uid)),
+      readDogMeta(store,dogVillageFor(store))
     ]);
     const p=progressSnap.exists?progressSnap.data():null;
     const treeLevel=dogTreeLevelFromLevels(villageSnap.exists?villageSnap.data():null);
@@ -3331,8 +3331,8 @@ function finishEisstock(ch,members){
             if(!ownedEmojiCache||ownedEmojiUid!==identity.uid||timestamp-ownedEmojiAt>=60000){
               const store=db();
               const [scratchSnap,treeSnap]=await Promise.all([
-                store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
-                store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
+                readDogMeta(store,store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid)),
+                readDogMeta(store,store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid))
               ]);
               const scratchOwned=Object.keys(scratchSnap.exists?scratchSnap.data()?.owned||{}:{});
               const treeOwned=Object.values(treeSnap.exists?treeSnap.data()?.claims||{}:{})
