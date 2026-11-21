@@ -1,0 +1,24 @@
+name: Firebase Barikade roll batching (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server.js'
+      - 'tests/firebase-barikade-roll-batching.test.js'
+      - '.github/workflows/firebase-barikade-roll-batching.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  roll-batching:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate server syntax
+        run: node --check server.js
+      - name: Verify durable roll totals and exactly-once final booking
+        run: node --test tests/firebase-barikade-roll-batching.test.js
