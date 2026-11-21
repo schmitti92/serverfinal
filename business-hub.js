@@ -106,6 +106,10 @@ export function installHubBusiness(app,{verifyProfile,getSeat,getFirestore}){
        throw err(400,'IMMUTABLE_BANK_START');
      if(current.longGameVersion!==undefined&&incoming.longGameVersion!==current.longGameVersion)
        throw err(400,'IMMUTABLE_GAME_VERSION');
+     // An identical retry of the same state is not a new turn. Avoid
+     // rewriting the full Firestore game document or increasing its revision.
+     if(JSON.stringify(current)===JSON.stringify(incoming))
+       return {code:seat.gameCode,rev:old.rev,phase:old.phase,updatedAtMs:old.updatedAtMs,unchanged:true};
      // No official rank rewards; the browser is still responsible for game mathematics.
      const next={...old,rev:old.rev+1,phase:incoming.gameEnded?'finished':'game',game:incoming,updatedAtMs:Date.now()};
      tx.set(doc,next);return {code:seat.gameCode,rev:next.rev,phase:next.phase,updatedAtMs:next.updatedAtMs};
