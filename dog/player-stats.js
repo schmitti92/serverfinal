@@ -34,11 +34,22 @@ export function dogCompletedPlayerStats(raw,uid,displayName,seat,counters,winner
  const old=dogPlayerStats(raw,uid);
  const v=counters?.seats?.[seat]||{};
  const win=winner===seat%2?1:0;
- // XP shares this verified end-of-match document write; no per-move write.
- const {credited:_credited,...xp}=creditDogMatchXp(raw,{
+ // Bonus research is counted only on a server-confirmed complete match.
+ // Europe/Berlin day controls the first game and third game of each day.
+ const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Berlin',
+  year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));
+ const dayCount=raw?.xpDay===today?nonnegative(raw?.xpDayMatches):0;
+ const firstBonus=dayCount===0?10*Math.min(3,nonnegative(research?.dailyLevel)):0;
+ const thirdBonus=dayCount===2?10*Math.min(3,nonnegative(research?.effortLevel)):0;
+ const credited=creditDogMatchXp(raw,{
   won:win===1,knockedOut:nonnegative(v.knockedOut),matchId,now,bonusPercent:xpBonusPercent,
   researchPercent:research?.xpPercent||0,winBonusPercent:research?.winPercent||0});
- return {...xp,...old,name:String(displayName||'Spieler').slice(0,48),
+ const {credited:_credited,...xp}=credited;
+ const fixed=credited.credited?firstBonus+thirdBonus:0;
+ const nextXp=Math.min(1000000000,xp.xp+fixed);
+ return {...xp,...old,xp:nextXp,lastEarnedXp:xp.lastEarnedXp+fixed,
+  xpDay:today,xpDayMatches:dayCount+1,
+  lastDailyXpBonus:fixed,name:String(displayName||'Spieler').slice(0,48),
   played:old.played+1,wins:old.wins+win,
   knockedOut:old.knockedOut+nonnegative(v.knockedOut),
   wasKnockedOut:old.wasKnockedOut+nonnegative(v.wasKnockedOut),
