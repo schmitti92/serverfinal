@@ -118,7 +118,7 @@ test('DOG read-only stats reuse a brief cache and refresh after 30 seconds',asyn
  const latest=await h.leaderboard();
  assert.equal(latest.players.find(x=>x.name==='Alice').dog.wins,2);
  assert.equal(h.count(statsA),2,'bounded cache expires after 30 seconds');
- assert.equal(h.count(roomPath),2,'member validation remains authoritative');
+ assert.equal(h.count(roomPath),3,'every call rechecks live room membership independently of cached private stats');
 });
 
 test('Nonmembers never reach a private player statistic, wallet, or reward document',async()=>{
