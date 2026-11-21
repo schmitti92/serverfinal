@@ -168,3 +168,65 @@ test('DOG three-player winner credits exactly three genuine profiles, never the 
  assert.equal(repeated.status,200,'idempotent retry must not re-award match statistics');
  assert.equal(h.docs.get('dog_player_statistics_v1/user_alice123').played,1);
 });
+
+
+test('first regular DOG match has no Christmas wallet writes even while season is globally active',async()=>{
+ const h=harness({christmasEventActive:()=>true});
+ h.advance(Date.parse('2026-11-21T14:30:00Z'));
+ const code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ for(const who of ['bob','cara'])
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/join',who)).status,200);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ for(const who of ['alice','bob','cara'])
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/ready',who,{ready:true})).status,200);
+ const key='spielesammlung_hub_v1/'+code;
+ let room=h.docs.get(key);
+ assert.equal(room.match.dogChristmasEligibilityChecked,true);
+ assert.equal(room.match.christmas?.enabled,false,'the first completed game is the prerequisite for the event');
+ assert.equal([...h.docs.keys()].some(key=>key.startsWith('dog_christmas_villages_v1/')),false);
+ const first=room.match.dog.hands[0][0];
+ const exchange=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:room.match.id,expectedRevision:room.match.dog.revision,
+  actionId:'first-standard-dog-exchange-001',action:{type:'exchange',cardId:first.id}
+ });
+ assert.equal(exchange.status,200,exchange.error);
+ assert.equal(h.docs.get(key).match.christmas.enabled,false);
+ assert.equal([...h.docs.keys()].some(key=>
+   key.startsWith('dog_christmas_villages_v1/')||key.startsWith('dog_christmas_scratch_v1/')),false,
+  'normal first-match exchange never credits seasonal balances');
+ // An ongoing room created before this fix must stop seasonal credits
+ // on its next verified move, with a single persisted eligibility decision.
+ room=h.docs.get(key);
+ delete room.match.dogChristmasEligibilityChecked;
+ room.match.christmas.enabled=true;
+ h.docs.set(key,room);
+ const bob=h.docs.get(key).match.dog.hands[1][0];
+ const recovered=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','bob',{
+  matchId:room.match.id,expectedRevision:room.match.dog.revision,
+  actionId:'first-standard-dog-old-room-002',action:{type:'exchange',cardId:bob.id}
+ });
+ assert.equal(recovered.status,200,recovered.error);
+ assert.equal(h.docs.get(key).match.christmas.enabled,false);
+ assert.equal(h.docs.get(key).match.dogChristmasEligibilityChecked,true);
+ assert.equal([...h.docs.keys()].some(key=>
+   key.startsWith('dog_christmas_villages_v1/')||key.startsWith('dog_christmas_scratch_v1/')),false);
+});
+
+test('DOG Christmas rewards become available on a later match only after every player finished their initial game',async()=>{
+ const h=harness({christmasEventActive:()=>true});
+ const verifiedTime=Date.parse('2026-11-21T15:00:00Z');
+ h.advance(verifiedTime);
+ for(const uid of ['user_alice123','user_bobby123','user_carol123'])
+  h.docs.set('dog_player_statistics_v1/'+uid,{uid,played:1,updatedAt:verifiedTime});
+ const code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ for(const who of ['bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/join',who);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ for(const who of ['alice','bob','cara']){
+  const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready',who,{ready:true});
+  assert.equal(ready.status,200,ready.error);
+ }
+ const room=h.docs.get('spielesammlung_hub_v1/'+code);
+ assert.equal(room.match.dogChristmasEligibilityChecked,true);
+ assert.equal(room.match.christmas.enabled,true,
+  'subsequent verified matches keep all existing Christmas rewards');
+});
