@@ -119,3 +119,27 @@ test('historical DOG matches do not trigger the new film',async()=>{
   assert.equal(ack.status,403);
  }
 });
+
+test('verified event grants unlock Chris Vanessa David before any completed DOG match',async()=>{
+ const h=setup();
+ for(const [uid,name] of [['c','chris'],['v','vanessa'],['d','david']]){
+  const resetId='2026-11-21-lichtertal-chris-vanessa-david-fresh-start-v1';
+  h.docs.set('dog_christmas_event_access_v1/'+uid,{
+   uid,access:true,firstVisit:true,resetId});
+  const first=await h.call('GET','/api/hub/dog/christmas-intro',name);
+  assert.equal(first.status,200);
+  assert.equal(first.eligible,true);
+  assert.equal(first.previewGranted,true);
+  assert.equal(first.introReady,true);
+  assert.equal(first.completed,false,'film must replay on fresh visit');
+  assert.equal(first.played,0);
+  assert.equal(first.resetId,resetId);
+  const completed=await h.call('POST','/api/hub/dog/christmas-intro/complete',name);
+  assert.equal(completed.status,200);
+  assert.equal(completed.completed,true);
+  const again=await h.call('GET','/api/hub/dog/christmas-intro',name);
+  assert.equal(again.completed,true);
+  assert.equal(again.played,0,'access grant must never fake a DOG victory');
+  assert.equal(h.docs.has('dog_player_statistics_v1/'+uid),false);
+ }
+});
