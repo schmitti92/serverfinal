@@ -99,7 +99,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     const players=activeSeats(room).filter(p=>!p.testBot&&!p.bot);
     const snaps=await Promise.all(players.map(p=>tx.get(store.collection(DOG_RESEARCH_COLLECTION).doc(p.uid))));
     return Object.fromEntries(players.map((p,i)=>[p.uid,
-      Object.fromEntries(['card_swap','future_sight','spot_ticket','spot_light','lights_bonus','gift_magnet','elf_luck']
+      Object.fromEntries(['card_swap','spot_ticket','spot_light','lights_bonus']
         .map(id=>[id,dogResearchLevel(snaps[i].exists?snaps[i].data():null,id)]))]));
   }
   function privateChristmasMarks(match,uid){
@@ -708,10 +708,11 @@ function finishEisstock(ch,members){
         christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?
           {...publicDogChristmasMatch(room.match.christmas),...privateChristmasMarks(room.match,identity.uid)}:null,
         dogResearch:room.match.game==='dog'?{
-          ...(room.match.dogResearchSkills?.[identity.uid]||{}),
-          usedSwap:!!room.match.dog?.researchSwapped?.[room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat],
-          peeksUsed:room.match.dogResearchUsed?.[identity.uid]?.peeks||0,
-          peekedCard:room.match.dogResearchUsed?.[identity.uid]?.lastPeek||null
+          card_swap:room.match.dogResearchSkills?.[identity.uid]?.card_swap||0,
+          spot_ticket:room.match.dogResearchSkills?.[identity.uid]?.spot_ticket||0,
+          spot_light:room.match.dogResearchSkills?.[identity.uid]?.spot_light||0,
+          lights_bonus:room.match.dogResearchSkills?.[identity.uid]?.lights_bonus||0,
+          usedSwap:!!room.match.dog?.researchSwapped?.[room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat]
         }:null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogSeatColors:room.match.game==='dog'?room.match.dogRoster.map(r=>DOG_LOBBY_COLORS[r.seat]):null,
@@ -1802,14 +1803,11 @@ function finishEisstock(ch,members){
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
       if(match.dog.revision!==expectedRevision)throw error(409,'DOG_STALE_REVISION');
       const ability=match.dogResearchSkills?.[identity.uid]||{};
-      const uses=match.dogResearchUsed?.[identity.uid]||{};
       if(action.type==='research-swap'&&(!ability.card_swap||match.dog.phase!=='exchange'))
         throw error(403,'RESEARCH_SWAP_UNAVAILABLE');
-      if(action.type==='research-peek'){
-        if(!ability.future_sight)throw error(403,'RESEARCH_NOT_UNLOCKED');
-        if((uses.peeks||0)>=ability.future_sight)throw error(409,'RESEARCH_PEEK_LIMIT');
-        if(match.dog.phase==='finished')throw error(409,'RESEARCH_GAME_ENDED');
-      }
+      // An old player may be resuming a match with retired skills. Reject
+      // those actions even when the original match snapshot contains them.
+      if(action.type==='research-peek')throw error(403,'RESEARCH_RETIRED');
       // Upgrade old in-progress DOG rooms to the automatic event on their next
       // verified move. Already completed moves do not receive retroactive gifts.
       const seasonal=christmasActive();
@@ -1843,14 +1841,6 @@ function finishEisstock(ch,members){
           match.dogLightCarry={...(match.dogLightCarry||{}),[recipient.uid]:numerator%100};
           creditedTenths+=bonusTenths;
           event.earnedTenths+=bonusTenths;
-          if((ranks.gift_magnet||0)*2>randomInt(100)){
-            const extra=10+(event.levels?.bakery||1)-1;
-            creditedTenths+=extra;event.earnedTenths+=extra;event.bonusGiftCount++;
-            event.activity=[...(event.activity||[]).slice(-11),
-              {type:'research-gift',seat:playerSeat,earnedTenths:extra}];
-          }
-          if((ranks.elf_luck||0)>randomInt(100))
-            vouchersEarned.push({uid:recipient.uid,tier:'simple'});
         }
         // Only real participants get personal scratch vouchers. Bot traffic
         // never creates a wallet or extra Firestore reads.
@@ -1861,13 +1851,7 @@ function finishEisstock(ch,members){
         creditedTenths+=finishDogChristmasMatch(event,after);
       };
       try{
-        if(action.type==='research-peek'){
-          const top=match.dog.deck?.at(-1);
-          if(!top)throw Error('RESEARCH_DECK_EMPTY');
-          match.dogResearchUsed={...(match.dogResearchUsed||{}),
-           [identity.uid]:{...uses,peeks:(uses.peeks||0)+1,lastPeek:top.type}};
-          match.dog.revision++;
-        }else if(action.type==='research-swap'){
+        if(action.type==='research-swap'){
           match.dog=dogResearchSwapCard(match.dog,seat,action.cardId);
         }else if(action.type==='exchange'){
           const prior=match.dog;
@@ -1901,9 +1885,7 @@ function finishEisstock(ch,members){
             p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock(),
             event?.enabled?dogAcademyXpPercent(event.levels?.academy):0,
             {xpPercent:10*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'xp'),
-             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp'),
-             dailyLevel:dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'daily_xp'),
-             effortLevel:dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'effort')})
+             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp')})
         }));
         match.dogCounters.recorded=true;
       }
