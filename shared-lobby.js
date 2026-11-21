@@ -112,9 +112,13 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
         hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;
       return [fields[hash%fields.length]];
     };
+    // Exactly one mark is chosen per phase. If it is collected, do not
+    // silently reveal a second secret field during the same card phase.
+    const gift=research.spot_light?choose(event.giftFields||[],'light'):[];
+    const scratch=research.spot_ticket?choose(event.scratchFields||[],'scratch'):[];
     return {
-      visibleGiftFields:research.spot_light?choose((event.giftFields||[]).filter(p=>!(event.claimedFields||[]).includes(p)),'light'):[],
-      visibleScratchFields:research.spot_ticket?choose((event.scratchFields||[]).filter(p=>!(event.claimedScratchFields||[]).includes(p)),'scratch'):[]
+      visibleGiftFields:gift.filter(p=>!(event.claimedFields||[]).includes(p)),
+      visibleScratchFields:scratch.filter(p=>!(event.claimedScratchFields||[]).includes(p))
     };
   }
 
