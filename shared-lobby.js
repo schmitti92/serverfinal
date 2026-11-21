@@ -11,6 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createDogSharedReadCoordinator} from './dog-shared-read-coordinator.js';
+import {dogMetadataWasWritten} from './dog-meta-write-policy.js';
 import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
@@ -999,6 +1000,12 @@ function finishEisstock(ch,members){
         dogWriteKind,writeCounts:tracked?.counts()};
     });
     if(dogWriteKind)dogWriteDiagnostics.record(dogWriteKind,writeCounts,changed);
+    // Invalidate read-only DOG metadata precisely when a successful match
+    // action changed a wallet, village, research record or player statistics.
+    // Normal moves only save the room document and must preserve the 30s
+    // read cache. Firestore authorization/move checks are not cached.
+    if(dogMetadataWasWritten(dogWriteKind,writeCounts,COLLECTION))
+      dogMetaReadCoordinator.invalidate();
     if(dogAutoNoop)hubMutationReadCacheStats.dogAutoNoops++;
     // Only an actual committed room write/delete supersedes any earlier
     // Firestore stream or completion preflight. No-op requests still read
@@ -1027,6 +1034,9 @@ function finishEisstock(ch,members){
       // Never invalidate on GET, failed actions or explicit no-op updates.
       const route=String(req.route?.path||req.path||'');
       if(req.method==='POST'&&result?.unchanged!==true&&
+         // DOG moves are handled using committed per-collection write counts
+         // above, not an indiscriminate invalidation on every board move.
+         route!=='/api/hub/rooms/:code/dog/action'&&
          /^\/api\/hub\/(?:dog\/|scratch(?:\/|$)|christmas(?:-|\/)|grinch\/|rooms\/:code\/(?:dog\/|grinch\/))/.test(route))
         dogMetaReadCoordinator.invalidate();
       return res.json({ok:true,...result});
