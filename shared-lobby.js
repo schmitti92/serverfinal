@@ -1421,17 +1421,26 @@ function finishEisstock(ch,members){
   app.post('/api/hub/christmas-village/import',authentication,handler(async req=>{
     const identity=req.hubIdentity,store=db(),sharedRef=dogVillageFor(store),
       oldRef=legacyDogVillageFor(store,identity.uid);
+    // The event page follows this POST with an authoritative village GET and
+    // never uses the POST's village body. In metadata-only mode, read the
+    // legacy document first and skip the global read when nothing can migrate.
+    // Existing API clients still receive the full village response by default.
+    const metadataOnly=req.body?.metadataOnly===true;
     const result=await store.runTransaction(async tx=>{
-      const [oldSnap,sharedSnap]=await Promise.all([tx.get(oldRef),tx.get(sharedRef)]);
-      const shared=sharedSnap.exists?sharedSnap.data():null;
-      if(!oldSnap.exists||oldSnap.data()?.mergedToGlobal===DOG_GLOBAL_VILLAGE_ID)
+      const oldSnap=await tx.get(oldRef);
+      const alreadyMerged=oldSnap.exists&&oldSnap.data()?.mergedToGlobal===DOG_GLOBAL_VILLAGE_ID;
+      if(metadataOnly&&(!oldSnap.exists||alreadyMerged))
+        return {imported:false,checked:true};
+      const sharedSnap=await tx.get(sharedRef),shared=sharedSnap.exists?sharedSnap.data():null;
+      if(!oldSnap.exists||alreadyMerged)
         return {imported:false,village:dogVillagePublic(shared,DOG_GLOBAL_VILLAGE_ID)};
       const merged=mergeLegacyDogVillage(shared,oldSnap.data(),identity.uid);
       if(merged.changed){
         tx.set(sharedRef,merged.village);
         tx.update(oldRef,{mergedToGlobal:DOG_GLOBAL_VILLAGE_ID,mergedAt:clock()});
       }
-      return {imported:merged.changed,village:dogVillagePublic(merged.village,DOG_GLOBAL_VILLAGE_ID)};
+      return {imported:merged.changed,checked:true,
+        ...(metadataOnly?{}:{village:dogVillagePublic(merged.village,DOG_GLOBAL_VILLAGE_ID)})};
     });
     return {...result,shared:true,canUpgrade:christmasActive(),enabled:christmasActive()};
   }));
