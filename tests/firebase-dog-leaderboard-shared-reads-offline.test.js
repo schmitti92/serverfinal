@@ -68,7 +68,7 @@ function harness(){
   assert.equal((await call('POST','/api/hub/rooms','alice')).status,200);
   assert.equal((await call('POST','/api/hub/rooms/123/join','bob')).status,200);
  }
- return {setup,docs,hold,count,reads,leaderboard,store};
+ return {setup,docs,hold,count,reads,leaderboard,store,call};
 }
 const roomPath='spielesammlung_hub_v1/123';
 const statsA=DOG_PLAYER_STATS_COLLECTION+'/alice';
@@ -124,4 +124,53 @@ test('Nonmembers never reach a private player statistic, wallet, or reward docum
   assert.equal(h.count(collection+'/alice'),0,'no private reads for unauthenticated room member');
   assert.equal(h.count(collection+'/bob'),0);
  }
+});
+
+test('DOG village and tree reward views coalesce only simultaneous GLOBAL reads across rooms',async()=>{
+ const h=harness();await h.setup();
+ const globalVillage='dog_christmas_villages_v1/lichtertal_2026_shared';
+ // The actual collection/global id are server-defined, not supplied by clients.
+ h.docs.set(globalVillage,{lightsTenths:250,levels:{tower:1,workshop:1,bakery:1,inn:1,luckhouse:1,academy:1}});
+ const roomRelease=h.hold(roomPath),villageRelease=h.hold(globalVillage);
+ const village=h.call('GET','/api/hub/rooms/123/dog/village','alice');
+ const reward=h.call('GET','/api/hub/rooms/123/dog/tree-rewards','alice');
+ await wait();
+ assert.equal(h.count(roomPath),1,'authenticated room GET is shared');
+ roomRelease();await wait();await wait();
+ assert.equal(h.count(globalVillage),1,'same global document is read only once across endpoints');
+ villageRelease();
+ const [a,b]=await Promise.all([village,reward]);
+ assert.equal(a.status,200);assert.equal(b.status,200);
+ assert.equal(a.village.lightsTenths,250);
+ assert.ok(b.treeRewards,'personal tree rewards still projected by server');
+ h.docs.set(globalVillage,{lightsTenths:700});
+ const next=await h.call('GET','/api/hub/rooms/123/dog/village','alice');
+ assert.equal(next.village.lightsTenths,700,'no cached or stale wallet balances');
+ assert.equal(h.count(globalVillage),2,'next request reloads fresh global balance');
+});
+
+test('Kniffel statistics coalesce concurrent per-player GETs after membership validation',async()=>{
+ const h=harness();await h.setup();
+ const statsCollection='kniffel_player_stats_v1';
+ const statsAlice=statsCollection+'/alice',statsBob=statsCollection+'/bob';
+ h.docs.set(statsAlice,{wins:2,played:3,highestScore:64});
+ h.docs.set(statsBob,{wins:1,played:4,highestScore:45});
+ const roomRelease=h.hold(roomPath),statsRelease=h.hold(statsAlice);
+ const a=h.call('GET','/api/hub/rooms/123/kniffel/stats','alice');
+ const b=h.call('GET','/api/hub/rooms/123/kniffel/stats','bob');
+ await wait();assert.equal(h.count(roomPath),1,'room validation still coalesced');
+ roomRelease();await wait();await wait();
+ assert.equal(h.count(statsAlice),1);
+ assert.equal(h.count(statsBob),1);
+ statsRelease();
+ const result=await Promise.all([a,b]);
+ assert.equal(result[0].stats[0].wins,2);
+ assert.equal(result[1].stats[1].wins,1);
+ const denied=await h.call('GET','/api/hub/rooms/123/kniffel/stats','mallory');
+ assert.equal(denied.status,403);
+ assert.equal(h.count(statsAlice),1,'outsider does not reach financial or stats docs');
+ h.docs.set(statsAlice,{wins:4,played:5});
+ const fresh=await h.call('GET','/api/hub/rooms/123/kniffel/stats','alice');
+ assert.equal(fresh.stats[0].wins,4);
+ assert.equal(h.count(statsAlice),2,'finished GET never leaves a stored cache');
 });
