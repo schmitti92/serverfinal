@@ -96,7 +96,7 @@ test('DOG three distinct online profiles share one authoritative match with a fo
   for(let other=0;other<4;other++){
    if(other!==seat){
     assert.equal(Array.isArray(state.match.dog.hands[other]),false,'opponent and bot hands are never exposed');
-    assert.equal(state.match.dog.hands[other].count,6);
+    assert.equal(state.match.dog.hands[other].count,other===3?5:6,'server bot has already set aside its private exchange card');
    }
   }
  }
