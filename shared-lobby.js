@@ -91,10 +91,12 @@ const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
 export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1'}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
-  // Reuse only simultaneously in-flight authenticated READ-ONLY document gets.
-  // Each Firestore path includes the UID for private records; no TTL, and no
-  // shared results in the write/transaction paths.
-  const dogMetaReadCoordinator=createDogSharedReadCoordinator();
+  // DOG read-only status widgets reuse the same short-lived Render-RAM
+  // snapshots. Transactions/claims still fetch authoritative Firestore docs.
+  // Every private key contains the verified profile UID. Max age: 30 seconds.
+  const dogMetaReadCoordinator=createDogSharedReadCoordinator({
+   ttlMs:30000,maxCachedPerDatabase:256,clock
+  });
   const dogWriteDiagnostics=createDogWriteDiagnostics({clock});
   // Render-only aggregate write reports. No player details and no Firestore I/O.
   const dogWriteLogTimer=setInterval(()=>{
@@ -985,8 +987,17 @@ function finishEisstock(ch,members){
     return value;
   }
   const handler=fn=>async(req,res)=>{
-    try{const result=await fn(req);return res.json({ok:true,...result});}
-    catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
+    try{
+      const result=await fn(req);
+      // Do not serve a cached pre-purchase balance or an old village level
+      // immediately after an acknowledged DOG/Christmas mutation.
+      // Never invalidate on GET, failed actions or explicit no-op updates.
+      const route=String(req.route?.path||req.path||'');
+      if(req.method==='POST'&&result?.unchanged!==true&&
+         /^\/api\/hub\/(?:dog\/|scratch(?:\/|$)|christmas(?:-|\/)|grinch\/|rooms\/:code\/(?:dog\/|grinch\/))/.test(route))
+        dogMetaReadCoordinator.invalidate();
+      return res.json({ok:true,...result});
+    }catch(e){const status=e?.status||500;if(status>=500)console.error('[shared-lobby]',e?.message||e);
       return res.status(status).json({ok:false,error:status===500?'LOBBY_ERROR':e.message});}
   };
   app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog','dog-grinch1'],challengeFoundation:true,
