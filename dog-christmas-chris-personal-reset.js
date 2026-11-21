@@ -15,6 +15,8 @@ import {DOG_TREE_REWARDS_COLLECTION} from './dog/christmas-tree-rewards.js';
 export const CHRIS_CHRISTMAS_RESET_ID='2026-11-21-chris-personal-lichtertal-restart-v1';
 export const CHRIS_CHRISTMAS_RESET_MARKERS='dog_christmas_personal_reset_markers_v1';
 export const CHRIS_CHRISTMAS_RESET_ARCHIVES='dog_christmas_personal_reset_archives_v1';
+export const CHRIS_CHRISTMAS_LAUNCH_JOB='chris-2026-11-21-lichtertal-personal-restart-once';
+export const CHRIS_CHRISTMAS_LAUNCH_JOBS='dog_christmas_personal_reset_jobs_v1';
 export const CHRIS_CHRISTMAS_PLAYER_COLLECTIONS=Object.freeze([
  DOG_PLAYER_STATS_COLLECTION,  // DOG matches, XP / player level
  DOG_RESEARCH_COLLECTION,      // personal research and ability points
@@ -65,7 +67,9 @@ export async function getChrisChristmasResetStatus(db,uid){
  * Preflight checks active live matches; transaction does a second check and
  * creates the audit copy in the same commit as the deletion.
  */
-export async function resetChrisChristmasOnce(db,uid,{clock=Date.now}={}){
+export async function resetChrisChristmasOnce(db,uid,{
+ clock=Date.now,ignoreActiveRooms=false,verifyChrisProfileInTransaction=false
+}={}){
  if(!validUid(uid))throw Error('INVALID_CHRIS_PROFILE');
  if(!db?.collection||!db?.runTransaction)throw Error('CHRIS_RESET_STORAGE_UNAVAILABLE');
  const markerRef=markerFor(db,uid);
@@ -75,31 +79,44 @@ export async function resetChrisChristmasOnce(db,uid,{clock=Date.now}={}){
   return {alreadyReset:true,cleared:old.data().cleared||0,archived:old.data().archived||0};
  }
  const now=clock();
- const existingRooms=await db.collection(ROOM_COLLECTION).get();
- // Keep the live matching rooms in the same transaction: if Chris starts a
- // match in an already joined lobby during the preflight, abort the reset.
- const related=(existingRooms.docs||[]).filter(s=>{
-  const room=s.data();
-  return (room?.players||[]).some(player=>player?.uid===uid)&&
-   (Number(room?.expiresAt)>now||!Number.isFinite(Number(room?.expiresAt)));
- });
- if(related.length>40)throw Error('CHRIS_RESET_TOO_MANY_RELATED_ROOMS');
- if(related.some(s=>liveDogRoom(s.data(),uid,now)))throw Error('CHRIS_RESET_ACTIVE_DOG_MATCH');
- const roomRefs=related.map(s=>s.ref);
+ // The trusted one-off server startup job can ignore orphaned DOG rooms:
+ // it never edits a room, another account, or the common Christmas village.
+ // The authenticated interactive endpoint still enforces its normal guard.
+ let roomRefs=[];
+ if(!ignoreActiveRooms){
+  const existingRooms=await db.collection(ROOM_COLLECTION).get();
+  // Keep active, joined rooms in the transaction against concurrent starts.
+  const related=(existingRooms.docs||[]).filter(s=>{
+   const room=s.data();
+   return (room?.players||[]).some(player=>player?.uid===uid)&&
+    (Number(room?.expiresAt)>now||!Number.isFinite(Number(room?.expiresAt)));
+  });
+  if(related.length>40)throw Error('CHRIS_RESET_TOO_MANY_RELATED_ROOMS');
+  if(related.some(s=>liveDogRoom(s.data(),uid,now)))throw Error('CHRIS_RESET_ACTIVE_DOG_MATCH');
+  roomRefs=related.map(s=>s.ref);
+ }
  const entries=entryRefs(db,uid),archive=db.collection(CHRIS_CHRISTMAS_RESET_ARCHIVES);
+ const profileRef=verifyChrisProfileInTransaction?db.collection('player_profiles_v1').doc(uid):null;
  return db.runTransaction(async tx=>{
   const [marked,...snapshots]=await Promise.all([
    tx.get(markerRef),
    ...entries.map(x=>tx.get(x.ref)),
-   ...roomRefs.map(ref=>tx.get(ref))
+   ...roomRefs.map(ref=>tx.get(ref)),
+   ...(profileRef?[tx.get(profileRef)]:[])
   ]);
   if(marked.exists){
    if(marked.data()?.status!=='completed')throw Error('CHRIS_RESET_MARKER_INCONSISTENT');
    return {alreadyReset:true,cleared:marked.data().cleared||0,archived:marked.data().archived||0};
   }
-  const freshRooms=snapshots.slice(entries.length);
-  if(freshRooms.some(s=>s.exists&&liveDogRoom(s.data(),uid,clock())))
+  const freshRooms=snapshots.slice(entries.length,entries.length+roomRefs.length);
+  if(!ignoreActiveRooms&&freshRooms.some(s=>s.exists&&liveDogRoom(s.data(),uid,clock())))
    throw Error('CHRIS_RESET_ACTIVE_DOG_MATCH');
+  if(profileRef){
+   const profileSnap=snapshots[entries.length+roomRefs.length];
+   if(!profileSnap?.exists||String(profileSnap.data()?.name||'').trim().toLowerCase()!=='chris'||
+      (profileSnap.data()?.uid&&profileSnap.data().uid!==uid))
+    throw Error('CHRIS_RESET_IDENTITY_CHANGED');
+  }
   let cleared=0;
   for(let i=0;i<entries.length;i++){
    const entry=entries[i],snap=snapshots[i];
@@ -119,6 +136,56 @@ export async function resetChrisChristmasOnce(db,uid,{clock=Date.now}={}){
    personalCollections:CHRIS_CHRISTMAS_PLAYER_COLLECTIONS});
   return {alreadyReset:false,cleared,archived:cleared};
  });
+}
+
+/**
+ * User-authorized single-account reset, applied automatically on next Render
+ * start. No public admin endpoint or client-supplied UID is involved. Resolve
+ * the authoritative profile by its stored name, and fail closed if ambiguous.
+ * A global job receipt ensures no future profile named Chris can be affected
+ * by an old deployment of this one-time launch operation.
+ */
+export async function runChrisChristmasLaunchResetOnce(db,{clock=Date.now,logger=console}={}){
+ if(!db?.collection||!db?.runTransaction)throw Error('CHRIS_LAUNCH_RESET_STORAGE_UNAVAILABLE');
+ const jobRef=db.collection(CHRIS_CHRISTMAS_LAUNCH_JOBS).doc(CHRIS_CHRISTMAS_LAUNCH_JOB);
+ const completed=await jobRef.get();
+ if(completed.exists){
+  if(completed.data()?.status!=='completed')throw Error('CHRIS_LAUNCH_RESET_JOB_INCONSISTENT');
+  return {alreadyReset:true,jobCompleted:true};
+ }
+ // Bound to the exact profile record, not an unverified nickname in a room.
+ // The limit intentionally catches duplicate names instead of guessing a UID.
+ const query=await db.collection('player_profiles_v1')
+  .where('name','in',['Chris','chris','CHRIS']).limit(3).get();
+ const candidates=query.docs||[];
+ if(candidates.length!==1)throw Error('CHRIS_LAUNCH_RESET_PROFILE_NOT_UNIQUE');
+ const account=candidates[0],uid=account.id,data=account.data();
+ if(!validUid(uid)||String(data?.name||'').trim().toLowerCase()!=='chris'||
+    (data.uid&&data.uid!==uid))
+  throw Error('CHRIS_LAUNCH_RESET_PROFILE_UNVERIFIED');
+ // Explicit one-time maintenance instruction: orphaned stale DOG room states
+ // must not prevent clearing Chris's personal season. We do not alter rooms.
+ const result=await resetChrisChristmasOnce(db,uid,{
+  clock,ignoreActiveRooms:true,verifyChrisProfileInTransaction:true
+ });
+ await db.runTransaction(async tx=>{
+  const [job,personalMarker]=await Promise.all([
+   tx.get(jobRef),tx.get(markerFor(db,uid))
+  ]);
+  if(job.exists){
+   if(job.data()?.status!=='completed')throw Error('CHRIS_LAUNCH_RESET_JOB_INCONSISTENT');
+   return;
+  }
+  if(!personalMarker.exists||personalMarker.data()?.status!=='completed')
+   throw Error('CHRIS_LAUNCH_RESET_PERSONAL_MARKER_MISSING');
+  tx.create(jobRef,{
+   status:'completed',uid,resetId:CHRIS_CHRISTMAS_RESET_ID,
+   completedAt:clock(),cleared:personalMarker.data()?.cleared||0,
+   otherPlayersPreserved:true,sharedVillagePreserved:true
+  });
+ });
+ logger?.info?.('[dog-chris-launch-reset] one-time personal restart confirmed; shared village unchanged; cleared documents:',result.cleared);
+ return {...result,jobCompleted:true};
 }
 
 export function installChrisChristmasResetApi(app,{verifyProfile,getFirestore,clock=Date.now}){
