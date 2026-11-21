@@ -131,9 +131,16 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!humans.length)return false;
     const snaps=await Promise.all(humans.map(p=>tx.get(
       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid))));
-    return humans.every((p,i)=>snaps[i].exists&&
+    const wonBefore=humans.map((p,i)=>snaps[i].exists&&
       dogPlayerStats(snaps[i].data(),p.uid).played>=1&&
       Number(snaps[i].data()?.updatedAt||0)>=INTRO_SEASON_START_AT);
+    if(wonBefore.every(Boolean))return true;
+    // The three freshly restarted founders may play Christmas immediately
+    // even though their verifiable DOG match counters are zero.
+    const grants=await Promise.all(humans.map(p=>tx.get(
+      store.collection('dog_christmas_event_access_v1').doc(p.uid))));
+    return humans.every((_p,i)=>wonBefore[i]||
+      (grants[i].exists&&grants[i].data()?.access===true));
   }
   function privateChristmasMarks(match,uid){
     if(!match?.christmas?.enabled||!match.dogResearchSkills?.[uid])return {};
@@ -1354,34 +1361,40 @@ function finishEisstock(ch,members){
   // Verified Firebase profile name (never a client-submitted nickname). Chris
   // gets a preview invitation without changing his real DOG match statistics.
   const christmasPreviewGranted=identity=>String(identity?.name||'').trim().toLowerCase()==='chris';
+  const christmasGrantRef=(store,uid)=>store.collection('dog_christmas_event_access_v1').doc(uid);
   const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
-    const [stats,intro]=await Promise.all([
+    const [stats,intro,grant]=await Promise.all([
       readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
-      readDogMeta(store,introRef(store,uid))
+      readDogMeta(store,introRef(store,uid)),
+      readDogMeta(store,christmasGrantRef(store,uid))
     ]);
     const played=dogPlayerStats(stats.exists?stats.data():null,uid).played;
     // Old matches from before the official reveal do not count.
-    const previewGranted=christmasPreviewGranted(req.hubIdentity);
-    const introReady=played>=1&&Number(stats.data()?.updatedAt||0)>=INTRO_SEASON_START_AT;
+    const earlyAccess=grant.exists&&grant.data()?.access===true;
+    const previewGranted=earlyAccess||christmasPreviewGranted(req.hubIdentity);
+    const introReady=earlyAccess||(played>=1&&Number(stats.data()?.updatedAt||0)>=INTRO_SEASON_START_AT);
     const eligible=previewGranted||introReady;
     return {eligible,introReady,
       completed:eligible&&Number.isSafeInteger(intro.data()?.completedAt)&&intro.data().completedAt>0,
-      played,previewGranted};
+      played,previewGranted,resetId:earlyAccess?grant.data().resetId||null:null,
+      freshStart:earlyAccess};
   }));
   app.post('/api/hub/dog/christmas-intro/complete',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
     const reference=introRef(store,uid);
     return dogWriteDiagnostics.transaction(store,'dog-intro-complete',async tx=>{
-      const [stats,intro]=await Promise.all([
+      const [stats,intro,grant]=await Promise.all([
         tx.get(store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
-        tx.get(reference)
+        tx.get(reference),
+        tx.get(christmasGrantRef(store,uid))
       ]);
-      // Chris may explore Lichtertal early, but even his film receipt must
-      // follow a genuine, server-recorded DOG match after the reveal launch.
-      if(dogPlayerStats(stats.exists?stats.data():null,uid).played<1||
-         Number(stats.data()?.updatedAt||0)<INTRO_SEASON_START_AT)
+      // The one-time verified founder grants permit their very first film
+      // viewing without fabricating a completed DOG match.
+      const earlyAccess=grant.exists&&grant.data()?.access===true;
+      if(!earlyAccess&&(dogPlayerStats(stats.exists?stats.data():null,uid).played<1||
+         Number(stats.data()?.updatedAt||0)<INTRO_SEASON_START_AT))
         throw error(403,'DOG_CHRISTMAS_INTRO_LOCKED');
       if(intro.exists&&Number(intro.data()?.completedAt)>0)
         return {completed:true,unchanged:true};
