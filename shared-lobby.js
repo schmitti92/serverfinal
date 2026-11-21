@@ -702,9 +702,7 @@ function finishEisstock(ch,members){
         grinchRoster:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.map(({seat,uid,name})=>({seat,uid,name})):null,
         grinchCompletionRecorded:['dog-grinch1','dog-grinch2'].includes(room.match.game)&&room.match.grinchCompletionRecorded===true,
         grinchResearch:['dog-grinch1','dog-grinch2'].includes(room.match.game)?
-          {...(room.match.grinchResearchUsed?.[identity.uid]||{}),
-           fogCleared:room.match.grinchFogCleared?.[identity.uid]===room.match.grinch?.turn,
-           compass:room.match.grinchCompass?.[identity.uid]??null}:null,
+          {thaw:room.match.grinchResearchUsed?.[identity.uid]?.thaw||0}:null,
         christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?
           {...publicDogChristmasMatch(room.match.christmas),...privateChristmasMarks(room.match,identity.uid)}:null,
         dogResearch:room.match.game==='dog'?{
