@@ -1,0 +1,23 @@
+name: DOG three founders fresh Christmas start
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-christmas-three-founders-fresh-start.js'
+      - 'tests/dog-christmas-three-founders-fresh-start.test.js'
+      - 'shared-lobby.js'
+      - 'server.js'
+      - '.github/workflows/dog-three-founders-fresh-start.yml'
+  workflow_dispatch:
+jobs:
+  safety-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-christmas-three-founders-fresh-start.js
+      - run: node --check shared-lobby.js
+      - run: node --check server.js
+      - run: node --test tests/dog-christmas-three-founders-fresh-start.test.js
