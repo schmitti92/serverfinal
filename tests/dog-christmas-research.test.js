@@ -5,6 +5,7 @@ import {
  dogResearchCost,dogResearchSkill,dogResearchPityThreshold,dogResearchTicketMs
 } from '../dog/christmas-research.js';
 import {creditDogMatchXp,DOG_LEVEL_THRESHOLDS} from '../dog/player-levels.js';
+import {createGame,researchSwapCard} from '../dog/engine.js';
 
 const xpForLevel=n=>DOG_LEVEL_THRESHOLDS[n-1];
 test('research points are retrospective, excluding the initial level',()=>{
@@ -56,4 +57,23 @@ test('daily tickets and active collection timers are bounded',()=>{
  assert.equal(day.freeTicketAt,10_000+24*60*60*1000);
  const builder=dogResearchUpgrade({},xpForLevel(10),'builder',10_000);
  assert.equal(builder.builderAt,10_000+2*60*60*1000);
+});
+
+test('one-time magic redraw changes only the owner's hand and preserves all 110 cards',()=>{
+ const game=createGame({names:['A','B','C','D'],rng:()=>0.48});
+ const originalHands=game.hands.map(h=>h.map(c=>c.id));
+ const cardId=game.hands[0][0].id;
+ const next=researchSwapCard(game,0,cardId,()=>0.42);
+ assert.equal(next.hands[0].length,originalHands[0].length);
+ assert.equal(next.deck.length,game.deck.length-1);
+ assert.equal(next.discard.length,game.discard.length+1);
+ assert.equal(next.researchSwapped[0],true);
+ assert.equal(next.revision,game.revision+1);
+ assert.notEqual(next.hands[0][0].id,cardId);
+ for(let seat=1;seat<4;seat++)assert.deepEqual(next.hands[seat].map(c=>c.id),originalHands[seat]);
+ const all=[...next.deck,...next.discard,...next.hands.flat()];
+ assert.equal(all.length,110);
+ assert.equal(new Set(all.map(x=>x.id)).size,110);
+ assert.throws(()=>researchSwapCard(next,0,next.hands[0][0].id),/RESEARCH_SWAP_ALREADY_USED/);
+ assert.equal(game.researchSwapped,undefined,'pure reducer must not mutate prior state');
 });
