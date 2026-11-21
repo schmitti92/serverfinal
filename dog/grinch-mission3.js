@@ -1,8 +1,7 @@
 /**
- * DOG Grinch campaign – Mission 3, isolated gameplay core (packages 1–4).
+ * DOG Grinch campaign – Mission 3, isolated gameplay core (packages 1–5).
  * No imports from, or writes to, classic DOG or missions 1–2.
- * Official online launch, campaign rewards and cooperative task completion
- * remain disabled until their respective implementation packages.
+ * Official online launch and campaign rewards remain disabled.
  */
 export const MISSION3_ID=3;
 export const MISSION3_TRACK=64;
@@ -11,6 +10,8 @@ export const MISSION3_STARTS=Object.freeze([0,16,48,32]);
 export const MISSION3_COLORS=Object.freeze(['#e45b55','#499cf2','#eac04d','#43c66c']);
 export const MISSION3_TYPES=Object.freeze(['1/11','2','3','4','5','6','7','8','9','10','12','13','swap','joker']);
 export const MISSION3_STAGE_NAMES=Object.freeze(['Die Weihnachtslichter','Der Eisbrecher','Die magische Versiegelung']);
+export const MISSION3_TASK_TARGETS=Object.freeze([3,4,3]);
+export const MISSION3_TASK_ICONS=Object.freeze(['✨','🧊','🔮']);
 const copy=x=>JSON.parse(JSON.stringify(x));
 const mod=n=>(n%MISSION3_TRACK+MISSION3_TRACK)%MISSION3_TRACK;
 function random(seed){let v=(seed>>>0)||1;return ()=>((v=(Math.imul(v,1664525)+1013904223)>>>0)/4294967296);}
@@ -115,6 +116,73 @@ function endPhase(s){
  // Completion of the task later forces it if the RNG has not done so yet.
  if(rng()<.28)captureForStage(s,s.stageAtDeal,rng);
 }
+/**
+ * Three sequential team tasks. The Grinch cannot occupy an uncollected
+ * objective: an invincible piece could otherwise block that objective forever.
+ * The 64 original DOG track coordinates never change.
+ */
+function mission3PlaceObjectives(s){
+ if(!s.tasks||s.complete)return;
+ const remaining=s.tasks.objectives.filter(o=>!o.collected);
+ if(!remaining.length){s.tasks.activeFields=[];return;}
+ const starts=new Set(MISSION3_STARTS);
+ const occupied=new Set(s.pieces.filter(p=>p.place==='track').map(p=>p.pos));
+ const previous=new Set(remaining.map(o=>o.field).filter(n=>Number.isInteger(n)&&n>=0));
+ const valid=Array.from({length:64},(_,i)=>i).filter(i=>
+   !starts.has(i)&&!occupied.has(i)&&!previous.has(i));
+ if(valid.length<remaining.length)throw Error('Zu wenige freie DOG-Felder für die Gemeinschaftsaufgabe.');
+ const salt=(0x4C494348^Math.imul(s.stage+1,2654435761)^Math.imul(s.tasks.relocations+1,187904819))>>>0;
+ const choices=shuffle(valid,eventRandom(s,salt));
+ remaining.forEach((o,i)=>{o.field=choices[i];});
+ s.tasks.activeFields=remaining.map(o=>o.field);
+ s.tasks.relocations++;
+ if(s.stage===0&&s.tasks.relocations>1)
+  record(s,'✨ Die verbleibenden Weihnachtslichter sind nach der neuen Kartenverteilung weitergezogen.');
+}
+function mission3NewTask(s,stage){
+ const kinds=['light','ice','rune'],prefix=['l','i','r'][stage];
+ s.tasks.stage=stage;
+ s.tasks.objectives=Array.from({length:MISSION3_TASK_TARGETS[stage]},(_,i)=>({
+  id:prefix+i,kind:kinds[stage],field:-1,collected:false,collectedBy:null
+ }));
+ mission3PlaceObjectives(s);
+ s.tasks.lastTaskEvent={type:'task-start',stage,phase:s.phase};
+ record(s,MISSION3_TASK_ICONS[stage]+' Aufgabe '+(stage+1)+': '+MISSION3_STAGE_NAMES[stage]+'.');
+}
+function mission3OnLanding(s,pawn){
+ if(!s.tasks||s.complete||pawn.owner===3||pawn.place!=='track')return false;
+ const obj=s.tasks.objectives.find(o=>!o.collected&&o.field===pawn.pos);
+ if(!obj)return false;
+ const stage=s.stage;
+ obj.collected=true;obj.collectedBy=pawn.id;
+ s.tasks.progress[stage]++;
+ s.tasks.activeFields=s.tasks.objectives.filter(o=>!o.collected).map(o=>o.field);
+ s.tasks.lastTaskEvent={type:'collected',stage,field:pawn.pos,owner:pawn.owner,pieceId:pawn.id,progress:s.tasks.progress[stage]};
+ record(s,MISSION3_TASK_ICONS[stage]+' '+s.players[pawn.owner].name+' erreicht ein Missionsfeld ('+s.tasks.progress[stage]+'/'+MISSION3_TASK_TARGETS[stage]+').');
+ if(s.tasks.progress[stage]!==MISSION3_TASK_TARGETS[stage])return true;
+ captureForStage(s,stage,eventRandom(s,0x53544147));
+ if(!s.capturesByStage?.[stage])throw Error('Eine verpflichtende Gefangennahme fehlt.');
+ s.tasks.completedStages.push(stage);
+ if(stage===2){
+  s.complete=true;
+  s.tasks.lastTaskEvent={type:'mission-complete',stage,phase:s.phase};
+  s.lastEvent={type:'mission-complete',phase:s.phase,captured:[...s.capturedPerHuman]};
+  record(s,'🏆 Mission 3 geschafft! Drei Aufgaben gelöst; je eine Figur gefangen. Sechs Figuren erreichen Mission 4.');
+  return true;
+ }
+ s.stage=stage+1;
+ mission3NewTask(s,s.stage);
+ return true;
+}
+export function mission3TaskStatus(s){
+ if(!s?.tasks)return null;
+ const stage=s.stage;
+ return {stage,title:MISSION3_STAGE_NAMES[stage],icon:MISSION3_TASK_ICONS[stage],
+  progress:s.tasks.progress[stage],total:MISSION3_TASK_TARGETS[stage],
+  remaining:s.tasks.objectives.filter(o=>!o.collected).map(o=>({id:o.id,field:o.field,kind:o.kind})),
+  completedStages:[...s.tasks.completedStages],complete:Boolean(s.complete)};
+}
+
 function deal(s){
  s.phase++;
  s.stageAtDeal=s.stage;
@@ -131,6 +199,8 @@ function deal(s){
   }
  }
  s.current=0;s.grinchActionsLeft=0;s.grinchUsed=[];s.seven=null;
+ // Only remaining LIGHTS move with a new full hand (not each played card).
+ if(s.tasks&&s.stage===0)mission3PlaceObjectives(s);
  s.lastEvent={type:'deal',phase:s.phase,stage:s.stageAtDeal};
  record(s,'🃏 Kartenphase '+s.phase+': Menschen je 6, Grinch '+count[3]+' Karten.');
 }
@@ -150,8 +220,10 @@ export function createMission3(seed=Math.floor(Math.random()*2147483647),names=[
   draw:newDeck(rng),discard:[],hands:[[],[],[],[]],seven:null,
   grinchActionsLeft:0,grinchUsed:[],history:[],lastPlayedCard:null,lastEvent:null,
   capturedPerHuman:[0,0,0],captureOrder:shuffle([0,1,2],rng),capturesByStage:[null,null,null],
-  lastCapture:null,lastCurse:null,tasks:null,revision:0};
- deal(s);settle(s);
+  lastCapture:null,lastCurse:null,complete:false,
+  tasks:{stage:0,progress:[0,0,0],objectives:[],activeFields:[],completedStages:[],relocations:0,lastTaskEvent:null},
+  revision:0};
+ deal(s);mission3NewTask(s,0);settle(s);
  return s;
 }
 function relocate(s,victim,attackerOwner,reservedLanding=null){
