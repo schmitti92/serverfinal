@@ -147,7 +147,12 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,hubSeat,log=c
    try{await room.writeQueue;room.storage='firestore';return true;}
    catch(e){room.storage='memory';log.warn('[kreuzkunter] Firestore save failed; room continues temporarily in memory:',e?.message||e);return false;}
   }
- async function broadcast(room){room.revision++;room.timestamp=now();await save(room);const s=snapshot(room);const connected=room.players.map(p=>p.socket?.readyState===1);room.players.forEach((p,index)=>safeSend(p.socket,{type:'state',code:room.code,index,host:p.id===room.host,revision:room.revision,connected,storage:room.storage||'memory',previews:room.previews||{},selections:room.selections||{},game:s}));}
+ // Online presence and preview selections are transient WebSocket state.
+ // Only genuine room mutations must advance the durable revision and save to Firestore.
+ // The Kreuz browser accepts equal revisions, so presence updates still reach everyone.
+ async function broadcast(room,{persist=true}={}){
+  if(persist){room.revision++;room.timestamp=now();await save(room);}
+  const s=snapshot(room);const connected=room.players.map(p=>p.socket?.readyState===1);room.players.forEach((p,index)=>safeSend(p.socket,{type:'state',code:room.code,index,host:p.id===room.host,revision:room.revision,connected,storage:room.storage||'memory',previews:room.previews||{},selections:room.selections||{},game:s}));}
  function sendState(room,ws,index){safeSend(ws,{type:'state',code:room.code,index,host:room.players[index].id===room.host,revision:room.revision,connected:room.players.map(p=>p.socket?.readyState===1),storage:room.storage||'memory',previews:room.previews||{},selections:room.selections||{},game:snapshot(room)});}
  async function bookFinishedKreuz(room){
   if(room.finished&&!room.statsFinalizedV8&&room.matchIdV8){
@@ -208,7 +213,7 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,hubSeat,log=c
   if(prior&&prior!==ws)try{prior.close(4000,'Neue Verbindung');}catch(_e){}
   player.socket=ws;session.room=room;session.id=player.id;
   safeSend(ws,{type:'welcome',code:room.code,token:player.id,host:room.host===player.id});
-  await broadcast(room);
+  await broadcast(room,{persist:false}); // Hub seat ownership was saved during room creation.
   if(room.finished)await bookFinishedKreuz(room);
  }
  async function isHubMatchFinished(match){
@@ -223,7 +228,7 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,hubSeat,log=c
   if(msg.boardId!==BOARD_ID)return sendError(ws,'Spielfeldversion stimmt nicht überein.');
   if(session.room)return sendError(ws,'Du bist bereits in einem Raum.');
   // When Firestore is missing, rooms are playable but volatile.
-  let room,p,id;const identity=await verifyProfile?.(msg.profileIdToken)||null;const name=identity?.name||strip(msg.name,24)||'Spieler';
+  let room,p,id,persistJoin=op==='create';const identity=await verifyProfile?.(msg.profileIdToken)||null;const name=identity?.name||strip(msg.name,24)||'Spieler';
   if(op==='create'){
    if(rooms.size>=MAX_ROOMS)return sendError(ws,'Alle Spielräume belegt.');
    let code=newCode();while(rooms.has(code)||(await load(code)))code=newCode();
@@ -233,13 +238,17 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,hubSeat,log=c
    room=await load(code);if(!room)return sendError(ws,'Raumcode nicht gefunden.');
    id=typeof msg.token==='string'?msg.token:null;
    p=id?room.players.find(q=>q.id===id):null;
-   if(p?.profileUid&&p.profileUid!==identity?.uid)return sendError(ws,'Dieses Spielerfeld gehört einem anderen Online-Konto.');if(!p){if(id)return sendError(ws,'Spielertoken nicht mehr gültig. Bitte mit einem neuen Raum beginnen.');if(room.phase!=='lobby')return sendError(ws,'Partie läuft bereits; Beitritt nur mit Spielertoken.');if(room.players.length>=6)return sendError(ws,'Der Raum ist voll (maximal 6).');id=token();p=freshPlayer(name,id);room.players.push(p);}
+   if(p?.profileUid&&p.profileUid!==identity?.uid)return sendError(ws,'Dieses Spielerfeld gehört einem anderen Online-Konto.');if(!p){if(id)return sendError(ws,'Spielertoken nicht mehr gültig. Bitte mit einem neuen Raum beginnen.');if(room.phase!=='lobby')return sendError(ws,'Partie läuft bereits; Beitritt nur mit Spielertoken.');if(room.players.length>=6)return sendError(ws,'Der Raum ist voll (maximal 6).');id=token();p=freshPlayer(name,id);room.players.push(p);persistJoin=true;}
    const prior=p.socket;if(prior&&prior!==ws)try{prior.close(4000,'Andere Verbindung');}catch{}
   }
   if(p.profileUid&&p.profileUid!==identity?.uid)return sendError(ws,'Für diesen Spielplatz bitte mit dem ursprünglichen Konto anmelden.');
-  p.profileUid=identity?.uid||p.profileUid||null; p.socket=ws;session.room=room;session.id=id;
+  const verifiedUid=identity?.uid||p.profileUid||null;
+  if(p.profileUid!==verifiedUid)persistJoin=true; // Persist a newly claimed seat.
+  p.profileUid=verifiedUid; p.socket=ws;session.room=room;session.id=id;
+  const priorHost=room.host;
   if(!room.players.some(q=>q.id===room.host&&q.socket?.readyState===1))room.host=id;
-  safeSend(ws,{type:'welcome',code:room.code,token:id,host:room.host===id});await broadcast(room);if(room.finished)await bookFinishedKreuz(room);return;
+  if(room.host!==priorHost)persistJoin=true;
+  safeSend(ws,{type:'welcome',code:room.code,token:id,host:room.host===id});await broadcast(room,{persist:persistJoin});if(room.finished)await bookFinishedKreuz(room);return;
  }
  const room=session.room;if(!room||!session.id)return sendError(ws,'Bitte zuerst Raum erstellen oder beitreten.');
  const index=room.players.findIndex(p=>p.id===session.id);if(index<0||room.players[index].socket!==ws)return sendError(ws,'Diese Verbindung ist nicht mehr gültig.');
@@ -349,7 +358,7 @@ function createKreuzKunter({getFirestore,verifyProfile,recordStats,hubSeat,log=c
    let msg;try{msg=JSON.parse(String(raw));if(!msg||typeof msg!=='object'||Array.isArray(msg))throw Error('format');}catch{return sendError(ws,'Ungültiges Nachrichtenformat.');}
    session.queue=session.queue.then(()=>handleAction(ws,msg,session)).catch(e=>{log.error('[kreuzkunter] action failed',e);sendError(ws,'Serverfehler. Spielstand bitte abgleichen.');});
   });
-  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;delete room.previews?.[room.players.indexOf(p)];delete room.selections?.[room.players.indexOf(p)];if(!room.hubMatchId&&room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room);}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
+  ws.on('close',()=>{session.queue=session.queue.then(async()=>{const room=session.room;if(!room)return;const p=room.players.find(x=>x.id===session.id);if(!p||p.socket!==ws)return;p.socket=null;delete room.previews?.[room.players.indexOf(p)];delete room.selections?.[room.players.indexOf(p)];const oldHost=room.host;if(!room.hubMatchId&&room.host===p.id){const successor=room.players.find(q=>q.socket?.readyState===1);if(successor)room.host=successor.id;}try{await broadcast(room,{persist:room.host!==oldHost});}catch(e){log.error('[kreuzkunter] disconnect save failed',e.message);}});});
  }
  return {handle,rooms,isHubMatchFinished,health:()=>({ok:true,game:'KreuzKunter',boardId:BOARD_ID,rooms:rooms.size,firebaseConnected:!!db(),storageMode:db()?'firestore':'memory-only',collection:COLLECTION})};
 }
