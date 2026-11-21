@@ -32,10 +32,22 @@ const entryRefs=(db,uid)=>CHRIS_CHRISTMAS_PLAYER_COLLECTIONS.map(collection=>({
  path:collection+'/'+uid,
  ref:db.collection(collection).doc(uid)
 }));
-const liveDogRoom=(room,uid,now)=>room?.phase==='playing'&&
- ['dog','dog-grinch1','dog-grinch2','dog-grinch3'].includes(room?.match?.game||room?.game)&&
- (Number(room.expiresAt)>now||!Number.isFinite(Number(room.expiresAt)))&&
- (room.players||[]).some(player=>player?.uid===uid);
+// A completed DOG match may remain in its "playing" HUB ROOM until the
+// winning ceremony is acknowledged and the lobby archives that match.
+// Inspect the server-owned game state, not just the outer room phase.
+export function isChrisActiveChristmasMatch(room,uid,now){
+ if(room?.phase!=='playing')return false;
+ const game=room.match?.game||room.game;
+ if(!['dog','dog-grinch1','dog-grinch2','dog-grinch3'].includes(game))return false;
+ if(!(Number(room.expiresAt)>now||!Number.isFinite(Number(room.expiresAt))))return false;
+ if(!(room.players||[]).some(player=>player?.uid===uid))return false;
+ // The same completion semantics are used by shared-lobby's hubMatchPhase.
+ if(game==='dog'&&room.match?.dog?.phase==='finished')return false;
+ if(game.startsWith('dog-grinch')&&room.match?.grinch?.complete===true)return false;
+ // Unknown or still-running match states stay protected.
+ return true;
+}
+const liveDogRoom=isChrisActiveChristmasMatch;
 
 export async function getChrisChristmasResetStatus(db,uid){
  if(!validUid(uid))throw Error('INVALID_CHRIS_PROFILE');
