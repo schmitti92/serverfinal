@@ -1048,6 +1048,64 @@ test('DOG online: same shared room, four seats with bots, private card projectio
  assert.equal((await h.api('GET','/api/hub/rooms/'+code,'alice')).room.match.dog.hands[1].count>=0,true);
  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/finish','alice')).status,409);
 });
+test('DOG three distinct online profiles share one authoritative match with a fourth server bot',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ for(const who of ['bob','cara']){
+  const joined=await h.api('POST','/api/hub/rooms/'+code+'/join',who);
+  assert.equal(joined.status,200);
+  assert.equal(joined.room.players.filter(p=>p.participating).length,0,'pre-game lobby is preserved');
+ }
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ for(const who of ['alice','bob']){
+  const pending=await h.api('POST','/api/hub/rooms/'+code+'/ready',who,{ready:true});
+  assert.equal(pending.status,200);
+  assert.equal(pending.room.phase,'preparing','start only after the third real profile is ready');
+ }
+ const launched=await h.api('POST','/api/hub/rooms/'+code+'/ready','cara',{ready:true});
+ assert.equal(launched.status,200);
+ assert.equal(launched.room.phase,'playing');
+ const matchId=launched.room.match.id;
+ assert.equal(launched.room.match.dog.players.length,4);
+ assert.deepEqual(launched.room.match.dog.players.map(p=>p.bot),[false,false,false,true]);
+ assert.equal(launched.room.match.dog.phase,'exchange');
+ assert.equal(launched.room.match.dog.exchanges[3],true,'only the missing seat has a server-selected exchange');
+
+ for(const [seat,who] of ['alice','bob','cara'].entries()){
+  const state=(await h.api('GET','/api/hub/rooms/'+code,who)).room;
+  assert.equal(state.code,code);
+  assert.equal(state.match.id,matchId,'all players share the same actual match');
+  assert.equal(state.match.dogSeat,seat);
+  assert.equal(state.match.dog.hands[seat].length,6,'own hand belongs to verified profile');
+  assert.equal(state.match.dog.deck,undefined);
+  assert.equal(state.match.dog.discard,undefined);
+  for(let other=0;other<4;other++){
+   if(other!==seat){
+    assert.equal(Array.isArray(state.match.dog.hands[other]),false,'opponent and bot hands are never exposed');
+    assert.equal(state.match.dog.hands[other].count,6);
+   }
+  }
+ }
+ const path='/api/hub/rooms/'+code+'/dog/action';
+ assert.equal((await h.api('POST',path,'dana',{
+  matchId,expectedRevision:launched.room.match.dog.revision,
+  actionId:'dog-three-outsider-001',action:{type:'exchange',cardId:1}
+ })).status,403,'another account cannot take over a player seat');
+ for(const [i,who] of ['alice','bob','cara'].entries()){
+  const state=(await h.api('GET','/api/hub/rooms/'+code,who)).room;
+  const seat=state.match.dogSeat;
+  const cardId=state.match.dog.hands[seat][0].id;
+  const sent=await h.api('POST',path,who,{
+   matchId,expectedRevision:state.match.dog.revision,
+   actionId:'dog-three-exchange-'+i+'-001',action:{type:'exchange',cardId}
+  });
+  assert.equal(sent.status,200,who+' exchange is accepted by Render');
+  assert.equal(sent.room.match.id,matchId);
+ }
+ const final=(await h.api('GET','/api/hub/rooms/'+code,'cara')).room;
+ assert.equal(final.match.dog.phase,'play','three real exchanges and one server bot complete the phase');
+ assert.equal(final.match.dog.players.filter(p=>p.bot).length,1);
+ assert.equal(final.match.id,matchId);
+});
 test('DOG four-human lobby hides each opponent hand',async()=>{
  const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
  for(const p of ['bob','cara','dana'])await h.api('POST','/api/hub/rooms/'+code+'/join',p);
