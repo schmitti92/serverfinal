@@ -3892,12 +3892,20 @@ async function writeSkyjoPersisted(code,state,baseRev){
     if(baseRev!=null && Number(baseRev)!==curRev){
       return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
     }
-    // Repeat packets are not new moves. Only suppress after Firebase
-    // actually confirmed this revision; failed/unpersisted writes still retry.
-    if(cur&&skyjoFirebaseConfirmedRev.has(rc)&&skyjoFirebaseConfirmedRev.get(rc)>=curRev&&
-       JSON.stringify(cur.state)===raw)
+    // An identical payload is NOT a new move, even while the first Firebase
+    // write is pending. Duplicates used to create ever more revisions.
+    // Keep the existing queued worker; if it died, retry the SAME revision.
+    if(cur&&JSON.stringify(cur.state)===raw){
+      const confirmed=skyjoFirebaseConfirmedRev.has(rc)&&skyjoFirebaseConfirmedRev.get(rc)>=curRev;
+      if(!confirmed&&!skyjoFirebaseLatestOp.has(rc)&&!skyjoFirebaseWorkers.has(rc))
+        queueSkyjoFirebaseOp(rc,{type:"set",payload:{
+          code:rc,rev:curRev,state:cur.state,
+          updatedAtMs:cur.updatedAtMs||0,ts:cur.updatedAtMs||Date.now()
+        }});
       return {ok:true,code:rc,rev:curRev,updatedAtMs:cur.updatedAtMs||0,
-        source:"firestore-synced",firebaseQueued:false,unchanged:true};
+        source:confirmed?"firestore-synced":"memory-pending",
+        firebaseQueued:!confirmed,unchanged:true};
+    }
     const rev=curRev+1, updatedAtMs=Date.now();
     const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
     // RAM is authoritative while the process is alive; disk is an immediate local fallback.
@@ -4066,12 +4074,20 @@ async function writeBusinessPersisted(code,state,baseRev){
   return withBusinessWriteLock(rc,async()=>{
     const cur=await readBusinessPersisted(rc),curRev=Number(cur?.rev||0)||0;
     if(baseRev!=null && Number(baseRev)!==curRev)return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
-    // Only a previously Firebase-acknowledged identical state can skip a write.
-    // Pending or failed Firestore writes must still be retried normally.
-    if(cur&&businessFirebaseConfirmedRev.has(rc)&&businessFirebaseConfirmedRev.get(rc)>=curRev&&
-       JSON.stringify(cur.state)===raw)
+    // A repeated state is never a new business turn. Do not inflate the
+    // revision during slow Firestore acknowledgements; retry that same
+    // revision only if the persistence worker and queue are both absent.
+    if(cur&&JSON.stringify(cur.state)===raw){
+      const confirmed=businessFirebaseConfirmedRev.has(rc)&&businessFirebaseConfirmedRev.get(rc)>=curRev;
+      if(!confirmed&&!businessFirebaseLatestOp.has(rc)&&!businessFirebaseWorkers.has(rc))
+        queueBusinessFirebaseOp(rc,{type:"set",payload:{
+          code:rc,rev:curRev,state:cur.state,
+          updatedAtMs:cur.updatedAtMs||0,ts:cur.updatedAtMs||Date.now()
+        }});
       return {ok:true,code:rc,rev:curRev,updatedAtMs:cur.updatedAtMs||0,
-        source:"firestore-synced",firebaseQueued:false,unchanged:true};
+        source:confirmed?"firestore-synced":"memory-pending",
+        firebaseQueued:!confirmed,unchanged:true};
+    }
     const rev=curRev+1,updatedAtMs=Date.now();
     const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
     businessMissingUntil.delete(rc);cacheBusinessPayload(payload,"memory");
