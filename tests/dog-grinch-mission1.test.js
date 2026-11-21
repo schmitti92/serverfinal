@@ -31,7 +31,7 @@ function makeHarness(){
   use:(path,handler)=>middleware.push({path,handler})
  };
  installSharedLobby(app,{verifyProfile:async token=>people[token]||null,
-  getFirestore:()=>store,clock:()=>1700000000000,codeGenerator:()=> '123'});
+  getFirestore:()=>store,clock:()=>1700000000000,codeGenerator:()=> '123',grinchOnlineEnabled:true});
  function routeMatches(template,path){
   const a=template.split('/'),b=path.split('/');
   return a.length===b.length&&a.every((p,i)=>p.startsWith(':')||p===b[i]);
