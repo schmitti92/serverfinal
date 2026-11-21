@@ -1,0 +1,31 @@
+name: DOG Three Real Online Players
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/engine.js'
+      - 'dog/lobby-colors.js'
+      - 'tests/shared-lobby.test.js'
+      - 'tests/dog-lobby-colors.test.js'
+      - 'tests/dog-engine.test.js'
+      - '.github/workflows/dog-three-online-players.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  three-player-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check server-side DOG rules and seat selection
+        run: node --test tests/dog-engine.test.js tests/dog-lobby-colors.test.js
+      - name: Simulate three verified online players plus one server bot
+        run: node --test --test-name-pattern='DOG three distinct online profiles' tests/shared-lobby.test.js
