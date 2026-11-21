@@ -3277,6 +3277,9 @@ function initFirebaseIfConfigured() {
    return "";
  }
  async function recordRollStat(room, color, value){
+   // New games store exact roll totals in the authoritative durable room.
+   // Older running games keep their existing per-roll booking semantics.
+   if(room?.state?.matchTrack?.deferLegacyRollStats===true)return;
    const name = getPlayerNameByColor(room, color);
    if(isGuestName(name)) return;
    await statsUpsert(name, { rollCount: 1, rollSum: Number(value)||0 });
@@ -3429,6 +3432,52 @@ const c=String(mt.turnColor||room.state?.turnColor||'').toLowerCase();
  }
  // --------------------------------------------------------------------------
 
+// Lifetime counters are committed once per completed match; the recorded
+// match ID prevents duplicate credits after reconnect/retry/restart.
+async function bookBarikadeLifetimeStats(room,patches){
+ try{
+   initFirebaseIfConfigured();
+   if(!firestore)return false;
+   const matchId=String(room?.state?.matchId||
+     (String(room?.code||'')+':'+String(room?.state?.startedAt||'')));
+   if(!matchId||matchId===':')return false;
+   const combined=new Map();
+   for(const {name,patch} of patches){
+     const display=normName(name);
+     if(!display||isGuestName(display))continue;
+     const id=statsDocId(display),item=combined.get(id)||{name:display,patch:{}};
+     for(const [key,value] of Object.entries(patch))
+       if(Number.isFinite(value))item.patch[key]=(item.patch[key]||0)+value;
+     combined.set(id,item);
+   }
+   const entries=[...combined].map(([id,value])=>({
+     ref:firestore.collection(STATS_COLLECTION).doc(id),...value
+   }));
+   if(!entries.length)return true;
+   await firestore.runTransaction(async tx=>{
+     const snaps=await Promise.all(entries.map(e=>tx.get(e.ref)));
+     entries.forEach((entry,i)=>{
+       const old=snaps[i].exists?snaps[i].data()||{}:{};
+       const booked=Array.isArray(old.barikadeBookedMatchIds)?
+         old.barikadeBookedMatchIds.filter(x=>typeof x==='string').slice(-39):[];
+       if(booked.includes(matchId))return;
+       const next={...old,name:entry.name};
+       for(const key of ['games','wins','forfeits','rollCount','rollSum','playMs']){
+         const past=Number.isFinite(old[key])?old[key]:0;
+         next[key]=past+(Number.isFinite(entry.patch[key])?entry.patch[key]:0);
+       }
+       next.barikadeBookedMatchIds=[...booked,matchId];
+       next.updatedAt=Date.now();
+       tx.set(entry.ref,next,{merge:true});
+     });
+   });
+   return true;
+ }catch(e){
+   console.warn('[stats] completed match booking failed:',e?.message||e);
+   return false;
+ }
+}
+
 async function finalizeMatchStats(room, winnerColor, opts={}){
    try{
      if(!room?.state) return;
@@ -3444,34 +3493,26 @@ async function finalizeMatchStats(room, winnerColor, opts={}){
          }catch(e){console.warn('[v8/barikade] booking delayed:',e?.message||e);}
        }
      }
-     if(room.state.statsFinalized) return;
-     room.state.statsFinalized = true;
-
-     const startedAt = Number(room.state.startedAt || 0) || 0;
-     const finishedAt = Number(room.state.finishedAt || Date.now()) || Date.now();
-     const playMs = Math.max(0, finishedAt - startedAt);
-
-     const active = Array.isArray(room.state.activeColors) && room.state.activeColors.length ? room.state.activeColors : ALLOWED_COLORS;
-     const winner = String(winnerColor||"").toLowerCase();
-
-     for(const c of active){
-       const name = getPlayerNameByColor(room, c);
-       if(isGuestName(name)) continue;
-       await statsUpsert(name, { games: 1, playMs });
-     }
-
-     const wName = getPlayerNameByColor(room, winner);
-     if(!isGuestName(wName)){
-       await statsUpsert(wName, { wins: 1 });
-     }
-
-     const forfeiter = String(opts.forfeiterColor||"").toLowerCase();
-     if(forfeiter){
-       const fName = getPlayerNameByColor(room, forfeiter);
-       if(!isGuestName(fName)){
-         await statsUpsert(fName, { forfeits: 1 });
-       }
-     }
+     if(room.state.statsFinalized)return;
+     const startedAt=Number(room.state.startedAt||0)||0;
+     const finishedAt=Number(room.state.finishedAt||Date.now())||Date.now();
+     const playMs=Math.max(0,finishedAt-startedAt);
+     const active=Array.isArray(room.state.activeColors)&&room.state.activeColors.length?
+       room.state.activeColors:ALLOWED_COLORS;
+     const winner=String(winnerColor||'').toLowerCase();
+     const forfeiter=String(opts.forfeiterColor||room.state.forfeiterColor||'').toLowerCase();
+     const deferred=room.state.matchTrack?.deferLegacyRollStats===true;
+     const rows=deferred?matchRows(room):[];
+     const patches=active.map(color=>{
+       const name=getPlayerNameByColor(room,color);
+       const row=rows.find(r=>r.color===String(color).toLowerCase());
+       return {name,patch:{
+         games:1,playMs,wins:color===winner?1:0,forfeits:color===forfeiter?1:0,
+         ...(deferred?{rollCount:Number(row?.rollCount)||0,rollSum:Number(row?.rollSum)||0}:{})
+       }};
+     });
+     // Only mark finalized after the entire Firebase transaction succeeds.
+     if(await bookBarikadeLifetimeStats(room,patches))room.state.statsFinalized=true;
    }catch(e){
      console.warn("[stats] finalize failed:", e?.message||e);
    }
@@ -5766,7 +5807,7 @@ paused: false,
       for(const c of active){
         perColor[c]=blankMatchRow(c,getPlayerNameByColor(room,c)||c);
       }
-      return {perColor,turnStartedAt:Date.now(),turnColor:String(turnColor||'').toLowerCase()};
+      return {perColor,turnStartedAt:Date.now(),turnColor:String(turnColor||'').toLowerCase(),deferLegacyRollStats:true};
     })(),
   };
 
@@ -6220,7 +6261,7 @@ try{
       broadcast(room, roomUpdatePayload(room));
 
 
-      if (room.state?.finished&&!room.state?.profileStatsFinalizedV8){
+      if (room.state?.finished&&(!room.state.profileStatsFinalizedV8||!room.state.statsFinalized)){
         await finalizeMatchStats(room,room.state.winnerColor);
       }
       if (room.state) send(ws, { type: "snapshot", state: room.state });
