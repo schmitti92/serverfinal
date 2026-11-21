@@ -715,7 +715,7 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // request fields never override the public shop price.
  if(editionPrice!==null&&(!Number.isSafeInteger(editionPrice)||editionPrice<0||editionPrice>1000000))
   throw Error('SCRATCH_EDITION_PRICE_INVALID');
- const safeDiscount=Number.isInteger(discountPercent)?Math.max(0,Math.min(20,discountPercent)):0;
+ const safeDiscount=Number.isInteger(discountPercent)?Math.max(0,Math.min(40,discountPercent)):0;
  const facePrice=editionPrice===null?ticketPrice:editionPrice;
  const price=free||voucher?0:Math.max(0,Math.ceil(facePrice*(100-safeDiscount)/100));
  if(w.coins<price)throw Error('SCRATCH_NOT_ENOUGH_COINS');
