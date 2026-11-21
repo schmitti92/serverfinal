@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
  DOG_RESEARCH_SKILLS,dogResearchEarned,dogResearchStatus,dogResearchUpgrade,
- dogResearchCost,dogResearchSkill,dogResearchPityThreshold,dogResearchTicketMs
+ dogResearchCost,dogResearchSkill,dogResearchLevel,dogResearchPityThreshold,dogResearchTicketMs
 } from '../dog/christmas-research.js';
 import {creditDogMatchXp,DOG_LEVEL_THRESHOLDS} from '../dog/player-levels.js';
 import {createGame,researchSwapCard} from '../dog/engine.js';
@@ -26,7 +26,13 @@ test('specified one-off costs and caps',()=>{
  assert.equal(dogResearchSkill('coin_bonus').maxLevel,10);
  assert.equal(dogResearchSkill('builder').maxLevel,3);
  assert.equal(dogResearchSkill('thaw').maxLevel,2);
- assert.ok(DOG_RESEARCH_SKILLS.length>=20);
+ assert.equal(DOG_RESEARCH_SKILLS.length,12);
+ const wanted=['card_swap','thaw','xp','win_xp','discount','coin_bonus',
+  'pity','free_ticket','spot_ticket','spot_light','lights_bonus','builder'];
+ assert.deepEqual(DOG_RESEARCH_SKILLS.map(s=>s.id),wanted);
+ assert.equal(dogResearchSkill('future_sight'),undefined);
+ assert.equal(dogResearchSkill('fog_lantern'),undefined);
+ assert.equal(dogResearchSkill('grinch_compass'),undefined);
 });
 test('purchases are server-checked and can never spend more than earned',()=>{
  const lvl5=xpForLevel(5);
@@ -34,7 +40,7 @@ test('purchases are server-checked and can never spend more than earned',()=>{
  progress=dogResearchUpgrade(progress,lvl5,'xp',1200);
  assert.equal(dogResearchStatus(progress,lvl5).available,4);
  assert.equal(dogResearchStatus(progress,lvl5).levels.xp,1);
- assert.throws(()=>dogResearchUpgrade(progress,lvl5,'card_swap'),/RESEARCH_NOT_READY/);
+ assert.throws(()=>dogResearchUpgrade(progress,lvl5,'future_sight'),/RESEARCH_UNKNOWN/);
  assert.throws(()=>dogResearchUpgrade(progress,xpForLevel(1),'win_xp'),/RESEARCH_NOT_ENOUGH_POINTS/);
  let max={};
  for(let n=0;n<10;n++)max=dogResearchUpgrade(max,xpForLevel(50),'xp',1300+n);
@@ -76,4 +82,25 @@ test('one-time magic redraw changes only the owner's hand and preserves all 110 
  assert.equal(new Set(all.map(x=>x.id)).size,110);
  assert.throws(()=>researchSwapCard(next,0,next.hands[0][0].id),/RESEARCH_SWAP_ALREADY_USED/);
  assert.equal(game.researchSwapped,undefined,'pure reducer must not mutate prior state');
+});
+
+test('legacy purchased talents are not visible, active or billed after removal',()=>{
+ const xp=xpForLevel(20);
+ const old={levels:{future_sight:3,fog_lantern:2,effort:3,
+  card_swap:1,xp:2,advent:1,gift_magnet:3}};
+ const current=dogResearchStatus(old,xp);
+ assert.deepEqual(Object.keys(current.levels),DOG_RESEARCH_SKILLS.map(s=>s.id));
+ assert.equal(current.levels.card_swap,1);
+ assert.equal(current.levels.xp,2);
+ assert.equal(current.spent,7);
+ assert.equal(dogResearchCost(dogResearchSkill('card_swap'),1),5);
+ assert.equal(dogResearchSkill('thaw').maxLevel,2);
+ assert.equal(dogResearchSkill('xp').steps,'Je Stufe +10 %, maximal +100 %');
+ assert.equal(dogResearchSkill('win_xp').steps,'Je Stufe +30 % auf Sieger-XP, maximal +300 %');
+ assert.equal(dogResearchSkill('discount').steps,'Je Stufe 2 %, maximal 20 %');
+ assert.equal(dogResearchSkill('coin_bonus').steps,'Je Stufe +2 %, maximal +20 %');
+ for(const id of ['future_sight','fog_lantern','grinch_compass','daily_xp','mission_xp','effort','gift_magnet','elf_luck','advent']){
+  assert.equal(dogResearchLevel(old,id),0,id+' must have no effect');
+  assert.throws(()=>dogResearchUpgrade(old,xp,id),/RESEARCH_UNKNOWN/);
+ }
 });
