@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'dog/christmas-scratch.js'
+      - 'shared-lobby.js'
       - 'tests/dog-christmas-scratch.test.js'
       - 'tests/dog-christmas-scratch-settings.test.js'
       - '.github/workflows/dog-scratch-no-freebies.yml'
@@ -17,4 +18,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog/christmas-scratch.js
-      - run: node --test --test-name-pattern='daily and unlimited complimentary|global free mode stays disabled|earned DOG field tickets enter' tests/dog-christmas-scratch.test.js tests/dog-christmas-scratch-settings.test.js
+      - run: node --test --test-name-pattern='daily and unlimited complimentary|global free mode stays disabled|earned DOG field tickets enter|free scratch requests are rejected in the hub' tests/dog-christmas-scratch.test.js tests/dog-christmas-scratch-settings.test.js
