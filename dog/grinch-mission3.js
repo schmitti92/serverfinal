@@ -77,7 +77,7 @@ function knockBack(s,pawn,rng,requestedSteps=null){
  const original=pawn.pos,steps=requestedSteps??(2+Math.floor(rng()*5));
  // Keep the official board free from overlapping pieces after a curse.
  const candidates=[steps,...[2,3,4,5,6].filter(x=>x!==steps)];
- const picked=candidates.find(amount=>!onField(s,mod(original-amount),pawn.id));
+ const picked=candidates.find(amount=>!onField(s,mod(original-amount),pawn.id)&&!s.tasks?.activeFields.includes(mod(original-amount)));
  if(picked===undefined)return null;
  pawn.pos=mod(original-picked);
  return picked;
@@ -283,7 +283,8 @@ function sevenOptions(s,seat,remaining,cardId){
  for(const p of owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0&&(seat!==3||!s.grinchUsed.includes(p.id)))){
   for(let distance=1;distance<=remaining;distance++){
    const route=path(s,p,distance,true);
-   if(route)result.push({kind:'seven',pieceId:p.id,cardId,as:'7',distance,to:route.to,captureIds:route.captureIds});
+   if(route&&(seat!==3||!s.tasks?.activeFields.includes(route.to)))
+    result.push({kind:'seven',pieceId:p.id,cardId,as:'7',distance,to:route.to,captureIds:route.captureIds});
   }
  }
  return result;
@@ -301,7 +302,7 @@ function canFinishSeven(s,seat,left,cardId,seen=new Set()){
  return false;
 }
 export function mission3LegalMoves(s,seat=s?.current){
- if(!s||seat!==s.current||!Number.isInteger(seat)||seat<0||seat>3)return [];
+ if(!s||s.complete||seat!==s.current||!Number.isInteger(seat)||seat<0||seat>3)return [];
  const hand=s.hands[seat],pending=s.seven;
  const result=[];
  for(const card of hand){
@@ -330,6 +331,7 @@ export function mission3LegalMoves(s,seat=s?.current){
       (seat===MISSION3_GRINCH||p.owner!==MISSION3_GRINCH));
     let total=0;
     for(const a of sources)for(const b of targets){
+     if(seat===3&&s.tasks?.activeFields.includes(b.pos))continue;
      total++;result.push({kind:'swap',cardId:card.id,as,pieceId:a.id,targetId:b.id});
     }
     if(!total)result.push({kind:'emptySwap',cardId:card.id,as});
@@ -338,7 +340,8 @@ export function mission3LegalMoves(s,seat=s?.current){
    for(const distance of cardSteps(as))for(const p of owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0)){
     if(seat===MISSION3_GRINCH&&s.grinchUsed.includes(p.id))continue;
     const r=path(s,p,distance);
-    if(r)result.push({kind:'move',cardId:card.id,as,pieceId:p.id,distance,to:r.to,captureIds:r.captureIds});
+    if(r&&(seat!==3||!s.tasks?.activeFields.includes(r.to)))
+     result.push({kind:'move',cardId:card.id,as,pieceId:p.id,distance,to:r.to,captureIds:r.captureIds});
    }
   }
  }
@@ -363,6 +366,7 @@ function advance(s,spentCard=true){
  s.turn++;
 }
 function settle(s){
+ if(s.complete)return;
  for(let guard=0;guard<360;guard++){
   if(s.hands.every(h=>h.length===0)){endPhase(s);deal(s);continue;}
   if(s.seven)return;
