@@ -1706,12 +1706,36 @@ function finishEisstock(ch,members){
         if(m.grinchRoster.length!==3||new Set(m.grinchRoster.map(p=>p.uid)).size!==3)
           throw error(409,'GRINCH_ROSTER_INVALID');
         const refs=m.grinchRoster.map(p=>store.collection(GRINCH_PROGRESS_COLLECTION).doc(p.uid));
-        const snaps=await Promise.all(refs.map(ref=>tx.get(ref)));
-        const completedAt=clock();
+        const researchRefs=m.grinchRoster.map(p=>store.collection(DOG_RESEARCH_COLLECTION).doc(p.uid));
+        const statsRefs=m.grinchRoster.map(p=>store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid));
+        const walletRefs=m.grinchRoster.map(p=>store.collection(DOG_SCRATCH_COLLECTION).doc(p.uid));
+        // Read everything before the first Firestore write, including level XP.
+        const [snaps,researchSnaps,statsSnaps,walletSnaps]=await Promise.all([
+          Promise.all(refs.map(ref=>tx.get(ref))),
+          Promise.all(researchRefs.map(ref=>tx.get(ref))),
+          Promise.all(statsRefs.map(ref=>tx.get(ref))),
+          Promise.all(walletRefs.map(ref=>tx.get(ref)))
+        ]);
+        const completedAt=clock(),missionNumber=m.game==='dog-grinch2'?2:1;
         m.grinchRoster.forEach((player,i)=>{
           const prior=snaps[i].exists?snaps[i].data():{};
-          const missionNumber=m.game==='dog-grinch2'?2:1;
           const completed=[...new Set([...(Array.isArray(prior.completedMissions)?prior.completedMissions:[]),missionNumber])];
+          const firstTime=!prior.completedMissions?.includes(missionNumber);
+          if(firstTime){
+            const research=researchSnaps[i].exists?researchSnaps[i].data():null;
+            const rank=dogResearchLevel(research,'mission_xp');
+            const xpGain=100+rank*5;
+            const old=statsSnaps[i].exists?statsSnaps[i].data():{};
+            const total=Number.isSafeInteger(old.xp)?old.xp:0;
+            tx.set(statsRefs[i],{...old,xp:Math.min(1000000000,total+xpGain),
+              lastEarnedXp:xpGain,researchLastMission:missionNumber,updatedAt:completedAt});
+            const advent=dogResearchLevel(research,'advent');
+            if(advent){
+              let wallet=walletSnaps[i].exists?walletSnaps[i].data():null;
+              for(let n=0;n<advent;n++)wallet=grantDogScratchVoucher(wallet,'simple');
+              tx.set(walletRefs[i],wallet);
+            }
+          }
           tx.set(refs[i],{
             uid:player.uid,name:player.name,
             completedMissions:completed,highestUnlocked:Math.max(m.game==='dog-grinch2'?3:2,Number(prior.highestUnlocked)||1),
