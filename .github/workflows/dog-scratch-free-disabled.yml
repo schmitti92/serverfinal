@@ -16,4 +16,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog/christmas-scratch-settings.js
-      - run: node --test tests/dog-christmas-scratch-settings.test.js tests/dog-christmas-scratch.test.js
+      - run: node --test --test-name-pattern="four scratch variants|global free mode|legacy host settings|global host scratch settings|earned DOG field tickets|one free simple ticket|paid ticket is atomic" tests/dog-christmas-scratch-settings.test.js tests/dog-christmas-scratch.test.js
