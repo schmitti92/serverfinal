@@ -106,6 +106,25 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     }));
   },60000);
   dogWriteLogTimer.unref?.();
+  // Count actual server GET attempts per DOG collection without extra
+  // database reads. This is not the same as Firebase's billed reads.
+  let lastDogReads=dogMetaReadCoordinator.stats();
+  const dogReadLogTimer=setInterval(()=>{
+    const current=dogMetaReadCoordinator.stats();
+    const physicalReads=current.documentReads-lastDogReads.documentReads;
+    const saved=current.cacheHits-lastDogReads.cacheHits;
+    if(physicalReads||saved){
+      const byCollection=Object.fromEntries(Object.entries(current.readsByCollection)
+       .map(([name,total])=>[name,total-(lastDogReads.readsByCollection?.[name]||0)])
+       .filter(([,count])=>count>0));
+      console.info('[dog-meta-reads/1min]',JSON.stringify({
+       physicalGetAttempts:physicalReads,cachedGetAvoided:saved,
+       byCollection,cachedDocuments:current.cached
+      }));
+    }
+    lastDogReads=current;
+  },60000);
+  dogReadLogTimer.unref?.();
   const readDogMeta=(store,ref)=>dogMetaReadCoordinator.read(store,ref);
   const christmasActive=()=>christmasEventActive()===true;
   const grinchActive=()=>grinchOnlineEnabled===true;
