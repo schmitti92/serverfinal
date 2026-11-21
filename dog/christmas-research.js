@@ -1,6 +1,7 @@
 /** Lichtertal Weihnachtsforschung – personal, server-owned progression.
- * Only entries with enabled:true can be purchased. Other ideas are previews,
- * not misleading charged upgrades. Never trust the browser for levels/points.
+ * Exactly the twelve approved abilities are registered and purchasable.
+ * Retired skill keys are ignored, making past spends automatically available
+ * again without destroying stored progress. Never trust browser balances.
  */
 import {dogLevelFromXp} from './player-levels.js';
 
@@ -9,15 +10,9 @@ const skill=(id,icon,name,category,maxLevel,description,steps,{enabled=false,onc
  Object.freeze({id,icon,name,category,maxLevel,description,steps,enabled,onceCost});
 export const DOG_RESEARCH_SKILLS=Object.freeze([
  skill('card_swap','🃏','Magischer Kartentausch','game',1,'Vor der Partnerübergabe einmal eine eigene Handkarte gegen eine zufällige neue tauschen.','Einmal pro Partie · 5 FP',{enabled:true,onceCost:5}),
- skill('future_sight','🔮','Blick in die Zukunft','game',3,'Die nächste Nachziehkarte nur für dich ansehen.','1 / 2 / 3 Einblicke je Partie',{enabled:true}),
  skill('thaw','🛡️','Weihnachtsschutz','game',2,'Im Grinch-Slot eingefrorene Figuren antippen und befreien – auch von Mitspielern.','1 / 2 Befreiungen je Mission',{enabled:true}),
- skill('fog_lantern','🏮','Magische Nebellaterne','game',3,'Einen aktiven Nebel in der Grinch-Mission nur für dich aufheben.','1 / 2 / 3 Anwendungen je Mission',{enabled:true}),
- skill('grinch_compass','🧭','Grinch-Kompass','game',3,'Zeigt dir privat, wie nahe eine verdeckte Grinch-Falle ist.','1 / 2 / 3 geheime Hinweise',{enabled:true}),
  skill('xp','📚','Wichtelwissen','xp',10,'Mehr Erfahrung nach jeder abgeschlossenen DOG-Partie.','Je Stufe +10 %, maximal +100 %',{enabled:true}),
  skill('win_xp','🏆','Siegerakademie','xp',10,'Mehr Erfahrung für gewonnene DOG-Partien.','Je Stufe +30 % auf Sieger-XP, maximal +300 %',{enabled:true}),
- skill('daily_xp','🌅','Weihnachtlicher Frühstart','xp',3,'Extra-Erfahrung für die erste abgeschlossene DOG-Partie des Tages.','+10 / +20 / +30 XP',{enabled:true}),
- skill('mission_xp','📜','Missionsforscher','xp',3,'Bonus-XP für den ersten bestätigten Abschluss einer Grinch-Mission.','+5 / +10 / +15 % Missions-XP',{enabled:true}),
- skill('effort','💪','Winterlicher Fleiß','xp',3,'Extra-Erfahrung für die dritte abgeschlossene DOG-Partie des Tages.','+10 / +20 / +30 XP',{enabled:true}),
  skill('discount','🎟️','Glückshaus-Rabatt','scratch',10,'Persönlicher Rabatt auf bezahlte Rubbellose, zusätzlich zum Dorf.','Je Stufe 2 %, maximal 20 %',{enabled:true}),
  skill('coin_bonus','💰','Goldene Gewinnforschung','scratch',10,'Zusätzliche Münzen bei Gewinn; getrennt vom Auflagenbudget.','Je Stufe +2 %, maximal +20 %',{enabled:true}),
  skill('pity','🍀','Trostengel','scratch',5,'Nach bezahlten Nieten erhältst du ein einfaches Gratislos.','9 / 8 / 7 / 6 / 5 Nieten',{enabled:true}),
@@ -25,10 +20,7 @@ export const DOG_RESEARCH_SKILLS=Object.freeze([
  skill('spot_ticket','🔍','Verborgener Losfinder','game',1,'Ein Losfeld ist zu Spielbeginn ausschließlich für dich sichtbar.','Eine geheime Feldmarkierung',{enabled:true,onceCost:3}),
  skill('spot_light','🌟','Lichtfeld-Entdecker','game',1,'Ein Lichtfeld ist zu Spielbeginn ausschließlich für dich sichtbar.','Eine geheime Feldmarkierung',{enabled:true,onceCost:3}),
  skill('lights_bonus','⭐','Sternensammler','village',10,'Bis zu 50 % mehr persönlich gesammelte Weihnachtslichter.','Je Stufe +5 %, maximal 50 %',{enabled:true}),
- skill('gift_magnet','🎁','Geschenkmagnet','village',3,'Chance auf ein zusätzliches Lichtgeschenk, wenn du ein Geschenk sammelst.','+2 / +4 / +6 % Chance',{enabled:true}),
- skill('elf_luck','🧝','Wichtelglück','village',3,'Chance auf einen einfachen Losgutschein bei gesammelten Geschenken.','+1 / +2 / +3 % Chance',{enabled:true}),
  skill('builder','🏗️','Weihnachtsbaumeister','village',3,'Alle zwei Stunden Lichter aktiv einsammeln, ohne Stapelung.','1 / 2 / 3 Lichter pro Abholung',{enabled:true}),
- skill('advent','🎁','Adventssegen','village',3,'Einfache Losgutscheine beim erstmaligen Abschluss jeder Grinch-Mission.','1 / 2 / 3 Gutscheine',{enabled:true})
 ]);
 export const dogResearchSkill=id=>DOG_RESEARCH_SKILLS.find(skill=>skill.id===id);
 export const dogResearchLevel=(raw,id)=>{
@@ -50,6 +42,8 @@ export function dogResearchCost(skill,targetLevel){
 }
 export function dogResearchStatus(raw,xp=0,now=Date.now()){
  const lvl=dogLevelFromXp(xp).level;
+ // Only the current twelve skills contribute to spent points. Old research
+ // entries are kept in storage for audit but never grant effects or charge FP.
  const levels=Object.fromEntries(DOG_RESEARCH_SKILLS.map(skill=>[skill.id,dogResearchLevel(raw,skill.id)]));
  const spent=DOG_RESEARCH_SKILLS.reduce((sum,skill)=>{
   const amount=levels[skill.id];
