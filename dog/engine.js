@@ -8,6 +8,9 @@ const startCards = new Set(['1/11','13']);
 const clone = value => JSON.parse(JSON.stringify(value));
 const mod = n => ((n%64)+64)%64;
 const opponentTeam = owner => owner%2;
+const activeSeats=s=>s.players.filter(p=>!p.inactive).map(p=>p.seat);
+const soloThree=s=>s.mode==='solo3';
+const nextSeat=(s,seat)=>{for(let n=1;n<=4;n++){const next=(seat+n)%4;if(!s.players[next].inactive)return next;}throw Error('NO_ACTIVE_SEAT');};
 export function makeDeck(){
   const cards=[];let id=0;
   for(const type of CARD_TYPES) for(let n=0;n<(type==='joker'?6:8);n++)cards.push({id:++id,type});
@@ -20,7 +23,7 @@ function shuffle(list,rng=Math.random){
   return a;
 }
 function allInGoal(s,seat){return s.pieces.filter(x=>x.owner===seat).every(x=>x.place==='goal');}
-function moverOwner(s,seat){return allInGoal(s,seat)?(seat+2)%4:seat;}
+function moverOwner(s,seat){return soloThree(s)?seat:allInGoal(s,seat)?(seat+2)%4:seat;}
 function pieceAt(s,space,except){
   return s.pieces.find(p=>p.id!==except && p.place===space.place && p.pos===space.pos && (space.place!=='goal'||p.owner===space.owner));
 }
@@ -76,18 +79,27 @@ export function createGame(options={}){
   const rng=options.rng||Math.random;
   const names=Array.isArray(options.names)?options.names:['Du','Blau','Grün','Gelb'];
   const bots=Array.isArray(options.bots)?options.bots:[false,true,true,true];
-  const s={schemaVersion:1,ruleset:RULESET.id,phase:'exchange',round:0,revision:0,starter:0,current:0,players:Array.from({length:4},(_,seat)=>({seat,name:String(names[seat]||'Spieler '+(seat+1)).slice(0,25),bot:!!bots[seat],team:seat%2})),pieces:Array.from({length:16},(_,i)=>({id:i,owner:Math.floor(i/4),place:'home',pos:-1})),hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,winner:null,history:[]};
+  const missing=Array.isArray(options.inactiveSeats)?options.inactiveSeats:[];
+  if(missing.length!==0&&(missing.length!==1||!Number.isInteger(missing[0])||missing[0]<0||missing[0]>3))throw Error('INVALID_INACTIVE_SEATS');
+  const mode=missing.length===1?'solo3':'teams4';
+  const players=Array.from({length:4},(_,seat)=>({seat,
+    name:missing.includes(seat)?'Freier Platz':String(names[seat]||'Spieler '+(seat+1)).slice(0,25),
+    bot:!missing.includes(seat)&&!!bots[seat],inactive:missing.includes(seat),team:mode==='solo3'?seat:seat%2}));
+  const s={schemaVersion:1,ruleset:RULESET.id,mode,phase:'exchange',round:0,revision:0,starter:0,current:0,players,
+    pieces:Array.from({length:16},(_,i)=>({id:i,owner:Math.floor(i/4),place:'home',pos:-1})).filter(p=>!players[p.owner].inactive),
+    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,winner:null,history:[]};
   deal(s,rng);return s;
 }
 function history(s,text){s.history.unshift(text);s.history.length=Math.min(s.history.length,12);}
 function deal(s,rng){
   s.round++;
   const count=[6,5,4,3,2][(s.round-1)%5];
-  s.starter=(s.round-1)%4;s.current=s.starter;s.phase='exchange';
-  s.exchanges=[null,null,null,null];
+  const seats=activeSeats(s);
+  s.starter=seats[(s.round-1)%seats.length];s.current=s.starter;s.phase='exchange';
+  s.exchanges=s.players.map(p=>p.inactive?true:null);
   s.seven=null;
   s.hands=[[],[],[],[]];
-  for(let n=0;n<count;n++)for(let seat=0;seat<4;seat++){
+  for(let n=0;n<count;n++)for(const seat of seats){
     if(s.deck.length===0)s.deck=shuffle(s.discard.splice(0),rng);
     if(s.deck.length===0)throw Error('NO_CARDS');
     s.hands[seat].push(s.deck.pop());
@@ -122,9 +134,9 @@ export function exchangeCard(original,seat,cardId,rng=Math.random){
   if(at<0)throw Error('CARD_NOT_HELD');
   s.exchanges[seat]=hand.splice(at,1)[0];
   if(s.exchanges.every(Boolean)){
-    for(let i=0;i<4;i++)s.hands[(i+2)%4].push(s.exchanges[i]);
-    s.exchanges=[null,null,null,null];s.phase='play';s.current=s.starter;
-    history(s,'Alle Partnerkarten wurden verdeckt getauscht');
+    for(const i of activeSeats(s))s.hands[soloThree(s)?nextSeat(s,i):(i+2)%4].push(s.exchanges[i]);
+    s.exchanges=s.players.map(p=>p.inactive?true:null);s.phase='play';s.current=s.starter;
+    history(s,soloThree(s)?'Alle Karten wurden verdeckt im Uhrzeigersinn weitergegeben':'Alle Partnerkarten wurden verdeckt getauscht');
     settle(s,rng);
   }
   s.revision++;return s;
@@ -198,6 +210,7 @@ function winningSevenMoves(s,seat,left){
   return good;
 }
 export function legalActions(s,seat=s.current){
+  if(!s.players[seat]||s.players[seat].inactive)return [];
   if(s.phase==='exchange')return s.exchanges[seat]===null?s.hands[seat].map(c=>({type:'exchange',cardId:c.id})): [];
   if(s.phase==='seven'){
     if(s.current!==seat)return [];
@@ -213,6 +226,15 @@ export function legalActions(s,seat=s.current){
   return list;
 }
 function finishIfWon(s){
+  if(soloThree(s)){
+    for(const seat of activeSeats(s)){
+      if(s.pieces.filter(p=>p.owner===seat).every(p=>p.place==='goal')){
+        s.winner=seat;s.phase='finished';history(s,s.players[seat].name+' gewinnt die Dreierpartie!');
+        return true;
+      }
+    }
+    return false;
+  }
   for(const team of [0,1]){
     if(s.pieces.filter(p=>p.owner%2===team).every(p=>p.place==='goal')){
       s.winner=team;s.phase='finished';history(s,'Team '+(team===0?'Rot/Grün':'Blau/Gelb')+' gewinnt!');
@@ -226,12 +248,12 @@ function settle(s,rng=Math.random){
   let guard=0;
   while(s.phase==='play'&&++guard<30){
     if(s.hands.every(h=>h.length===0)){deal(s,rng);return;}
-    if(s.hands[s.current].length===0){s.current=(s.current+1)%4;continue;}
+    if(s.hands[s.current].length===0){s.current=nextSeat(s,s.current);continue;}
     const acts=legalActions(s,s.current);
     if(acts.length)break;
     s.discard.push(...s.hands[s.current].splice(0));
     history(s,s.players[s.current].name+' kann nicht ziehen und legt die Hand ab');
-    s.current=(s.current+1)%4;
+    s.current=nextSeat(s,s.current);
   }
   if(guard>=30)throw Error('TURN_LOOP');
 }
@@ -251,7 +273,7 @@ export function takeAction(original,seat,action,rng=Math.random){
     history(s,s.players[seat].name+' teilt die 7: '+action.steps+' Felder');
     if(s.seven.spent===7){
       discardCard(s,seat,s.seven.cardId);s.seven=null;
-      s.phase='play';s.current=(seat+1)%4;settle(s,rng);
+      s.phase='play';s.current=nextSeat(s,seat);settle(s,rng);
     }
   }else if(action.type==='seven'){
     s.phase='seven';s.seven={cardId:action.cardId,spent:0,snapshot:clone(s.pieces)};
