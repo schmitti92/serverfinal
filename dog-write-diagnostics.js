@@ -17,6 +17,7 @@ export function createDogWriteDiagnostics({clock=Date.now,windowMs=DOG_WRITE_DIA
   // Transaction-local paths are never included in public diagnostics or logs.
   // They are used only after commit to evict the exact affected read caches.
   const writePaths=new Set();
+  let pathsComplete=true;
   const tracked=new Proxy(tx,{get(target,property){
    const value=Reflect.get(target,property,target);
    if(typeof value!=='function')return value;
@@ -25,11 +26,12 @@ export function createDogWriteDiagnostics({clock=Date.now,windowMs=DOG_WRITE_DIA
      const collection=collectionName(args[0]);
      writes[collection]=(writes[collection]||0)+1;
      if(typeof args[0]?.path==='string'&&args[0].path.includes('/'))writePaths.add(args[0].path);
+     else pathsComplete=false;
      return value.apply(target,args);
     };
    return value.bind(target);
   }});
-  return {tx:tracked,counts:()=>({...writes}),paths:()=>[...writePaths]};
+  return {tx:tracked,counts:()=>({...writes}),paths:()=>pathsComplete?[...writePaths]:null};
  }
  function record(kind,counts={},changed=true){
   const minute=Math.floor(clock()/60000),key=String(kind||'dog-other');
