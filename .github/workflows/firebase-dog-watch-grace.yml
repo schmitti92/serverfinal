@@ -1,0 +1,22 @@
+name: Firebase DOG listener reuse regression
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/firebase-dog-watch-grace-offline.test.js'
+      - '.github/workflows/firebase-dog-watch-grace.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  watch-reuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js
+      - run: node --test tests/firebase-dog-watch-grace-offline.test.js tests/firebase-dog-leaderboard-shared-reads-offline.test.js tests/dog-meta-write-policy.test.js
