@@ -11,7 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createDogSharedReadCoordinator} from './dog-shared-read-coordinator.js';
-import {dogMetadataWasWritten} from './dog-meta-write-policy.js';
+import {dogMetadataWasWritten,dogWrittenMetadataPaths} from './dog-meta-write-policy.js';
 import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
@@ -952,7 +952,7 @@ function finishEisstock(ch,members){
     const ref=documentFor(store,code);
     // The transaction result carries its own committed-write flag: retries
     // cannot leak a previous attempt's decision into cache invalidation.
-    const {value,changed,revision,dogWriteKind,writeCounts,dogAutoNoop}=await store.runTransaction(async tx=>{
+    const {value,changed,revision,dogWriteKind,writeCounts,writePaths,dogAutoNoop}=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const game=room.match?.game||room.game;
@@ -984,11 +984,11 @@ function finishEisstock(ch,members){
       }
       if(result?.remove){
         writeTx.delete(ref);
-        return {value:result.value,changed:true,dogWriteKind,writeCounts:tracked?.counts()};
+        return {value:result.value,changed:true,dogWriteKind,writeCounts:tracked?.counts(),writePaths:tracked?.paths()};
       }
       if(result?.unchanged)
         return {value:expose(room,identity),changed:false,revision:room.revision,
-          dogWriteKind,writeCounts:tracked?.counts()};
+          dogWriteKind,writeCounts:tracked?.counts(),writePaths:tracked?.paths()};
       // A legacy/optional DOG command can also silently leave the room
       // unchanged. Never bill a full hub-document write for that no-op.
       // Do NOT suppress a transaction that explicitly awarded another
@@ -996,12 +996,12 @@ function finishEisstock(ch,members){
       if(dogBefore!==null && dogBefore===JSON.stringify(room) &&
          Object.keys(tracked?.counts()||{}).length===0)
         return {value:expose(room,identity),changed:false,revision:room.revision,
-          dogWriteKind,writeCounts:{},dogAutoNoop:true};
+          dogWriteKind,writeCounts:{},writePaths:[],dogAutoNoop:true};
       room.revision=(Number(room.revision)||0)+1;
       room.updatedAt=clock();room.expiresAt=clock()+TTL_MS;
       writeTx.set(ref,room);
       return {value:expose(room,identity),changed:true,
-        dogWriteKind,writeCounts:tracked?.counts()};
+        dogWriteKind,writeCounts:tracked?.counts(),writePaths:tracked?.paths()};
     });
     if(dogWriteKind)dogWriteDiagnostics.record(dogWriteKind,writeCounts,changed);
     // A committed DOG action requires one authoritative Firestore room write;
@@ -1014,8 +1014,13 @@ function finishEisstock(ch,members){
     // action changed a wallet, village, research record or player statistics.
     // Normal moves only save the room document and must preserve the 30s
     // read cache. Firestore authorization/move checks are not cached.
-    if(dogMetadataWasWritten(dogWriteKind,writeCounts,COLLECTION))
-      dogMetaReadCoordinator.invalidate();
+    if(dogMetadataWasWritten(dogWriteKind,writeCounts,COLLECTION)){
+      const paths=dogWrittenMetadataPaths(dogWriteKind,writePaths,COLLECTION);
+      // Paths come ONLY from the committed transaction's tracked writes.
+      // Missing path evidence must retain the original full-flush behavior.
+      if(paths===null)dogMetaReadCoordinator.invalidate();
+      else for(const path of paths)dogMetaReadCoordinator.invalidate(path);
+    }
     if(dogAutoNoop)hubMutationReadCacheStats.dogAutoNoops++;
     // Only an actual committed room write/delete supersedes any earlier
     // Firestore stream or completion preflight. No-op requests still read
