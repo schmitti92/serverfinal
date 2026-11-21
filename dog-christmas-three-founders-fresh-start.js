@@ -161,7 +161,7 @@ export async function resetThreeFoundersChristmasOnce(db,{
      resetId:FRESH_START_ID,sourcePath:path,savedAt:now,data:grantSnaps[i].data()
     });archived++;
    }
-   tx.set(grants[i],{uid:accounts[i].uid,displayName:accounts[i].data.name,
+   tx.set(grants[i],{uid:accounts[i].uid,displayName:profileSnaps[i].data().name,
     access:true,firstVisit:true,resetId:FRESH_START_ID,issuedAt:now});
   }
   for(let i=0;i<roomSnaps.length;i++){
