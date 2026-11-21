@@ -399,11 +399,14 @@ export function mission3Play(original,seat,action){
   pawn.place='track';pawn.pos=MISSION3_STARTS[seat];
  }else if(chosen.kind==='move'||chosen.kind==='seven'){
   applyMovement(s,chosen.pieceId,chosen.distance,chosen.kind==='seven');
+  // EXACT landing with a movement card (including a partial seven), never
+  // merely passing a marker or swapping two pawns.
+  if(seat!==3)mission3OnLanding(s,s.pieces.find(p=>p.id===chosen.pieceId));
  }else if(chosen.kind==='swap'){
   const pawn=s.pieces.find(p=>p.id===chosen.pieceId),other=s.pieces.find(p=>p.id===chosen.targetId);
   const temp=pawn.pos;pawn.pos=other.pos;other.pos=temp;
  }
- if(chosen.kind==='seven'){
+ if(chosen.kind==='seven'&&!s.complete){
   if(!s.seven)s.seven={seat,cardId:chosen.cardId,as:'7',spent:0};
   s.seven.spent+=chosen.distance;
   if(s.seven.spent<7){
@@ -416,6 +419,13 @@ export function mission3Play(original,seat,action){
  s.discard.push(s.hands[seat].splice(i,1)[0]);
  s.lastPlayedCard=card.type;
  record(s,(seat===3?'😈 Grinch':s.players[seat].name)+' spielt '+(card.type==='joker'?'Joker als '+chosen.as:chosen.as));
+ if(s.complete){
+  // Mission success can happen on a partial seven. The remaining card
+  // steps become irrelevant; discard it and persist an immutable victory.
+  s.seven=null;
+  if(mission3CardTotal(s)!==110)throw Error('DOG-Kartenbestand beschädigt.');
+  s.revision++;return s;
+ }
  if(seat===3&&chosen.pieceId&&!s.grinchUsed.includes(chosen.pieceId))s.grinchUsed.push(chosen.pieceId);
  advance(s);settle(s);
  if(mission3CardTotal(s)!==110)throw Error('DOG-Kartenbestand beschädigt.');
@@ -425,11 +435,19 @@ export function mission3Play(original,seat,action){
 export function mission3SetPreviewStage(original,stage){
  if(!Number.isInteger(stage)||stage<0||stage>2)throw Error('Ungültige Missionsstufe');
  const s=copy(original);s.stage=stage;s.revision++;
+ // Developer-only fast-forward for legacy card tests. Official progression
+ // never uses this; the real mission advances after collection of targets.
+ if(s.tasks&&s.tasks.stage!==stage){
+  for(let i=0;i<stage;i++)s.tasks.progress[i]=MISSION3_TASK_TARGETS[i];
+  s.tasks.completedStages=Array.from({length:stage},(_,i)=>i);
+  mission3NewTask(s,stage);
+ }
  record(s,'🧪 Testvorschau: '+MISSION3_STAGE_NAMES[stage]+'. Neue Grinch-Hand ab nächster Verteilung.');
  return s;
 }
 /** Local preview ONLY: end the current phase while keeping all 110 card IDs. */
 export function mission3NextPreviewDeal(original){
+ if(original?.complete)throw Error('Mission 3 ist bereits gewonnen.');
  const s=copy(original);
  for(const hand of s.hands)s.discard.push(...hand);
  s.hands=[[],[],[],[]];s.seven=null;
@@ -544,7 +562,7 @@ function aiRankedMoves(s,width=AI_WIDTH){
  * Partial split-seven steps do not consume one of the 1/2/3 card actions.
  */
 export function mission3PlanGrinchTurn(s){
- if(!s||s.current!==3||s.grinchActionsLeft<=0)return {moves:[],score:0};
+ if(!s||s.complete||s.current!==3||s.grinchActionsLeft<=0)return {moves:[],score:0};
  const depth=Math.min(5,s.grinchActionsLeft+2);
  let beam=[{state:s,moves:[],score:0}];
  const completed=[];
