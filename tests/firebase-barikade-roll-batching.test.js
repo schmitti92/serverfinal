@@ -67,3 +67,12 @@ test('Existing already running matches cannot double-credit lifetime dice totals
  assert.match(source,/if\(await bookBarikadeLifetimeStats\(room,patches\)\)room\.state\.statsFinalized=true/);
  assert.match(source,/!room\.state\.profileStatsFinalizedV8\|\|!room\.state\.statsFinalized/);
 });
+
+test('Match completion saves the room once; reconnect can still persist missed stats',()=>{
+ const summary=take('async function finalizeMatchStats(', 'function docIdForRoom(');
+ assert.match(summary,/if\(stateChanged&&!opts\.deferPersistence\)await persistRoomState\(room\)/);
+ assert.match(summary,/if\(await bookBarikadeLifetimeStats\(room,patches\)\)/);
+ assert.match(source,/finalizeMatchStats\(room, room\.state\.winnerColor, \{deferPersistence:true\}\)/);
+ assert.match(source,/finalizeMatchStats\(room, room\.state\.winnerColor, \{ forfeiterColor: myColor, deferPersistence:true \}\)/);
+ assert.match(source,/if \(room\.state\?\.finished&&\(!room\.state\.profileStatsFinalizedV8\|\|!room\.state\.statsFinalized\)\)/);
+});
