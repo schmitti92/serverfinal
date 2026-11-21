@@ -886,7 +886,7 @@ function finishEisstock(ch,members){
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const game=room.match?.game||room.game;
-      const dogWriteKind=game==='dog'?'dog-match':
+      const dogWriteKind=game==='dog'?(room.match?.game==='dog'?'dog-match':'dog-lobby'):
         typeof game==='string'&&game.startsWith('dog-grinch')?'dog-grinch':
         room.game==='dog'?'dog-lobby':null;
       // Count the actual transaction's document operations. Never count a
