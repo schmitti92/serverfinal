@@ -36,7 +36,10 @@ function stepPath(s,id,count,homeChoice,seven=false){
   const piece=s.pieces.find(p=>p.id===id);
   if(!piece||piece.place==='home'||!Number.isInteger(count)||count===0)return null;
   let current={place:piece.place,pos:piece.pos,owner:piece.owner};
-  let entering=false, cameFromBehind=false;
+  let entering=false;
+  // Retain goal entry earned by crossing the owner's start square from behind.
+  // A pawn freshly placed from the reserve must not gain this permission.
+  let goalReady=piece.place==='track'&&piece.pos===piece.owner*16&&piece.goalReady===true;
   const path=[];const captures=[];
   for(let i=0;i<Math.abs(count);i++){
     if(current.place==='goal'){
@@ -46,10 +49,14 @@ function stepPath(s,id,count,homeChoice,seven=false){
     }else{
       const oldPos=current.pos;
       const newPos=mod(oldPos+(count>0?1:-1));
-      if(count>0 && newPos===piece.owner*16 && oldPos!==newPos)cameFromBehind=true;
-      if(count>0 && homeChoice && oldPos===piece.owner*16 && cameFromBehind){
+      if(count>0 && homeChoice && oldPos===piece.owner*16 && goalReady){
         current={place:'goal',pos:0,owner:piece.owner};entering=true;
-      }else current={place:'track',pos:newPos,owner:piece.owner};
+        goalReady=false;
+      }else{
+        current={place:'track',pos:newPos,owner:piece.owner};
+        // Only a step onto the entry square makes a later goal entry legal.
+        goalReady=count>0&&newPos===piece.owner*16&&oldPos!==newPos;
+      }
     }
     const occupant=pieceAt(s,current,id);
     if(current.place==='goal'&&occupant)return null;
@@ -61,7 +68,7 @@ function stepPath(s,id,count,homeChoice,seven=false){
     // When entering the finish, the remaining steps must stay inside that lane.
   }
   if(!path.length)return null;
-  return {pieceId:id,steps:count,viaGoal:entering,homeChoice:!!homeChoice,path,captures:[...new Set(captures)]};
+  return {pieceId:id,steps:count,viaGoal:entering,homeChoice:!!homeChoice,path,captures:[...new Set(captures)],goalReady:current.place==='track'&&goalReady};
 }
 function applyMovement(s,m,seven=false){
   const piece=s.pieces.find(p=>p.id===m.pieceId);
@@ -70,10 +77,13 @@ function applyMovement(s,m,seven=false){
     const occupant=pieceAt(s,next,piece.id);
     if(occupant && (seven || i===m.path.length-1)){
       if(protectedPiece(occupant))throw Error('PROTECTED_FIELD');
-      occupant.place='home';occupant.pos=-1;
+      occupant.place='home';occupant.pos=-1;delete occupant.goalReady;
     }
     replacePosition(piece,next);
   }
+  // This travels with ordinary room state; no extra server/Firebase writes.
+  if(m.goalReady)piece.goalReady=true;
+  else delete piece.goalReady;
 }
 export function createGame(options={}){
   const rng=options.rng||Math.random;
@@ -319,12 +329,13 @@ export function takeAction(original,seat,action,rng=Math.random){
       const occupant=pieceAt(s,target,p.id);
       if(occupant){
         if(protectedPiece(occupant))throw Error('PROTECTED_FIELD');
-        occupant.place='home';occupant.pos=-1;
+        occupant.place='home';occupant.pos=-1;delete occupant.goalReady;
       }
-      p.place='track';p.pos=p.owner*16;
+      p.place='track';p.pos=p.owner*16;delete p.goalReady;
     }else if(action.type==='swap'){
       const a=s.pieces.find(p=>p.id===action.pieceId),b=s.pieces.find(p=>p.id===action.targetId);
       const pos=a.pos;a.pos=b.pos;b.pos=pos;
+      delete a.goalReady;delete b.goalReady;
     }else if(action.type==='move'){
       const m=stepPath(s,action.pieceId,action.steps,!!action.viaGoal);
       if(!m)throw Error('PATH_INVALID');
