@@ -982,41 +982,40 @@ function finishEisstock(ch,members){
     // just because their browser has not fetched the new UI yet.
     const submitted=req.body?.settings?.variants||{};
     const preservedFields=['coinAmounts','moneySymbolWeights','giftSymbolWeights'];
-    if(Object.keys(settings.variants).some(id=>
-      preservedFields.some(field=>submitted[id]?.[field]===undefined))){
+    const giftFields=['price','doubleChancePer1000','lightChancePer1000','lightMin','lightMax'];
+    const submittedGifts=submitted.gifts||{},submittedSnow=submitted.snow_collect||{};
+    const preserveVariantFields=Object.keys(settings.variants).some(id=>
+      preservedFields.some(field=>submitted[id]?.[field]===undefined));
+    const preserveNumberOne=req.body?.settings?.numberOne20===undefined;
+    const preserveGiftFields=giftFields.some(key=>submittedGifts[key]===undefined);
+    const preserveSnowFields=giftFields.some(key=>submittedSnow[key]===undefined);
+    // Older settings forms may omit several separate fields. Read the
+    // authoritative saved document ONCE for every required preservation,
+    // not once per group (previously up to four billable document GETs).
+    // The final write and its validated structure are unchanged.
+    let saved;
+    if(preserveVariantFields||preserveNumberOne||preserveGiftFields||preserveSnowFields){
       const prior=await ref.get();
-      const saved=normalizeScratchSettings(prior.exists?prior.data():null);
+      saved=normalizeScratchSettings(prior.exists?prior.data():null);
+    }
+    if(preserveVariantFields){
       for(const id of Object.keys(settings.variants)){
-       for(const field of preservedFields){
-        if(submitted[id]?.[field]===undefined)
-         settings.variants[id][field]=[...saved.variants[id][field]];
-       }
+        for(const field of preservedFields){
+          if(submitted[id]?.[field]===undefined)
+            settings.variants[id][field]=[...saved.variants[id][field]];
+        }
       }
     }
-    // Cached/older clients must not overwrite a customized Glückszahl 1 ticket.
-    // Keep its independent symbol odds, prize amounts and price if the edit
-    // form did not submit numberOne20 at all.
-    if(req.body?.settings?.numberOne20===undefined){
-      const prior=await ref.get();
-      settings.numberOne20=normalizeScratchSettings(prior.exists?prior.data():null).numberOne20;
-    }
-    // Keep Geschenkelinie-only options if an older global settings form
-    // saves another ticket type without submitting these fields.
-    const submittedGifts=submitted.gifts||{};
-    const giftFields=['price','doubleChancePer1000','lightChancePer1000','lightMin','lightMax'];
-    if(giftFields.some(key=>submittedGifts[key]===undefined)){
-      const prior=await ref.get();
-      const saved=normalizeScratchSettings(prior.exists?prior.data():null).variants.gifts;
+    // Preserve customized Glückszahl 1 and individual ticket controls when
+    // an older client submits a partial global settings object.
+    if(preserveNumberOne)settings.numberOne20=saved.numberOne20;
+    if(preserveGiftFields){
       for(const key of giftFields)if(submittedGifts[key]===undefined)
-        settings.variants.gifts[key]=saved[key];
+        settings.variants.gifts[key]=saved.variants.gifts[key];
     }
-    // Cached general forms do not submit the separate Bingo controls.
-    const submittedSnow=submitted.snow_collect||{};
-    if(giftFields.some(key=>submittedSnow[key]===undefined)){
-      const prior=await ref.get();
-      const saved=normalizeScratchSettings(prior.exists?prior.data():null).variants.snow_collect;
+    if(preserveSnowFields){
       for(const key of giftFields)if(submittedSnow[key]===undefined)
-        settings.variants.snow_collect[key]=saved[key];
+        settings.variants.snow_collect[key]=saved.variants.snow_collect[key];
     }
     await ref.set({...settings,updatedBy:identity.uid,updatedAt:clock()});
     return {settings};
