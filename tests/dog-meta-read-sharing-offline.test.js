@@ -116,3 +116,17 @@ test('All targeted read-only meta routes are wired; purchases and claims remain 
   assert.match(block,/runTransaction/,'write remains transactional: '+mutation);
  }
 });
+
+test('Grinch progress and emoji entitlements share only simultaneous private/global document reads',()=>{
+ const source=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ const progress=source.slice(source.indexOf("app.get('/api/hub/grinch/progress'"),
+   source.indexOf("app.use('/api/hub/rooms'"));
+ assert.match(progress,/readDogMeta\(store,store\.collection\(GRINCH_PROGRESS_COLLECTION\)\.doc\(req\.hubIdentity\.uid\)\)/);
+ assert.match(progress,/readDogMeta\(store,dogVillageFor\(store\)\)/);
+ const socket=source.slice(source.indexOf("if\(!DOG_STARTER_EMOJIS\.has\(id\)\)"),
+   source.indexOf("ownedEmojiCache=new Set"));
+ assert.match(socket,/readDogMeta\(store,store\.collection\(DOG_SCRATCH_COLLECTION\)\.doc\(identity\.uid\)\)/);
+ assert.match(socket,/readDogMeta\(store,store\.collection\(DOG_TREE_REWARDS_COLLECTION\)\.doc\(identity\.uid\)\)/);
+ assert.match(socket,/ownedEmojiUid!==identity\.uid/);
+ assert.match(source,/const dogMetaReadCoordinator=createDogSharedReadCoordinator\(\)/);
+});
