@@ -23,7 +23,7 @@ import { installSharedLobby } from "./shared-lobby.js";
 import { createFirebaseMutationRequestDiagnostics } from "./firebase-mutation-request-diagnostics.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
 import {installChrisChristmasResetApi} from "./dog-christmas-chris-personal-reset.js";
-import {resetThreeFoundersChristmasOnce} from "./dog-christmas-three-founders-fresh-start.js";
+import {restartDogChristmasForAllOnce} from "./dog-christmas-all-players-reset.js";
 import {deferChristmasResetOnSafePreflight} from "./dog-christmas-startup-policy.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
@@ -8206,20 +8206,23 @@ setInterval(() => {
   }
 }, SNAPSHOT_HEARTBEAT_MS);
 
-// Authorized fresh first-visit restart for Chris, Vanessa and David.
-// Profiles, individual wallets, the global village and print runs are backed
-// up transactionally. This replaces the old broader and Chris-only jobs,
-// avoiding accidentally running overlapping resets on a future deployment.
+// Explicitly authorized global Christmas restart (ALL event participants).
+// Await the idempotent, archive-backed Firestore transaction BEFORE serving.
+// This REPLACES the failed three-founders-only startup reset.
 async function startServerWithChristmasReset(){
   if(profileProjectMatches&&firestore){
     try{
-      await resetThreeFoundersChristmasOnce(firestore);
+      const reset=await restartDogChristmasForAllOnce(firestore);
+      console.info('[dog-all-christmas-reset] startup result',JSON.stringify({
+       completed:reset.completed,skipped:reset.skipped,verified:reset.verified,
+       actualAcademyLevel:reset.actualAcademyLevel
+      }));
     }catch(err){
-      // Fail closed: never partially delete accounts or reward state. Keep
-      // the website online so the issue is visible and can be investigated.
-      console.error('[dog-founders-fresh-start] NOT APPLIED; unchanged event data:',err?.message||err);
+      // Fail closed on writes, but keep the rest of the game online. The
+      // explicit diagnostic makes a blocked reset visible in Render logs.
+      console.error('[dog-all-christmas-reset] NOT APPLIED OR NOT VERIFIED:',err?.message||err);
     }
-  }else console.warn('[dog-founders-fresh-start] skipped: verified Firebase project unavailable');
+  }else console.warn('[dog-all-christmas-reset] skipped: verified Firebase project unavailable');
   server.listen(PORT,()=>console.log("Barikade server listening on",PORT,"build",SERVER_BUILD));
 }
 startServerWithChristmasReset().catch(err=>{
