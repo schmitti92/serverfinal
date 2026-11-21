@@ -1221,6 +1221,37 @@ function finishEisstock(ch,members){
     return {stats:dogPlayerStats(snap.exists?snap.data():null,uid),
       tracking:'from-2026-11-15',scope:'completed-dog-online-matches'};
   }));
+  // The Christmas portal stays SEALED until a server-verified completed DOG
+  // online match. The introductory film is acknowledged per profile so it
+  // does not replay on another device after a successful first viewing.
+  const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
+  app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
+    const uid=req.hubIdentity.uid,store=db();
+    const [stats,intro]=await Promise.all([
+      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
+      introRef(store,uid).get()
+    ]);
+    const played=dogPlayerStats(stats.exists?stats.data():null,uid).played;
+    const eligible=played>=1;
+    return {eligible,completed:eligible&&Number.isSafeInteger(intro.data()?.completedAt)&&intro.data().completedAt>0,
+      played:eligible?played:0};
+  }));
+  app.post('/api/hub/dog/christmas-intro/complete',authentication,handler(async req=>{
+    const uid=req.hubIdentity.uid,store=db();
+    const reference=introRef(store,uid);
+    return store.runTransaction(async tx=>{
+      const [stats,intro]=await Promise.all([
+        tx.get(store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
+        tx.get(reference)
+      ]);
+      if(dogPlayerStats(stats.exists?stats.data():null,uid).played<1)
+        throw error(403,'DOG_CHRISTMAS_INTRO_LOCKED');
+      if(intro.exists&&Number(intro.data()?.completedAt)>0)
+        return {completed:true,unchanged:true};
+      tx.set(reference,{uid,completedAt:clock(),version:1});
+      return {completed:true,unchanged:false};
+    });
+  }));
   // Weihnachtliche Forschung: all spends and timed claims are transactional.
   // In particular the player never submits XP, earned points or upgrade levels.
   app.get('/api/hub/dog/research',authentication,handler(async req=>{
