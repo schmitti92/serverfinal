@@ -144,11 +144,12 @@ export function refreshDogChristmasDeal(match,round,draw=randomInt){
  return true;
 }
 /**
- * Temporary Christmas board visibility. Switch to false to restore the
+ * Private Christmas board visibility. Research grants one personal hint;
+ * disabled globally to restore the
  * original secret-field gameplay without changing stored matches or rewards.
  * The server remains authoritative for every move and field claim.
  */
-export const DOG_CHRISTMAS_SHOW_BOARD_FIELDS=true;
+export const DOG_CHRISTMAS_SHOW_BOARD_FIELDS=false;
 
 /** Public room snapshot: during the preview only UNCLAIMED field positions
  * are exposed. Internal arrays and claimed indices remain private.
