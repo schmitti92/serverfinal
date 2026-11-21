@@ -1225,6 +1225,9 @@ function finishEisstock(ch,members){
   // online match. The introductory film is acknowledged per profile so it
   // does not replay on another device after a successful first viewing.
   const INTRO_SEASON_START_AT=Date.parse('2026-11-21T13:00:00Z');
+  // Verified Firebase profile name (never a client-submitted nickname). Chris
+  // gets a preview invitation without changing his real DOG match statistics.
+  const christmasPreviewGranted=identity=>identity?.name==='Chris';
   const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
@@ -1234,9 +1237,11 @@ function finishEisstock(ch,members){
     ]);
     const played=dogPlayerStats(stats.exists?stats.data():null,uid).played;
     // Old matches from before the official reveal do not count.
-    const eligible=played>=1&&Number(stats.data()?.updatedAt||0)>=INTRO_SEASON_START_AT;
-    return {eligible,completed:eligible&&Number.isSafeInteger(intro.data()?.completedAt)&&intro.data().completedAt>0,
-      played:eligible?played:0};
+    const previewGranted=christmasPreviewGranted(req.hubIdentity);
+    const eligible=previewGranted||(played>=1&&Number(stats.data()?.updatedAt||0)>=INTRO_SEASON_START_AT);
+    return {eligible,
+      completed:previewGranted||(eligible&&Number.isSafeInteger(intro.data()?.completedAt)&&intro.data().completedAt>0),
+      played,previewGranted};
   }));
   app.post('/api/hub/dog/christmas-intro/complete',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
@@ -1246,8 +1251,9 @@ function finishEisstock(ch,members){
         tx.get(store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
         tx.get(reference)
       ]);
-      if(dogPlayerStats(stats.exists?stats.data():null,uid).played<1||
-         Number(stats.data()?.updatedAt||0)<INTRO_SEASON_START_AT)
+      if(!christmasPreviewGranted(req.hubIdentity)&&
+         (dogPlayerStats(stats.exists?stats.data():null,uid).played<1||
+          Number(stats.data()?.updatedAt||0)<INTRO_SEASON_START_AT))
         throw error(403,'DOG_CHRISTMAS_INTRO_LOCKED');
       if(intro.exists&&Number(intro.data()?.completedAt)>0)
         return {completed:true,unchanged:true};
