@@ -75,3 +75,34 @@ test('recent ongoing DOG match rejects reset before deleting any rewards',async(
   /FOUNDERS_RESET_LIVE_DOG_MATCH/);
  assert.deepEqual(Object.fromEntries(docs),before);
 });
+
+test('one existing scratch print run restarts its issue counter but keeps its prize budget',async()=>{
+ const before=original();
+ const {CHRISTMAS_EDITIONS}=await import('../dog-christmas-reset-once.js');
+ const [collection,id,variant]=CHRISTMAS_EDITIONS[0];
+ before[collection+'/'+id]={id:'oldprint',variantId:variant,
+  issued:151,paidCoins:250,revision:7,
+  prizePlan:Array.from({length:500},(_,i)=>i%4)};
+ const {db,docs}=fake(before);
+ const outcome=await resetThreeFoundersChristmasOnce(db,{clock:()=>10000,logger:{info(){}}});
+ assert.equal(outcome.editionsRestarted,1);
+ assert.equal(docs.get(collection+'/'+id).issued,0);
+ assert.equal(docs.get(collection+'/'+id).paidCoins,0);
+ assert.equal(docs.get(collection+'/'+id).prizePlan.length,500);
+ const archive=FRESH_START_ID+'_'+Buffer.from(collection+'/'+id).toString('base64url');
+ assert.equal(docs.get('dog_christmas_founders_restart_archives_v1/'+archive).data.issued,151);
+});
+test('old uncompleted DOG room is closed to prevent late reward payouts',async()=>{
+ const before=original();before['spielesammlung_hub_v1/123']={
+  phase:'playing',game:'dog',match:{game:'dog',dog:{phase:'play'}},
+  players:U.map(uid=>({uid,participating:true,ready:true})),
+  expiresAt:600000,updatedAt:10000,revision:10};
+ const {db,docs}=fake(before);
+ const result=await resetThreeFoundersChristmasOnce(db,{clock:()=>500000,logger:{info(){}}});
+ assert.equal(result.roomsReopened,1);
+ const room=docs.get('spielesammlung_hub_v1/123');
+ assert.equal(room.phase,'lobby');
+ assert.equal(room.match,null);
+ assert.equal(room.game,null);
+ assert.ok(room.players.every(p=>!p.participating&&!p.ready));
+});
