@@ -67,10 +67,8 @@ test('a fully frozen human gets ONE card passed, not their whole hand discarded'
 });
 test('frozen humans are not unfrozen just because empty hands are skipped',()=>{
  let s=spacedBoard(929);
- s.hands[0]=[];
- // Preserve all card IDs by placing the discarded red cards in discard first.
- // Do not create new or duplicate cards.
- // At this point we can still test the invariant via the next real move.
+ // Empty hand must preserve all card IDs in the shared discard.
+ s.discard.push(...s.hands[0].splice(0));
  pawn(s,'r0').frozenTurns=2;
  s.current=3;s.grinchActionsLeft=1;s.grinchUsed=[];
  s.hands[3].forEach(c=>{c.type='3';});
