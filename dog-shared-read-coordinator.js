@@ -36,7 +36,9 @@ export function createDogSharedReadCoordinator({
   return value;
  }
  function invalidate(path=null){
-  epoch++;
+  // A single player's payout must not spoil concurrent reads of unrelated
+  // accounts. Only a full flush supersedes ALL in-flight snapshots.
+  if(path==null)epoch++;
   counters.invalidations++;
   for(const db of liveDatabases){
    if(path==null){db.pending.clear();db.cached.clear();}
@@ -73,7 +75,10 @@ export function createDogSharedReadCoordinator({
   if(tracked)record.pending.set(path,task);
   try{
    const value=await task;
-   if(ttlMs>0&&readEpoch===epoch){
+   // The same document may have been invalidated while its GET was pending.
+   // Only the currently registered request can populate the read cache;
+   // untracked overflow reads remain uncached rather than risk stale data.
+   if(ttlMs>0&&tracked&&record.pending.get(path)===task&&readEpoch===epoch){
     record.cached.delete(path);
     record.cached.set(path,{snapshot:value,expiresAt:clock()+ttlMs});
     while(record.cached.size>maxCachedPerDatabase)
