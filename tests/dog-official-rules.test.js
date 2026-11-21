@@ -170,6 +170,58 @@ test('DOG official: a split 7 may use remaining points for partner once own last
  assert.equal(s.pieces[8].pos,39);
 });
 
+test('DOG 7: red advances one field inside finish, then another red pawn moves six',()=>{
+ for(const inactiveSeats of [[],[3]]){
+   let s=createGame({rng:()=>0.42,bots:[false,false,false,false],inactiveSeats});
+   s.phase='play';s.current=0;s.starter=0;
+   s.hands=[[{id:999,type:'7'}],[],[],[]];
+   const finishPawn=s.pieces.find(p=>p.id===0),ringPawn=s.pieces.find(p=>p.id===1);
+   finishPawn.place='goal';finishPawn.pos=0;
+   ringPawn.place='track';ringPawn.pos=8;
+   const seven=legalActions(s,0).find(m=>m.type==='seven'&&m.cardId===999);
+   assert.ok(seven,'the 7 may be played with a legal 1 + 6 split');
+   s=takeAction(s,0,seven);
+   const first=legalActions(s,0).find(m=>m.type==='seven-step'&&m.pieceId===0&&m.steps===1&&m.to==='goal:1');
+   assert.ok(first,'one step forward inside finish must be selectable');
+   s=takeAction(s,0,first);
+   assert.equal(s.phase,'seven');
+   assert.equal(s.current,0,'red must keep the turn for the remaining steps');
+   assert.equal(s.seven.spent,1);
+   assert.equal(s.pieces.find(p=>p.id===0).pos,1);
+   const six=legalActions(s,0).find(m=>m.type==='seven-step'&&m.pieceId===1&&m.steps===6&&m.to==='track:14');
+   assert.ok(six,'six steps on another red figure must remain available');
+   s=takeAction(s,0,six);
+   assert.notEqual(s.phase,'seven','split 7 should finish exactly after 1 + 6');
+   assert.equal(s.pieces.find(p=>p.id===1).pos,14);
+   assert.equal(s.hands[0].some(c=>c.id===999),false,'seven card discarded exactly once');
+ }
+});
+
+test('DOG 7: reverse order six ring steps then one within the red goal is legal',()=>{
+ let s=fixture('7',0);
+ position(s,0,'goal',0);
+ position(s,1,'track',8);
+ s=takeAction(s,0,action(s,m=>m.type==='seven'));
+ const six=action(s,m=>m.type==='seven-step'&&m.pieceId===1&&m.steps===6);
+ s=takeAction(s,0,six);
+ assert.equal(s.seven.spent,6);
+ const one=action(s,m=>m.type==='seven-step'&&m.pieceId===0&&m.steps===1&&m.to==='goal:1');
+ s=takeAction(s,0,one);
+ assert.notEqual(s.phase,'seven');
+ assert.equal(s.pieces[0].pos,1);
+});
+
+test('DOG 7: occupied next goal slot blocks a one-step move without a legal landing',()=>{
+ const s=fixture('7',0);
+ position(s,0,'goal',0);
+ position(s,2,'goal',1);
+ position(s,1,'track',8);
+ const moves=legalActions(s,0);
+ assert.ok(moves.some(m=>m.type==='seven'),'other pieces still allow a full seven');
+ s.phase='seven';s.seven={cardId:999,spent:0};
+ assert.equal(legalActions(s,0).some(m=>m.type==='seven-step'&&m.pieceId===0&&m.steps===1),false);
+});
+
 test('DOG official: protected and goal figures must never be swap candidates',()=>{
  const s=fixture('swap',0);
  position(s,0,'track',10);
