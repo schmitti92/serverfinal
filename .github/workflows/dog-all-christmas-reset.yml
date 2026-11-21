@@ -1,0 +1,21 @@
+name: DOG all players Christmas fresh launch
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-christmas-all-players-reset.js'
+      - 'tests/dog-christmas-all-players-reset.test.js'
+      - 'server.js'
+      - '.github/workflows/dog-all-christmas-reset.yml'
+  workflow_dispatch:
+jobs:
+  global-reset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-christmas-all-players-reset.js
+      - run: node --check server.js
+      - run: node --test tests/dog-christmas-all-players-reset.test.js
