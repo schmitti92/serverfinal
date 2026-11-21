@@ -873,7 +873,7 @@ function finishEisstock(ch,members){
     const ref=documentFor(store,code);
     // The transaction result carries its own committed-write flag: retries
     // cannot leak a previous attempt's decision into cache invalidation.
-    const {value,changed}=await store.runTransaction(async tx=>{
+    const {value,changed,revision}=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const result=await change(room,tx,store);
@@ -892,7 +892,7 @@ function finishEisstock(ch,members){
         game.statsRecorded=true;
       }
       if(result?.remove){tx.delete(ref);return {value:result.value,changed:true};}
-      if(result?.unchanged)return {value:expose(room,identity),changed:false};
+      if(result?.unchanged)return {value:expose(room,identity),changed:false,revision:room.revision};
       room.revision=(Number(room.revision)||0)+1;
       room.updatedAt=clock();room.expiresAt=clock()+TTL_MS;
       tx.set(ref,room);
@@ -906,7 +906,18 @@ function finishEisstock(ch,members){
       invalidateHubReadCache(code);
     }else{
       hubMutationReadCacheStats.noops++;
-      hubMutationReadCacheStats.avoidedInvalidations++;
+      // A no-op transaction has still read the latest Firestore document.
+      // If another Render instance committed a newer revision, drop any
+      // older short-lived preflight cache instead of trusting stale RAM.
+      const cached=syncRoomReads.get(code)?.room;
+      const streamed=roomStreams.get(code);
+      const staleSync=cached&&cached.revision!==revision;
+      const staleStream=streamed?.hasSnapshot&&streamed.room&&streamed.room.revision!==revision;
+      if(staleSync||staleStream){
+        invalidateHubReadCache(code);
+      }else{
+        hubMutationReadCacheStats.avoidedInvalidations++;
+      }
     }
     return value;
   }
