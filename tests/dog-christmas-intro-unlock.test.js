@@ -55,7 +55,7 @@ test('Christmas remains locked until verified DOG match completion',async()=>{
  r=await h.call('POST','/api/hub/dog/christmas-intro/complete');
  assert.equal(r.status,403);assert.equal(r.error,'DOG_CHRISTMAS_INTRO_LOCKED');
  assert.equal(h.docs.has('dog_christmas_intro_unlock_v1/c'),false);
- h.docs.set('dog_player_statistics_v1/c',{played:1,wins:0,xp:10});
+ h.docs.set('dog_player_statistics_v1/c',{played:1,wins:0,xp:10,updatedAt:Date.parse('2026-11-21T13:05:00Z')});
  r=await h.call('GET','/api/hub/dog/christmas-intro');
  assert.equal(r.eligible,true);assert.equal(r.completed,false);
  r=await h.call('POST','/api/hub/dog/christmas-intro/complete');
