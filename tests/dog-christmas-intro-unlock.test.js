@@ -57,7 +57,7 @@ test('Vanessa remains locked until verified DOG match completion',async()=>{
  assert.equal(h.docs.has('dog_christmas_intro_unlock_v1/v'),false);
  h.docs.set('dog_player_statistics_v1/v',{played:1,wins:0,xp:10,updatedAt:Date.parse('2026-11-21T13:05:00Z')});
  r=await h.call('GET','/api/hub/dog/christmas-intro','vanessa');
- assert.equal(r.eligible,true);assert.equal(r.completed,false);
+ assert.equal(r.eligible,true);assert.equal(r.introReady,true);assert.equal(r.completed,false);
  r=await h.call('POST','/api/hub/dog/christmas-intro/complete','vanessa');
  assert.equal(r.status,200);assert.equal(r.completed,true);assert.equal(r.unchanged,false);
  const stamp=h.docs.get('dog_christmas_intro_unlock_v1/v').completedAt;
@@ -73,20 +73,49 @@ test('Unauthenticated users cannot see unlock status',async()=>{
  assert.equal(r.status,401);
 });
 
-test('lowercase chris receives immediate preview access without fabricating a DOG match',async()=>{
+test('Chris keeps preview access but watches the intro after his first verified DOG match',async()=>{
  const h=setup();
- const status=await h.call('GET','/api/hub/dog/christmas-intro','chris');
- assert.equal(status.status,200);
- assert.equal(status.eligible,true);
- assert.equal(status.completed,true);
- assert.equal(status.previewGranted,true);
- assert.equal(status.played,0);
+ const before=await h.call('GET','/api/hub/dog/christmas-intro','chris');
+ assert.equal(before.status,200);
+ assert.equal(before.eligible,true);
+ assert.equal(before.introReady,false);
+ assert.equal(before.completed,false);
+ assert.equal(before.previewGranted,true);
+ assert.equal(before.played,0);
  assert.equal(h.docs.has('dog_player_statistics_v1/c'),false);
+ const tooEarly=await h.call('POST','/api/hub/dog/christmas-intro/complete','chris');
+ assert.equal(tooEarly.status,403);
+ assert.equal(tooEarly.error,'DOG_CHRISTMAS_INTRO_LOCKED');
  assert.equal(h.docs.has('dog_christmas_intro_unlock_v1/c'),false);
- const finish=await h.call('POST','/api/hub/dog/christmas-intro/complete','chris');
- assert.equal(finish.completed,true);
- assert.equal(h.docs.has('dog_player_statistics_v1/c'),false);
+ h.docs.set('dog_player_statistics_v1/c',{played:1,wins:0,xp:10,updatedAt:Date.parse('2026-11-21T13:05:00Z')});
+ const afterMatch=await h.call('GET','/api/hub/dog/christmas-intro','chris');
+ assert.equal(afterMatch.eligible,true);
+ assert.equal(afterMatch.introReady,true);
+ assert.equal(afterMatch.completed,false);
+ const finished=await h.call('POST','/api/hub/dog/christmas-intro/complete','chris');
+ assert.equal(finished.status,200);
+ assert.equal(finished.completed,true);
+ assert.equal(finished.unchanged,false);
+ const afterFilm=await h.call('GET','/api/hub/dog/christmas-intro','chris');
+ assert.equal(afterFilm.completed,true);
+ assert.equal(afterFilm.played,1,'a watched film must not fabricate another DOG match');
+ assert.equal(h.docs.get('dog_player_statistics_v1/c').played,1);
+ assert.equal((await h.call('POST','/api/hub/dog/christmas-intro/complete','chris')).unchanged,true);
  const david=await h.call('GET','/api/hub/dog/christmas-intro','david');
  assert.equal(david.eligible,false);
+ assert.equal(david.introReady,false);
  assert.equal(david.completed,false);
+});
+test('historical DOG matches do not trigger the new film',async()=>{
+ const h=setup();
+ for(const [uid,name] of [['c','chris'],['v','vanessa']]){
+  h.docs.set('dog_player_statistics_v1/'+uid,
+   {played:7,wins:4,updatedAt:Date.parse('2026-11-20T22:00:00Z')});
+  const status=await h.call('GET','/api/hub/dog/christmas-intro',name);
+  assert.equal(status.introReady,false);
+  assert.equal(status.completed,false);
+  assert.equal(status.eligible,name==='chris');
+  const ack=await h.call('POST','/api/hub/dog/christmas-intro/complete',name);
+  assert.equal(ack.status,403);
+ }
 });
