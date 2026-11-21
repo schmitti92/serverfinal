@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - 'dog-shared-read-coordinator.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-meta-read-sharing-offline.test.js'
       - 'dog-gates.js'
       - 'dog-materials.js'
       - 'server.js'
@@ -27,5 +29,5 @@ jobs:
           node --check dog-gates.js
           node --check dog-materials.js
           node --check server.js
-      - name: Run DOG team-progress fake Firestore regression
-        run: node --test tests/dog-shared-read-coordinator-offline.test.js
+      - name: Run DOG team-progress and Christmas meta fake Firestore regressions
+        run: node --test tests/dog-shared-read-coordinator-offline.test.js tests/dog-meta-read-sharing-offline.test.js
