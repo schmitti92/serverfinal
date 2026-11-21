@@ -85,9 +85,10 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1'}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   const christmasActive=()=>christmasEventActive()===true;
+  const grinchActive=()=>grinchOnlineEnabled===true;
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
@@ -601,6 +602,7 @@ function finishEisstock(ch,members){
   }
 
   function startGrinchMission(room,village){
+    if(!grinchActive())throw error(403,'GRINCH_PART2_NOT_RELEASED');
     // These are existing, authenticated members of the SAME main hub room.
     if(!christmasActive()||dogTreeLevelFromLevels(village)<10)throw error(409,'GRINCH_TREE_LEVEL_10_REQUIRED');
     const members=activeSeats(room);
@@ -614,6 +616,7 @@ function finishEisstock(ch,members){
     room.game='dog-grinch1';room.phase='playing';
   }
   function startGrinchMission2(room,village){
+    if(!grinchActive())throw error(403,'GRINCH_PART2_NOT_RELEASED');
     if(!christmasActive()||dogTreeLevelFromLevels(village)<10)throw error(409,'GRINCH_TREE_LEVEL_10_REQUIRED');
     const members=activeSeats(room);
     if(members.length!==3||members.some(p=>p.testBot||p.bot))throw error(409,'GRINCH_REQUIRES_THREE_HUMAN_PLAYERS');
@@ -1398,6 +1401,7 @@ function finishEisstock(ch,members){
     return result;
   }));
   app.get('/api/hub/grinch/progress',authentication,handler(async req=>{
+    if(!grinchActive())return {progress:{completedMissions:[],highestUnlocked:1},treeLevel:0,canStartMission1:false,available:false};
     const store=db();
     const [progressSnap,villageSnap]=await Promise.all([
       store.collection(GRINCH_PROGRESS_COLLECTION).doc(req.hubIdentity.uid).get(),
@@ -1484,6 +1488,7 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),game=req.body?.game,identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(!Object.hasOwn(HUB_GAMES,game))throw error(400,'INVALID_GAME');
+    if(!grinchActive()&&['dog-grinch1','dog-grinch2'].includes(game))throw error(403,'GRINCH_PART2_NOT_RELEASED');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
       if(room.phase==='playing'&&!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
@@ -1616,6 +1621,7 @@ function finishEisstock(ch,members){
   // Mission 1 occupies the existing authenticated hub room and its shared
   // WebSocket stream. It NEVER creates a second room or trusts client wins.
   app.post('/api/hub/rooms/:code/grinch/launch',handler(async req=>{
+    if(!grinchActive())throw error(403,'GRINCH_PART2_NOT_RELEASED');
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     return {room:await mutate(code,identity,async(room,tx,store)=>{
@@ -1639,6 +1645,7 @@ function finishEisstock(ch,members){
   // Independent Grinch mission 2: all three authenticated users must have
   // already completed mission 1. No client-provided completion flags.
   app.post('/api/hub/rooms/:code/grinch/launch2',handler(async req=>{
+    if(!grinchActive())throw error(403,'GRINCH_PART2_NOT_RELEASED');
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     return {room:await mutate(code,identity,async(room,tx,store)=>{
@@ -1669,6 +1676,7 @@ function finishEisstock(ch,members){
   // The stored match and revision remain authoritative; remote spectators and
   // clients cannot bypass a slot or select its result.
   app.post('/api/hub/rooms/:code/grinch/ack2',handler(async req=>{
+    if(!grinchActive())throw error(403,'GRINCH_PART2_NOT_RELEASED');
     const code=validCode(req.params.code),identity=req.hubIdentity;
     const {matchId,round,expectedRevision}=req.body||{};
     if(!code||typeof matchId!=='string'||matchId.length>100||
@@ -1689,6 +1697,7 @@ function finishEisstock(ch,members){
     })};
   }));
   app.post('/api/hub/rooms/:code/grinch/action',handler(async req=>{
+    if(!grinchActive())throw error(403,'GRINCH_PART2_NOT_RELEASED');
     const code=validCode(req.params.code),identity=req.hubIdentity;
     const {matchId,action,expectedRevision,actionId}=req.body||{};
     if(!code||typeof matchId!=='string'||matchId.length>100||
