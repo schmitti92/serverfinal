@@ -1,0 +1,25 @@
+name: Firebase DRAMATIC read/write savings
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server.js'
+      - 'shared-lobby.js'
+      - 'dog-shared-read-coordinator.js'
+      - 'tests/firebase-skyjo-business-write-noops.test.js'
+      - 'tests/firebase-dog-read-cache-budget.test.js'
+      - 'tests/firebase-dog-leaderboard-shared-reads-offline.test.js'
+      - '.github/workflows/firebase-heavy-load-savings.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check server.js
+      - run: node --check shared-lobby.js
+      - run: node --check dog-shared-read-coordinator.js
+      - run: node --test tests/firebase-skyjo-business-write-noops.test.js tests/firebase-dog-read-cache-budget.test.js tests/firebase-dog-leaderboard-shared-reads-offline.test.js tests/firebase-hub-noop-cache-offline.test.js tests/firebase-dog-write-diagnostics-offline.test.js
