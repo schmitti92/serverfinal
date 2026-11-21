@@ -1,0 +1,19 @@
+name: Firebase Skyjo authorization read savings
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/firebase-skyjo-authorization-read-cache.test.js'
+      - '.github/workflows/firebase-skyjo-authorization-read-cache.yml'
+  workflow_dispatch:
+jobs:
+  cache-read-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js
+      - run: node --test tests/firebase-skyjo-authorization-read-cache.test.js
