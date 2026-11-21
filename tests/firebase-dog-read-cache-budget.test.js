@@ -1,0 +1,79 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createDogSharedReadCoordinator} from '../dog-shared-read-coordinator.js';
+
+test('read-only Firestore docs are reused within 30s, then refreshed automatically',async()=>{
+ let now=1_000_000,calls=0,level=1;
+ const db={},ref={path:'dog_christmas_villages_v1/lichtertal_2026_shared',
+  async get(){calls++;return {exists:true,data:()=>({academy:level})}}};
+ const coordinator=createDogSharedReadCoordinator({ttlMs:30_000,clock:()=>now});
+ assert.equal((await coordinator.read(db,ref)).data().academy,1);
+ level=2;
+ assert.equal((await coordinator.read(db,ref)).data().academy,1);
+ assert.equal(calls,1,'repeated view must not issue another Firebase document GET');
+ now+=30_001;
+ assert.equal((await coordinator.read(db,ref)).data().academy,2);
+ assert.equal(calls,2);
+ assert.equal(coordinator.stats().ttlMs,30000);
+ assert.equal(coordinator.stats().cacheHits,1);
+});
+
+test('server-side confirmed mutation invalidates cached view immediately',async()=>{
+ let calls=0,coins=100;
+ const db={},ref={path:'dog_christmas_scratch_wallet_v1/chrisUid',
+  async get(){calls++;return {exists:true,data:()=>({coins})}}};
+ const coordinator=createDogSharedReadCoordinator({ttlMs:30_000});
+ assert.equal((await coordinator.read(db,ref)).data().coins,100);
+ coins=500;
+ coordinator.invalidate();
+ assert.equal((await coordinator.read(db,ref)).data().coins,500);
+ assert.equal(calls,2);
+ assert.equal(coordinator.stats().invalidations,1);
+});
+
+test('different users never share private wallet documents',async()=>{
+ const coordinator=createDogSharedReadCoordinator({ttlMs:60_000});
+ const db={};let calls=0;
+ const alice={path:'dog_christmas_scratch_wallet_v1/alice',async get(){calls++;return {data:()=>({coins:300})}}};
+ const bob={path:'dog_christmas_scratch_wallet_v1/bob',async get(){calls++;return {data:()=>({coins:900})}}};
+ assert.equal((await coordinator.read(db,alice)).data().coins,300);
+ assert.equal((await coordinator.read(db,bob)).data().coins,900);
+ assert.equal((await coordinator.read(db,alice)).data().coins,300);
+ assert.equal(calls,2);
+});
+
+test('cache is bounded and cannot accumulate unlimited player records',async()=>{
+ const db={},coordinator=createDogSharedReadCoordinator({
+  ttlMs:30_000,maxCachedPerDatabase:2
+ });
+ let calls=0;
+ const ref=id=>({path:'dog_player_statistics_v1/'+id,
+  async get(){calls++;return {id}}});
+ await coordinator.read(db,ref('a'));
+ await coordinator.read(db,ref('b'));
+ await coordinator.read(db,ref('c'));
+ assert.equal(coordinator.stats().cached,2);
+ await coordinator.read(db,ref('b'));
+ assert.equal(calls,3,'recent b stays cached');
+ await coordinator.read(db,ref('a'));
+ assert.equal(calls,4,'oldest a must be evicted');
+});
+
+test('read in flight before invalidation cannot contaminate newer cached results',async()=>{
+ const db={},coordinator=createDogSharedReadCoordinator({ttlMs:30_000});
+ let resolveOld,reads=0,value=1;
+ const ref={path:'dog_christmas_research_v1/chris',get(){
+  reads++;
+  if(reads===1)return new Promise(resolve=>{resolveOld=resolve});
+  return Promise.resolve({data:()=>({value})});
+ }};
+ const pending=coordinator.read(db,ref);
+ await Promise.resolve(); // Start the first backend read.
+ coordinator.invalidate();
+ value=2;
+ assert.equal((await coordinator.read(db,ref)).data().value,2);
+ resolveOld({data:()=>({value:1})});
+ assert.equal((await pending).data().value,1);
+ assert.equal((await coordinator.read(db,ref)).data().value,2);
+ assert.equal(reads,2);
+});
