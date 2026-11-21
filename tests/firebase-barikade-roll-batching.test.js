@@ -64,7 +64,7 @@ test('Completed match books all player lifetime counters once, retries commit no
 test('Existing already running matches cannot double-credit lifetime dice totals',()=>{
  assert.match(source,/const deferred=room\.state\.matchTrack\?\.deferLegacyRollStats===true/);
  assert.match(source,/\.\.\.\(deferred\?\{rollCount:/);
- assert.match(source,/if\(await bookBarikadeLifetimeStats\(room,patches\)\)room\.state\.statsFinalized=true/);
+ assert.match(source,/if\(await bookBarikadeLifetimeStats\(room,patches\)\)\s*\{\s*room\.state\.statsFinalized=true/);
  assert.match(source,/!room\.state\.profileStatsFinalizedV8\|\|!room\.state\.statsFinalized/);
 });
 
