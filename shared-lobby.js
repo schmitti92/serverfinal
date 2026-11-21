@@ -1547,15 +1547,18 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const roomSnapshot=await documentFor(store,code).get();
-    const room=roomSnapshot.exists?roomSnapshot.data():null;
+    // Share only concurrent room GETs. Every request still validates its
+    // own Firebase identity and room membership before any private reads.
+    const room=await freshHubRoomForHttp(code);
     validateRead(room,identity);
     const members=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,6);
     const rows=await Promise.all(members.map(async member=>{
+      // No TTL for scores, wallets or reward entitlements. Overlapping stats
+      // tabs share physical GETs; the next request always gets a fresh copy.
       const [stats,scratch,tree]=await Promise.all([
-        store.collection(DOG_PLAYER_STATS_COLLECTION).doc(member.uid).get(),
-        store.collection(DOG_SCRATCH_COLLECTION).doc(member.uid).get(),
-        store.collection(DOG_TREE_REWARDS_COLLECTION).doc(member.uid).get()
+        readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(member.uid)),
+        readDogMeta(store,store.collection(DOG_SCRATCH_COLLECTION).doc(member.uid)),
+        readDogMeta(store,store.collection(DOG_TREE_REWARDS_COLLECTION).doc(member.uid))
       ]);
       return {stats:stats.exists?stats.data():null,
         scratch:scratch.exists?scratch.data():null,
