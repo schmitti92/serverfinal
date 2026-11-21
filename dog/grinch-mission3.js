@@ -251,6 +251,15 @@ export function mission3SetPreviewStage(original,stage){
  record(s,'🧪 Testvorschau: '+MISSION3_STAGE_NAMES[stage]+'. Neue Grinch-Hand ab nächster Verteilung.');
  return s;
 }
+/** Local preview ONLY: end the current phase while keeping all 110 card IDs. */
+export function mission3NextPreviewDeal(original){
+ const s=copy(original);
+ for(const hand of s.hands)s.discard.push(...hand);
+ s.hands=[[],[],[],[]];s.seven=null;
+ deal(s);settle(s);s.revision++;
+ if(mission3CardTotal(s)!==110)throw Error('DOG-Kartenbestand beschädigt.');
+ return s;
+}
 export function mission3ChooseGrinchMove(s){
  if(s.current!==3)return null;
  const moves=mission3LegalMoves(s,3);
