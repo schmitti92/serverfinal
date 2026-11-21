@@ -83,21 +83,16 @@ test('paid ticket is atomic and duplicate command never double-charges, rerolls 
  assert.throws(()=>buyScratchTicket({...first.wallet,coins:0},null,
   {tier:'medium',commandId:'scratch-command-other'},args),/SCRATCH_NOT_ENOUGH_COINS/);
 });
-test('one free simple ticket per calendar day with no hidden coin charge',()=>{
- const one=buyScratchTicket(null,null,{tier:'simple',free:true,commandId:'scratch-free-001'},
-  {...args,draw:()=>0});
- assert.equal(one.result.price,0);
- assert.equal(one.result.type,'none','draw 0 is a legitimate 20% no-prize ticket');
- assert.equal(one.wallet.coins,DOG_SCRATCH_START_COINS);
- assert.equal(dogScratchStatus(one.wallet,null,NOW).dailyFreeAvailable,false);
- assert.throws(()=>buyScratchTicket(one.wallet,null,
-  {tier:'simple',free:true,commandId:'scratch-free-002'},args),
-  /SCRATCH_DAILY_ALREADY_USED/);
- assert.throws(()=>buyScratchTicket(null,null,
-  {tier:'premium',free:true,commandId:'scratch-free-003'},args),
-  /SCRATCH_FREE_ONLY_SIMPLE/);
- const tomorrow=NOW+86400000;
- assert.equal(dogScratchStatus(one.wallet,null,tomorrow).dailyFreeAvailable,true);
+test('daily and unlimited complimentary scratch purchases are disabled while starter coins remain',()=>{
+ for(const tier of ['simple','medium','premium']){
+  assert.throws(()=>buyScratchTicket(null,null,
+   {tier,free:true,commandId:'scratch-free-blocked-'+tier},
+   {...args,draw:()=>{throw Error('FREE_MUST_NOT_DRAW')}}),
+   /SCRATCH_FREE_DISABLED/);
+ }
+ assert.equal(dogScratchStatus(null,null,NOW).dailyFreeAvailable,false);
+ assert.equal(dogScratchStatus(null,null,NOW+86400000).dailyFreeAvailable,false);
+ assert.equal(dogScratchStatus(null,null,NOW).coins,DOG_SCRATCH_START_COINS);
  assert.notEqual(dogScratchToday(Date.parse('2026-11-15T22:30:00Z')),
   dogScratchToday(Date.parse('2026-11-15T23:30:00Z')));
 });
