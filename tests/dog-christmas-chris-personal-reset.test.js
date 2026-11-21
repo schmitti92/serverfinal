@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
  CHRIS_CHRISTMAS_RESET_ID,CHRIS_CHRISTMAS_RESET_ARCHIVES,
  CHRIS_CHRISTMAS_RESET_MARKERS,CHRIS_CHRISTMAS_PLAYER_COLLECTIONS,
- getChrisChristmasResetStatus,resetChrisChristmasOnce,installChrisChristmasResetApi
+ getChrisChristmasResetStatus,resetChrisChristmasOnce,installChrisChristmasResetApi,
+ isChrisActiveChristmasMatch
 } from '../dog-christmas-chris-personal-reset.js';
 
 const copy=data=>structuredClone(data);
@@ -92,6 +93,63 @@ test('active Chris DOG match aborts without deleting or archiving anything',asyn
  await assert.rejects(()=>resetChrisChristmasOnce(db,chris,{clock:()=>10000}),
   /CHRIS_RESET_ACTIVE_DOG_MATCH/);
  assert.deepEqual(Object.fromEntries(docs),seed);
+});
+test('DOG finished game inside still-playing lobby is NOT an active match',async()=>{
+ const seed=initial();
+ seed['spielesammlung_hub_v1/123']={
+  phase:'playing',game:'dog',
+  match:{game:'dog',id:'finished-game',dog:{phase:'finished',winner:0}},
+  expiresAt:20000,players:[{uid:chris},{uid:vanessa},{uid:david}]};
+ assert.equal(isChrisActiveChristmasMatch(seed['spielesammlung_hub_v1/123'],chris,10000),false);
+ const {db,docs}=firestore(seed);
+ const result=await resetChrisChristmasOnce(db,chris,{clock:()=>10000});
+ assert.equal(result.alreadyReset,false);
+ assert.equal(result.cleared,7);
+ assert.equal(docs.has('dog_player_statistics_v1/'+chris),false);
+ assert.equal(docs.has('dog_player_statistics_v1/'+vanessa),true);
+ assert.equal(docs.has('dog_player_statistics_v1/'+david),true);
+ assert.deepEqual(docs.get('spielesammlung_hub_v1/123'),seed['spielesammlung_hub_v1/123'],
+  'the completed room itself is not modified');
+});
+test('DOG with a real unfinished game inside playing room still blocks Chris reset',async()=>{
+ for(const phase of ['exchange','play','seven','rescue']){
+  const seed=initial();
+  seed['spielesammlung_hub_v1/123']={
+   phase:'playing',game:'dog',match:{game:'dog',dog:{phase}},
+   expiresAt:20000,players:[{uid:chris}]};
+  const {db,docs}=firestore(seed);
+  assert.equal(isChrisActiveChristmasMatch(seed['spielesammlung_hub_v1/123'],chris,10000),true);
+  await assert.rejects(()=>resetChrisChristmasOnce(db,chris,{clock:()=>10000}),
+   /CHRIS_RESET_ACTIVE_DOG_MATCH/);
+  assert.equal(docs.has(CHRIS_CHRISTMAS_RESET_MARKERS+'/'+chris),false);
+ }
+});
+test('Grinch missions: genuinely completed games do not block, unfinished ones do',async()=>{
+ for(const name of ['dog-grinch1','dog-grinch2']){
+  const finished={phase:'playing',game:name,
+   match:{game:name,grinch:{complete:true}},
+   expiresAt:20000,players:[{uid:chris}]};
+  assert.equal(isChrisActiveChristmasMatch(finished,chris,10000),false);
+  const {db,docs}=firestore({...initial(),['spielesammlung_hub_v1/123']:finished});
+  assert.equal((await resetChrisChristmasOnce(db,chris,{clock:()=>10000})).alreadyReset,false);
+  assert.equal(docs.has('dog_christmas_research_v1/'+chris),false);
+  const ongoing={...finished,match:{game:name,grinch:{complete:false}}};
+  assert.equal(isChrisActiveChristmasMatch(ongoing,chris,10000),true);
+ }
+});
+test('transaction sees a concurrently completed match and allows the safe reset',async()=>{
+ const seed=initial();
+ seed['spielesammlung_hub_v1/123']={
+  phase:'playing',game:'dog',match:{game:'dog',dog:{phase:'finished'}},
+  expiresAt:20000,players:[{uid:chris}]};
+ const {db,docs}=firestore(seed,store=>{
+  // Room remains in the outer playing state even after its ceremony.
+  const current=store.get('spielesammlung_hub_v1/123');
+  store.set('spielesammlung_hub_v1/123',{...current,match:{game:'dog',dog:{phase:'finished'}}});
+ });
+ const result=await resetChrisChristmasOnce(db,chris,{clock:()=>10000});
+ assert.equal(result.alreadyReset,false);
+ assert.equal(docs.has(CHRIS_CHRISTMAS_RESET_MARKERS+'/'+chris),true);
 });
 test('concurrent match start in Chris existing lobby aborts inside transaction',async()=>{
  const seed=initial();
