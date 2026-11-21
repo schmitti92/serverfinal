@@ -1,0 +1,24 @@
+name: Firebase DOG village legacy import (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/firebase-village-legacy-import-offline.test.js'
+      - '.github/workflows/firebase-village-legacy-import-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  village-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check server syntax
+        run: node --check shared-lobby.js
+      - name: Test real authenticated import route against fake Firestore
+        run: node --test tests/firebase-village-legacy-import-offline.test.js
