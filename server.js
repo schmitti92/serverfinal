@@ -4834,7 +4834,7 @@ app.post("/room/:code/ensure", (req, res) => {
       const requestedTheme=String(req.body?.boardTheme || "").toLowerCase();
       if(requestedTheme==='classic' || requestedTheme==='wood' || requestedTheme==='stone'){
         const boardTheme=setLobbyBoardTheme(room,requestedTheme);
-        if(room.state){
+        if(room.state&&room.state.boardTheme!==boardTheme){
           room.state.boardTheme=boardTheme;
           try{ Promise.resolve(persistRoomState(room)).catch(()=>{}); }catch(_e){}
           broadcast(room,{type:"snapshot",state:room.state});
@@ -4924,7 +4924,7 @@ app.post("/room/:code/board-theme", async (req, res) => {
     // Falls bereits ein Spielzustand existiert, ziehen wir die rein visuelle
     // Einstellung direkt nach. So können Lobby, Reconnect und offene Spiel-Tabs
     // niemals unterschiedliche Brettdesigns anzeigen.
-    if(room.state){
+    if(room.state&&room.state.boardTheme!==boardTheme){
       room.state.boardTheme = boardTheme;
       try{ await persistRoomState(room); }catch(_e){}
       broadcast(room, { type:"snapshot", state:room.state });
@@ -6362,6 +6362,8 @@ broadcast(room, roomUpdatePayload(room));
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann den Modus ändern" }); return; }
 
       const mode = (msg.mode === "victim") ? "victim" : "thrower";
+      const changed=room.jokerAwardMode!==mode||!!room.state&&room.state.jokerAwardMode!==mode;
+      if(!changed)return; // Duplicate lobby setting, no revision and no write.
       room.jokerAwardMode = mode;
       if (room.state) room.state.jokerAwardMode = mode;
 
@@ -6588,10 +6590,20 @@ broadcast(room, roomUpdatePayload(room));
       if (!me?.isHost) { send(ws, { type: "error", code: "NOT_HOST", message: "Nur Host kann fortsetzen" }); return; }
       if (!room.state) { send(ws, { type: "error", code: "NO_STATE", message: "Spiel nicht gestartet" }); return; }
       if (!canStart(room)) {
-        room.state.paused = true;
-        await persistRoomState(room);
+        // Old host tabs may repeat "resume" every two seconds while waiting.
+        // Persist the transition once; repeat attempts are presence-only.
+        if (room.state.paused !== true) {
+          room.state.paused = true;
+          await persistRoomState(room);
+        }
         send(ws, { type: "error", code: "NEED_2P", message: "Warte auf 2 Spieler…" });
-        broadcast(room, { type: "snapshot", state: room.state });
+        // Only the requester needs the existing paused snapshot.
+        send(ws, { type: "snapshot", state: room.state });
+        return;
+      }
+      if (room.state.paused === false) {
+        // An already-running match must never create another Firestore write.
+        send(ws, { type: "snapshot", state: room.state });
         return;
       }
       room.state.paused = false;
