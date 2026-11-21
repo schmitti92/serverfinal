@@ -697,6 +697,10 @@ function finishEisstock(ch,members){
         grinchSeat:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         grinchRoster:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.map(({seat,uid,name})=>({seat,uid,name})):null,
         grinchCompletionRecorded:['dog-grinch1','dog-grinch2'].includes(room.match.game)&&room.match.grinchCompletionRecorded===true,
+        grinchResearch:['dog-grinch1','dog-grinch2'].includes(room.match.game)?
+          {...(room.match.grinchResearchUsed?.[identity.uid]||{}),
+           fogCleared:room.match.grinchFogCleared?.[identity.uid]===room.match.grinch?.turn,
+           compass:room.match.grinchCompass?.[identity.uid]??null}:null,
         christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?
           {...publicDogChristmasMatch(room.match.christmas),...privateChristmasMarks(room.match,identity.uid)}:null,
         dogResearch:room.match.game==='dog'?{
@@ -1698,8 +1702,39 @@ function finishEisstock(ch,members){
       if((m.grinchCommands||[]).includes(actionId))return {unchanged:true};
       if(m.grinch.complete)throw error(409,'GRINCH_ALREADY_COMPLETED');
       if(m.grinch.revision!==expectedRevision)throw error(409,'GRINCH_STALE_REVISION');
-      try{m.grinch=m.game==='dog-grinch2'?playGrinchMission2(m.grinch,seat,action):playGrinchMission1(m.grinch,seat,action);}
-      catch(e){throw error(409,e.message||'GRINCH_ILLEGAL_ACTION');}
+      if(['research-thaw','research-fog','research-compass'].includes(action.type)){
+        const skill={ 'research-thaw':'thaw','research-fog':'fog_lantern',
+          'research-compass':'grinch_compass'}[action.type];
+        const ref=store.collection(DOG_RESEARCH_COLLECTION).doc(identity.uid);
+        const snap=await tx.get(ref),rank=dogResearchLevel(snap.exists?snap.data():null,skill);
+        const used=m.grinchResearchUsed?.[identity.uid]||{};
+        const count=used[skill]||0;
+        if(rank<=count)throw error(403,'RESEARCH_NOT_AVAILABLE');
+        if(action.type==='research-thaw'){
+          const target=m.grinch.pieces.find(p=>p.id===action.pieceId&&p.place==='track');
+          if(m.game!=='dog-grinch2'||!target||m.grinch.m2?.frozen?.[target.id]!==true)
+            throw error(409,'RESEARCH_NOT_FROZEN');
+          // A permanent story loss is never reversible; only slot-based
+          // temporary freezing can be removed (including allies).
+          delete m.grinch.m2.frozen[target.id];
+          m.grinch.history=['🛡️ '+identity.name+' taut die Figur '+target.id+' auf!',...m.grinch.history].slice(0,12);
+        }else if(action.type==='research-fog'){
+          if(m.grinch.lastEvent?.type!=='fog')throw error(409,'RESEARCH_NO_FOG');
+          m.grinchFogCleared={...(m.grinchFogCleared||{}),[identity.uid]:m.grinch.turn};
+        }else{
+          const mine=m.grinch.players?.[seat];
+          if(!mine||mine.lost&&m.game==='dog-grinch1'||mine.m2Lost&&m.game==='dog-grinch2')
+            throw error(409,'RESEARCH_NO_HIDDEN_TRAP');
+          const left=Math.max(0,(mine.lossTriggerAt||0)-(mine.lossEligibleLandings||0));
+          m.grinchCompass={...(m.grinchCompass||{}),[identity.uid]:left};
+        }
+        m.grinchResearchUsed={...(m.grinchResearchUsed||{}),
+          [identity.uid]:{...used,[skill]:count+1}};
+        m.grinch.revision++;
+      }else{
+        try{m.grinch=m.game==='dog-grinch2'?playGrinchMission2(m.grinch,seat,action):playGrinchMission1(m.grinch,seat,action);}
+        catch(e){throw error(409,e.message||'GRINCH_ILLEGAL_ACTION');}
+      }
       m.grinchCommands=[...(m.grinchCommands||[]).slice(-69),actionId];
       // Only the actual final verified move grants progress to all members.
       if(m.grinch.complete&&!m.grinchCompletionRecorded){
