@@ -779,7 +779,10 @@ function finishEisstock(ch,members){
   // Render-first completion checks: share a brief, read-only room snapshot across
   // clients instead of starting an unchanged Firestore transaction every 7 seconds.
   // This cache NEVER authorizes a write. Completion and payouts still use mutate().
-  const SYNC_ROOM_READ_TTL_MS=2500;
+  // 12 s avoids repeated Firestore GETs from the 7-s completion heartbeat.
+  // This is only a non-authorizing preflight: isMatchFinished() still runs
+  // on every call, and any actual completion rechecks in mutate().
+  const SYNC_ROOM_READ_TTL_MS=12000;
   const SYNC_ROOM_READ_MAX=128;
   const syncRoomReads=new Map();
   // The existing Firestore onSnapshot already put this authoritative room into
@@ -788,6 +791,29 @@ function finishEisstock(ch,members){
   // that changes state. Independent Firebase Auth and membership checks remain.
   const HUB_STREAM_READ_TTL_MS=2500;
   const hubStreamReadCounts={hits:0,misses:0,invalidations:0};
+  // Share concurrent read-only HTTP GETs for the same room, without adding
+  // any TTL or caching membership decisions. Firestore authorization remains
+  // per caller in validateRead(), and all writes still use transactions.
+  const hubHttpReadsInFlight=new Map();
+  const hubHttpReadEpochs=new Map();
+  const hubHttpReadCounts={firestoreGets:0,coalesced:0};
+  function freshHubRoomForHttp(code){
+    const running=hubHttpReadsInFlight.get(code);
+    if(running){hubHttpReadCounts.coalesced++;return running;}
+    const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const epoch=hubHttpReadEpochs.get(code)||0;
+    hubHttpReadCounts.firestoreGets++;
+    const pending=documentFor(store,code).get().then(snapshot=>{
+      // A room mutation might commit while the read is in flight. Never
+      // return its pre-mutation snapshot after that successful commit.
+      if((hubHttpReadEpochs.get(code)||0)!==epoch)return freshHubRoomForHttp(code);
+      return snapshot.exists?snapshot.data():null;
+    });
+    hubHttpReadsInFlight.set(code,pending);
+    const cleanup=()=>{if(hubHttpReadsInFlight.get(code)===pending)hubHttpReadsInFlight.delete(code);};
+    pending.then(cleanup,cleanup);
+    return pending;
+  }
   function recentHubStreamRoom(code){
     const stream=roomStreams.get(code);
     const age=stream?.snapshotAt!=null?clock()-stream.snapshotAt:Infinity;
@@ -801,6 +827,8 @@ function finishEisstock(ch,members){
     return null;
   }
   function invalidateHubReadCache(code){
+    hubHttpReadEpochs.set(code,(hubHttpReadEpochs.get(code)||0)+1);
+    hubHttpReadsInFlight.delete(code);
     syncRoomReads.delete(code);
     const stream=roomStreams.get(code);
     if(stream)stream.snapshotAt=null;
@@ -815,11 +843,7 @@ function finishEisstock(ch,members){
     const now=clock(),cached=syncRoomReads.get(code);
     if(cached?.room&&cached.expiresAt>now)return cached.room;
     if(cached?.pending)return cached.pending;
-    const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
-    const pending=(async()=>{
-      const snapshot=await documentFor(store,code).get();
-      return snapshot.exists?snapshot.data():null;
-    })();
+    const pending=freshHubRoomForHttp(code);
     syncRoomReads.set(code,{pending});
     try{
       const room=await pending;
@@ -876,7 +900,8 @@ function finishEisstock(ch,members){
   };
   app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog','dog-grinch1'],challengeFoundation:true,
     // Counters are Render RAM only; never fetch Firebase to report them.
-    hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size}
+    hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size},
+    hubHttpReadCoalescing:{...hubHttpReadCounts,inFlight:hubHttpReadsInFlight.size,syncTtlMs:SYNC_ROOM_READ_TTL_MS}
   }));
   // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
   // A read never writes or grants a prize. Payouts happen in a transaction
@@ -1560,10 +1585,7 @@ function finishEisstock(ch,members){
     // No additional Firestore read when an active room watcher has just
     // delivered a fresh snapshot. No watcher/stale state => direct Firestore.
     let room=recentHubStreamRoom(code);
-    if(!room){
-      const store=db();const snap=await documentFor(store,code).get();
-      room=snap.exists?snap.data():null;
-    }
+    if(!room)room=await freshHubRoomForHttp(code);
     validateRead(room,req.hubIdentity);return {room:expose(room,req.hubIdentity)};
   }));
   app.post('/api/hub/rooms/:code/select',handler(async req=>{
