@@ -1767,8 +1767,28 @@ function finishEisstock(ch,members){
         // transitions. No client-supplied knockout numbers are trusted.
         countDogKnockouts(match,before,after,playerSeat);
         if(!event?.enabled)return;
-        creditedTenths+=claimDogChristmasGift(event,before,after,move,playerSeat);
+        const baseLights=claimDogChristmasGift(event,before,after,move,playerSeat);
+        creditedTenths+=baseLights;
         const recipient=match.dogRoster.find(p=>p.seat===playerSeat);
+        if(baseLights>0&&recipient&&!recipient.bot){
+          const ranks=match.dogResearchSkills?.[recipient.uid]||{};
+          // Carry hundredths of a tenth to ensure a +5 % bonus works even
+          // when a gift pays a small amount of Christmas lights.
+          const carry=match.dogLightCarry?.[recipient.uid]||0;
+          const numerator=baseLights*Math.min(10,ranks.lights_bonus||0)*5+carry;
+          const bonusTenths=Math.floor(numerator/100);
+          match.dogLightCarry={...(match.dogLightCarry||{}),[recipient.uid]:numerator%100};
+          creditedTenths+=bonusTenths;
+          event.earnedTenths+=bonusTenths;
+          if((ranks.gift_magnet||0)*2>randomInt(100)){
+            const extra=10+(event.levels?.bakery||1)-1;
+            creditedTenths+=extra;event.earnedTenths+=extra;event.bonusGiftCount++;
+            event.activity=[...(event.activity||[]).slice(-11),
+              {type:'research-gift',seat:playerSeat,earnedTenths:extra}];
+          }
+          if((ranks.elf_luck||0)>randomInt(100))
+            vouchersEarned.push({uid:recipient.uid,tier:'simple'});
+        }
         // Only real participants get personal scratch vouchers. Bot traffic
         // never creates a wallet or extra Firestore reads.
         if(recipient&&!recipient.bot){
@@ -1818,7 +1838,9 @@ function finishEisstock(ch,members){
             p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock(),
             event?.enabled?dogAcademyXpPercent(event.levels?.academy):0,
             {xpPercent:10*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'xp'),
-             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp')})
+             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp'),
+             dailyLevel:dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'daily_xp'),
+             effortLevel:dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'effort')})
         }));
         match.dogCounters.recorded=true;
       }
