@@ -1227,7 +1227,7 @@ function finishEisstock(ch,members){
   const INTRO_SEASON_START_AT=Date.parse('2026-11-21T13:00:00Z');
   // Verified Firebase profile name (never a client-submitted nickname). Chris
   // gets a preview invitation without changing his real DOG match statistics.
-  const christmasPreviewGranted=identity=>identity?.name==='Chris';
+  const christmasPreviewGranted=identity=>String(identity?.name||'').trim().toLowerCase()==='chris';
   const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
