@@ -28,7 +28,7 @@ function setup(){
   use:(path,handler)=>middlewares.push({path,handler})
  };
  installSharedLobby(app,{verifyProfile:async token=>
-  ({chris:{uid:'c',name:'Chris'},vanessa:{uid:'v',name:'Vanessa'},david:{uid:'d',name:'David'}}[token]||null),
+  ({chris:{uid:'c',name:'chris'},vanessa:{uid:'v',name:'Vanessa'},david:{uid:'d',name:'David'}}[token]||null),
   getFirestore:()=>store,clock:()=>1700000000000});
  const call=async(verb,path,who='chris',body={})=>{
   const route=routes.find(r=>r.verb===verb&&r.path===path);
@@ -73,7 +73,7 @@ test('Unauthenticated users cannot see unlock status',async()=>{
  assert.equal(r.status,401);
 });
 
-test('Chris has immediate preview access without fabricating a DOG match',async()=>{
+test('lowercase chris receives immediate preview access without fabricating a DOG match',async()=>{
  const h=setup();
  const status=await h.call('GET','/api/hub/dog/christmas-intro','chris');
  assert.equal(status.status,200);
