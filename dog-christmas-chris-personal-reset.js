@@ -64,19 +64,30 @@ export async function resetChrisChristmasOnce(db,uid,{clock=Date.now}={}){
  }
  const now=clock();
  const existingRooms=await db.collection(ROOM_COLLECTION).get();
- const active=(existingRooms.docs||[]).filter(s=>liveDogRoom(s.data(),uid,now)).map(s=>s.ref);
- if(active.length)throw Error('CHRIS_RESET_ACTIVE_DOG_MATCH');
+ // Keep the live matching rooms in the same transaction: if Chris starts a
+ // match in an already joined lobby during the preflight, abort the reset.
+ const related=(existingRooms.docs||[]).filter(s=>{
+  const room=s.data();
+  return (room?.players||[]).some(player=>player?.uid===uid)&&
+   (Number(room?.expiresAt)>now||!Number.isFinite(Number(room?.expiresAt)));
+ });
+ if(related.length>40)throw Error('CHRIS_RESET_TOO_MANY_RELATED_ROOMS');
+ if(related.some(s=>liveDogRoom(s.data(),uid,now)))throw Error('CHRIS_RESET_ACTIVE_DOG_MATCH');
+ const roomRefs=related.map(s=>s.ref);
  const entries=entryRefs(db,uid),archive=db.collection(CHRIS_CHRISTMAS_RESET_ARCHIVES);
  return db.runTransaction(async tx=>{
   const [marked,...snapshots]=await Promise.all([
    tx.get(markerRef),
    ...entries.map(x=>tx.get(x.ref)),
-   ...active.map(ref=>tx.get(ref))
+   ...roomRefs.map(ref=>tx.get(ref))
   ]);
   if(marked.exists){
    if(marked.data()?.status!=='completed')throw Error('CHRIS_RESET_MARKER_INCONSISTENT');
    return {alreadyReset:true,cleared:marked.data().cleared||0,archived:marked.data().archived||0};
   }
+  const freshRooms=snapshots.slice(entries.length);
+  if(freshRooms.some(s=>s.exists&&liveDogRoom(s.data(),uid,clock())))
+   throw Error('CHRIS_RESET_ACTIVE_DOG_MATCH');
   let cleared=0;
   for(let i=0;i<entries.length;i++){
    const entry=entries[i],snap=snapshots[i];
