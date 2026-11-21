@@ -13,6 +13,17 @@ export function createDogSharedReadCoordinator({
 }={}){
  const byDatabase=new WeakMap();
  const counters={documentReads:0,sharedReads:0,cacheHits:0,errors:0,invalidations:0};
+ const readsByCollection={},hitsByCollection={};
+ const collectionOf=path=>{
+  const prefix=String(path).split('/')[0];
+  return /^[a-z0-9_]{3,75}$/.test(prefix)?prefix:'other';
+ };
+ const tally=(bucket,path)=>{
+  const kind=collectionOf(path);
+  // Collection names are public schema metadata, never account IDs or docs.
+  const safe=Object.hasOwn(bucket,kind)||Object.keys(bucket).length<60?kind:'other';
+  bucket[safe]=(bucket[safe]||0)+1;
+ };
  const liveDatabases=new Set();
  let epoch=0;
  function storeFor(db){
@@ -44,6 +55,7 @@ export function createDogSharedReadCoordinator({
    const cached=record.cached.get(path);
    if(cached&&cached.expiresAt>now){
     counters.cacheHits++;
+    tally(hitsByCollection,path);
     // Refresh bounded FIFO order; does not prolong the TTL.
     record.cached.delete(path);
     record.cached.set(path,cached);
@@ -54,6 +66,7 @@ export function createDogSharedReadCoordinator({
   const existing=record.pending.get(path);
   if(existing){counters.sharedReads++;return existing;}
   counters.documentReads++;
+  tally(readsByCollection,path);
   const readEpoch=epoch;
   const task=Promise.resolve().then(()=>ref.get());
   const tracked=record.pending.size<maxPendingPerDatabase;
@@ -71,6 +84,7 @@ export function createDogSharedReadCoordinator({
   finally{if(tracked&&record.pending.get(path)===task)record.pending.delete(path);}
  }
  const stats=()=>({...counters,ttlMs,maxCachedPerDatabase,
+  readsByCollection:{...readsByCollection},hitsByCollection:{...hitsByCollection},
   cached:[...liveDatabases].reduce((n,db)=>n+db.cached.size,0),
   pending:[...liveDatabases].reduce((n,db)=>n+db.pending.size,0)});
  return {read,invalidate,stats};
