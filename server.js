@@ -3699,6 +3699,7 @@ const skyjoMissingUntil = new Map();         // code -> short negative cache aft
 const skyjoWriteChains = new Map();         // code -> serialized optimistic writes
 const skyjoFirebaseLatestOp = new Map();    // code -> latest pending set/delete operation
 const skyjoFirebaseWorkers = new Map();     // code -> background Firestore worker
+const skyjoFirebaseConfirmedRev = new Map(); // skip only states already durably acknowledged by Firebase
 const skyjoReactionRooms = new Map();       // code -> transient emoji stream, not game state
 
 function skyjoSavePath(code){
@@ -3742,7 +3743,9 @@ async function readSkyjoCold(code){
       if(snap.exists){
         const d=snap.data()||{};
         if(d.state && typeof d.state==="object"){
-          return { code:rc, rev:Number(d.rev||0)||0, state:d.state, updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0, source:"firestore" };
+          const confirmedRev=Number(d.rev||0)||0;
+          skyjoFirebaseConfirmedRev.set(rc,confirmedRev);
+          return { code:rc, rev:confirmedRev, state:d.state, updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0, source:"firestore" };
         }
       }
     }
@@ -3796,13 +3799,18 @@ function queueSkyjoFirebaseOp(code,op){
         initFirebaseIfConfigured();
         if(!firestore) continue;
         const ref=firestore.collection(SKYJO_COLLECTION).doc(docIdForRoom(rc));
-        if(next?.type==="delete") await ref.delete();
+        if(next?.type==="delete") {await ref.delete();skyjoFirebaseConfirmedRev.delete(rc);}
         else if(next?.type==="set" && next.payload){
           const p=next.payload;
           await ref.set({
             code:rc,rev:p.rev,state:p.state,updatedAtMs:p.updatedAtMs,ts:p.ts,
             updatedAt:admin.firestore.FieldValue.serverTimestamp()
           },{merge:false});
+          // Successful Firestore acknowledgement, not merely RAM/disk queueing.
+          skyjoFirebaseConfirmedRev.delete(rc);
+          skyjoFirebaseConfirmedRev.set(rc,p.rev);
+          while(skyjoFirebaseConfirmedRev.size>SKYJO_CACHE_MAX)
+            skyjoFirebaseConfirmedRev.delete(skyjoFirebaseConfirmedRev.keys().next().value);
         }
         consecutiveFailures=0;
       }catch(e){
@@ -3833,6 +3841,12 @@ async function writeSkyjoPersisted(code,state,baseRev){
     if(baseRev!=null && Number(baseRev)!==curRev){
       return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
     }
+    // Repeat packets are not new moves. Only suppress after Firebase
+    // actually confirmed this revision; failed/unpersisted writes still retry.
+    if(cur&&skyjoFirebaseConfirmedRev.has(rc)&&skyjoFirebaseConfirmedRev.get(rc)>=curRev&&
+       JSON.stringify(cur.state)===raw)
+      return {ok:true,code:rc,rev:curRev,updatedAtMs:cur.updatedAtMs||0,
+        source:"firestore-synced",firebaseQueued:false,unchanged:true};
     const rev=curRev+1, updatedAtMs=Date.now();
     const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
     // RAM is authoritative while the process is alive; disk is an immediate local fallback.
@@ -3850,6 +3864,7 @@ async function deleteSkyjoPersisted(code){
   const rc=normalizeSkyjoCode(code); if(!rc) return false;
   return withSkyjoWriteLock(rc,async()=>{
     skyjoCache.delete(rc);
+    skyjoFirebaseConfirmedRev.delete(rc);
     skyjoMissingUntil.set(rc,Date.now()+15000);
     skyjoReactionRooms.delete(rc);
     try{ const f=skyjoSavePath(rc); if(fs.existsSync(f))fs.unlinkSync(f); }catch(_e){}
