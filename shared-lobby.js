@@ -15,6 +15,7 @@ import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPla
 import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
+import {DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,dogChristmasScratchMinLevel,dogChristmasScratchUnlocked} from './dog/christmas-unlock-levels.js';
 import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearchLevel,dogResearchTicketMs,dogResearchPityThreshold} from './dog/christmas-research.js';
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
@@ -876,7 +877,7 @@ function finishEisstock(ch,members){
   // and share the existing 10 tree entitlements to avoid duplicated art.
   app.get('/api/hub/scratch',authentication,handler(async req=>{
      const identity=req.hubIdentity,store=db();
-     const [snap,tree,settingsSnap,villageSnap,researchSnap,giftsEditionSnap,snowEditionSnap,ticEditionSnap,...otherEditionSnaps]=await Promise.all([
+     const [snap,tree,settingsSnap,villageSnap,researchSnap,giftsEditionSnap,snowEditionSnap,ticEditionSnap,statsSnap,...otherEditionSnaps]=await Promise.all([
        store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
        store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
@@ -885,6 +886,7 @@ function finishEisstock(ch,members){
        store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT).get(),
        store.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT).get(),
        store.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT).get(),
+       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(identity.uid).get(),
        ...OTHER_EDITION_VARIANTS.map(variant=>
         store.collection(OTHER_EDITION_COLLECTION).doc('current_'+variant).get())
      ]);
@@ -899,6 +901,8 @@ function finishEisstock(ch,members){
        ticEdition:ticEditionPublic(ticEditionSnap.exists?ticEditionSnap.data():null),
        otherEditions:Object.fromEntries(OTHER_EDITION_VARIANTS.map((variant,i)=>
         [variant,otherEditionPublic(otherEditionSnaps[i]?.exists?otherEditionSnaps[i].data():null)])),
+       playerLevel:dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null).level,
+       variantUnlockLevels:DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,
        canManageScratch:true};
    }));
    // Authenticate all writes, but do not require host/room membership:
@@ -1111,15 +1115,19 @@ function finishEisstock(ch,members){
       store.collection(OTHER_EDITION_COLLECTION).doc('current_'+body.variantId):null;
     const sharedVillageRef=dogVillageFor(store);
     const researchRef=store.collection(DOG_RESEARCH_COLLECTION).doc(identity.uid);
+    const playerStatsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(identity.uid);
     // Regular DOG scratch purchase; no printed editions or 500-ticket queue.
     // The server still verifies prizes and atomically books each purchase.
     const award=await store.runTransaction(async tx=>{
-      const [walletSnap,treeSnap,settingsSnap,villageSnap,researchSnap,editionSnap,snowSnap,ticSnap,otherSnap]=await Promise.all([
+      const [walletSnap,treeSnap,settingsSnap,villageSnap,researchSnap,editionSnap,snowSnap,ticSnap,otherSnap,playerStatsSnap]=await Promise.all([
         tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),tx.get(sharedVillageRef),tx.get(researchRef),
         giftsEditionRef?tx.get(giftsEditionRef):Promise.resolve(null),
         snowEditionRef?tx.get(snowEditionRef):Promise.resolve(null),
         ticEditionRef?tx.get(ticEditionRef):Promise.resolve(null),
-        otherEditionRef?tx.get(otherEditionRef):Promise.resolve(null)]);
+        otherEditionRef?tx.get(otherEditionRef):Promise.resolve(null),tx.get(playerStatsRef)]);
+      const verifiedPlayerLevel=dogPlayerLevelStatus(playerStatsSnap.exists?playerStatsSnap.data():null).level;
+      if(!dogChristmasScratchUnlocked(body.variantId,verifiedPlayerLevel))
+        throw error(403,'SCRATCH_PLAYER_LEVEL_LOCKED');
       const settings=normalizeScratchSettings(settingsSnap.exists?settingsSnap.data():null);
       const rawResearch=researchSnap.exists?researchSnap.data():null;
       const privateDiscount=2*dogResearchLevel(rawResearch,'discount');
@@ -1200,6 +1208,7 @@ function finishEisstock(ch,members){
       }
       return {result:result.result,replayed:result.unchanged,
         scratch:{...result.status,settings,
+         playerLevel:verifiedPlayerLevel,variantUnlockLevels:DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,
          discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)+privateDiscount},
         giftsEdition:giftsEditionPublic(nextEdition||(editionSnap?.exists?editionSnap.data():null)),
         snowEdition:snowEditionPublic(nextSnowEdition||(snowSnap?.exists?snowSnap.data():null)),
