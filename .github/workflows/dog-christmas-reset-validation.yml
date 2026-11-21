@@ -1,0 +1,19 @@
+name: DOG Christmas official reset validation
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-christmas-reset-once.js'
+      - 'tests/dog-christmas-reset-once.test.js'
+      - '.github/workflows/dog-christmas-reset-validation.yml'
+  workflow_dispatch:
+jobs:
+  reset-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: node --test tests/dog-christmas-reset-once.test.js
