@@ -590,11 +590,17 @@ function finishEisstock(ch,members){
     const players=activeSeats(room);
     if(players.length<1||players.length>4)throw error(409,'INVALID_PLAYER_COUNT');
     const seats=dogLobbySeats(players);
+    // Exactly three verified human players form a three-way match. No
+    // fourth computer participant, hidden hand or phantom player is created.
+    const threeHuman=players.length===3;
     const roster=Array.from({length:4},(_,seat)=>{
       const player=seats[seat];
-      return player?{seat,uid:player.uid,name:player.name,bot:false}:{seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true};
+      return player?{seat,uid:player.uid,name:player.name,bot:false,inactive:false}:
+        threeHuman?{seat,uid:null,name:'Freier Platz',bot:false,inactive:true}:
+        {seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true,inactive:false};
     });
-    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot)})};
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot),
+      inactiveSeats:roster.filter(r=>r.inactive).map(r=>r.seat)})};
     // No host or room switch: the active seasonal event is automatic for DOG.
     room.phase='playing';
     // Bots finish their opening exchanges before the first hidden map is
@@ -719,7 +725,7 @@ function finishEisstock(ch,members){
         }:null,
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogSeatColors:room.match.game==='dog'?room.match.dogRoster.map(r=>DOG_LOBBY_COLORS[r.seat]):null,
-        dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
+        dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot||r.inactive?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
