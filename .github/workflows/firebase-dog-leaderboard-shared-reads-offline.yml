@@ -1,0 +1,27 @@
+name: Firebase DOG leaderboard shared reads (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog-shared-read-coordinator.js'
+      - 'tests/firebase-dog-leaderboard-shared-reads-offline.test.js'
+      - '.github/workflows/firebase-dog-leaderboard-shared-reads-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  leaderboard-reads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate backend syntax
+        run: |
+          node --check shared-lobby.js
+          node --check tests/firebase-dog-leaderboard-shared-reads-offline.test.js
+      - name: Concurrent real statistics route with isolated fake Firestore
+        run: node --test tests/firebase-dog-leaderboard-shared-reads-offline.test.js
