@@ -1,0 +1,24 @@
+name: Firebase hub no-op cache (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/firebase-hub-noop-cache-offline.test.js'
+      - '.github/workflows/firebase-hub-noop-cache-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-op-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify shared hub backend syntax
+        run: node --check shared-lobby.js
+      - name: Exercise real hub routes with countable fake Firestore
+        run: node --test tests/firebase-hub-noop-cache-offline.test.js
