@@ -11,6 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createDogSharedReadCoordinator} from './dog-shared-read-coordinator.js';
+import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
@@ -94,6 +95,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   // Each Firestore path includes the UID for private records; no TTL, and no
   // shared results in the write/transaction paths.
   const dogMetaReadCoordinator=createDogSharedReadCoordinator();
+  const dogWriteDiagnostics=createDogWriteDiagnostics({clock});
   const readDogMeta=(store,ref)=>dogMetaReadCoordinator.read(store,ref);
   const christmasActive=()=>christmasEventActive()===true;
   const grinchActive=()=>grinchOnlineEnabled===true;
@@ -880,10 +882,18 @@ function finishEisstock(ch,members){
     const ref=documentFor(store,code);
     // The transaction result carries its own committed-write flag: retries
     // cannot leak a previous attempt's decision into cache invalidation.
-    const {value,changed,revision}=await store.runTransaction(async tx=>{
+    const {value,changed,revision,dogWriteKind,writeCounts}=await store.runTransaction(async tx=>{
       const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
-      const result=await change(room,tx,store);
+      const game=room.match?.game||room.game;
+      const dogWriteKind=game==='dog'?'dog-match':
+        typeof game==='string'&&game.startsWith('dog-grinch')?'dog-grinch':
+        room.game==='dog'?'dog-lobby':null;
+      // Count the actual transaction's document operations. Never count a
+      // transaction retry or a failed validation as a committed write.
+      const tracked=dogWriteKind?dogWriteDiagnostics.counter(tx):null;
+      const writeTx=tracked?.tx||tx;
+      const result=await change(room,writeTx,store);
       // Record each completed match exactly once, in the same transaction as its final move.
       if(room.match?.game==='kniffel'&&room.match.kniffel?.finished&&!room.match.kniffel.statsRecorded){
         const game=room.match.kniffel;
@@ -898,14 +908,21 @@ function finishEisstock(ch,members){
         });
         game.statsRecorded=true;
       }
-      if(result?.remove){tx.delete(ref);return {value:result.value,changed:true};}
-      if(result?.unchanged)return {value:expose(room,identity),changed:false,revision:room.revision};
+      if(result?.remove){
+        writeTx.delete(ref);
+        return {value:result.value,changed:true,dogWriteKind,writeCounts:tracked?.counts()};
+      }
+      if(result?.unchanged)
+        return {value:expose(room,identity),changed:false,revision:room.revision,
+          dogWriteKind,writeCounts:tracked?.counts()};
       room.revision=(Number(room.revision)||0)+1;
       room.updatedAt=clock();room.expiresAt=clock()+TTL_MS;
-      tx.set(ref,room);
-      return {value:expose(room,identity),changed:true};
+      writeTx.set(ref,room);
+      return {value:expose(room,identity),changed:true,
+        dogWriteKind,writeCounts:tracked?.counts()};
     });
-    // Only an actual committed room write/delete supersedes the recent
+    if(dogWriteKind)dogWriteDiagnostics.record(dogWriteKind,writeCounts,changed);
+    // Only an actual committed room write/delete supersedes any earlier
     // Firestore stream or completion preflight. No-op requests still read
     // Firestore for authorization but must not cause fresh follower GETs.
     if(changed){
@@ -934,6 +951,7 @@ function finishEisstock(ch,members){
     hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size},
     hubHttpReadCoalescing:{...hubHttpReadCounts,inFlight:hubHttpReadsInFlight.size,syncTtlMs:SYNC_ROOM_READ_TTL_MS},
     hubMutationCache:{...hubMutationReadCacheStats},
+    dogWrites10m:dogWriteDiagnostics.snapshot(),
     dogMetaInFlightReads:dogMetaReadCoordinator.stats()
   }));
   // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
@@ -1181,7 +1199,7 @@ function finishEisstock(ch,members){
     const playerStatsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(identity.uid);
     // Regular DOG scratch purchase; no printed editions or 500-ticket queue.
     // The server still verifies prizes and atomically books each purchase.
-    const award=await store.runTransaction(async tx=>{
+    const award=await dogWriteDiagnostics.transaction(store,'dog-scratch-buy',async tx=>{
       const [walletSnap,treeSnap,settingsSnap,villageSnap,researchSnap,editionSnap,snowSnap,ticSnap,otherSnap,playerStatsSnap]=await Promise.all([
         tx.get(accountRef),tx.get(treeRef),tx.get(settingsRef),tx.get(sharedVillageRef),tx.get(researchRef),
         giftsEditionRef?tx.get(giftsEditionRef):Promise.resolve(null),
@@ -1352,7 +1370,7 @@ function finishEisstock(ch,members){
     const store=db(),uid=req.hubIdentity.uid,now=clock();
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
     const researchRef=store.collection(DOG_RESEARCH_COLLECTION).doc(uid);
-    return store.runTransaction(async tx=>{
+    return dogWriteDiagnostics.transaction(store,'dog-research-upgrade',async tx=>{
       const [statsSnap,researchSnap]=await Promise.all([tx.get(statsRef),tx.get(researchRef)]);
       const xp=statsSnap.exists?statsSnap.data()?.xp:0;
       let next;
@@ -1371,7 +1389,7 @@ function finishEisstock(ch,members){
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
     const walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
     const villageRef=dogVillageFor(store);
-    return store.runTransaction(async tx=>{
+    return dogWriteDiagnostics.transaction(store,'dog-research-claim',async tx=>{
       const [researchSnap,statsSnap,rewardSnap]=await Promise.all([
         tx.get(researchRef),tx.get(statsRef),
         type==='free_ticket'?tx.get(walletRef):tx.get(villageRef)
@@ -1424,7 +1442,7 @@ function finishEisstock(ch,members){
     const store=db(),uid=req.hubIdentity.uid;
     const walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
-    return store.runTransaction(async tx=>{
+    return dogWriteDiagnostics.transaction(store,'dog-level-claim',async tx=>{
       const [statsSnap,walletSnap]=await Promise.all([tx.get(statsRef),tx.get(walletRef)]);
       const current=dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null);
       if(current.level<level||current.totalXp<DOG_LEVEL_THRESHOLDS[level-1])
@@ -1475,7 +1493,7 @@ function finishEisstock(ch,members){
     // A linked DOG room gets the two new hidden fields immediately. Unlinked
     // rooms keep their current maps until a fresh match is started.
     const linkedCode=validCode(req.body?.roomCode),linkedRef=linkedCode?documentFor(store,linkedCode):null;
-    const village=await store.runTransaction(async tx=>{
+    const village=await dogWriteDiagnostics.transaction(store,'dog-village-upgrade',async tx=>{
       const ref=dogVillageFor(store);
       const [snap,roomSnap]=await Promise.all([tx.get(ref),linkedRef?tx.get(linkedRef):Promise.resolve(null)]);
       let result;
@@ -1512,7 +1530,7 @@ function finishEisstock(ch,members){
     const level=req.body?.level,store=db();
     if(!Number.isInteger(level)||level<1||level>10)throw error(400,'INVALID_TREE_LEVEL');
     const accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(req.hubIdentity.uid);
-    const result=await store.runTransaction(async tx=>{
+    const result=await dogWriteDiagnostics.transaction(store,'dog-tree-claim',async tx=>{
       const [villageSnap,accountSnap]=await Promise.all([tx.get(dogVillageFor(store)),tx.get(accountRef)]);
       let granted;
       try{granted=claimDogTreeReward(
@@ -2239,6 +2257,9 @@ function finishEisstock(ch,members){
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player.participating)throw error(403,'SPECTATOR_CANNOT_READY');
       if(player.testBot)throw error(403,'TEST_PLAYER_MANAGED_SEPARATELY');
+      // Repeat UI readiness packets are not moves and must not create a
+      // fresh Firestore revision. Preserve the legacy all-ready launch path.
+      if(player.ready===ready&&!(ready&&allReady(room)))return {unchanged:true};
       player.ready=ready;
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
