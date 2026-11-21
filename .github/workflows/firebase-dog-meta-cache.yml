@@ -4,6 +4,9 @@ on:
     branches: [main]
     paths:
       - 'dog-meta-write-policy.js'
+      - 'dog-write-diagnostics.js'
+      - 'dog-shared-read-coordinator.js'
+      - 'tests/firebase-dog-read-cache-budget.test.js'
       - 'shared-lobby.js'
       - 'tests/dog-meta-write-policy.test.js'
       - '.github/workflows/firebase-dog-meta-cache.yml'
@@ -21,4 +24,6 @@ jobs:
           node-version: '22'
       - run: node --check shared-lobby.js
       - run: node --check dog-meta-write-policy.js
+      - run: node --check dog-write-diagnostics.js
+      - run: node --check dog-shared-read-coordinator.js
       - run: node --test tests/dog-meta-write-policy.test.js tests/firebase-dog-read-cache-budget.test.js tests/firebase-dog-leaderboard-shared-reads-offline.test.js
