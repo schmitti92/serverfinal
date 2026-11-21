@@ -1,0 +1,28 @@
+name: Firebase DOG writes 10-minute diagnostics (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog-write-diagnostics.js'
+      - 'tests/firebase-dog-write-diagnostics-offline.test.js'
+      - '.github/workflows/firebase-dog-write-diagnostics.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dog-write-diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check backend and test syntax
+        run: |
+          node --check shared-lobby.js
+          node --check dog-write-diagnostics.js
+          node --check tests/firebase-dog-write-diagnostics-offline.test.js
+      - name: Test real DOG lobby writes and transaction retry accounting
+        run: node --test tests/firebase-dog-write-diagnostics-offline.test.js
