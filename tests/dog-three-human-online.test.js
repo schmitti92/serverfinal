@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installSharedLobby} from '../shared-lobby.js';
+import {legalActions as dogLegalActions} from '../dog/engine.js';
 
 function harness(options={}){
  let finished=false,skyjoBootstraps=0,watchStarts=0,watchStops=0;
@@ -125,4 +126,45 @@ test('DOG three distinct online profiles share one authoritative match without a
  assert.equal(final.match.dog.players.filter(p=>!p.inactive).length,3);
  assert.equal(final.match.dog.current,0);
  assert.equal(final.match.id,matchId);
+});
+
+test('DOG three-player winner credits exactly three genuine profiles, never the vacant seat',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ for(const who of ['bob','cara'])assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/join',who)).status,200);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ for(const who of ['alice','bob','cara'])assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/ready',who,{ready:true})).status,200);
+ // Put a trusted server-side fixture one legal goal-entry away from victory;
+ // the last move still goes through the normal authenticated action route.
+ const key='spielesammlung_hub_v1/'+code,room=h.docs.get(key);
+ assert.ok(room);
+ const s=room.match.dog;
+ assert.equal(s.mode,'solo3');
+ s.phase='play';s.current=0;s.starter=0;s.revision=42;
+ s.hands=[[{id:7777,type:'2'}],[],[],[]];
+ for(const p of s.pieces.filter(p=>p.owner===0)){
+  if(p.id===3){p.place='track';p.pos=63;}
+  else{p.place='goal';p.pos=p.id+1;}
+ }
+ h.docs.set(key,room);
+ const action=dogLegalActions(s,0).find(a=>a.type==='move'&&a.pieceId===3&&a.steps===2&&a.viaGoal===true);
+ assert.ok(action,'the finishing move must be valid under the server DOG rules');
+ const reply=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:room.match.id,expectedRevision:42,
+  actionId:'dog-solo3-win-confirm-000001',action
+ });
+ assert.equal(reply.status,200,reply.error);
+ assert.equal(reply.room.match.dog.phase,'finished');
+ assert.equal(reply.room.match.dog.winner,0);
+ for(const [uid,wins] of [['user_alice123',1],['user_bobby123',0],['user_carol123',0]]){
+  const record=h.docs.get('dog_player_statistics_v1/'+uid);
+  assert.equal(record?.played,1,'each actual human earns precisely one completed match');
+  assert.equal(record?.wins,wins,'the individual winner is recorded without old team parity');
+ }
+ assert.equal(h.docs.has('dog_player_statistics_v1/null'),false,'vacant fourth seat is not an account');
+ assert.equal(h.docs.has('dog_player_statistics_v1/undefined'),false);
+ const repeated=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:room.match.id,expectedRevision:42,actionId:'dog-solo3-win-confirm-000001',action
+ });
+ assert.equal(repeated.status,200,'idempotent retry must not re-award match statistics');
+ assert.equal(h.docs.get('dog_player_statistics_v1/user_alice123').played,1);
 });
