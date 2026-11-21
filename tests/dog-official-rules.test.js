@@ -244,6 +244,7 @@ test('DOG: blocked hand stays intact until one chosen card is discarded',()=>{
 
 test('DOG: drawn 13 is playable immediately but only to leave home',()=>{
  let s=fixture('3');
+ for(let seat=1;seat<4;seat++)s.hands[seat]=[{id:2000+seat,type:'3'}];
  s.hands[0].push({id:1000,type:'4'});
  s.deck=[{id:1001,type:'13'}];
  assert.equal(legalActions(s,0).length,2);
@@ -272,6 +273,7 @@ test('DOG: drawn Joker can only start, drawn 12 is automatically thrown away',()
  assert.equal(s.phase,'rescue');
  assert.ok(legalActions(s,0).every(m=>m.type==='start'&&['1/11','13'].includes(m.as)));
  let t=fixture('3');
+ for(let seat=1;seat<4;seat++)t.hands[seat]=[{id:2000+seat,type:'3'}];
  t.deck=[{id:1002,type:'12'}];
  t=takeAction(t,0,{type:'discardDraw',cardId:999});
  assert.equal(t.phase,'play');
@@ -282,6 +284,7 @@ test('DOG: drawn Joker can only start, drawn 12 is automatically thrown away',()
 
 test('DOG: blocked starting square stops a drawn 13, even if 13 could move',()=>{
  let s=fixture('swap');
+ for(let seat=1;seat<4;seat++)s.hands[seat]=[{id:2000+seat,type:'3'}];
  position(s,0,'track',0); // own protected start, other three still at home
  s.deck=[{id:1004,type:'13'}];
  assert.ok(legalActions(s,0).some(m=>m.type==='discardDraw'));
@@ -337,6 +340,7 @@ test('DOG official: voluntary pass, shortened card or direct goal entry are reje
 
 test('DOG: exhausting the draw pile reshuffles discard using deterministic RNG',()=>{
  let s=fixture('3');
+ for(let seat=1;seat<4;seat++)s.hands[seat]=[{id:2000+seat,type:'3'}];
  s.deck=[];
  s.discard=[{id:4500,type:'3'},{id:4501,type:'3'},{id:4502,type:'3'}];
  let draws=0;
