@@ -199,3 +199,13 @@ test('four free starter variants redeem separately without using generic tier vo
   {tier:'simple',variantId:'gifts',voucher:true,commandId:'starter-no-more'},
   {...args,draw:max=>0}),/SCRATCH_NO_VOUCHER/);
 });
+
+test('free scratch requests are rejected in the hub before any Firestore transaction',()=>{
+ const code=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ const route=code.slice(code.indexOf("app.post('/api/hub/scratch/buy'"),
+  code.indexOf("app.post('/api/hub/scratch/buy'")+5000);
+ const guard=route.indexOf("if(body.free===true)throw error(409,'SCRATCH_FREE_DISABLED')");
+ const transaction=route.indexOf("dogWriteDiagnostics.transaction(store,'dog-scratch-buy'");
+ assert.ok(guard>0,'free purchase has a server-side guard');
+ assert.ok(transaction>guard,'free requests are rejected before database transactions');
+});
