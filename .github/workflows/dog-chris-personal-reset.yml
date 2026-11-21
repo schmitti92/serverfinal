@@ -1,0 +1,30 @@
+name: DOG Chris personal Christmas reset
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog-christmas-chris-personal-reset.js'
+      - 'tests/dog-christmas-chris-personal-reset.test.js'
+      - 'server.js'
+      - '.github/workflows/dog-chris-personal-reset.yml'
+  pull_request:
+    paths:
+      - 'dog-christmas-chris-personal-reset.js'
+      - 'tests/dog-christmas-chris-personal-reset.test.js'
+      - 'server.js'
+      - '.github/workflows/dog-chris-personal-reset.yml'
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+jobs:
+  reset-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-christmas-chris-personal-reset.js
+      - run: node --check server.js
+      - run: node --test tests/dog-christmas-chris-personal-reset.test.js
