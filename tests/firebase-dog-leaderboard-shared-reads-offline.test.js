@@ -8,7 +8,7 @@ import {DOG_TREE_REWARDS_COLLECTION} from '../dog/christmas-tree-rewards.js';
 function harness(){
  const docs=new Map(),routes=new Map(),reads=new Map(),holds=new Map();
  let transaction=Promise.resolve(),now=1000000;
- const snapshot=key=>({exists:docs.has(key),data:()=>structuredClone(docs.get(key))});
+ const snapshot=key=>{const exists=docs.has(key),value=structuredClone(docs.get(key));return {exists,data:()=>structuredClone(value)};};
  const store={
   collection:name=>({doc:id=>{
    const path=name+'/'+id;
