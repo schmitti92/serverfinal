@@ -121,6 +121,20 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       Object.fromEntries(['card_swap','spot_ticket','spot_light','lights_bonus']
         .map(id=>[id,dogResearchLevel(snaps[i].exists?snaps[i].data():null,id)]))]));
   }
+  // The introductory classic match is intentionally NON-SEASONAL.
+  // Authoritative completed-match statistics are checked just once when
+  // launching a match (or once when a pre-fix match receives its next move).
+  // No Firebase polling, no reward writes for first-time players.
+  async function dogChristmasUnlockedForMatch(room,tx,store){
+    if(!christmasActive())return false;
+    const humans=activeSeats(room).filter(p=>!p.testBot&&!p.bot&&typeof p.uid==='string');
+    if(!humans.length)return false;
+    const snaps=await Promise.all(humans.map(p=>tx.get(
+      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid))));
+    return humans.every((p,i)=>snaps[i].exists&&
+      dogPlayerStats(snaps[i].data(),p.uid).played>=1&&
+      Number(snaps[i].data()?.updatedAt||0)>=INTRO_SEASON_START_AT);
+  }
   function privateChristmasMarks(match,uid){
     if(!match?.christmas?.enabled||!match.dogResearchSkills?.[uid])return {};
     const research=match.dogResearchSkills[uid],event=match.christmas;
@@ -601,7 +615,7 @@ function finishEisstock(ch,members){
     if(guard>=300)throw Error('DOG_BOT_LOOP');
     match.dog=s;
   }
-  function startDog(room,village=null){
+  function startDog(room,village=null,dogEventEnabled=false){
     if(room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
     const players=activeSeats(room);
     if(players.length<1||players.length>4)throw error(409,'INVALID_PLAYER_COUNT');
@@ -622,7 +636,8 @@ function finishEisstock(ch,members){
     // Bots finish their opening exchanges before the first hidden map is
     // generated, so both real players receive the same first card-deal map.
     advanceDogBots(room.match,(before,after,action,seat)=>countDogKnockouts(room.match,before,after,seat));
-    room.match.christmas=createDogChristmasMatch(village,christmasActive(),randomInt,room.match.dog.round);
+    room.match.dogChristmasEligibilityChecked=true;
+    room.match.christmas=createDogChristmasMatch(village,dogEventEnabled,randomInt,room.match.dog.round);
   }
 
   function startGrinchMission(room,village){
@@ -651,7 +666,7 @@ function finishEisstock(ch,members){
       grinch:mission,grinchCommands:[],grinchCompletionRecorded:false};
     room.game='dog-grinch2';room.phase='playing';
   }
-  function startGame(room,village=null){
+  function startGame(room,village=null,dogEventEnabled=false){
     if(room.game==='dog-grinch1')return startGrinchMission(room,village);
     if(room.game==='dog-grinch2')throw error(409,'MISSION2_REQUIRES_VERIFIED_LAUNCH');
     if(room.game==='drei-schatzkammern'){
@@ -686,7 +701,7 @@ function finishEisstock(ch,members){
       assertFreshMatch(room.lastCompleted,room.match);
       room.phase='playing';return;
     }
-    if(room.game==='dog')return startDog(room,village);
+    if(room.game==='dog')return startDog(room,village,dogEventEnabled);
     if(room.game==='partychallenge')return startChallenge(room);
     if(room.game==='barikade')return startBarikade(room);
     if(room.game==='kreuz')return startKreuz(room);
@@ -730,7 +745,7 @@ function finishEisstock(ch,members){
         grinchCompletionRecorded:['dog-grinch1','dog-grinch2'].includes(room.match.game)&&room.match.grinchCompletionRecorded===true,
         grinchResearch:['dog-grinch1','dog-grinch2'].includes(room.match.game)?
           {thaw:room.match.grinchResearchUsed?.[identity.uid]?.thaw||0}:null,
-        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?
+        christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?.enabled?
           {...publicDogChristmasMatch(room.match.christmas),...privateChristmasMarks(room.match,identity.uid)}:null,
         dogResearch:room.match.game==='dog'?{
           card_swap:room.match.dogResearchSkills?.[identity.uid]?.card_swap||0,
@@ -2024,16 +2039,22 @@ function finishEisstock(ch,members){
       // An old player may be resuming a match with retired skills. Reject
       // those actions even when the original match snapshot contains them.
       if(action.type==='research-peek')throw error(403,'RESEARCH_RETIRED');
-      // Upgrade old in-progress DOG rooms to the automatic event on their next
-      // verified move. Already completed moves do not receive retroactive gifts.
+      // Older running matches may have enabled the event automatically before
+      // the first DOG victory. Verify eligibility ONCE and persist the decision
+      // in the same authoritative turn; never charge a village reward before it.
       const seasonal=christmasActive();
-      if(seasonal&&!match.christmas){
-        const villageSnap=await tx.get(dogVillageFor(store));
-        match.christmas=createDogChristmasMatch(villageSnap.exists?villageSnap.data():null,true,randomInt,match.dog.round);
+      if(match.dogChristmasEligibilityChecked!==true){
+        const eligible=await dogChristmasUnlockedForMatch(room,tx,store);
+        match.dogChristmasEligibilityChecked=true;
+        if(!eligible)match.christmas=createDogChristmasMatch(null,false,randomInt,match.dog.round);
+        else if(!match.christmas?.enabled&&seasonal){
+          const villageSnap=await tx.get(dogVillageFor(store));
+          match.christmas=createDogChristmasMatch(villageSnap.exists?villageSnap.data():null,true,randomInt,match.dog.round);
+        }
       }
-      // After the event ends, persisted snapshots remain for history only;
-      // neither gifts nor end-of-match credits may be paid out.
-      const event=seasonal?match.christmas:null;
+      // The first match is standard DOG. Disabled seasonal snapshots must
+      // never mint lights, vouchers or additional Firestore document writes.
+      const event=seasonal&&match.christmas?.enabled?match.christmas:null;
       const initialGifts=event?.giftCount||0,initialBonus=event?.bonusGiftCount||0;
       const hadInn=event?.innCredited===true;
       let creditedTenths=0;
@@ -2300,10 +2321,11 @@ function finishEisstock(ch,members){
       // Automatic and atomic: the very last ready confirmation starts exactly one match.
       if(allReady(room)&&HUB_GAMES[room.game]&&room.game!=='partychallenge'){
         const research=await matchResearchForPlayers(room,tx,store);
-        const village=room.game==='dog'&&christmasActive()
+        const dogEventEnabled=room.game==='dog'&&await dogChristmasUnlockedForMatch(room,tx,store);
+        const village=dogEventEnabled
          ?await sharedVillageForMatchStart(tx,store,room.hostUid):
          room.game==='dog-grinch1'?(await tx.get(dogVillageFor(store))).data()||null:null;
-        startGame(room,village);
+        startGame(room,village,dogEventEnabled);
         if(room.match?.game==='dog')room.match.dogResearchSkills=research||{};
       }
     })};
@@ -2320,10 +2342,11 @@ function finishEisstock(ch,members){
       if(active.length<rule.min||active.length>rule.max||!active.every(p=>p.ready))throw error(409,'PLAYERS_NOT_READY');
       // Fallback for the host; normal starts occur automatically after the last ready.
       const research=await matchResearchForPlayers(room,tx,store);
-      const village=room.game==='dog'&&christmasActive()
+      const dogEventEnabled=room.game==='dog'&&await dogChristmasUnlockedForMatch(room,tx,store);
+      const village=dogEventEnabled
         ?await sharedVillageForMatchStart(tx,store,room.hostUid):
         room.game==='dog-grinch1'?(await tx.get(dogVillageFor(store))).data()||null:null;
-      startGame(room,village);
+      startGame(room,village,dogEventEnabled);
       if(room.match?.game==='dog')room.match.dogResearchSkills=research||{};
     })};
   }));
