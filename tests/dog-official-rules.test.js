@@ -346,8 +346,8 @@ test('DOG: exhausting the draw pile reshuffles discard using deterministic RNG',
  assert.equal(s.phase,'play');
  assert.equal(s.current,1);
  assert.equal(s.hands[0].length,0);
- assert.equal(s.discard.length,2,'Selected card and unusable replacement remain in discard');
- assert.equal(s.deck.length,2);
+ assert.equal(s.discard.length,1,'Unusable replacement returns to discard');
+ assert.equal(s.deck.length,3);
 });
 
 test('DOG Phase 1: turns preserve the original 110-card inventory and disallow two figures per square',()=>{
