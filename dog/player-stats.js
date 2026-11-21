@@ -30,13 +30,14 @@ export function dogPlayerStats(raw,uid){
  return {uid,played:nonnegative(d.played),wins:nonnegative(d.wins),
   knockedOut:nonnegative(d.knockedOut),wasKnockedOut:nonnegative(d.wasKnockedOut)};
 }
-export function dogCompletedPlayerStats(raw,uid,displayName,seat,counters,winner,matchId,now,xpBonusPercent=0){
+export function dogCompletedPlayerStats(raw,uid,displayName,seat,counters,winner,matchId,now,xpBonusPercent=0,research={}){
  const old=dogPlayerStats(raw,uid);
  const v=counters?.seats?.[seat]||{};
  const win=winner===seat%2?1:0;
  // XP shares this verified end-of-match document write; no per-move write.
  const {credited:_credited,...xp}=creditDogMatchXp(raw,{
-  won:win===1,knockedOut:nonnegative(v.knockedOut),matchId,now,bonusPercent:xpBonusPercent});
+  won:win===1,knockedOut:nonnegative(v.knockedOut),matchId,now,bonusPercent:xpBonusPercent,
+  researchPercent:research?.xpPercent||0,winBonusPercent:research?.winPercent||0});
  return {...xp,...old,name:String(displayName||'Spieler').slice(0,48),
   played:old.played+1,wins:old.wins+win,
   knockedOut:old.knockedOut+nonnegative(v.knockedOut),
