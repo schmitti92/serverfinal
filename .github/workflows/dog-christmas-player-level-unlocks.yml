@@ -1,0 +1,22 @@
+name: DOG Christmas Player-Level Unlocks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/player-levels.js'
+      - 'dog/christmas-unlock-levels.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-player-levels.test.js'
+      - 'tests/dog-christmas-unlock-levels.test.js'
+      - '.github/workflows/dog-christmas-player-level-unlocks.yml'
+  workflow_dispatch:
+jobs:
+  unlocks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: node --test tests/dog-player-levels.test.js tests/dog-christmas-unlock-levels.test.js
