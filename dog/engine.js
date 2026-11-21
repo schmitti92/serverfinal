@@ -372,5 +372,7 @@ export function publicState(s,seat=null){
   t.hands=t.hands.map((hand,i)=>i===seat?hand:{count:hand.length});
   t.exchanges=t.exchanges.map(x=>x?true:false);
   if(t.seven)delete t.seven.snapshot;
+  // The rescue card's stable deck ID reveals its value. Keep it private.
+  if(seat!==s.current)delete t.rescue;
   return t;
 }
