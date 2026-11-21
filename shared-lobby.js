@@ -853,8 +853,11 @@ function finishEisstock(ch,members){
   // with HTTP readers; never use a snapshot for an action or an authorization
   // that changes state. Independent Firebase Auth and membership checks remain.
   const HUB_STREAM_READ_TTL_MS=2500;
+  const HUB_DOG_WATCH_IDLE_GRACE_MS=6000;
   const hubStreamReadCounts={hits:0,misses:0,invalidations:0,watchStarts:0,watchStops:0,
-    snapshotEvents:0,dogSnapshotEvents:0,duplicateSnapshots:0,watchErrors:0};
+    snapshotEvents:0,dogSnapshotEvents:0,duplicateSnapshots:0,watchErrors:0,
+    dogActionCommits:0,dogActionNoops:0,watchReuses:0,idleWatchExpirations:0,
+    idleSnapshotEvents:0};
   // Share concurrent read-only HTTP GETs for the same room, without adding
   // any TTL or caching membership decisions. Firestore authorization remains
   // per caller in validateRead(), and all writes still use transactions.
@@ -944,7 +947,7 @@ function finishEisstock(ch,members){
     }
   }
   const hubMutationReadCacheStats={committed:0,noops:0,joinCommitted:0,joinNoops:0,avoidedInvalidations:0,dogAutoNoops:0};
-  async function mutate(code,identity,change){
+  async function mutate(code,identity,change,source=null){
     const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=documentFor(store,code);
     // The transaction result carries its own committed-write flag: retries
@@ -1001,6 +1004,12 @@ function finishEisstock(ch,members){
         dogWriteKind,writeCounts:tracked?.counts()};
     });
     if(dogWriteKind)dogWriteDiagnostics.record(dogWriteKind,writeCounts,changed);
+    // A committed DOG action requires one authoritative Firestore room write;
+    // watcher event counts can now be compared to actual completed actions.
+    if(source==='dog-action'){
+      if(changed)hubStreamReadCounts.dogActionCommits++;
+      else hubStreamReadCounts.dogActionNoops++;
+    }
     // Invalidate read-only DOG metadata precisely when a successful match
     // action changed a wallet, village, research record or player statistics.
     // Normal moves only save the room document and must preserve the 30s
@@ -2222,7 +2231,7 @@ function finishEisstock(ch,members){
       }
       for(const item of voucherUpdates)tx.set(item.ref,item.wallet);
       for(const item of completedDogStats)tx.set(item.ref,item.data);
-    });
+    },'dog-action');
     return {room};
   }));
 
@@ -3402,17 +3411,31 @@ function finishEisstock(ch,members){
   let lastHubRoomGetCount=hubHttpReadCounts.firestoreGets;
   let lastHubWatchEvents=hubStreamReadCounts.snapshotEvents;
   let lastDogWatchEvents=hubStreamReadCounts.dogSnapshotEvents;
+  let lastDogActionCommits=hubStreamReadCounts.dogActionCommits;
+  let lastWatchReuses=hubStreamReadCounts.watchReuses;
+  let lastIdleSnapshotEvents=hubStreamReadCounts.idleSnapshotEvents;
   const hubReadLogTimer=setInterval(()=>{
     const httpRoomGets=hubHttpReadCounts.firestoreGets-lastHubRoomGetCount;
     const watchNotifications=hubStreamReadCounts.snapshotEvents-lastHubWatchEvents;
     const dogWatchNotifications=hubStreamReadCounts.dogSnapshotEvents-lastDogWatchEvents;
-    if(httpRoomGets||watchNotifications)console.info('[hub-read-sources/1min]',JSON.stringify({
-      httpRoomGetAttempts:httpRoomGets,watchNotifications,dogWatchNotifications,
-      activeRoomWatches:roomStreams.size
-    }));
+    const committedDogActions=hubStreamReadCounts.dogActionCommits-lastDogActionCommits;
+    const avoidedWatchRestarts=hubStreamReadCounts.watchReuses-lastWatchReuses;
+    const idleWatchNotifications=hubStreamReadCounts.idleSnapshotEvents-lastIdleSnapshotEvents;
+    if(httpRoomGets||watchNotifications||committedDogActions||avoidedWatchRestarts)
+      console.info('[hub-read-sources/1min]',JSON.stringify({
+        httpRoomGetAttempts:httpRoomGets,watchNotifications,dogWatchNotifications,
+        committedDogActions,avoidedWatchRestarts,idleWatchNotifications,
+        watchNotificationsPerDogAction:committedDogActions?
+          Math.round(100*dogWatchNotifications/committedDogActions)/100:null,
+        activeRoomWatches:roomStreams.size,
+        note:'Listener notifications are not equivalent to billable Firestore reads'
+      }));
     lastHubRoomGetCount=hubHttpReadCounts.firestoreGets;
     lastHubWatchEvents=hubStreamReadCounts.snapshotEvents;
     lastDogWatchEvents=hubStreamReadCounts.dogSnapshotEvents;
+    lastDogActionCommits=hubStreamReadCounts.dogActionCommits;
+    lastWatchReuses=hubStreamReadCounts.watchReuses;
+    lastIdleSnapshotEvents=hubStreamReadCounts.idleSnapshotEvents;
   },60000);
   hubReadLogTimer.unref?.();
   // DOG emoji reactions travel over already-authenticated room sockets.
@@ -3423,7 +3446,7 @@ function finishEisstock(ch,members){
   function watchRoom(code,store,subscriber){
     let stream=roomStreams.get(code);
     if(!stream){
-      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null,snapshotAt:null};
+      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null,snapshotAt:null,idleTimer:null};
       roomStreams.set(code,stream);
       try{
         hubStreamReadCounts.watchStarts++;
@@ -3432,6 +3455,8 @@ function finishEisstock(ch,members){
           const previous=stream.room;
           const next=snapshot.exists?snapshot.data():null;
           hubStreamReadCounts.snapshotEvents++;
+          if(stream.idleTimer&&stream.subscribers.size===0)
+            hubStreamReadCounts.idleSnapshotEvents++;
           if(next?.game==='dog'||next?.match?.game==='dog')
             hubStreamReadCounts.dogSnapshotEvents++;
           if(stream.hasSnapshot&&previous?.revision===next?.revision)
@@ -3445,6 +3470,7 @@ function finishEisstock(ch,members){
         },err=>{
           if(roomStreams.get(code)!==stream)return;
           hubStreamReadCounts.watchErrors++;
+          if(stream.idleTimer){clearTimeout(stream.idleTimer);stream.idleTimer=null;}
           roomStreams.delete(code);
           for(const fn of [...stream.subscribers])fn(null,err||new Error('STREAM_UNAVAILABLE'));
           stream.subscribers.clear();
@@ -3454,14 +3480,37 @@ function finishEisstock(ch,members){
         throw e;
       }
     }
+    // Switching from the central lobby to DOG closes and reopens a socket.
+    // Keep the single existing room watch briefly instead of buying another
+    // initial Firestore snapshot on every quick navigation/reconnect.
+    if(stream.idleTimer){
+      clearTimeout(stream.idleTimer);stream.idleTimer=null;
+      hubStreamReadCounts.watchReuses++;
+    }
     stream.subscribers.add(subscriber);
-    if(stream.hasSnapshot)subscriber(stream.room,null);
+    if(stream.hasSnapshot&&stream.snapshotAt!==null)subscriber(stream.room,null);
+    const stop=()=>{
+      if(roomStreams.get(code)!==stream||stream.subscribers.size!==0)return;
+      if(stream.idleTimer){clearTimeout(stream.idleTimer);stream.idleTimer=null;}
+      roomStreams.delete(code);hubStreamReadCounts.watchStops++;
+      try{stream.unsubscribe?.();}catch(_e){}
+    };
     return ()=>{
       stream.subscribers.delete(subscriber);
-      if(stream.subscribers.size===0&&roomStreams.get(code)===stream){
-        roomStreams.delete(code);hubStreamReadCounts.watchStops++;
-        try{stream.unsubscribe?.();}catch(_e){}
-      }
+      if(stream.subscribers.size!==0||roomStreams.get(code)!==stream)return;
+      // Only live DOG rooms get a bounded grace. Other games and finished
+      // matches close immediately to avoid background Firestore reads.
+      if(stream.hasSnapshot&&
+         (stream.room?.match?.game==='dog'||stream.room?.game==='dog')){
+        if(!stream.idleTimer){
+          stream.idleTimer=setTimeout(()=>{
+            stream.idleTimer=null;
+            hubStreamReadCounts.idleWatchExpirations++;
+            stop();
+          },HUB_DOG_WATCH_IDLE_GRACE_MS);
+          stream.idleTimer.unref?.();
+        }
+      }else stop();
     };
   }
   function attachSocket(ws){
