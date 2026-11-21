@@ -20,6 +20,7 @@ import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
+import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
 import { installChristmasIceApi } from "./christmas-ice-api.js";
@@ -8063,4 +8064,18 @@ setInterval(() => {
   }
 }, SNAPSHOT_HEARTBEAT_MS);
 
-server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
+// Lichtertal official launch: privileged, one-shot migration BEFORE accepting traffic.
+// The reset flag must exactly match the archived, idempotent season identifier.
+async function startServerWithChristmasReset(){
+  if(String(process.env.DOG_CHRISTMAS_RESET_ONCE||'').trim()===CHRISTMAS_RESET_ID){
+    if(!profileProjectMatches||!firestore)
+      throw Error('CHRISTMAS_RESET_ABORT: verified Firestore project is unavailable');
+    console.info('[christmas-reset] starting safe archived launch reset');
+    await resetDogChristmasEventOnce(firestore,console);
+  }
+  server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
+}
+startServerWithChristmasReset().catch(err=>{
+  console.error('[christmas-reset] startup aborted; no game server exposed:',err?.message||err);
+  process.exitCode=1;
+});
