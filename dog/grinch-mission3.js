@@ -70,11 +70,11 @@ export function createMission3(seed=Math.floor(Math.random()*2147483647),names=[
  deal(s);settle(s);
  return s;
 }
-function relocate(s,victim,attackerOwner){
+function relocate(s,victim,attackerOwner,reservedLanding=null){
  if(attackerOwner===MISSION3_GRINCH){
   const gate=mission3Start(victim.owner);
   const occupied=onField(s,gate,victim.id);
-  if(occupied){victim.place='home';victim.pos=-1;return 'Haus';}
+  if(occupied||gate===reservedLanding){victim.place='home';victim.pos=-1;return 'Haus';}
   victim.place='track';victim.pos=gate;return 'Startfeld';
  }
  victim.place='home';victim.pos=-1;return 'Haus';
@@ -110,7 +110,7 @@ function applyMovement(s,pieceId,distance,split){
  if(!route)throw Error('Dieser Weg ist blockiert.');
  for(const id of route.captureIds){
   const victim=s.pieces.find(p=>p.id===id);
-  const where=relocate(s,victim,pawn.owner);
+  const where=relocate(s,victim,pawn.owner,route.to);
   record(s,(pawn.owner===3?'😈 Grinch':s.players[pawn.owner].name)+' schlägt '+s.players[victim.owner].name+' → '+where);
  }
  pawn.pos=route.to;
