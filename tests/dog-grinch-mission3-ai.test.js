@@ -56,13 +56,14 @@ test('visible mission-objective fields influence Grinch defensive positioning',(
  const s=grinchTurn(902);
  s.pieces.forEach((p,i)=>{
   p.place=p.owner===3?'track':'home';
-  p.pos=p.owner===3?[10,20,30,40,50][i-9]:-1;
+  p.pos=p.owner===3?[9,20,30,40,50][i-9]:-1;
  });
  s.tasks={activeFields:[12]};
  s.hands[3].forEach(card=>{card.type='2';});
  const choice=mission3ChooseGrinchMove(s);
  assert.equal(choice.pieceId,'g0');
- assert.equal(choice.to,12,'Grinch guards the active mission field');
+ assert.equal(choice.to,11,'Grinch guards an adjacent field without blocking an invincible objective');
+ assert.notEqual(choice.to,12,'unfinished mission objectives must stay accessible');
  assert.equal(choice.kind,'move');
 });
 test('multi-step plans use own 6/12/18-card hand, can replay legally and preserve 110 cards',()=>{
