@@ -40,7 +40,7 @@ test('Snake clock probe skips Firestore write when round remains unchanged',()=>
  const outcome=evaluate(callback,room);
  assert.deepEqual(outcome,{unchanged:true});
  assert.equal(room.match.challenge.phase,'countdown');
- assert.match(source,/if\(result\?\.unchanged\)return expose\(room,identity\)/);
+ assert.match(source,/if\(result\?\.unchanged\)return \{value:expose\(room,identity\),changed:false,revision:room\.revision\}/);
  assert.match(source,/tx\.set\(ref,room\)/);
 });
 
