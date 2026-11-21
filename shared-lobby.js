@@ -888,6 +888,13 @@ function finishEisstock(ch,members){
     hubStreamReadCounts.misses++;
     return null;
   }
+  // Read-only DOG metadata pages can reuse the same very recent snapshot
+  // already delivered to authorized room sockets. Membership is checked
+  // independently on every request; stale/missing streams use Firestore.
+  // Actions and purchases must never use this helper.
+  function readHubRoomForView(code){
+    return recentHubStreamRoom(code)||freshHubRoomForHttp(code);
+  }
   function hubCacheHasDifferentRevision(code,revision){
     const cached=syncRoomReads.get(code)?.room;
     const streamed=roomStreams.get(code);
@@ -1658,7 +1665,7 @@ function finishEisstock(ch,members){
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     // Share only concurrent room GETs. Every request still validates its
     // own Firebase identity and room membership before any private reads.
-    const room=await freshHubRoomForHttp(code);
+    const room=await readHubRoomForView(code);
     validateRead(room,identity);
     const members=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,6);
     const rows=await Promise.all(members.map(async member=>{
@@ -1679,7 +1686,7 @@ function finishEisstock(ch,members){
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const room=await freshHubRoomForHttp(code);
+    const room=await readHubRoomForView(code);
     validateRead(room,identity);
     const members=room.players.filter(p=>!p.testBot&&!p.bot);
     const docs=await Promise.all(members.map(p=>
@@ -1745,8 +1752,7 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code);if(!code)throw error(400,'INVALID_ROOM_CODE');
     // No additional Firestore read when an active room watcher has just
     // delivered a fresh snapshot. No watcher/stale state => direct Firestore.
-    let room=recentHubStreamRoom(code);
-    if(!room)room=await freshHubRoomForHttp(code);
+    const room=await readHubRoomForView(code);
     validateRead(room,req.hubIdentity);return {room:expose(room,req.hubIdentity)};
   }));
   app.post('/api/hub/rooms/:code/select',handler(async req=>{
@@ -1808,7 +1814,7 @@ function finishEisstock(ch,members){
   app.get('/api/hub/rooms/:code/dog/village',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const store=db(),room=await freshHubRoomForHttp(code);
+    const store=db(),room=await readHubRoomForView(code);
     validateRead(room,identity);
     const snap=await readDogMeta(store,dogVillageFor(store));
     return {village:dogVillagePublic(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID),
@@ -1822,7 +1828,7 @@ function finishEisstock(ch,members){
   app.get('/api/hub/rooms/:code/dog/tree-rewards',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const room=await freshHubRoomForHttp(code);
+    const room=await readHubRoomForView(code);
     validateRead(room,identity);
     const [villageSnap,accountSnap]=await Promise.all([
       readDogMeta(store,dogVillageFor(store)),
