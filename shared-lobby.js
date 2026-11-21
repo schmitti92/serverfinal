@@ -853,7 +853,8 @@ function finishEisstock(ch,members){
   // with HTTP readers; never use a snapshot for an action or an authorization
   // that changes state. Independent Firebase Auth and membership checks remain.
   const HUB_STREAM_READ_TTL_MS=2500;
-  const hubStreamReadCounts={hits:0,misses:0,invalidations:0};
+  const hubStreamReadCounts={hits:0,misses:0,invalidations:0,watchStarts:0,watchStops:0,
+    snapshotEvents:0,dogSnapshotEvents:0,duplicateSnapshots:0,watchErrors:0};
   // Share concurrent read-only HTTP GETs for the same room, without adding
   // any TTL or caching membership decisions. Firestore authorization remains
   // per caller in validateRead(), and all writes still use transactions.
@@ -3396,6 +3397,24 @@ function finishEisstock(ch,members){
   // One Firestore watch per room per server instance. Each socket still gets
   // independently validated and independently filtered room data.
   const roomStreams=new Map();
+  // Pure Render-RAM diagnostics. A watch notification is not identical to a
+  // billable Firestore read, but exposes high-volume listeners alongside GETs.
+  let lastHubRoomGetCount=hubHttpReadCounts.firestoreGets;
+  let lastHubWatchEvents=hubStreamReadCounts.snapshotEvents;
+  let lastDogWatchEvents=hubStreamReadCounts.dogSnapshotEvents;
+  const hubReadLogTimer=setInterval(()=>{
+    const httpRoomGets=hubHttpReadCounts.firestoreGets-lastHubRoomGetCount;
+    const watchNotifications=hubStreamReadCounts.snapshotEvents-lastHubWatchEvents;
+    const dogWatchNotifications=hubStreamReadCounts.dogSnapshotEvents-lastDogWatchEvents;
+    if(httpRoomGets||watchNotifications)console.info('[hub-read-sources/1min]',JSON.stringify({
+      httpRoomGetAttempts:httpRoomGets,watchNotifications,dogWatchNotifications,
+      activeRoomWatches:roomStreams.size
+    }));
+    lastHubRoomGetCount=hubHttpReadCounts.firestoreGets;
+    lastHubWatchEvents=hubStreamReadCounts.snapshotEvents;
+    lastDogWatchEvents=hubStreamReadCounts.dogSnapshotEvents;
+  },60000);
+  hubReadLogTimer.unref?.();
   // DOG emoji reactions travel over already-authenticated room sockets.
   // They are ephemeral: 0 additional Firestore writes and no new listeners.
   const dogEmojiClients=new Map();
@@ -3407,9 +3426,17 @@ function finishEisstock(ch,members){
       stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null,snapshotAt:null};
       roomStreams.set(code,stream);
       try{
+        hubStreamReadCounts.watchStarts++;
         stream.unsubscribe=documentFor(store,code).onSnapshot(snapshot=>{
           if(roomStreams.get(code)!==stream)return;
-          stream.room=snapshot.exists?snapshot.data():null;
+          const previous=stream.room;
+          const next=snapshot.exists?snapshot.data():null;
+          hubStreamReadCounts.snapshotEvents++;
+          if(next?.game==='dog'||next?.match?.game==='dog')
+            hubStreamReadCounts.dogSnapshotEvents++;
+          if(stream.hasSnapshot&&previous?.revision===next?.revision)
+            hubStreamReadCounts.duplicateSnapshots++;
+          stream.room=next;
           stream.hasSnapshot=true;
           stream.snapshotAt=clock();
           // Wake any short-lived HTTP sync cache with this newer DB revision.
@@ -3417,6 +3444,7 @@ function finishEisstock(ch,members){
           for(const fn of [...stream.subscribers])fn(stream.room,null);
         },err=>{
           if(roomStreams.get(code)!==stream)return;
+          hubStreamReadCounts.watchErrors++;
           roomStreams.delete(code);
           for(const fn of [...stream.subscribers])fn(null,err||new Error('STREAM_UNAVAILABLE'));
           stream.subscribers.clear();
@@ -3431,7 +3459,7 @@ function finishEisstock(ch,members){
     return ()=>{
       stream.subscribers.delete(subscriber);
       if(stream.subscribers.size===0&&roomStreams.get(code)===stream){
-        roomStreams.delete(code);
+        roomStreams.delete(code);hubStreamReadCounts.watchStops++;
         try{stream.unsubscribe?.();}catch(_e){}
       }
     };
