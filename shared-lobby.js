@@ -2933,6 +2933,9 @@ function finishEisstock(ch,members){
    const elapsed=Math.max(0,clock()-ch.startAt);
    if(survived>Math.floor(elapsed/90)+10||score>Math.floor(elapsed/90)*50+500)throw error(400,'INVALID_SNAKE_PROGRESS');
    if(score<p.score||survived<p.survived)return {unchanged:true};
+   // A newer sequence alone is not an actual game-state change. Ignore
+   // duplicate progress heartbeats without creating a Firestore room revision.
+   if(!finished&&score===p.score&&survived===p.survived)return {unchanged:true};
    p.seq=seq;p.score=score;p.survived=survived;p.updatedAt=clock();
    if(finished){p.alive=false;p.finished=true;}
    advanceSnake(ch,room.match.members);
@@ -3006,6 +3009,13 @@ function finishEisstock(ch,members){
      const now=clock();
      if(now<ch.startAt)return {unchanged:true};
      if(now>=ch.startAt+90000){advanceLavaTiles(ch,now);finishLava(ch,room.match.members);return;}
+     // No active collapsing tile, living bot or threatened player? This
+     // watchdog would only move its lastTickAt marker, so skip the entire write.
+     const activeTile=l.tiles.some(tile=>tile.state===1);
+     const activeBot=room.match.members.some(m=>m.uid.startsWith('testbot:')&&l.players[m.uid]?.alive);
+     const playerOnLava=Object.values(l.players).some(p=>p.alive&&
+       l.tiles[Math.floor(p.y/60)*10+Math.floor(p.x/60)]?.state===2);
+     if(!activeTile&&!activeBot&&!playerOnLava)return {unchanged:true};
      if(l.lastTickAt&&now-l.lastTickAt<200)return {unchanged:true};
      l.lastTickAt=now;
      advanceLavaTiles(ch,now);
