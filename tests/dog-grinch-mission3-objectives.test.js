@@ -25,6 +25,7 @@ function positionObjectives(s,fields,progress=0){
 function redMove(s,from=7,distance=4){
  const moving=s.pieces.find(p=>p.owner===0&&p.place==='track');
  assert.ok(moving,'Red must have a surviving pawn');
+ s.pieces.forEach((p,i)=>{if(p.place==='track')p.pos=20+i;});
  moving.pos=from;s.current=0;s.grinchUsed=[];s.seven=null;
  s.hands[0][0].type=String(distance);
  const opts=mission3LegalMoves(s).filter(m=>m.kind==='move'&&m.pieceId===moving.id&&m.distance===distance);
