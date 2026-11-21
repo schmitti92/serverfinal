@@ -1570,11 +1570,11 @@ function finishEisstock(ch,members){
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const snap=await documentFor(store,code).get();
-    const room=snap.exists?snap.data():null;
+    const room=await freshHubRoomForHttp(code);
     validateRead(room,identity);
     const members=room.players.filter(p=>!p.testBot&&!p.bot);
-    const docs=await Promise.all(members.map(p=>store.collection(KNIFFEL_STATS_COLLECTION).doc(p.uid).get()));
+    const docs=await Promise.all(members.map(p=>
+      readDogMeta(store,store.collection(KNIFFEL_STATS_COLLECTION).doc(p.uid))));
     return {stats:members.map((p,i)=>{const d=docs[i].exists?docs[i].data():{};return {uid:p.uid,name:p.name,wins:d.wins||0,played:d.played||0,highestScore:d.highestScore||0};})};
   }));
   app.post('/api/hub/rooms',handler(async req=>{
@@ -1689,9 +1689,9 @@ function finishEisstock(ch,members){
   app.get('/api/hub/rooms/:code/dog/village',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const store=db(),roomSnap=await documentFor(store,code).get(),room=roomSnap.exists?roomSnap.data():null;
+    const store=db(),room=await freshHubRoomForHttp(code);
     validateRead(room,identity);
-    const snap=await dogVillageFor(store).get();
+    const snap=await readDogMeta(store,dogVillageFor(store));
     return {village:dogVillagePublic(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID),
       host:true,shared:true,
       canUpgrade:christmasActive(),
@@ -1703,11 +1703,11 @@ function finishEisstock(ch,members){
   app.get('/api/hub/rooms/:code/dog/tree-rewards',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
     if(!code)throw error(400,'INVALID_ROOM_CODE');
-    const roomSnap=await documentFor(store,code).get(),room=roomSnap.exists?roomSnap.data():null;
+    const room=await freshHubRoomForHttp(code);
     validateRead(room,identity);
     const [villageSnap,accountSnap]=await Promise.all([
-      dogVillageFor(store).get(),
-      store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get()
+      readDogMeta(store,dogVillageFor(store)),
+      readDogMeta(store,store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid))
     ]);
     return {treeRewards:dogTreeRewardStatus(
       villageSnap.exists?villageSnap.data():null,
