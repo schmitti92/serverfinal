@@ -83,7 +83,7 @@ test('resets and archives ALL Christmas player state, without touching other gam
 });
 test('active DOG match aborts with NO writes or archive',async()=>{
  const data=base();
- data['spielesammlung_hub_v1/123']={phase:'playing',game:'dog',match:{id:'active'}};
+ data['spielesammlung_hub_v1/123']={phase:'playing',game:'dog',expiresAt:Date.now()+3600000,match:{id:'active'}};
  const {store,docs}=memoryFirestore(data);
  await assert.rejects(()=>resetDogChristmasEventOnce(store,silent),/CHRISTMAS_RESET_DOG_MATCH_ACTIVE/);
  assert.deepEqual(Object.fromEntries(docs),data);
