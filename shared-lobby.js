@@ -12,6 +12,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
 import { randomInt, randomUUID } from 'node:crypto';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
+import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
 import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
 import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearchLevel,dogResearchTicketMs,dogResearchPityThreshold} from './dog/christmas-research.js';
@@ -1415,6 +1416,30 @@ function finishEisstock(ch,members){
       treeLevel,canStartMission1:christmasActive()&&treeLevel>=10};
   }));
   app.use('/api/hub/rooms',authentication);
+  // One read-only query per visitor action; at most six player wallets.
+  // Only members of this same live room may see the comparison. No UIDs in
+  // the response and no global profile listing or extra gameplay writes.
+  app.get('/api/hub/rooms/:code/dog/player-statistics',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(!store)throw error(503,'DATABASE_UNAVAILABLE');
+    const roomSnapshot=await documentFor(store,code).get();
+    const room=roomSnapshot.exists?roomSnapshot.data():null;
+    validateRead(room,identity);
+    const members=room.players.filter(p=>!p.testBot&&!p.bot).slice(0,6);
+    const rows=await Promise.all(members.map(async member=>{
+      const [stats,scratch,tree]=await Promise.all([
+        store.collection(DOG_PLAYER_STATS_COLLECTION).doc(member.uid).get(),
+        store.collection(DOG_SCRATCH_COLLECTION).doc(member.uid).get(),
+        store.collection(DOG_TREE_REWARDS_COLLECTION).doc(member.uid).get()
+      ]);
+      return {stats:stats.exists?stats.data():null,
+        scratch:scratch.exists?scratch.data():null,
+        tree:tree.exists?tree.data():null};
+    }));
+    return {roomCode:code,updatedAt:clock(),
+      ...christmasLeaderboard(members,rows,identity.uid)};
+  }));
   app.get('/api/hub/rooms/:code/kniffel/stats',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,store=db();
     if(!code)throw error(400,'INVALID_ROOM_CODE');
