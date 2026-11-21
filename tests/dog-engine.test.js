@@ -161,3 +161,27 @@ test('three-player turn rotation skips the empty fourth color',()=>{
  assert.ok(['play','exchange'].includes(s.phase));
  if(s.phase==='exchange')assert.ok([0,1,2].includes(s.current));
 });
+
+test('three-human DOG skips every possible vacant color and preserves original pawn IDs',()=>{
+ for(let vacant=0;vacant<4;vacant++){
+  const s=createGame({rng:()=>0.376,inactiveSeats:[vacant],bots:[false,false,false,false]});
+  const seats=[0,1,2,3].filter(i=>i!==vacant);
+  assert.equal(s.mode,'solo3');
+  assert.equal(s.pieces.length,12);
+  assert.deepEqual(s.hands.map(h=>h.length),Array.from({length:4},(_,i)=>i===vacant?0:6));
+  assert.equal(s.pieces.some(p=>p.owner===vacant),false);
+  assert.deepEqual(s.pieces.filter(p=>p.owner===seats[0]).map(p=>p.id),
+   Array.from({length:4},(_,i)=>seats[0]*4+i),'original board IDs must not be renumbered');
+  s.phase='play';
+  s.hands=Array.from({length:4},(_,seat)=>seat===vacant?[]:[{id:501+seat,type:'13'}]);
+  const before=(vacant+3)%4;
+  const after=(vacant+1)%4;
+  s.current=before;
+  const move=legalActions(s,before).find(a=>a.type==='start');
+  assert.ok(move,'a real player immediately preceding the empty color has a legal move');
+  const result=takeAction(s,before,move);
+  assert.equal(result.current,after,'the vacant color must never receive a turn');
+  assert.equal(result.players[result.current].inactive,false);
+  assert.equal(result.pieces.length,12);
+ }
+});
