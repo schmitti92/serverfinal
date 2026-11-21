@@ -1226,6 +1226,9 @@ function finishEisstock(ch,members){
       (body.voucher===true&&body.free===true)||
       !(SCRATCH_VARIANT_IDS_BY_TIER[body.tier]||[]).includes(body.variantId))
       throw error(400,'SCRATCH_INVALID_REQUEST');
+    // Reject stale-client complimentary requests before any Firestore read or
+    // transaction. Earned vouchers remain a separate, legitimate payment.
+    if(body.free===true)throw error(409,'SCRATCH_FREE_DISABLED');
     const accountRef=store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid);
     const treeRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid);
     const settingsRef=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
