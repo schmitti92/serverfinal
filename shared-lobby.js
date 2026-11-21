@@ -1974,7 +1974,7 @@ function finishEisstock(ch,members){
             p.uid,p.name,p.seat,match.dogCounters,match.dog.winner,match.id,clock(),
             event?.enabled?dogAcademyXpPercent(event.levels?.academy):0,
             {xpPercent:10*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'xp'),
-             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp')})
+             winPercent:30*dogResearchLevel(researchSnaps[i].exists?researchSnaps[i].data():null,'win_xp')},match.dog.mode)
         }));
         match.dogCounters.recorded=true;
       }
