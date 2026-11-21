@@ -111,3 +111,53 @@ test('computer-vs-computer matches terminate with a team winner',()=>{
   assert.ok(s.winner===0||s.winner===1);
  }
 });
+
+test('three human DOG players have no bot, no fourth cards and clockwise exchange',()=>{
+ let s=createGame({rng:()=>0.143,inactiveSeats:[3],bots:[false,false,false,false],
+  names:['Chris','Vanessa','David','Freier Platz']});
+ assert.equal(s.mode,'solo3');
+ assert.deepEqual(s.players.map(p=>p.bot),[false,false,false,false]);
+ assert.deepEqual(s.players.map(p=>p.inactive),[false,false,false,true]);
+ assert.deepEqual(s.hands.map(h=>h.length),[6,6,6,0]);
+ assert.equal(s.pieces.length,12);
+ assert.deepEqual(s.exchanges,[null,null,null,true]);
+ const ids=[0,1,2].map(seat=>s.hands[seat][0].id);
+ for(let seat=0;seat<3;seat++)s=exchangeCard(s,seat,ids[seat]);
+ assert.equal(s.phase,'play');
+ assert.equal(s.hands[1].some(c=>c.id===ids[0]),true,'Chris passes to Vanessa');
+ assert.equal(s.hands[2].some(c=>c.id===ids[1]),true,'Vanessa passes to David');
+ assert.equal(s.hands[0].some(c=>c.id===ids[2]),true,'David passes to Chris');
+ assert.equal(s.hands[3].length,0);
+ assert.deepEqual(legalActions(s,3),[],'inactive seat can never move');
+ assert.equal(s.players[s.current].inactive,false);
+});
+test('three-player win requires four own pieces, not a phantom partner',()=>{
+ for(let winner=0;winner<3;winner++){
+  let s=createGame({rng:()=>0.456,inactiveSeats:[3],bots:[false,false,false,false]});
+  for(let seat=0;seat<2;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
+  for(let piece=0;piece<4;piece++){
+   const pawn=s.pieces.find(p=>p.id===winner*4+piece);
+   pawn.place='goal';pawn.pos=piece;
+  }
+  s=exchangeCard(s,2,s.hands[2][0].id);
+  assert.equal(s.phase,'finished','winning player '+winner);
+  assert.equal(s.winner,winner,'winner is player seat, not team parity');
+ }
+});
+test('three-player turn rotation skips the empty fourth color',()=>{
+ let s=createGame({rng:()=>0.627,inactiveSeats:[3],bots:[false,false,false,false]});
+ for(let seat=0;seat<3;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
+ assert.equal(s.current,0);
+ // Arrange legal start cards for each active player. The fourth seat never acts.
+ s.hands=[ [{id:501,type:'13'}],[{id:502,type:'13'}],[{id:503,type:'13'}],[] ];
+ s.phase='play';s.current=0;
+ for(let seat=0;seat<3;seat++){
+  assert.equal(s.current,seat);
+  const move=legalActions(s,seat).find(x=>x.type==='start');
+  assert.ok(move,'each of the three real players can play');
+  s=takeAction(s,seat,move);
+ }
+ assert.notEqual(s.current,3);
+ assert.ok(['play','exchange'].includes(s.phase));
+ if(s.phase==='exchange')assert.ok([0,1,2].includes(s.current));
+});
