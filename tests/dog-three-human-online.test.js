@@ -182,7 +182,7 @@ test('first regular DOG match has no Christmas wallet writes even while season i
  const key='spielesammlung_hub_v1/'+code;
  let room=h.docs.get(key);
  assert.equal(room.match.dogChristmasEligibilityChecked,true);
- assert.equal(room.match.christmas?.enabled,false,'the first completed game is the prerequisite for the event');
+ assert.equal(room.match.christmas?.enabled===true,false,'the first completed game is the prerequisite for the event');
  assert.equal([...h.docs.keys()].some(key=>key.startsWith('dog_christmas_villages_v1/')),false);
  const first=room.match.dog.hands[0][0];
  const exchange=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
@@ -190,7 +190,7 @@ test('first regular DOG match has no Christmas wallet writes even while season i
   actionId:'first-standard-dog-exchange-001',action:{type:'exchange',cardId:first.id}
  });
  assert.equal(exchange.status,200,exchange.error);
- assert.equal(h.docs.get(key).match.christmas.enabled,false);
+ assert.equal(h.docs.get(key).match.christmas?.enabled===true,false);
  assert.equal([...h.docs.keys()].some(key=>
    key.startsWith('dog_christmas_villages_v1/')||key.startsWith('dog_christmas_scratch_v1/')),false,
   'normal first-match exchange never credits seasonal balances');
@@ -198,7 +198,7 @@ test('first regular DOG match has no Christmas wallet writes even while season i
  // on its next verified move, with a single persisted eligibility decision.
  room=h.docs.get(key);
  delete room.match.dogChristmasEligibilityChecked;
- room.match.christmas.enabled=true;
+ room.match.christmas={enabled:true};
  h.docs.set(key,room);
  const bob=h.docs.get(key).match.dog.hands[1][0];
  const recovered=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','bob',{
@@ -206,7 +206,7 @@ test('first regular DOG match has no Christmas wallet writes even while season i
   actionId:'first-standard-dog-old-room-002',action:{type:'exchange',cardId:bob.id}
  });
  assert.equal(recovered.status,200,recovered.error);
- assert.equal(h.docs.get(key).match.christmas.enabled,false);
+ assert.equal(h.docs.get(key).match.christmas?.enabled===true,false);
  assert.equal(h.docs.get(key).match.dogChristmasEligibilityChecked,true);
  assert.equal([...h.docs.keys()].some(key=>
    key.startsWith('dog_christmas_villages_v1/')||key.startsWith('dog_christmas_scratch_v1/')),false);
