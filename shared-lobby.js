@@ -2945,7 +2945,11 @@ function finishEisstock(ch,members){
    const ch=room.match?.challenge;
    if(ch?.id!==challengeId||ch.phase!=='countdown'||ch.order[ch.index]!=='snake-arena')return {unchanged:true};
    if(!room.match.members.some(m=>m.uid===identity.uid))throw error(403,'NOT_A_PARTICIPANT');
+   const phaseBefore=ch.phase;
    advanceSnake(ch,room.match.members);
+   // A timeout probe often only checks the clock. If no player was eliminated
+   // and the round did not finish, avoid rewriting the entire Firestore room.
+   if(ch.phase===phaseBefore)return {unchanged:true};
   })};
  }));
  app.post('/api/hub/rooms/:code/challenge-lava-state',handler(async req=>{
