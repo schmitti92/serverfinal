@@ -94,6 +94,27 @@ function deal(s,rng){
   }
   history(s,'Runde '+s.round+': '+count+' Karten pro Person');
 }
+/** Optional, paid research: replace exactly one of the owner's cards before
+ * the partner exchange. Unlike the partner exchange, this draws from the deck.
+ * Once per match, preserves all 110 IDs and never exposes other hands.
+ */
+export function researchSwapCard(original,seat,cardId,rng=Math.random){
+ const s=clone(original);
+ if(s.phase!=='exchange'||s.exchanges[seat]!==null||s.researchSwapped?.[seat])
+  throw Error('RESEARCH_SWAP_ALREADY_USED');
+ if(!Number.isInteger(cardId)||!Array.isArray(s.hands[seat]))throw Error('CARD_NOT_HELD');
+ const index=s.hands[seat].findIndex(card=>card.id===cardId);
+ if(index<0)throw Error('CARD_NOT_HELD');
+ if(!s.deck.length&&s.discard.length)s.deck=shuffle(s.discard.splice(0),rng);
+ if(!s.deck.length)throw Error('RESEARCH_DECK_EMPTY');
+ const discarded=s.hands[seat][index];
+ s.hands[seat][index]=s.deck.pop();
+ s.discard.push(discarded);
+ s.researchSwapped=Array.isArray(s.researchSwapped)?s.researchSwapped:[false,false,false,false];
+ s.researchSwapped[seat]=true;
+ history(s,'🔬 '+s.players[seat].name+' hat vor der Runde eine Karte erforscht.');
+ s.revision++;return s;
+}
 export function exchangeCard(original,seat,cardId,rng=Math.random){
   const s=clone(original);
   if(s.phase!=='exchange'||s.exchanges[seat]!==null)throw Error('EXCHANGE_NOT_ALLOWED');
