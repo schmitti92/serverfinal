@@ -61,5 +61,5 @@ test('Pause/resume and theme handlers do not persist an already applied setting'
  const theme=server.slice(server.indexOf('app.post("/room/:code/board-theme"'),
   server.indexOf('app.post(',server.indexOf('app.post("/room/:code/board-theme"')+12));
  assert.match(theme,/room\.state&&room\.state\.boardTheme!==boardTheme/);
- assert.match(server,/if\(room\.state&&room\.state\.jokerAwardMode!==mode\)/);
+ assert.match(server,/const changed=room\.jokerAwardMode!==mode\|\|!!room\.state&&room\.state\.jokerAwardMode!==mode/);
 });
