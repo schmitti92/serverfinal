@@ -1677,6 +1677,16 @@ function finishEisstock(ch,members){
     if(!grinchActive()&&['dog-grinch1','dog-grinch2'].includes(game))throw error(403,'GRINCH_PART2_NOT_RELEASED');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      // Repeated DOG selection (double click, stale tab, browser retry) is
+      // not a new lobby state. Keep readiness and skip a full Firestore write.
+      // An actual new avatar choice is the only permitted delta.
+      if(game==='dog'&&room.phase==='preparing'&&room.game==='dog'){
+        const me=room.players.find(p=>p.uid===identity.uid);
+        const avatar=req.body?.dogAvatar;
+        if(!validDogAvatar(avatar)||me?.dogAvatar===avatar)return {unchanged:true};
+        if(me)me.dogAvatar=avatar;
+        return;
+      }
       if(room.phase==='playing'&&!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
       if(room.phase==='playing'&&hubMatchFinished(room.match))archiveCompletedMatch(room);
       if(game!=='partychallenge')room.players=room.players.filter(p=>!p.testBot);
