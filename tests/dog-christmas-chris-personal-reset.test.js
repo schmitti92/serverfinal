@@ -270,3 +270,43 @@ test('trusted launch rechecks verified Chris identity in the same archive/deleti
  assert.equal(docs.has(CHRIS_CHRISTMAS_RESET_MARKERS+'/'+chris),false);
  assert.equal(docs.has(CHRIS_CHRISTMAS_LAUNCH_JOBS+'/'+CHRIS_CHRISTMAS_LAUNCH_JOB),false);
 });
+
+test('verified Chris alone can explicitly override stale playing rooms after confirming match completion',async()=>{
+ const initialData=initial();
+ initialData['spielesammlung_hub_v1/123']={
+  phase:'playing',game:'dog',match:{game:'dog',dog:{phase:'play'}},
+  expiresAt:20000,players:[{uid:chris},{uid:vanessa},{uid:david}]};
+ const {db,docs}=firestore(initialData);
+ const endpoints={};
+ const app={get:()=>{},post:(route,auth,action)=>{endpoints[route]=[auth,action];}};
+ installChrisChristmasResetApi(app,{getFirestore:()=>db,
+  verifyProfile:async token=>token==='chris'?{uid:chris,name:'Chris'}:
+   token==='vanessa'?{uid:vanessa,name:'Vanessa'}:null,clock:()=>10000});
+ const invoke=async(token,body)=>{
+  const [auth,action]=endpoints['/api/hub/dog/chris-christmas-reset'];
+  const req={get:()=>token?'Bearer '+token:'',body};
+  const res={statusCode:200,status(x){this.statusCode=x;return this;},
+   set(){return this;},json(x){this.body=x;return x;}};
+  let result;
+  await auth(req,res,()=>{result=action(req,res)});
+  if(result)await result;
+  return res;
+ };
+ const confirmation='CHRIS_WEIHNACHT_NEUSTART';
+ const denied=await invoke('vanessa',{confirmation,completedMatchesConfirmed:true});
+ assert.equal(denied.statusCode,403);
+ const guarded=await invoke('chris',{confirmation});
+ assert.equal(guarded.statusCode,409);
+ assert.equal(docs.has('dog_christmas_research_v1/'+chris),true);
+ const approved=await invoke('chris',{confirmation,completedMatchesConfirmed:true,
+  uid:vanessa});
+ assert.equal(approved.statusCode,200);
+ assert.equal(approved.body.resetCompleted,true);
+ assert.equal(approved.body.cleared,7);
+ assert.equal(docs.has('dog_christmas_research_v1/'+chris),false);
+ assert.deepEqual(docs.get('spielesammlung_hub_v1/123'),initialData['spielesammlung_hub_v1/123'],
+  'room game state must not be changed');
+ assert.deepEqual(docs.get('player_profiles_v1/'+vanessa),initialData['player_profiles_v1/'+vanessa]);
+ assert.deepEqual(docs.get('dog_christmas_villages_v1/lichtertal_2026_shared'),
+  initialData['dog_christmas_villages_v1/lichtertal_2026_shared']);
+});
