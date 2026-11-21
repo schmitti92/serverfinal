@@ -241,7 +241,10 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   // SKYJO GET polling must not re-read the hub document on every frame.
   // This cache is ONLY used for read-only game-state requests. Actions,
   // payouts and room mutations still re-check the authoritative Firestore room.
-  const SKYJO_READ_CACHE_MS=3000;
+  // Read-only SKYJO polling used to reauthorize every 3 seconds even for
+  // unchanged rooms. Retain a bounded server-RAM authorization snapshot for
+  // 15 seconds; actual game actions still recheck Firestore transactionally.
+  const SKYJO_READ_CACHE_MS=15000;
   const SKYJO_READ_CACHE_MAX=128;
   const skyjoReadRooms=new Map();
   async function readOnlySkyjoRoom(store,gameCode){
@@ -893,6 +896,10 @@ function finishEisstock(ch,members){
       streamed?.hasSnapshot&&streamed.room&&streamed.room.revision!==revision);
   }
   function invalidateHubReadCache(code){
+    // A real room mutation invalidates its Skyjo read-only authorization
+    // cache immediately. Other room caches remain valid until their TTL.
+    for(const gameCode of skyjoReadRooms.keys())
+      if(hubCodeFromGame(gameCode)===code)skyjoReadRooms.delete(gameCode);
     hubHttpReadEpochs.set(code,(hubHttpReadEpochs.get(code)||0)+1);
     hubHttpReadsInFlight.delete(code);
     syncRoomReads.delete(code);
