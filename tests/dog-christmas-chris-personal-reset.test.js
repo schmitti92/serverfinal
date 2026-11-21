@@ -4,7 +4,8 @@ import {
  CHRIS_CHRISTMAS_RESET_ID,CHRIS_CHRISTMAS_RESET_ARCHIVES,
  CHRIS_CHRISTMAS_RESET_MARKERS,CHRIS_CHRISTMAS_PLAYER_COLLECTIONS,
  getChrisChristmasResetStatus,resetChrisChristmasOnce,installChrisChristmasResetApi,
- isChrisActiveChristmasMatch
+ isChrisActiveChristmasMatch,runChrisChristmasLaunchResetOnce,
+ CHRIS_CHRISTMAS_LAUNCH_JOB,CHRIS_CHRISTMAS_LAUNCH_JOBS
 } from '../dog-christmas-chris-personal-reset.js';
 
 const copy=data=>structuredClone(data);
@@ -17,7 +18,13 @@ function firestore(initial={},onTransaction=()=>{}){
   collection:name=>({
    doc:id=>ref(name+'/'+id),
    get:async()=>({docs:[...docs.keys()].filter(path=>path.startsWith(name+'/')&&
-    path.split('/').length===2).map(snap)})
+    path.split('/').length===2).map(snap)}),
+   where:(field,operator,values)=>{
+    assert.equal(operator,'in');
+    return {limit:count=>({get:async()=>({docs:[...docs.keys()]
+     .filter(path=>path.startsWith(name+'/')&&path.split('/').length===2)
+     .map(snap).filter(s=>values.includes(s.data()?.[field])).slice(0,count)})})};
+   }
   }),
   runTransaction:async fn=>{
    onTransaction(docs);
@@ -42,6 +49,9 @@ function firestore(initial={},onTransaction=()=>{}){
 }
 const chris='chris-uid',vanessa='vanessa-uid',david='david-uid';
 const initial=()=>({
+ ['player_profiles_v1/'+chris]:{uid:chris,name:'Chris',setupComplete:true},
+ ['player_profiles_v1/'+vanessa]:{uid:vanessa,name:'Vanessa',setupComplete:true},
+ ['player_profiles_v1/'+david]:{uid:david,name:'David',setupComplete:true},
  ['dog_player_statistics_v1/'+chris]:{name:'Chris',played:42,wins:22,xp:12000},
  ['dog_player_statistics_v1/'+vanessa]:{name:'Vanessa',played:4,xp:100},
  ['dog_player_statistics_v1/'+david]:{name:'David',played:1,xp:50},
@@ -195,4 +205,68 @@ test('only verified Chris identity is allowed by API: name spoofing in request b
  assert.equal(valid.body.resetCompleted,true);
  assert.equal(docs.has('dog_player_statistics_v1/'+chris),false);
  assert.equal(docs.has('dog_player_statistics_v1/'+vanessa),true);
+});
+
+test('trusted server launch: reset only the uniquely verified Chris profile once, preserve access and team',async()=>{
+ const seed=initial(),{db,docs}=firestore(seed);
+ const logger={info:()=>{}};
+ const first=await runChrisChristmasLaunchResetOnce(db,{clock:()=>10000,logger});
+ assert.equal(first.jobCompleted,true);
+ assert.equal(first.alreadyReset,false);
+ assert.equal(first.cleared,7);
+ assert.equal(docs.get(CHRIS_CHRISTMAS_LAUNCH_JOBS+'/'+CHRIS_CHRISTMAS_LAUNCH_JOB).status,'completed');
+ assert.deepEqual(docs.get('player_profiles_v1/'+chris),seed['player_profiles_v1/'+chris],
+  'Chris remains signed in and can still open Lichtertal');
+ assert.equal(docs.has('dog_player_statistics_v1/'+chris),false);
+ assert.equal(docs.has('dog_christmas_scratch_wallet_v1/'+chris),false);
+ assert.deepEqual(docs.get('dog_player_statistics_v1/'+vanessa),seed['dog_player_statistics_v1/'+vanessa]);
+ assert.deepEqual(docs.get('dog_player_statistics_v1/'+david),seed['dog_player_statistics_v1/'+david]);
+ assert.deepEqual(docs.get('dog_christmas_villages_v1/lichtertal_2026_shared'),
+  seed['dog_christmas_villages_v1/lichtertal_2026_shared']);
+ assert.deepEqual(docs.get('spielesammlung_hub_v1/123'),seed['spielesammlung_hub_v1/123']);
+ // A later server restart must never reset new winnings.
+ docs.set('dog_christmas_scratch_wallet_v1/'+chris,{coins:12345});
+ const rerun=await runChrisChristmasLaunchResetOnce(db,{clock:()=>20000,logger});
+ assert.equal(rerun.alreadyReset,true);
+ assert.deepEqual(docs.get('dog_christmas_scratch_wallet_v1/'+chris),{coins:12345});
+});
+test('trusted launch ignores old orphaned DOG lobby rooms without altering them',async()=>{
+ const seed=initial();
+ seed['spielesammlung_hub_v1/123']={phase:'playing',game:'dog',
+  match:{game:'dog',dog:{phase:'play'}},expiresAt:20000,
+  players:[{uid:chris},{uid:vanessa},{uid:david}]};
+ const {db,docs}=firestore(seed);
+ const result=await runChrisChristmasLaunchResetOnce(db,{clock:()=>10000,logger:{info(){}}});
+ assert.equal(result.jobCompleted,true);
+ assert.deepEqual(docs.get('spielesammlung_hub_v1/123'),seed['spielesammlung_hub_v1/123']);
+ assert.equal(docs.has('dog_christmas_research_v1/'+chris),false);
+ assert.equal(docs.has('dog_christmas_research_v1/'+vanessa),false);
+});
+test('trusted launch aborts safely if more than one stored profile is named Chris',async()=>{
+ const seed=initial();
+ seed['player_profiles_v1/another-chris']={uid:'another-chris',name:'Chris'};
+ const {db,docs}=firestore(seed);
+ await assert.rejects(()=>runChrisChristmasLaunchResetOnce(db,{clock:()=>10000}),
+  /CHRIS_LAUNCH_RESET_PROFILE_NOT_UNIQUE/);
+ assert.deepEqual(Object.fromEntries(docs),seed);
+});
+test('trusted launch aborts safely if no verified Chris profile exists',async()=>{
+ const seed=initial();
+ delete seed['player_profiles_v1/'+chris];
+ const {db,docs}=firestore(seed);
+ await assert.rejects(()=>runChrisChristmasLaunchResetOnce(db,{clock:()=>10000}),
+  /CHRIS_LAUNCH_RESET_PROFILE_NOT_UNIQUE/);
+ assert.deepEqual(Object.fromEntries(docs),seed);
+});
+test('trusted launch rechecks verified Chris identity in the same archive/deletion transaction',async()=>{
+ const seed=initial();
+ const {db,docs}=firestore(seed,store=>{
+  const entry=store.get('player_profiles_v1/'+chris);
+  store.set('player_profiles_v1/'+chris,{...entry,name:'Renamed'});
+ });
+ await assert.rejects(()=>runChrisChristmasLaunchResetOnce(db,{clock:()=>10000}),
+  /CHRIS_RESET_IDENTITY_CHANGED/);
+ assert.equal(docs.has('dog_christmas_scratch_wallet_v1/'+chris),true);
+ assert.equal(docs.has(CHRIS_CHRISTMAS_RESET_MARKERS+'/'+chris),false);
+ assert.equal(docs.has(CHRIS_CHRISTMAS_LAUNCH_JOBS+'/'+CHRIS_CHRISTMAS_LAUNCH_JOB),false);
 });
