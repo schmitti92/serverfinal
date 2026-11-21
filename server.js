@@ -20,6 +20,7 @@ import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
+import { createFirebaseMutationRequestDiagnostics } from "./firebase-mutation-request-diagnostics.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
 import {installChrisChristmasResetApi} from "./dog-christmas-chris-personal-reset.js";
 import {deferChristmasResetOnSafePreflight} from "./dog-christmas-startup-policy.js";
@@ -4362,6 +4363,20 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "500kb" }));
+// Across all games: measure successful mutation HTTP requests without ever
+// reading or writing Firebase. Only Express route templates are recorded.
+const firebaseMutationRequests=createFirebaseMutationRequestDiagnostics();
+app.use(firebaseMutationRequests.observe);
+app.get('/api/firebase/mutation-activity',(_req,res)=>res.json({
+ ok:true,scope:'successful_http_mutation_requests_not_firestore_writes',
+ ...firebaseMutationRequests.snapshot()
+}));
+const firebaseMutationLogTimer=setInterval(()=>{
+ const totals=firebaseMutationRequests.snapshot();
+ if(totals.successfulRequests)
+  console.info('[firebase-mutation-requests/10min]',JSON.stringify(totals));
+},60000);
+firebaseMutationLogTimer.unref?.();
 // Scratch APIs are registered once by installSharedLobby with verified tree unlocks,
 // event gating and atomic wallet writes. Do not shadow them with a legacy handler.
 // Spielerprofil V1.1: sichere Startdiagnose (nur öffentliche Projekt-ID, keine Secrets).
