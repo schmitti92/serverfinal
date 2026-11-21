@@ -27,5 +27,5 @@ jobs:
           node-version: '22'
       - name: Check server-side DOG rules and seat selection
         run: node --test tests/dog-engine.test.js tests/dog-lobby-colors.test.js
-      - name: Simulate three verified online players plus one server bot
+      - name: Simulate three verified online players without a bot
         run: node --test tests/dog-three-human-online.test.js
