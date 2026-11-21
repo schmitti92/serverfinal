@@ -65,7 +65,7 @@ test('daily tickets and active collection timers are bounded',()=>{
  assert.equal(builder.builderAt,10_000+2*60*60*1000);
 });
 
-test('one-time magic redraw changes only the owner's hand and preserves all 110 cards',()=>{
+test('one-time magic redraw changes only the current player hand and preserves all 110 cards',()=>{
  const game=createGame({names:['A','B','C','D'],rng:()=>0.48});
  const originalHands=game.hands.map(h=>h.map(c=>c.id));
  const cardId=game.hands[0][0].id;
