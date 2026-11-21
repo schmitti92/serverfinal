@@ -3482,6 +3482,7 @@ async function finalizeMatchStats(room, winnerColor, opts={}){
    try{
      if(!room?.state) return;
      if(isTestRoom(room)) return;
+     let stateChanged=false;
      if(!room.state.profileStatsFinalizedV8 && Array.isArray(room.state.profileSeatsV8)){
        const seats=room.state.profileSeatsV8;
        const winnerSeat=seats.find(p=>p.seat===String(winnerColor||'').toLowerCase());
@@ -3489,11 +3490,14 @@ async function finalizeMatchStats(room, winnerColor, opts={}){
          try{
            await profileStatsV8.book({game:'barikade',matchId:room.state.matchId,players:seats,winnerUids:[winnerSeat.uid],startedAt:room.state.startedAt,finishedAt:room.state.finishedAt||Date.now(),reason:room.state.gameOverReason||'goal'});
            room.state.profileStatsFinalizedV8=true;
-           await persistRoomState(room);
+           stateChanged=true; // Finish caller persists this together with the final state.
          }catch(e){console.warn('[v8/barikade] booking delayed:',e?.message||e);}
        }
      }
-     if(room.state.statsFinalized)return;
+     if(room.state.statsFinalized){
+       if(stateChanged&&!opts.deferPersistence)await persistRoomState(room);
+       return;
+     }
      const startedAt=Number(room.state.startedAt||0)||0;
      const finishedAt=Number(room.state.finishedAt||Date.now())||Date.now();
      const playMs=Math.max(0,finishedAt-startedAt);
@@ -3512,7 +3516,12 @@ async function finalizeMatchStats(room, winnerColor, opts={}){
        }};
      });
      // Only mark finalized after the entire Firebase transaction succeeds.
-     if(await bookBarikadeLifetimeStats(room,patches))room.state.statsFinalized=true;
+     if(await bookBarikadeLifetimeStats(room,patches)){
+       room.state.statsFinalized=true;
+       stateChanged=true;
+     }
+     // Reconnect may be the only caller with no subsequent game-state save.
+     if(stateChanged&&!opts.deferPersistence)await persistRoomState(room);
    }catch(e){
      console.warn("[stats] finalize failed:", e?.message||e);
    }
@@ -7549,7 +7558,7 @@ if (room.state.phase !== "need_roll") {
       room.state.forfeiterColor = myColor;
       setGameOver(room, winnerColor);
 
-      await finalizeMatchStats(room, room.state.winnerColor, { forfeiterColor: myColor });
+      await finalizeMatchStats(room, room.state.winnerColor, { forfeiterColor: myColor, deferPersistence:true });
       await persistRoomState(room);
 
       broadcast(room, {
@@ -7945,7 +7954,7 @@ if (msg.type === "move_request") {
       if (winner) {
         setGameOver(room, winner);
         console.log(`[win] room=${room.code} winner=${room.state.winnerColor}`);
-        await finalizeMatchStats(room, room.state.winnerColor);
+        await finalizeMatchStats(room, room.state.winnerColor, {deferPersistence:true});
       }
 
       // Alle NICHT an eine offene Ereigniskarte gebundenen Rad-Belohnungen werden
