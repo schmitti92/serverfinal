@@ -3907,6 +3907,7 @@ const businessMissingUntil = new Map();
 const businessWriteChains = new Map();
 const businessFirebaseLatestOp = new Map();
 const businessFirebaseWorkers = new Map();
+const businessFirebaseConfirmedRev = new Map(); // only known Firestore-committed states may no-op
 const businessPresenceRooms = new Map(); // transient online-presence; never changes room rev
 const BUSINESS_PRESENCE_TTL_MS = Number(process.env.BUSINESS_PRESENCE_TTL_MS || 45000);
 const BUSINESS_LOBBY_RECLAIM_MS = Number(process.env.BUSINESS_LOBBY_RECLAIM_MS || 90000);
@@ -3945,7 +3946,11 @@ async function readBusinessCold(code){
       const snap=await firestore.collection(BUSINESS_COLLECTION).doc(docIdForRoom(rc)).get();
       if(snap.exists){
         const d=snap.data()||{};
-        if(d.state && typeof d.state==="object")return {code:rc,rev:Number(d.rev||0)||0,state:d.state,updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0,source:"firestore"};
+        if(d.state && typeof d.state==="object"){
+          const confirmedRev=Number(d.rev||0)||0;
+          businessFirebaseConfirmedRev.set(rc,confirmedRev);
+          return {code:rc,rev:confirmedRev,state:d.state,updatedAtMs:Number(d.updatedAtMs||d.ts||0)||0,source:"firestore"};
+        }
       }
     }
   }catch(e){console.warn("[business/firebase] cold read failed:",e?.message||e)}
@@ -3984,10 +3989,14 @@ function queueBusinessFirebaseOp(code,op){
       try{
         initFirebaseIfConfigured();if(!firestore)continue;
         const ref=firestore.collection(BUSINESS_COLLECTION).doc(docIdForRoom(rc));
-        if(next?.type==="delete")await ref.delete();
+        if(next?.type==="delete"){await ref.delete();businessFirebaseConfirmedRev.delete(rc);}
         else if(next?.type==="set"&&next.payload){
           const p=next.payload;
           await ref.set({code:rc,rev:p.rev,state:p.state,updatedAtMs:p.updatedAtMs,ts:p.ts,updatedAt:admin.firestore.FieldValue.serverTimestamp()},{merge:false});
+          businessFirebaseConfirmedRev.delete(rc);
+          businessFirebaseConfirmedRev.set(rc,p.rev);
+          while(businessFirebaseConfirmedRev.size>BUSINESS_CACHE_MAX)
+            businessFirebaseConfirmedRev.delete(businessFirebaseConfirmedRev.keys().next().value);
         }
         failures=0;
       }catch(e){
@@ -4006,6 +4015,12 @@ async function writeBusinessPersisted(code,state,baseRev){
   return withBusinessWriteLock(rc,async()=>{
     const cur=await readBusinessPersisted(rc),curRev=Number(cur?.rev||0)||0;
     if(baseRev!=null && Number(baseRev)!==curRev)return {ok:false,conflict:true,error:"STALE_REV",rev:curRev,state:cur?.state||null,updatedAtMs:cur?.updatedAtMs||0};
+    // Only a previously Firebase-acknowledged identical state can skip a write.
+    // Pending or failed Firestore writes must still be retried normally.
+    if(cur&&businessFirebaseConfirmedRev.has(rc)&&businessFirebaseConfirmedRev.get(rc)>=curRev&&
+       JSON.stringify(cur.state)===raw)
+      return {ok:true,code:rc,rev:curRev,updatedAtMs:cur.updatedAtMs||0,
+        source:"firestore-synced",firebaseQueued:false,unchanged:true};
     const rev=curRev+1,updatedAtMs=Date.now();
     const payload={code:rc,rev,state,updatedAtMs,ts:updatedAtMs};
     businessMissingUntil.delete(rc);cacheBusinessPayload(payload,"memory");
@@ -4017,7 +4032,7 @@ async function writeBusinessPersisted(code,state,baseRev){
 async function deleteBusinessPersisted(code){
   const rc=normalizeBusinessCode(code);if(!rc)return false;
   return withBusinessWriteLock(rc,async()=>{
-    businessCache.delete(rc);businessMissingUntil.set(rc,Date.now()+15000);businessPresenceRooms.delete(rc);
+    businessCache.delete(rc);businessFirebaseConfirmedRev.delete(rc);businessMissingUntil.set(rc,Date.now()+15000);businessPresenceRooms.delete(rc);
     try{const f=businessSavePath(rc);if(fs.existsSync(f))fs.unlinkSync(f)}catch(_e){}
     queueBusinessFirebaseOp(rc,{type:"delete"});return true;
   });
