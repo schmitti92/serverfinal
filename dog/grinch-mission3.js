@@ -206,7 +206,7 @@ function deal(s){
 }
 export function createMission3(seed=Math.floor(Math.random()*2147483647),names=['Rot','Blau','Gelb']){
  if(!Number.isInteger(seed))throw Error('Ungültiger Seed');
- const rng=random(seed),places=shuffle(Array.from({length:64},(_,i)=>i),rng);
+ const rng=random(seed),places=shuffle(Array.from({length:64},(_,i)=>i).filter(i=>!MISSION3_STARTS.includes(i)),rng);
  const players=[
   ...['Rot','Blau','Gelb'].map((name,owner)=>({owner,name:String(names[owner]||name).slice(0,25),kind:'human'})),
   {owner:3,name:'Grinch',kind:'ai'}
@@ -278,12 +278,18 @@ function applyMovement(s,pieceId,distance,split){
  pawn.pos=route.to;
  return route;
 }
+// Unbeatable green pawns must not seal the only re-entry squares or
+// occupy an unfinished cooperative goal. They may pass both categories.
+function blockedGrinchLanding(s,field){
+ return MISSION3_STARTS.slice(0,3).includes(field)||
+  Boolean(s.tasks?.activeFields.includes(field));
+}
 function sevenOptions(s,seat,remaining,cardId){
  const result=[];
  for(const p of owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0&&(seat!==3||!s.grinchUsed.includes(p.id)))){
   for(let distance=1;distance<=remaining;distance++){
    const route=path(s,p,distance,true);
-   if(route&&(seat!==3||!s.tasks?.activeFields.includes(route.to)))
+   if(route&&(seat!==3||!blockedGrinchLanding(s,route.to)))
     result.push({kind:'seven',pieceId:p.id,cardId,as:'7',distance,to:route.to,captureIds:route.captureIds});
   }
  }
@@ -331,7 +337,7 @@ export function mission3LegalMoves(s,seat=s?.current){
       (seat===MISSION3_GRINCH||p.owner!==MISSION3_GRINCH));
     let total=0;
     for(const a of sources)for(const b of targets){
-     if(seat===3&&s.tasks?.activeFields.includes(b.pos))continue;
+     if(seat===3&&blockedGrinchLanding(s,b.pos))continue;
      total++;result.push({kind:'swap',cardId:card.id,as,pieceId:a.id,targetId:b.id});
     }
     if(!total)result.push({kind:'emptySwap',cardId:card.id,as});
@@ -340,7 +346,7 @@ export function mission3LegalMoves(s,seat=s?.current){
    for(const distance of cardSteps(as))for(const p of owned(s,seat).filter(p=>p.place==='track'&&p.frozenTurns===0)){
     if(seat===MISSION3_GRINCH&&s.grinchUsed.includes(p.id))continue;
     const r=path(s,p,distance);
-    if(r&&(seat!==3||!s.tasks?.activeFields.includes(r.to)))
+    if(r&&(seat!==3||!blockedGrinchLanding(s,r.to)))
      result.push({kind:'move',cardId:card.id,as,pieceId:p.id,distance,to:r.to,captureIds:r.captureIds});
    }
   }
