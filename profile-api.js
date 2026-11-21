@@ -123,8 +123,12 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true,onPro
         const old=snap.data();
         if(old.setupComplete===false)return {status:403};
         if(old.revision!==revision)return {status:409,profile:output(old)};
-        const next={...prefs,...extra,updated:Date.now(),revision:revision+1};
-        if(Object.hasOwn(req.body,'avatarImage'))next.avatarImage=req.body.avatarImage;
+        const changes={...prefs,...extra};
+        if(Object.hasOwn(req.body,'avatarImage'))changes.avatarImage=req.body.avatarImage;
+        // Same profile data is not a new revision or a Firestore write.
+        if(Object.entries(changes).every(([key,value])=>old[key]===value))
+          return {status:200,profile:output(old),unchanged:true};
+        const next={...changes,updated:Date.now(),revision:revision+1};
         tx.update(ref,next);
         return {status:200,profile:output({...old,...next})};
       });
@@ -132,7 +136,7 @@ export function installProfileApi(app,{admin,getFirestore,isReady=()=>true,onPro
       if(result.status===404)return error(res,404,'PROFILE_MISSING');
       if(result.status===403)return error(res,403,'SETUP_REQUIRED');
       // A completed profile edit invalidates the Render-only name cache.
-      onProfileSaved(req.profileUid);
+      if(!result.unchanged)onProfileSaved(req.profileUid);
       return res.json({ok:true,profile:result.profile});
     }catch(e){console.error('[profile/update]',e);return error(res,500,'PROFILE_WRITE_FAILED');}
   });
