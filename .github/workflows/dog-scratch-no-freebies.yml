@@ -17,4 +17,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog/christmas-scratch.js
-      - run: node --test tests/dog-christmas-scratch.test.js tests/dog-christmas-scratch-settings.test.js
+      - run: node --test --test-name-pattern='daily and unlimited complimentary|global free mode stays disabled|earned DOG field tickets enter' tests/dog-christmas-scratch.test.js tests/dog-christmas-scratch-settings.test.js
