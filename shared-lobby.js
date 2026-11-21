@@ -1505,8 +1505,10 @@ function finishEisstock(ch,members){
     const {building,expectedLevel,commandId}=req.body||{},store=db();
     // A linked DOG room gets the two new hidden fields immediately. Unlinked
     // rooms keep their current maps until a fresh match is started.
-    const linkedCode=validCode(req.body?.roomCode),linkedRef=linkedCode?documentFor(store,linkedCode):null;
-    const village=await dogWriteDiagnostics.transaction(store,'dog-village-upgrade',async tx=>{
+    const linkedCode=building==='inn'?validCode(req.body?.roomCode):null,
+      linkedRef=linkedCode?documentFor(store,linkedCode):null;
+    const villageResult=await dogWriteDiagnostics.transaction(store,'dog-village-upgrade',async tx=>{
+      let roomChanged=false;
       const ref=dogVillageFor(store);
       const [snap,roomSnap]=await Promise.all([tx.get(ref),linkedRef?tx.get(linkedRef):Promise.resolve(null)]);
       let result;
@@ -1523,14 +1525,15 @@ function finishEisstock(ch,members){
               room.revision=(Number(room.revision)||0)+1;
               room.updatedAt=clock();
               tx.set(linkedRef,room);
+              roomChanged=true;
             }
           }
         }
       }
-      return dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID);
+      return {village:dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID),roomChanged};
     });
-    if(linkedCode)invalidateHubReadCache(linkedCode);
-    return {village,shared:true,canUpgrade:true,enabled:true};
+    if(linkedCode&&villageResult.roomChanged)invalidateHubReadCache(linkedCode);
+    return {village:villageResult.village,shared:true,canUpgrade:true,enabled:true};
   }));
   // The common tree unlocks ten *personal* fixed prizes, one claim per player.
   app.get('/api/hub/christmas-tree-rewards',authentication,handler(async req=>{
@@ -1788,7 +1791,8 @@ function finishEisstock(ch,members){
     const {building,expectedLevel,commandId}=req.body||{};
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     const store=db(),roomRef=documentFor(store,code);
-    const village=await store.runTransaction(async tx=>{
+    const villageResult=await dogWriteDiagnostics.transaction(store,'dog-room-village-upgrade',async tx=>{
+      let roomChanged=false;
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
       // Any authenticated room member may use the common funds.
@@ -1805,13 +1809,14 @@ function finishEisstock(ch,members){
             room.revision=(Number(room.revision)||0)+1;
             room.updatedAt=clock();
             tx.set(roomRef,room);
+            roomChanged=true;
           }
         }
       }
-      return dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID);
+      return {village:dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID),roomChanged};
     });
-    invalidateHubReadCache(code);
-    return {village};
+    if(villageResult.roomChanged)invalidateHubReadCache(code);
+    return {village:villageResult.village};
   }));
 
   // Mission 1 occupies the existing authenticated hub room and its shared
