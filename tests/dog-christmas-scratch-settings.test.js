@@ -35,9 +35,9 @@ test('global free mode stays disabled even when legacy settings enable it',()=>{
  assert.throws(()=>buyScratchTicket(base,null,
    {tier:'premium',free:true,commandId:'scratch-free-premium-101'},
    {settings:config,draw:draw(0),now:()=>Date.parse('2026-11-15T12:00:00Z')}),
-   /SCRATCH_FREE_ONLY_SIMPLE/);
+   /SCRATCH_FREE_DISABLED/);
  assert.throws(()=>buyScratchTicket(base,null,{tier:'premium',free:true,commandId:'scratch-free-premium-102'},
-   {draw:draw(0)}),/SCRATCH_FREE_ONLY_SIMPLE/);
+   {draw:draw(0)}),/SCRATCH_FREE_DISABLED/);
 });
 test('per-variant win caps retain verified payout combinations',()=>{
  const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);
