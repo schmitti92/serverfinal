@@ -1961,7 +1961,9 @@ function finishEisstock(ch,members){
       let completedDogStats=[];
       if(match.dog.phase==='finished'&&!match.dogCounters?.recorded){
         if(!match.dogCounters)match.dogCounters=newDogMatchCounters();
-        const humans=match.dogRoster.filter(p=>!p.bot);
+        // Vacant colors are not accounts. Never create player-stat docs for
+        // the empty fourth seat in the three-person, no-bot variant.
+        const humans=match.dogRoster.filter(p=>!p.bot&&!p.inactive&&typeof p.uid==='string'&&p.uid.length>0);
         const docs=humans.map(p=>store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid));
         const researchRefs=humans.map(p=>store.collection(DOG_RESEARCH_COLLECTION).doc(p.uid));
         const [snapshots,researchSnaps]=await Promise.all([
