@@ -4,7 +4,7 @@ import {installSharedLobby} from '../shared-lobby.js';
 import {newGame,legalMoves,play,publicMissionState,pieceCoord} from '../dog/grinch-mission2.js';
 
 const clone=value=>value===undefined?undefined:structuredClone(value);
-function makeHarness(){
+function makeHarness({grinchOnlineEnabled=true}={}){
  const docs=new Map(),routes=[],middleware=[];
  const people={alice:{uid:'alice-uid',name:'Alice'},bob:{uid:'bob-uid',name:'Bob'},cara:{uid:'cara-uid',name:'Cara'},outsider:{uid:'outside-uid',name:'Outsider'}};
  const snapshot=data=>({exists:data!==undefined,data:()=>clone(data)});
@@ -31,7 +31,7 @@ function makeHarness(){
   use:(path,handler)=>middleware.push({path,handler})
  };
  installSharedLobby(app,{verifyProfile:async token=>people[token]||null,
-  getFirestore:()=>store,clock:()=>1700000000000,codeGenerator:()=> '123',grinchOnlineEnabled:true});
+  getFirestore:()=>store,clock:()=>1700000000000,codeGenerator:()=> '123',grinchOnlineEnabled});
  function routeMatches(template,path){
   const a=template.split('/'),b=path.split('/');
   return a.length===b.length&&a.every((p,i)=>p.startsWith(':')||p===b[i]);
@@ -205,4 +205,23 @@ test('slot acknowledgement is seat-bound, idempotent and does not change the cho
  const repeat=await h.call('POST',route+'/ack2',who,payload);
  assert.equal(repeat.status,200);
  assert.equal(h.docs.get('spielesammlung_hub_v1/123').match.grinch.revision,after.revision);
+});
+
+
+test('unreleased Grinch part 2 refuses public room selections and every online mission endpoint',async()=>{
+ const h=makeHarness({grinchOnlineEnabled:false});await three(h);
+ const roomBefore=structuredClone(h.docs.get('spielesammlung_hub_v1/123'));
+ for(const path of ['/api/hub/rooms/123/grinch/launch','/api/hub/rooms/123/grinch/launch2',
+  '/api/hub/rooms/123/grinch/action','/api/hub/rooms/123/grinch/ack2']){
+  const result=await h.call('POST',path);assert.equal(result.status,403,path);
+  assert.equal(result.error,'GRINCH_PART2_NOT_RELEASED',path);
+ }
+ for(const game of ['dog-grinch1','dog-grinch2']){
+  const result=await h.call('POST','/api/hub/rooms/123/select','alice',{game});
+  assert.equal(result.status,403);assert.equal(result.error,'GRINCH_PART2_NOT_RELEASED');
+ }
+ const progress=await h.call('GET','/api/hub/grinch/progress');
+ assert.equal(progress.status,200);assert.equal(progress.available,false);
+ assert.equal(progress.canStartMission1,false);
+ assert.deepEqual(h.docs.get('spielesammlung_hub_v1/123'),roomBefore,'locked actions must not mutate the room');
 });
