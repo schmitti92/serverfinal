@@ -1342,7 +1342,14 @@ export function installDealOrNoDeal(app,{verifyProfile,getFirestore,getSkyjoStat
     if(!room.players?.some(p=>p.uid===uid&&!p.testBot&&!p.bot))throw Error('NOT_IN_ROOM');
     if(room.hostUid!==uid)throw Error('HOST_ONLY');
     const old=normalizeDealEconomy(configSnap.data());
-    const next={...values,slotWeights:values.slotWeights??old.slotWeights,
+    const weights=values.slotWeights??old.slotWeights;
+    // Identical admin settings should not generate a new global Firestore
+    // revision, fan-out, or a billable document write.
+    if(JSON.stringify(values.prices)===JSON.stringify(old.prices)&&
+       JSON.stringify(weights)===JSON.stringify(old.slotWeights)&&
+       values.doubleBoostEnabled===old.doubleBoostEnabled&&
+       values.packsEnabled===old.packsEnabled)return old;
+    const next={...values,slotWeights:weights,
      revision:old.revision+1,updatedAt:Date.now(),updatedBy:uid};
     tx.set(ref,next);
     return normalizeDealEconomy(next);
