@@ -16,9 +16,9 @@ export function createFirebaseMutationRequestDiagnostics({clock=Date.now,windowM
    if(res.statusCode<200||res.statusCode>=300)return;
    const raw=req.route?.path;
    if(typeof raw!=='string'||!raw.startsWith('/'))return;
-   const prefix=String(req.baseUrl||'');
-   // Express route patterns contain :code/:uid rather than real identifiers.
-   const name=(req.method+' '+prefix+raw).slice(0,150);
+   // Only the registered Express route template is safe to retain. Never
+   // append req.baseUrl: mounted routers can contain resolved room codes.
+   const name=(req.method+' '+raw).slice(0,150);
    const minute=Math.floor(clock()/60000);
    let bucket=buckets.get(minute);
    if(!bucket){bucket=new Map();buckets.set(minute,bucket);}
