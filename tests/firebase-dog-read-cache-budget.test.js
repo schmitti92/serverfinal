@@ -5,7 +5,7 @@ import {createDogSharedReadCoordinator} from '../dog-shared-read-coordinator.js'
 test('read-only Firestore docs are reused within 30s, then refreshed automatically',async()=>{
  let now=1_000_000,calls=0,level=1;
  const db={},ref={path:'dog_christmas_villages_v1/lichtertal_2026_shared',
-  async get(){calls++;return {exists:true,data:()=>({academy:level})}}};
+  async get(){calls++;const snapshot=level;return {exists:true,data:()=>({academy:snapshot})}}};
  const coordinator=createDogSharedReadCoordinator({ttlMs:30_000,clock:()=>now});
  assert.equal((await coordinator.read(db,ref)).data().academy,1);
  level=2;
