@@ -1,0 +1,26 @@
+name: Firebase scratch settings one-read (offline)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/firebase-scratch-settings-single-read-offline.test.js'
+      - '.github/workflows/firebase-scratch-settings-single-read-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  settings-one-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check module syntax
+        run: |
+          node --check shared-lobby.js
+          node --check tests/firebase-scratch-settings-single-read-offline.test.js
+      - name: Assert one GET for multiple preserved legacy settings
+        run: node --test tests/firebase-scratch-settings-single-read-offline.test.js
