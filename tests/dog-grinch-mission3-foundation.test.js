@@ -79,16 +79,19 @@ test('if the personal start is already occupied, the struck pawn goes home',()=>
  assert.equal(p(next,'r1').place,'track');
  assert.equal(p(next,'r1').pos,0);
 });
-test('split seven never creates overlapping pawns when Grinch lands on victim’s home start',()=>{
+test('split seven returns struck pawn to free start while Grinch cannot PARK on protected start',()=>{
  const s=cleanBoard(createMission3(740));
  s.current=3;s.grinchActionsLeft=1;s.hands[3][0].type='7';
  p(s,'g0').pos=43;p(s,'y0').pos=45;
  const options=mission3LegalMoves(s);
- const attack=options.find(m=>m.kind==='seven'&&m.pieceId==='g0'&&m.distance===5);
- assert.ok(attack,'split seven can knock yellow while finishing on its start field');
+ assert.equal(options.some(m=>m.kind==='seven'&&m.pieceId==='g0'&&m.distance===5),false,
+  'Grinch cannot stop on yellow start field 48');
+ const attack=options.find(m=>m.kind==='seven'&&m.pieceId==='g0'&&m.distance===4);
+ assert.ok(attack,'split seven can attack pawn beside protected start');
  const after=mission3Play(s,3,attack);
- assert.equal(p(after,'g0').pos,48);
- assert.equal(p(after,'y0').place,'home','target start field must remain clear for the incoming Grinch');
+ assert.equal(p(after,'g0').pos,47);
+ assert.equal(p(after,'y0').place,'track');
+ assert.equal(p(after,'y0').pos,48);
  assert.ok(mission3Validate(after));
 });
 test('the protected human start cannot be hit by the Grinch',()=>{
@@ -144,6 +147,7 @@ test('a long seeded simulation preserves all 110 cards and 14 pawns at all three
    let s=createMission3(seed*929+stage);
    if(stage){s=mission3SetPreviewStage(s,stage);s=mission3NextPreviewDeal(s);}
    for(let turn=0;turn<130;turn++){
+    if(s.complete){assert.ok(mission3Validate(s));break;}
     const moves=mission3LegalMoves(s);assert.ok(moves.length);
     const m=moves[(turn*19+seed)%moves.length];
     s=mission3Play(s,s.current,m);
