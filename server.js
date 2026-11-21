@@ -22,7 +22,8 @@ import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import { createFirebaseMutationRequestDiagnostics } from "./firebase-mutation-request-diagnostics.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
-import {installChrisChristmasResetApi,runChrisChristmasLaunchResetOnce} from "./dog-christmas-chris-personal-reset.js";
+import {installChrisChristmasResetApi} from "./dog-christmas-chris-personal-reset.js";
+import {resetThreeFoundersChristmasOnce} from "./dog-christmas-three-founders-fresh-start.js";
 import {deferChristmasResetOnSafePreflight} from "./dog-christmas-startup-policy.js";
 import { installDealOrNoDeal } from "./deal-or-no-deal-api.js";
 import { installPeekJoker } from "./deal-peek-joker.js";
@@ -8205,34 +8206,21 @@ setInterval(() => {
   }
 }, SNAPSHOT_HEARTBEAT_MS);
 
-// Lichtertal official launch: privileged, one-shot migration BEFORE accepting traffic.
-// The reset flag must exactly match the archived, idempotent season identifier.
+// Authorized fresh first-visit restart for Chris, Vanessa and David.
+// Profiles, individual wallets, the global village and print runs are backed
+// up transactionally. This replaces the old broader and Chris-only jobs,
+// avoiding accidentally running overlapping resets on a future deployment.
 async function startServerWithChristmasReset(){
-  if(String(process.env.DOG_CHRISTMAS_RESET_ONCE||'').trim()===CHRISTMAS_RESET_ID){
-    if(!profileProjectMatches||!firestore)
-      throw Error('CHRISTMAS_RESET_ABORT: verified Firestore project is unavailable');
-    console.info('[christmas-reset] starting safe archived launch reset');
-    try{
-      await resetDogChristmasEventOnce(firestore,console);
-    }catch(err){
-      if(!deferChristmasResetOnSafePreflight(err))throw err;
-      // The safe reset preflight rejected this run without committing data.
-      // Keep the existing event records; serving the game is safer than an
-      // indefinitely blocked Render release. Never silently delete user data.
-      console.warn('[christmas-reset] DEFERRED: safety preflight blocked reset; no archived player state was modified. The service remains available. Reason:',err.message);
-    }
-  }
-  // Explicitly authorized: clear Chris's personal DOG Christmas save once.
-  // The archived job receipt avoids repeating this on Render restarts.
-  // A missing/ambiguous account fails CLOSED and never blocks game availability.
   if(profileProjectMatches&&firestore){
     try{
-      await runChrisChristmasLaunchResetOnce(firestore);
+      await resetThreeFoundersChristmasOnce(firestore);
     }catch(err){
-      console.error('[dog-chris-launch-reset] NOT APPLIED; no one-time personal reset committed:',err?.message||err);
+      // Fail closed: never partially delete accounts or reward state. Keep
+      // the website online so the issue is visible and can be investigated.
+      console.error('[dog-founders-fresh-start] NOT APPLIED; unchanged event data:',err?.message||err);
     }
-  }else console.warn('[dog-chris-launch-reset] skipped: verified Firebase project unavailable');
-  server.listen(PORT, () => console.log("Barikade server listening on", PORT, "build", SERVER_BUILD));
+  }else console.warn('[dog-founders-fresh-start] skipped: verified Firebase project unavailable');
+  server.listen(PORT,()=>console.log("Barikade server listening on",PORT,"build",SERVER_BUILD));
 }
 startServerWithChristmasReset().catch(err=>{
   console.error('[christmas-reset] startup aborted; no game server exposed:',err?.message||err);
