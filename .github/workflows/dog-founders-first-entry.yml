@@ -1,0 +1,21 @@
+name: DOG Christmas founder access and first-visit intro
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/dog-christmas-intro-unlock.test.js'
+      - 'tests/dog-christmas-three-founders-fresh-start.test.js'
+      - 'shared-lobby.js'
+      - 'dog-christmas-three-founders-fresh-start.js'
+      - '.github/workflows/dog-founders-first-entry.yml'
+  workflow_dispatch:
+jobs:
+  fresh-first-visit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js
+      - run: node --test tests/dog-christmas-intro-unlock.test.js tests/dog-christmas-three-founders-fresh-start.test.js
