@@ -21,6 +21,7 @@ import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
 import { createFirebaseMutationRequestDiagnostics } from "./firebase-mutation-request-diagnostics.js";
+import { createFirebaseReadRequestDiagnostics } from "./firebase-read-request-diagnostics.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
 import {installChrisChristmasResetApi} from "./dog-christmas-chris-personal-reset.js";
 import {restartDogChristmasForAllOnce} from "./dog-christmas-all-players-reset.js";
@@ -4463,7 +4464,19 @@ app.use(express.json({ limit: "500kb" }));
 // Across all games: measure successful mutation HTTP requests without ever
 // reading or writing Firebase. Only Express route templates are recorded.
 const firebaseMutationRequests=createFirebaseMutationRequestDiagnostics();
+const firebaseReadRequests=createFirebaseReadRequestDiagnostics();
 app.use(firebaseMutationRequests.observe);
+app.use(firebaseReadRequests.observe);
+app.get('/api/firebase/read-activity',(_req,res)=>res.json({
+ ok:true,scope:'successful_http_get_requests_not_firestore_billable_document_reads',
+ ...firebaseReadRequests.snapshot()
+}));
+const firebaseReadLogTimer=setInterval(()=>{
+ const totals=firebaseReadRequests.snapshot();
+ if(totals.successfulRequests)
+  console.info('[firebase-read-requests/10min]',JSON.stringify(totals));
+},60000);
+firebaseReadLogTimer.unref?.();
 app.get('/api/firebase/mutation-activity',(_req,res)=>res.json({
  ok:true,scope:'successful_http_mutation_requests_not_firestore_writes',
  ...firebaseMutationRequests.snapshot()
