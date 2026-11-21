@@ -24,17 +24,18 @@ test('four scratch variants have independent defaults and validated percentages'
  assert.equal(validateScratchSettings(premiumOne).variants.premium_27.maxPrizes,6);
  const full=clone(s);for(const id of Object.keys(full.variants))full.variants[id].maxPrizes=10;
  assert.deepEqual(Object.keys(validateScratchSettings(full).variants).map(id=>validateScratchSettings(full).variants[id].maxPrizes),[3,3,10,10]);
- assert.equal(normalizeScratchSettings({freeEnabled:true,variants:{gifts:bad.variants.elf}}).freeEnabled,true);
+ assert.equal(normalizeScratchSettings({freeEnabled:true,variants:{gifts:bad.variants.elf}}).freeEnabled,false);
  assert.deepEqual(normalizeScratchSettings({}).variants.premium_27.weights,DOG_SCRATCH_DEFAULT_SETTINGS.variants.premium_27.weights);
 });
-test('free mode applies to premium without coins or daily limits, and can be revoked',()=>{
+test('global free mode stays disabled even when legacy settings enable it',()=>{
  const config=clone(DOG_SCRATCH_DEFAULT_SETTINGS);config.freeEnabled=true;
  const base={coins:0,daily:'2026-11-15'};
- const receipt=buyScratchTicket(base,null,{tier:'premium',free:true,commandId:'scratch-free-premium-101'},
-   {settings:config,draw:draw(0),now:()=>Date.parse('2026-11-15T12:00:00Z')});
- assert.equal(receipt.result.price,0);
- assert.equal(receipt.wallet.daily,'2026-11-15');
- assert.equal(receipt.status.settings.freeEnabled,true);
+ assert.equal(normalizeScratchSettings(config).freeEnabled,false);
+ assert.equal(validateScratchSettings(config).freeEnabled,false);
+ assert.throws(()=>buyScratchTicket(base,null,
+   {tier:'premium',free:true,commandId:'scratch-free-premium-101'},
+   {settings:config,draw:draw(0),now:()=>Date.parse('2026-11-15T12:00:00Z')}),
+   /SCRATCH_FREE_ONLY_SIMPLE/);
  assert.throws(()=>buyScratchTicket(base,null,{tier:'premium',free:true,commandId:'scratch-free-premium-102'},
    {draw:draw(0)}),/SCRATCH_FREE_ONLY_SIMPLE/);
 });
@@ -126,7 +127,7 @@ test('legacy host settings gain original per-tier payout values on read',()=>{
  assert.deepEqual(migrated.variants.snow_collect.coinAmounts,[10,40,100]);
  assert.deepEqual(migrated.variants.elf.coinAmounts,[100,300,800]);
  assert.deepEqual(migrated.variants.premium_27.coinAmounts,[200,800,2000]);
- assert.equal(migrated.freeEnabled,true);
+ assert.equal(migrated.freeEnabled,false);
  assert.equal(migrated.variants.elf.maxPrizes,8);
  assert.deepEqual(validateScratchSettings(legacy),migrated);
 });
