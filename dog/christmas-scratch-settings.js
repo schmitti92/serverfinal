@@ -125,7 +125,10 @@ export function normalizeScratchSettings(raw){
      lightChancePer1000:v.lightChancePer1000??100,lightMin:v.lightMin??1,lightMax:v.lightMax??10
    }:{})};
  }
- return {version:1,freeEnabled:raw?.freeEnabled===true,variants,
+ // Global unlimited free-play is permanently disabled. Old stored
+ // preferences may still say true, but neither clients nor tickets can
+ // reactivate free purchases from that historical flag.
+ return {version:1,freeEnabled:false,variants,
   numberOne20:normalizeNumberOne20(raw?.numberOne20)};
 }
 /** Reject malformed or partial host edits before any Firestore write. */
