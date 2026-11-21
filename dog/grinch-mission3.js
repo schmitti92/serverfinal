@@ -34,7 +34,12 @@ function cardSteps(type){
 }
 /** Seeded, server-replayable event randomness; no Math.random in match progression. */
 function eventRandom(s,salt=0){
- return random((s.seed>>>0)^Math.imul(s.phase,73856093)^Math.imul(s.turn+1,19349663)^(salt>>>0));
+ // Avalanche-mix small or neighboring seeds, avoiding biased first LCG draws.
+ let value=((s.seed>>>0)^Math.imul(s.phase,73856093)^Math.imul(s.turn+1,19349663)^(salt>>>0))>>>0;
+ value=Math.imul(value^(value>>>16),0x7feb352d);
+ value=Math.imul(value^(value>>>15),0x846ca68b);
+ value=(value^(value>>>16))>>>0;
+ return random(value);
 }
 function captureOrder(s){
  if(!Array.isArray(s.captureOrder)||s.captureOrder.length!==3)
