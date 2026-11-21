@@ -114,6 +114,24 @@ test('DOG repeated readiness toggles that leave game unchanged produce zero Fire
  assert.equal(JSON.stringify(diag.dogWrites10m).includes('alice'),false);
 });
 
+test('Repeated unchanged DOG game selection is no longer an extra Firestore room write',async()=>{
+ const h=rig();
+ assert.equal((await h.request('POST','/api/hub/rooms')).status,200);
+ assert.equal((await h.request('POST','/api/hub/rooms/123/join',{},'bob')).status,200);
+ const selected=await h.request('POST','/api/hub/rooms/123/select',{game:'dog'});
+ assert.equal(selected.status,200);
+ const firstRevision=selected.room.revision,writes=h.counters.writes;
+ const duplicate=await h.request('POST','/api/hub/rooms/123/select',{game:'dog'});
+ assert.equal(duplicate.status,200);
+ assert.equal(duplicate.room.revision,firstRevision);
+ assert.equal(h.counters.writes,writes,'identical DOG preparation must not rewrite room');
+ const health=await h.request('GET','/api/hub/health');
+ assert.equal(health.hubMutationCache.dogAutoNoops,1);
+ assert.equal(health.dogWrites10m.byKind['dog-lobby'].noops,1);
+ assert.equal(health.dogWrites10m.byKind['dog-lobby'].writeCalls,0,
+  'the original select was made from an unselected room, not yet counted as a DOG write');
+});
+
 test('DOG diagnostic collection totals do not perform Firebase reads of their own',()=>{
  const diagnostics=createDogWriteDiagnostics({clock:()=>1000000});
  const before=diagnostics.snapshot();
