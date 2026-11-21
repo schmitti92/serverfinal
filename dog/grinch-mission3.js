@@ -624,6 +624,20 @@ export function mission3Validate(s){
  if(!s||s.version!==1||s.mission!==3||!Array.isArray(s.pieces)||s.pieces.length!==14||
   !Array.isArray(s.hands)||s.hands.length!==4||!Array.isArray(s.players)||s.players.length!==4)return false;
  if(!s.pieces.every(p=>['track','home','captured'].includes(p.place)||p.place==='lost'))return false;
+ if(s.tasks){
+  if(!Number.isInteger(s.stage)||s.stage<0||s.stage>2||
+    s.tasks.stage!==s.stage||!Array.isArray(s.tasks.progress)||s.tasks.progress.length!==3||
+    !Array.isArray(s.tasks.objectives)||s.tasks.objectives.length!==MISSION3_TASK_TARGETS[s.stage]||
+    !Array.isArray(s.tasks.activeFields)||!Array.isArray(s.tasks.completedStages))return false;
+  const remaining=s.tasks.objectives.filter(o=>!o.collected);
+  const fields=remaining.map(o=>o.field);
+  if(fields.some(n=>!Number.isInteger(n)||n<0||n>=64||MISSION3_STARTS.includes(n)))return false;
+  if(new Set(fields).size!==fields.length)return false;
+  if(JSON.stringify(fields)!==JSON.stringify(s.tasks.activeFields))return false;
+  if(s.tasks.progress.some((n,i)=>!Number.isInteger(n)||n<0||n>MISSION3_TASK_TARGETS[i]))return false;
+  if(remaining.length!==MISSION3_TASK_TARGETS[s.stage]-s.tasks.progress[s.stage])return false;
+  if(s.complete&&(!s.tasks.completedStages.includes(2)||s.capturedPerHuman.some(n=>n!==1)))return false;
+ }
  const occupied=s.pieces.filter(p=>p.place==='track').map(p=>p.pos);
  const captives=[0,1,2].map(owner=>owned(s,owner).filter(p=>p.place==='captured').length);
  return occupied.every(n=>Number.isInteger(n)&&n>=0&&n<64)&&
