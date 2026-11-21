@@ -10,6 +10,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  * Deliberately DOES NOT launch legacy games until they have safe room adapters.
  */
 import { randomInt, randomUUID } from 'node:crypto';
+import {createDogSharedReadCoordinator} from './dog-shared-read-coordinator.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
@@ -89,6 +90,11 @@ const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
 export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1'}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
+  // Reuse only simultaneously in-flight authenticated READ-ONLY document gets.
+  // Each Firestore path includes the UID for private records; no TTL, and no
+  // shared results in the write/transaction paths.
+  const dogMetaReadCoordinator=createDogSharedReadCoordinator();
+  const readDogMeta=(store,ref)=>dogMetaReadCoordinator.read(store,ref);
   const christmasActive=()=>christmasEventActive()===true;
   const grinchActive=()=>grinchOnlineEnabled===true;
   const error=(status,message)=>Object.assign(new Error(message),{status});
@@ -901,7 +907,8 @@ function finishEisstock(ch,members){
   app.get('/api/hub/health',(_req,res)=>res.json({ok:true,phase:'foundation',storage:'firestore',databaseReady:!!db(),games:Object.keys(HUB_GAMES),integratedGames:['barikade','kreuz','skyjo','business','dog','dog-grinch1'],challengeFoundation:true,
     // Counters are Render RAM only; never fetch Firebase to report them.
     hubStreamReadCache:{...hubStreamReadCounts,ttlMs:HUB_STREAM_READ_TTL_MS,activeRooms:roomStreams.size},
-    hubHttpReadCoalescing:{...hubHttpReadCounts,inFlight:hubHttpReadsInFlight.size,syncTtlMs:SYNC_ROOM_READ_TTL_MS}
+    hubHttpReadCoalescing:{...hubHttpReadCounts,inFlight:hubHttpReadsInFlight.size,syncTtlMs:SYNC_ROOM_READ_TTL_MS},
+    dogMetaInFlightReads:dogMetaReadCoordinator.stats()
   }));
   // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
   // A read never writes or grants a prize. Payouts happen in a transaction
@@ -909,17 +916,17 @@ function finishEisstock(ch,members){
   app.get('/api/hub/scratch',authentication,handler(async req=>{
      const identity=req.hubIdentity,store=db();
      const [snap,tree,settingsSnap,villageSnap,researchSnap,giftsEditionSnap,snowEditionSnap,ticEditionSnap,statsSnap,...otherEditionSnaps]=await Promise.all([
-       store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid).get(),
-       store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid).get(),
-       store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID).get(),
-       dogVillageFor(store).get(),
-       store.collection(DOG_RESEARCH_COLLECTION).doc(identity.uid).get(),
-       store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT).get(),
-       store.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT).get(),
-       store.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT).get(),
-       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(identity.uid).get(),
+       readDogMeta(store,store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid)),
+       readDogMeta(store,store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid)),
+       readDogMeta(store,store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID)),
+       readDogMeta(store,dogVillageFor(store)),
+       readDogMeta(store,store.collection(DOG_RESEARCH_COLLECTION).doc(identity.uid)),
+       readDogMeta(store,store.collection(GIFTS_EDITION_COLLECTION).doc(GIFTS_EDITION_CURRENT)),
+       readDogMeta(store,store.collection(SNOW_EDITION_COLLECTION).doc(SNOW_EDITION_CURRENT)),
+       readDogMeta(store,store.collection(TIC_EDITION_COLLECTION).doc(TIC_EDITION_CURRENT)),
+       readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(identity.uid)),
        ...OTHER_EDITION_VARIANTS.map(variant=>
-        store.collection(OTHER_EDITION_COLLECTION).doc('current_'+variant).get())
+        readDogMeta(store,store.collection(OTHER_EDITION_COLLECTION).doc('current_'+variant)))
      ]);
      // The event odds are global, and every authenticated player may edit them
      // even if they did not open a shared room. No room document read needed.
@@ -1257,7 +1264,7 @@ function finishEisstock(ch,members){
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const uid=req.hubIdentity.uid;
     const ref=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
-    const snap=await ref.get();
+    const snap=await readDogMeta(store,ref);
     return {stats:dogPlayerStats(snap.exists?snap.data():null,uid),
       tracking:'from-2026-11-15',scope:'completed-dog-online-matches'};
   }));
@@ -1272,8 +1279,8 @@ function finishEisstock(ch,members){
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
     const [stats,intro]=await Promise.all([
-      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
-      introRef(store,uid).get()
+      readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
+      readDogMeta(store,introRef(store,uid))
     ]);
     const played=dogPlayerStats(stats.exists?stats.data():null,uid).played;
     // Old matches from before the official reveal do not count.
@@ -1308,8 +1315,8 @@ function finishEisstock(ch,members){
   app.get('/api/hub/dog/research',authentication,handler(async req=>{
     const store=db(),uid=req.hubIdentity.uid;
     const [stats,research]=await Promise.all([
-      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
-      store.collection(DOG_RESEARCH_COLLECTION).doc(uid).get()
+      readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
+      readDogMeta(store,store.collection(DOG_RESEARCH_COLLECTION).doc(uid))
     ]);
     return {research:dogResearchStatus(research.exists?research.data():null,
       stats.exists?stats.data()?.xp:0,clock())};
@@ -1371,10 +1378,10 @@ function finishEisstock(ch,members){
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
     const store=db(),uid=req.hubIdentity.uid;
     const [snap,walletSnap,villageSnap,researchSnap]=await Promise.all([
-      store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid).get(),
-      store.collection(DOG_SCRATCH_COLLECTION).doc(uid).get(),
-      dogVillageFor(store).get(),
-      store.collection(DOG_RESEARCH_COLLECTION).doc(uid).get()
+      readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
+      readDogMeta(store,store.collection(DOG_SCRATCH_COLLECTION).doc(uid)),
+      readDogMeta(store,dogVillageFor(store)),
+      readDogMeta(store,store.collection(DOG_RESEARCH_COLLECTION).doc(uid))
     ]);
     return {level:dogPlayerLevelStatus(snap.exists?snap.data():null),
       academyXpPercent:christmasActive()?dogAcademyXpPercent(villageSnap.exists?villageSnap.data()?.levels?.academy:1):0,
@@ -1406,7 +1413,7 @@ function finishEisstock(ch,members){
     });
   }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
-    const store=db(),snap=await dogVillageFor(store).get();
+    const store=db(),snap=await readDogMeta(store,dogVillageFor(store));
     return {village:dogVillagePublic(snap.exists?snap.data():null,DOG_GLOBAL_VILLAGE_ID),
       shared:true,canUpgrade:christmasActive(),enabled:christmasActive()};
   }));
@@ -1463,7 +1470,7 @@ function finishEisstock(ch,members){
   // The common tree unlocks ten *personal* fixed prizes, one claim per player.
   app.get('/api/hub/christmas-tree-rewards',authentication,handler(async req=>{
     const store=db(),accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(req.hubIdentity.uid);
-    const [villageSnap,accountSnap]=await Promise.all([dogVillageFor(store).get(),accountRef.get()]);
+    const [villageSnap,accountSnap]=await Promise.all([readDogMeta(store,dogVillageFor(store)),readDogMeta(store,accountRef)]);
     return {treeRewards:dogTreeRewardStatus(
       villageSnap.exists?villageSnap.data():null,accountSnap.exists?accountSnap.data():null)};
   }));
