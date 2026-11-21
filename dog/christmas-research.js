@@ -76,7 +76,13 @@ export function dogResearchUpgrade(raw,xp,id,now=Date.now()){
  const levels={...(raw?.levels||{}),[id]:oldLevel+1};
  const next={...(raw||{}),levels,updatedAt:now};
  if(id==='builder'&&!Number.isSafeInteger(next.builderAt))next.builderAt=now+7200000;
- if(id==='free_ticket'&&!Number.isSafeInteger(next.freeTicketAt))next.freeTicketAt=now+86400000;
+ if(id==='free_ticket'){
+  const newReady=now+dogResearchTicketMs(oldLevel+1);
+  // Raising the factory level shortens any pending cooldown, but cannot
+  // create stored tickets or delay a reward that was already claimable.
+  next.freeTicketAt=Number.isSafeInteger(next.freeTicketAt)
+   ?Math.min(next.freeTicketAt,newReady):newReady;
+ }
  return next;
 }
 export const dogResearchPityThreshold=level=>level>0?10-Math.min(5,level):0;
