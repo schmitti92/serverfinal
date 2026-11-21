@@ -77,3 +77,50 @@ test('read in flight before invalidation cannot contaminate newer cached results
  assert.equal((await coordinator.read(db,ref)).data().value,2);
  assert.equal(reads,2);
 });
+
+test('one players DOG reward cannot discard another players in-flight read',async()=>{
+ const db={},cache=createDogSharedReadCoordinator({ttlMs:30000});
+ const bob='dog_christmas_scratch_wallet_v1/bob',alice='dog_christmas_scratch_wallet_v1/alice';
+ let releaseBob,readsBob=0,readsAlice=0;
+ const bobRef={path:bob,get(){
+  readsBob++;
+  return new Promise(resolve=>{releaseBob=()=>resolve({data:()=>({coins:700})})});
+ }};
+ const aliceRef={path:alice,async get(){
+  readsAlice++;
+  return {data:()=>({coins:300})};
+ }};
+ const pendingBob=cache.read(db,bobRef);
+ await Promise.resolve();
+ await cache.read(db,aliceRef);
+ cache.invalidate(alice);
+ releaseBob();
+ assert.equal((await pendingBob).data().coins,700);
+ assert.equal((await cache.read(db,bobRef)).data().coins,700);
+ assert.equal(readsBob,1,'unrelated in-flight GET must populate Bob cache');
+ assert.equal(readsAlice,1);
+});
+
+test('targeted DOG cache invalidation blocks an earlier stale in-flight snapshot',async()=>{
+ const db={},cache=createDogSharedReadCoordinator({ttlMs:30000});
+ const path='dog_christmas_scratch_wallet_v1/alice';
+ let oldDone,reads=0,coins=1;
+ const ref={path,get(){
+  reads++;
+  const captured=coins;
+  if(reads===1)return new Promise(resolve=>{
+   oldDone=()=>resolve({data:()=>({coins:captured})});
+  });
+  return Promise.resolve({data:()=>({coins:captured})});
+ }};
+ const stale=cache.read(db,ref);
+ await Promise.resolve();
+ coins=2;
+ cache.invalidate(path);
+ assert.equal((await cache.read(db,ref)).data().coins,2);
+ oldDone();
+ assert.equal((await stale).data().coins,1,'original requester can see its historical response');
+ assert.equal((await cache.read(db,ref)).data().coins,2,
+  'historical response must never poison newer cache');
+ assert.equal(reads,2);
+});
