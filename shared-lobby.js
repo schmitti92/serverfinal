@@ -11,6 +11,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import {createDogSharedReadCoordinator} from './dog-shared-read-coordinator.js';
+import {createDogFirestoreReadBudget} from './dog-firestore-read-budget.js';
 import {dogMetadataWasWritten,dogWrittenMetadataPaths} from './dog-meta-write-policy.js';
 import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
@@ -99,6 +100,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
    ttlMs:30000,maxCachedPerDatabase:256,clock
   });
   const dogWriteDiagnostics=createDogWriteDiagnostics({clock});
+  const dogReadBudget=createDogFirestoreReadBudget({clock});
   // Render-only aggregate write reports. No player details and no Firestore I/O.
   const dogWriteLogTimer=setInterval(()=>{
     const report=dogWriteDiagnostics.snapshot();
@@ -874,7 +876,9 @@ function finishEisstock(ch,members){
       // A room mutation might commit while the read is in flight. Never
       // return its pre-mutation snapshot after that successful commit.
       if((hubHttpReadEpochs.get(code)||0)!==epoch)return freshHubRoomForHttp(code);
-      return snapshot.exists?snapshot.data():null;
+      const found=snapshot.exists?snapshot.data():null;
+      if(found?.game==='dog'||found?.match?.game==='dog')dogReadBudget.record('http-room-get',COLLECTION);
+      return found;
     });
     hubHttpReadsInFlight.set(code,pending);
     const cleanup=()=>{if(hubHttpReadsInFlight.get(code)===pending)hubHttpReadsInFlight.delete(code);};
@@ -953,7 +957,8 @@ function finishEisstock(ch,members){
     // The transaction result carries its own committed-write flag: retries
     // cannot leak a previous attempt's decision into cache invalidation.
     const {value,changed,revision,dogWriteKind,writeCounts,writePaths,dogAutoNoop}=await store.runTransaction(async tx=>{
-      const snap=await tx.get(ref);const room=snap.exists?snap.data():null;
+      const observedTx=source==='dog-action'?dogReadBudget.trackTransaction(tx):tx;
+      const snap=await observedTx.get(ref);const room=snap.exists?snap.data():null;
       validateRead(room,identity);
       const game=room.match?.game||room.game;
       const dogWriteKind=game==='dog'?(room.match?.game==='dog'?'dog-match':'dog-lobby'):
@@ -961,8 +966,8 @@ function finishEisstock(ch,members){
         room.game==='dog'?'dog-lobby':null;
       // Count the actual transaction's document operations. Never count a
       // transaction retry or a failed validation as a committed write.
-      const tracked=dogWriteKind?dogWriteDiagnostics.counter(tx):null;
-      const writeTx=tracked?.tx||tx;
+      const tracked=dogWriteKind?dogWriteDiagnostics.counter(observedTx):null;
+      const writeTx=tracked?.tx||observedTx;
       // Snapshot ONLY DOG's durable room, before the change callback. Some
       // callers return normally without changing anything; that is not a turn.
       // Other games remain untouched and valid DOG changes still commit.
@@ -1064,6 +1069,7 @@ function finishEisstock(ch,members){
     hubHttpReadCoalescing:{...hubHttpReadCounts,inFlight:hubHttpReadsInFlight.size,syncTtlMs:SYNC_ROOM_READ_TTL_MS},
     hubMutationCache:{...hubMutationReadCacheStats},
     dogWrites10m:dogWriteDiagnostics.snapshot(),
+    dogCoreReadAttempts10m:dogReadBudget.snapshot(),
     dogMetaInFlightReads:dogMetaReadCoordinator.stats()
   }));
   // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
@@ -3490,8 +3496,10 @@ function finishEisstock(ch,members){
           hubStreamReadCounts.snapshotEvents++;
           if(stream.idleTimer&&stream.subscribers.size===0)
             hubStreamReadCounts.idleSnapshotEvents++;
-          if(next?.game==='dog'||next?.match?.game==='dog')
+          if(next?.game==='dog'||next?.match?.game==='dog'){
             hubStreamReadCounts.dogSnapshotEvents++;
+            dogReadBudget.record('watch-notification',COLLECTION);
+          }
           if(stream.hasSnapshot&&previous?.revision===next?.revision)
             hubStreamReadCounts.duplicateSnapshots++;
           stream.room=next;
