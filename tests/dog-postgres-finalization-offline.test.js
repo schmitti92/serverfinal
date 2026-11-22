@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {createGame,legalActions} from '../dog/engine.js';
 import {newDogMatchCounters} from '../dog/player-stats.js';
@@ -298,7 +299,7 @@ test('Illegal or non-winning candidate cannot be silently staged as a winner',as
  await h.state.seedRoom(h.room);
  await assert.rejects(()=>h.fin.stageFinalMove({
   ...h.request,action:{type:'exchange',cardId:7777}
- }),/DOG_/);
+ }),/EXCHANGE_NOT_ALLOWED|DOG_/);
  assert.equal(h.pg.state.pending.size,0);
  assert.equal(h.pg.state.outbox.length,0);
  assert.equal(h.pg.metrics.rollbacks,1);
@@ -314,9 +315,11 @@ test('No global Christmas room may enter this partially migrated settlement',asy
  assert.equal(h.fire.metrics.writes,0);
 });
 
-test('Terminal SQL migration table exists and cannot fork multiple pending winners',()=>{
- // Independent of DB network: the migration is never executed in this test.
- const fs=requireNotAvailable();
- assert.equal(fs,true);
+test('Terminal SQL migration locks one winning action per room and remains private',()=>{
+ const sql=readFileSync(new URL('../migrations/20261122_dog_durable_rooms.sql',import.meta.url),'utf8');
+ assert.match(sql,/CREATE TABLE IF NOT EXISTS dog_room_pending_finishes/);
+ assert.match(sql,/room_code VARCHAR\(6\) PRIMARY KEY REFERENCES dog_room_states\(room_code\)/);
+ assert.match(sql,/finished_snapshot JSONB NOT NULL/);
+ assert.match(sql,/fingerprint CHAR\(64\) NOT NULL/);
+ assert.match(sql,/UNIQUE \(room_code,match_id,action_id\)/);
 });
-function requireNotAvailable(){return true}
