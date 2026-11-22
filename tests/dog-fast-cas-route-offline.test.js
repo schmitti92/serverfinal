@@ -2,7 +2,7 @@ import test, {afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {installSharedLobby} from '../shared-lobby.js';
-import {createDogChristmasMatch} from '../dog/christmas-village.js';
+import {createDogChristmasMatch,DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID} from '../dog/christmas-village.js';
 
 const openWebSockets=new Set();
 afterEach(()=>{for(const socket of [...openWebSockets])socket.close();});
@@ -388,10 +388,10 @@ test('Seasonal DOG gift remains an atomic Firestore village update, not a fast r
  assert.equal(h.counted.casUpdates,beforeCas,'gift must not take CAS route');
  assert.ok(h.counted.gets>beforeReads,'gift must read village from the old transaction');
  assert.equal(h.docs.get('spielesammlung_hub_v1/'+code).match.christmas.giftCount,1);
- const village=h.docs.get('dog_christmas_village_v1/global');
+ const village=h.docs.get(DOG_VILLAGE_COLLECTION+'/'+DOG_GLOBAL_VILLAGE_ID);
  assert.ok(village&&village.lightsTenths>0,'village credited exactly once');
  const repeated=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',input);
  assert.equal(repeated.status,200);
- assert.equal(h.docs.get('dog_christmas_village_v1/global').lightsTenths,village.lightsTenths);
+ assert.equal(h.docs.get(DOG_VILLAGE_COLLECTION+'/'+DOG_GLOBAL_VILLAGE_ID).lightsTenths,village.lightsTenths);
  ws.close();
 });
