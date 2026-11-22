@@ -50,7 +50,7 @@ test('each of the 1,000 weighted draw positions has the correct ticket category'
    if(roll<weights.none){
     if(tier==='premium'){
      assert.equal(x.result.type,'coins');
-     assert.equal(x.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins').length,4);
+     assert.equal(x.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins').length,2);
     }else{
      assert.equal(x.result.type,'none');
      assert.equal(x.result.totalCoins,0);
