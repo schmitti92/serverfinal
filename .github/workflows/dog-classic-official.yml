@@ -16,6 +16,7 @@ on:
       - 'tests/dog-christmas-tree-rewards.test.js'
       - 'tests/dog-christmas-scratch.test.js'
       - 'tests/dog-official-rules.test.js'
+      - 'tests/dog-startfield-color-protection.test.js'
       - '.github/workflows/dog-classic-official.yml'
   pull_request:
     paths:
@@ -32,6 +33,7 @@ on:
       - 'tests/dog-christmas-tree-rewards.test.js'
       - 'tests/dog-christmas-scratch.test.js'
       - 'tests/dog-official-rules.test.js'
+      - 'tests/dog-startfield-color-protection.test.js'
   workflow_dispatch:
 # Keep CI for the newest change instead of piling up redundant runs on main.
 concurrency:
@@ -52,5 +54,5 @@ jobs:
       - run: node --check dog/christmas-village.js && node --test tests/dog-christmas-village.test.js
       - run: node --check dog/christmas-tree-rewards.js && node --test tests/dog-christmas-tree-rewards.test.js
       - run: node --check dog/christmas-scratch.js && node --test tests/dog-christmas-scratch.test.js
-      - run: node --test tests/dog-engine.test.js tests/dog-official-rules.test.js
+      - run: node --test tests/dog-engine.test.js tests/dog-official-rules.test.js tests/dog-startfield-color-protection.test.js
       - run: node --test --test-name-pattern=DOG tests/shared-lobby.test.js
