@@ -40,34 +40,29 @@ test('DOG 7 cannot burn 5 remaining steps midgame when a goal pawn may move only
  assert.equal(legalActions(s,0).some(m=>m.type==='seven-finish'),false);
  assert.throws(()=>takeAction(s,0,{type:'seven-finish',remaining:5}),/ILLEGAL_ACTION/);
 });
-test('DOG 7 last red pawn entering goal may use only 2 steps and forfeit 5',()=>{
+test('DOG 7 finishes immediately when the last red pawn reaches 4/4',()=>{
  let s=startSeven(lastRedPawn(setup()));
  assert.equal(s.phase,'seven');
  s=takeAction(s,0,needed(s,m=>m.type==='seven-step'&&m.pieceId===0&&
    m.steps===2&&m.viaGoal&&m.to==='goal:0'));
  assert.equal(s.pieces[0].place,'goal');
- assert.equal(s.seven.spent,2);
- assert.equal(s.seven.canForfeit,true);
- assert.ok(legalActions(s,0).some(m=>m.type==='seven-finish'&&m.remaining===5));
- s=JSON.parse(JSON.stringify(s)); // online serialization round-trip
- s=takeAction(s,0,needed(s,m=>m.type==='seven-finish'&&m.remaining===5));
- assert.equal(s.seven,null);
- assert.notEqual(s.phase,'seven');
- assert.equal(s.hands[0].some(card=>card.id===999),false,'7 is no longer held, even if a fresh round starts');
- assert.equal(s.discard.some(card=>card.id===999),true,'7 is discarded once');
- assert.ok(s.history.some(t=>t.includes('5 Schritte')));
+ assert.equal(s.phase,'finished');
+ assert.equal(s.winner,0);
+ assert.equal(s.winnerSeat,0);
+ assert.equal(s.seven,null,'unused five points are discarded atomically');
+ assert.deepEqual(legalActions(s,0),[]);
+ assert.equal(s.hands[0].some(card=>card.id===999),false);
+ assert.equal(s.discard.filter(card=>card.id===999).length,1);
 });
-test('DOG 7 offers partner moves instead of forcing forfeit when own last pawn finishes',()=>{
+test('DOG 7 never continues with teammate after own 4/4 is achieved',()=>{
  let before=lastRedPawn(setup());
- pawn(before,8,'track',34); // green teammate
+ pawn(before,8,'track',34);
  let s=startSeven(before);
  s=takeAction(s,0,needed(s,m=>m.type==='seven-step'&&m.pieceId===0&&m.steps===2&&m.viaGoal));
- assert.ok(legalActions(s,0).some(m=>m.type==='seven-finish'&&m.remaining===5));
- assert.ok(legalActions(s,0).some(m=>m.type==='seven-step'&&m.pieceId===8&&m.steps===5));
- s=takeAction(s,0,needed(s,m=>m.type==='seven-step'&&m.pieceId===8&&m.steps===5));
- assert.equal(s.pieces.find(p=>p.id===8).pos,39);
+ assert.equal(s.phase,'finished');
+ assert.equal(s.pieces.find(p=>p.id===8).pos,34,'green pawn remains unmoved');
+ assert.deepEqual(legalActions(s,0),[]);
  assert.equal(s.seven,null);
- assert.equal(s.discard.at(-1).id,999);
 });
 test('DOG 7 may forfeit after split 1 step onto entry then 1 step into goal on last pawn',()=>{
  let s=startSeven(lastRedPawn(setup()));
@@ -77,8 +72,9 @@ test('DOG 7 may forfeit after split 1 step onto entry then 1 step into goal on l
  assert.equal(legalActions(s,0).some(m=>m.type==='seven-finish'),false);
  s=takeAction(s,0,needed(s,m=>m.type==='seven-step'&&m.pieceId===0&&
   m.steps===1&&m.viaGoal&&m.to==='goal:0'));
- assert.equal(s.seven.spent,2);
- assert.ok(legalActions(s,0).some(m=>m.type==='seven-finish'&&m.remaining===5));
+ assert.equal(s.phase,'finished');
+ assert.equal(s.seven,null);
+ assert.equal(s.winnerSeat,0);
 });
 test('DOG 7 goal pawn midgame 1 + other pawn 6 still spends all 7',()=>{
  let s=setup();
@@ -101,7 +97,7 @@ test('DOG solo3 automatically discards last 7 card when final pawn reaches goal 
  assert.equal(s.hands[0].length,0);
  assert.equal(s.discard.at(-1).id,999);
 });
-test('DOG last team pawn finishing the whole match also disposes of unused 7 steps',()=>{
+test('DOG first individual at 4/4 finishes and disposes of unused 7 steps',()=>{
  let s=lastRedPawn(setup());
  for(let i=8;i<12;i++)pawn(s,i,'goal',i-8);
  s=startSeven(s);
