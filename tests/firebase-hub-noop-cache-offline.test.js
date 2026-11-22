@@ -63,8 +63,8 @@ function harness(){
   assert.ok(found,'Registered route: '+method+' '+path);
   const [registration,handlers]=found,parts=registration.split(' ')[1].split('/');
   const params=Object.fromEntries(parts.flatMap((p,i)=>p.startsWith(':')?[[p.slice(1),requested[i]]]:[]));
-  const req={params,body,hubIdentity:{uid:user,name:user==='alice'?'Alice':'Bob'},
-   get:()=>''};
+  const req={params,body,method,route:{path:registration.split(' ')[1]},
+   hubIdentity:{uid:user,name:user==='alice'?'Alice':'Bob'},get:()=>''};
   const res={statusCode:200,status(code){this.statusCode=code;return this},
    json(data){this.body=data;return this}};
   await handlers.at(-1)(req,res);
@@ -168,4 +168,25 @@ test('Unauthorized avatar update cannot touch Firestore state or invalidate cach
  assert.equal(h.stats.sets,1);
  await h.sync(code);
  assert.equal(h.stats.gets,1);
+});
+
+test('DOG avatar-only updates do not flush unrelated Firestore level/XP/read-only statistics caches',async()=>{
+ const h=harness(),code=await h.created();
+ const first=await h.call('GET','/api/hub/dog/stats');
+ assert.equal(first.status,200);
+ const metadataGets=h.stats.gets;
+ assert.ok(metadataGets>=1,'one verified DOG statistics document read');
+
+ const avatar=await h.avatar(code,4);
+ assert.equal(avatar.status,200);
+ assert.equal(avatar.room.players[0].dogAvatar,4);
+ const second=await h.call('GET','/api/hub/dog/stats');
+ assert.equal(second.status,200);
+ assert.equal(h.stats.gets,metadataGets,
+  'a cosmetic room avatar change must not discard the 30s player metadata cache');
+ const report=(await h.health()).dogMetaInFlightReads;
+ assert.ok(report.cacheHits>=1,'second status call reused the same Firebase document');
+ // The hub room was still durably updated; the optimization only skips
+ // invalidation of unrelated per-account XP and wallet read snapshots.
+ assert.equal(h.stats.sets,2);
 });
