@@ -135,10 +135,40 @@ export function applyDogInnUpgradeToMatch(match,newInnLevel,draw=randomInt){
  match.levels.inn=newInnLevel;
  return needed;
 }
+
+/** Preserve every previously confirmed board discovery without another read.
+ * Older matches may predate foundGiftFields/foundScratchFields: recover the
+ * field coordinates still present in their bounded server activity history.
+ * Missing historical coordinates must never be guessed from total counters.
+ */
+const validFoundField=field=>Number.isInteger(field)&&field>=0&&field<64&&field%16!==0;
+function collectDogChristmasFoundFields(match){
+ const gifts=new Set(),tickets=new Set();
+ const add=(target,fields)=>{
+  if(!Array.isArray(fields))return;
+  for(const field of fields)if(validFoundField(field))target.add(field);
+ };
+ add(gifts,match.foundGiftFields);add(tickets,match.foundScratchFields);
+ add(gifts,match.claimedFields);add(tickets,match.claimedScratchFields);
+ for(const event of Array.isArray(match.activity)?match.activity:[]){
+  if(!validFoundField(event?.field))continue;
+  if(event.type==='gift')gifts.add(event.field);
+  if(event.type==='scratch')tickets.add(event.field);
+ }
+ return {foundGiftFields:[...gifts],foundScratchFields:[...tickets]};
+}
+function retainDogChristmasFoundFields(match){
+ const known=collectDogChristmasFoundFields(match);
+ match.foundGiftFields=known.foundGiftFields;
+ match.foundScratchFields=known.foundScratchFields;
+ return known;
+}
+
 /** Replaces both secret maps once, exactly when fresh cards are dealt. */
 export function refreshDogChristmasDeal(match,round,draw=randomInt){
  if(!match?.enabled||!Number.isInteger(round)||round<1||round===match.round)return false;
  if(round<match.round)return false;
+ retainDogChristmasFoundFields(match); // rescue old claims before the phase clears them
  const newFields=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[match.levels.tower-1],draw,dogInnScratchFieldCount(match.levels.inn||1));
  Object.assign(match,newFields,{round,claimedFields:[],claimedScratchFields:[],
   roundGiftCollected:0,roundScratchCollected:0});
@@ -162,8 +192,7 @@ export function publicDogChristmasMatch(match){
  // A found field remains marked throughout the entire match, even when
  // the next card deal replaces the hidden field maps. Never expose an
  // undiscovered position. The current claims also cover older saved rooms.
- const foundGiftFields=[...new Set([...(match.foundGiftFields||[]),...(match.claimedFields||[])])];
- const foundScratchFields=[...new Set([...(match.foundScratchFields||[]),...(match.claimedScratchFields||[])])];
+ const {foundGiftFields,foundScratchFields}=collectDogChristmasFoundFields(match);
  const boardFields=DOG_CHRISTMAS_SHOW_BOARD_FIELDS?{
   visibleGiftFields:(match.giftFields||[]).filter(i=>!(match.claimedFields||[]).includes(i)),
   visibleScratchFields:(match.scratchFields||[]).filter(i=>!(match.claimedScratchFields||[]).includes(i))
@@ -190,6 +219,7 @@ export function claimDogChristmasGift(match,before,after,action,seat,draw=random
  const field=landedDogTrackField(before,after,action);
  if(field===null)return 0;
  if(!match.giftFields.includes(field)||match.claimedFields.includes(field))return 0;
+ retainDogChristmasFoundFields(match);
  match.claimedFields.push(field);
  if(!Array.isArray(match.foundGiftFields))match.foundGiftFields=[];
  if(!match.foundGiftFields.includes(field))match.foundGiftFields.push(field);
@@ -211,6 +241,7 @@ export function claimDogChristmasScratch(match,before,after,action,seat,draw=ran
  const field=landedDogTrackField(before,after,action);
  if(field===null||!match.scratchFields?.includes(field)||
   match.claimedScratchFields?.includes(field))return null;
+ retainDogChristmasFoundFields(match);
  const tier=drawDogScratchTier(draw);
  match.claimedScratchFields.push(field);
  if(!Array.isArray(match.foundScratchFields))match.foundScratchFields=[];
