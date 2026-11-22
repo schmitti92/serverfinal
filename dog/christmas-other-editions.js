@@ -74,19 +74,20 @@ function nearTarget(n,target,max){
 }
 function premiumPlan(budget,c,count,draw){
  if(count===0){if(budget)throw Error('SCRATCH_OTHER_EDITION_BUDGET_UNREACHABLE');return []}
- const [a,b,d]=c.coinAmounts,baseline=count*(a+b+d);
+ // New editions reserve exactly TWO real paid money rows per premium card.
+ // Legacy one-character codes represent four rows and remain readable.
  const wanted=Math.round(count*c.goldChancePer1000/1000);
  let selected=null;
  for(const gold of nearTarget(count,wanted,count)){
-  const distribution=solveThree(c.coinAmounts,count,budget-baseline-gold*1000);
+  const distribution=solveThree(c.coinAmounts,2*count,budget-gold*1000);
   if(distribution){selected={gold,distribution};break}
  }
  if(!selected)throw Error('SCRATCH_OTHER_EDITION_BUDGET_UNREACHABLE');
- const fourth=selected.distribution.flatMap((n,i)=>Array(n).fill(String(i)));
+ const money=selected.distribution.flatMap((n,i)=>Array(n).fill(String(i)));
  const goldCount=selected.gold;
  const giftCount=Math.min(goldCount,Math.round(count*c.giftPer1000/1000));
  const indexes=shuffle(Array.from({length:count},(_,i)=>i),draw);
- const cards=fourth.map(v=>v);
+ const cards=Array.from({length:count},(_,i)=>'v6:'+money[2*i]+money[2*i+1]);
  for(let i=0;i<goldCount;i++)cards[indexes[i]]+=i<giftCount?'g':'m';
  return shuffle(cards,draw);
 }
@@ -141,7 +142,11 @@ export function otherTicketAmount(variant,code,c){
   return rows.reduce((sum,row)=>sum+c.coinAmounts[row%3]*(row>=3?2:1),0);
  }
  if(variant==='premium_27'){
+  if(/^v6:[012]{2}(?:[mg])?$/.test(code))
+   return c.coinAmounts[Number(code[3])]+c.coinAmounts[Number(code[4])]+
+    (code.length===6?1000:0);
   if(!/^[012](?:[mg])?$/.test(code))throw Error('SCRATCH_OTHER_EDITION_PLAN_INVALID');
+  // Old, already published edition plans retain their four-row accounting.
   return c.coinAmounts[0]+c.coinAmounts[1]+c.coinAmounts[2]+
    c.coinAmounts[Number(code[0])]+(code.length===2?1000:0);
  }
