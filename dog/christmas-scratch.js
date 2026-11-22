@@ -554,6 +554,15 @@ export function claimDogLevelScratchVouchers(raw,level,{now=Date.now()}={}){
 export function claimDogLevelOneScratchVouchers(raw,options={}){
  return claimDogLevelScratchVouchers(raw,1,options);
 }
+/** Credit DOG's discovered fixed-value gold fields to the existing personal
+ * scratch-coin balance. Only Render may call this after validating the move.
+ */
+export function grantDogScratchGold(raw,amount){
+ if(![1,500,1000,2000].includes(amount))throw Error('DOG_GOLD_INVALID_AMOUNT');
+ const wallet=normalizedScratchWallet(raw);
+ wallet.coins=Math.min(1000000000,wallet.coins+amount);
+ return wallet;
+}
 /** Call only after a server-verified hidden-field hit, within the move's transaction. */
 export function grantDogScratchVoucher(raw,tier){
  if(!Object.hasOwn(DOG_SCRATCH_TIERS,tier))throw Error('SCRATCH_INVALID_TIER');
