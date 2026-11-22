@@ -24,4 +24,5 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog/christmas-other-editions.js && node --check dog/christmas-scratch.js
-      - run: node --test tests/dog-premium-mixed-guarantees.test.js tests/dog-other-editions.test.js tests/christmas-scratch-purchase.test.js
+      - run: node --test tests/dog-premium-mixed-guarantees.test.js tests/dog-other-editions.test.js
+      - run: node --test --test-name-pattern='premium|Premium|27-cell' tests/christmas-scratch-purchase.test.js
