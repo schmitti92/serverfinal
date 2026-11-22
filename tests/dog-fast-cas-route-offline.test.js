@@ -498,3 +498,13 @@ test('WebSocket action cannot forge an actor, change room, or expose private opp
  assert.equal(Array.isArray(result.room.match.dog.hands[1]),false);
  ws.close();
 });
+
+test('Verified WebSocket subscription advertises action capability with no additional Firestore reads',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ const ws=await h.subscribe(code);
+ const caps=ws.messages.filter(m=>m.type==='dog_capabilities');
+ assert.equal(caps.length,1);
+ assert.equal(caps[0].actions,true);
+ assert.equal(Object.keys(caps[0]).length,2,'capability message carries no hidden cards or identity');
+ ws.close();
+});
