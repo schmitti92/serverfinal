@@ -1610,7 +1610,7 @@ function finishEisstock(ch,members){
     const store=db(),uid=req.hubIdentity.uid,now=clock();
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
     const researchRef=store.collection(DOG_RESEARCH_COLLECTION).doc(uid);
-    return dogWriteDiagnostics.transaction(store,'dog-research-upgrade',async tx=>{
+    const upgraded=await dogWriteDiagnostics.transaction(store,'dog-research-upgrade',async tx=>{
       const [statsSnap,researchSnap]=await Promise.all([tx.get(statsRef),tx.get(researchRef)]);
       const xp=statsSnap.exists?statsSnap.data()?.xp:0;
       let next;
@@ -1619,6 +1619,8 @@ function finishEisstock(ch,members){
       tx.set(researchRef,next);
       return {research:dogResearchStatus(next,xp,now)};
     });
+    dogMetaReadCoordinator.invalidate(researchRef.path);
+    return upgraded;
   }));
   app.post('/api/hub/dog/research/claim',authentication,handler(async req=>{
     const type=req.body?.type,tier=req.body?.tier;
@@ -1629,7 +1631,7 @@ function finishEisstock(ch,members){
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
     const walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
     const villageRef=dogVillageFor(store);
-    return dogWriteDiagnostics.transaction(store,'dog-research-claim',async tx=>{
+    const award=await dogWriteDiagnostics.transaction(store,'dog-research-claim',async tx=>{
       const [researchSnap,statsSnap,rewardSnap]=await Promise.all([
         tx.get(researchRef),tx.get(statsRef),
         type==='free_ticket'?tx.get(walletRef):tx.get(villageRef)
@@ -1642,20 +1644,32 @@ function finishEisstock(ch,members){
         type==='free_ticket'?dogResearchTicketMs(rank):7200000);
       if(now<eligibleAt)throw error(409,'RESEARCH_COOLDOWN');
       const next={...research,[key]:now+(type==='free_ticket'?dogResearchTicketMs(rank):7200000),updatedAt:now};
+      let scratchVoucherCount=null,villageLightsTenths=null;
       if(type==='free_ticket'){
         let wallet;
         try{wallet=grantDogScratchVoucher(rewardSnap.exists?rewardSnap.data():null,tier);}
         catch(e){throw error(409,e.message);}
         tx.set(walletRef,wallet);
+        const voucherStatus=dogScratchStatus(wallet);
+        scratchVoucherCount=[...Object.values(voucherStatus.vouchers),...Object.values(voucherStatus.variantVouchers)]
+         .reduce((sum,value)=>sum+value,0);
       }else{
         const earned=rank;
         const village=creditDogVillage(rewardSnap.exists?rewardSnap.data():null,DOG_GLOBAL_VILLAGE_ID,null,earned*10);
         tx.set(villageRef,village);
+        villageLightsTenths=village.lightsTenths;
       }
       tx.set(researchRef,next);
       return {research:dogResearchStatus(next,statsSnap.exists?statsSnap.data()?.xp:0,now),
-        claimed:type,tier:type==='free_ticket'?tier:null,lights:type==='builder'?rank:0};
+        claimed:type,tier:type==='free_ticket'?tier:null,lights:type==='builder'?rank:0,
+        ...(scratchVoucherCount!==null?{scratchVoucherCount}:{}),
+        ...(villageLightsTenths!==null?{villageLightsTenths}:{})};
     });
+    // Invalidate only the affected documents after the committed transaction:
+    // a new menu visit must never reuse pre-claim voucher or village balances.
+    dogMetaReadCoordinator.invalidate(researchRef.path);
+    dogMetaReadCoordinator.invalidate(type==='free_ticket'?walletRef.path:villageRef.path);
+    return award;
   }));
   // Lightweight server-verified DOG cosmetics. The game itself needs only
   // the player's earned unlock IDs and current XP level. Never load the
