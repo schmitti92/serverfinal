@@ -1,0 +1,28 @@
+name: DOG Christmas triple building upgrade prices
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/christmas-building-costs.js'
+      - 'dog/christmas-village.js'
+      - 'tests/dog-christmas-building-costs.test.js'
+      - 'tests/dog-christmas-village.test.js'
+      - '.github/workflows/dog-building-triple-costs.yml'
+  pull_request:
+    paths:
+      - 'dog/christmas-building-costs.js'
+      - 'dog/christmas-village.js'
+      - 'tests/dog-christmas-building-costs.test.js'
+      - 'tests/dog-christmas-village.test.js'
+      - '.github/workflows/dog-building-triple-costs.yml'
+  workflow_dispatch:
+jobs:
+  christmas-building-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/christmas-building-costs.js && node --check dog/christmas-village.js
+      - run: node --test tests/dog-christmas-building-costs.test.js tests/dog-christmas-village.test.js
