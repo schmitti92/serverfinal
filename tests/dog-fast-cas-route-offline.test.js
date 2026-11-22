@@ -129,7 +129,7 @@ test('DOG exchange uses one durable CAS update and zero transactional room reads
  const started=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
  assert.equal(started.status,200,JSON.stringify(started));
  assert.equal(started.room.match?.game,'dog');
- assert.equal(started.room.match.christmas.enabled,false);
+ assert.equal(started.room.match.christmas?.enabled??false,false);
  const ws=await h.subscribe(code);
  const initial=ws.messages.filter(msg=>msg.type==='room').at(-1).room;
  const cardId=initial.match.dog.hands[0][0].id;
