@@ -190,3 +190,18 @@ test('DOG avatar-only updates do not flush unrelated Firestore level/XP/read-onl
  // invalidation of unrelated per-account XP and wallet read snapshots.
  assert.equal(h.stats.sets,2);
 });
+
+test('Live DOG Firebase budget health reports SDK counts without a new database GET',async()=>{
+ const h=harness(),code=await h.created();
+ const before={...h.stats};
+ const health=await h.health();
+ assert.equal(health.dogFirebaseDiagnostics10m.billingVerified,false);
+ assert.equal(health.dogFirebaseDiagnostics10m.windowMinutes,10);
+ assert.equal(health.dogFirebaseDiagnostics10m.status,'no-observed-dog-traffic');
+ assert.equal(health.dogFirebaseDiagnostics10m.writeCalls,0);
+ assert.equal(health.dogFirebaseDiagnostics10m.transactionGetAttempts,0);
+ assert.equal(h.stats.gets,before.gets,'health must never query Firestore to compute its counters');
+ assert.equal(h.stats.sets,before.sets);
+ assert.ok(!JSON.stringify(health.dogFirebaseDiagnostics10m).includes(code),
+  'private room codes are not exported by diagnostics');
+});
