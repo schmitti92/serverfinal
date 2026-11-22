@@ -363,3 +363,43 @@ dem Test verworfen und ersetzt keine produktive, dauerhafte
 Postgres-Instanz. Die PostgreSQL-JavaScript-Bibliothek wird nur
 innerhalb des CI-Jobs installiert; die Render-Anwendung benötigt
 sie noch nicht, solange keine produktive PG-Integration existiert.
+
+## P5 – Echte Weihnachts-DOG-Regeln ohne Firebase pro Standardzug (vorbereitet)
+
+`dog-postgres-seasonal-adapter.js` enthält die erste serverseitige
+**rein lokale Berechnung der Weihnachts-DOG-Züge für einen späteren
+persistenten PostgreSQL-Spielstand**. Es ist **nicht** aus der
+produktiven `shared-lobby.js` oder `server.js` importiert.
+
+- Verwendet die echte DOG-Engine für Kartenwechsel, Forschungs-Kartentausch,
+  Bewegungen, 7-Teilzüge und automatische Bots.
+- Übernimmt die bisherigen Serverregeln für aufgedeckte Geschenk- und
+  Losfelder, zusätzliche Lichter über Forschung, Workshop-/Bäckerei-Boni,
+  neue verdeckte Felder pro Kartenrunde, Aufteilung von Lichtern und
+  den Inn-Bonus beim letzten Zug.
+- Spielt die 3-Personen-Partie ohne einen vierten Bot und vergibt persönliche
+  Lose ausschließlich an tatsächliche menschliche Mitglieder.
+- Schreibt **während der Berechnung weder Firebase noch Postgres**.
+  Jeder Deck-/Geschenk-Zufall wird erst mit einem tatsächlichen SQL-Commit
+  dauerhaft relevant und niemals an den Browser als Rohzustand gesendet.
+- **Standardmäßig werden alle Aktionen abgewiesen, die auch nur einen
+  Weihnachtsgewinn oder ein Spielende auslösen würden**. Mit einer
+  ausschließlich serverseitig gesetzten Option kann der zukünftige
+  SQL-Pending-Producer die Aktion berechnen und eine private Vorlage für
+  die bestehenden *exactly-once*-Firestore-Payout-Brücken erhalten.
+  Ohne dauerhafte SQL-Pending-Zeile und bestätigten Reward-Receipt darf
+  diese Änderung NICHT in der WebSocket-Outbox sichtbar werden.
+
+Offline-Regressionen decken 3 echte Spieler, normale Zug-/Tauschphase
+ohne Auszahlungsbedarf, Licht-/Geschenk-/Rubbellose, Forschungs-Carries,
+7 in 3+4, finale Friedensherberge-Lichter, Betrugsabwehr und den
+gesperrten Direkt-Commit vor Payout ab.
+
+**Es fehlt weiterhin für einen Live-Umbau:** Ein SQL-Zugjournal, das
+verdiente Weihnachtsbeträge oder finale XP/Los-Abschlüsse in einer
+*pending*-Transaktion unveränderlich einfriert, der wiederaufnehmbare
+Firestore-Abrechnungsworker sowie ein wirklich dauerhafter PG-Service.
+Das Event darf keinesfalls mit einem nicht quittierten Gewinnzug
+weiterspielen. Erst danach kann der normale Firestore-Watch/Write-Pfad
+für **neue DOG-Räume** abgeschaltet werden; laufende Match-IDs bleiben
+unangetastet.
