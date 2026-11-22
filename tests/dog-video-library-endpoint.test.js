@@ -40,7 +40,7 @@ function harness(options={}){
   };
   return call(0);
  };
- const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')?
+ const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')||path.startsWith('/api/hub/dog/video-library')?
   chain(handlers):handlers[0];
  const app={
   get(path,...handlers){routes.push({method:'GET',path,fn:routeFn(path,handlers)});},
