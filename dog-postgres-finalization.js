@@ -16,6 +16,7 @@ import {dogPostgresActionHash} from './dog-postgres-room-store.js';
 
 const CODE=/^(?:[0-9]{3}|[A-HJ-NP-Z2-9]{6})$/;
 const ACTION_ID=/^[-a-zA-Z0-9_:]{8,90}$/;
+const MATCH_UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WINDOW_MS=24*60*60*1000;
 const fail=code=>{const e=new Error(code);e.code=code;throw e};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -30,7 +31,7 @@ export function createDogPostgresFinalization({
  async function stageFinalMove({
   code,matchId,uid,actionId,expectedDogRevision,action,authorize
  }={}){
-  if(!CODE.test(String(code||''))||typeof matchId!=='string'||matchId.length<8||
+  if(!CODE.test(String(code||''))||!MATCH_UUID.test(String(matchId||''))||
      typeof uid!=='string'||!uid||!ACTION_ID.test(String(actionId||''))||
      !Number.isSafeInteger(expectedDogRevision)||expectedDogRevision<0||
      !action||typeof action!=='object'||Array.isArray(action)||
@@ -111,7 +112,7 @@ export function createDogPostgresFinalization({
  }
 
  async function loadPendingMatch({roomCode,matchId}={}){
-  if(!CODE.test(String(roomCode||''))||typeof matchId!=='string')
+  if(!CODE.test(String(roomCode||''))||!MATCH_UUID.test(String(matchId||'')))
    fail('DOG_PG_FINAL_INVALID_ID');
   const q=await pool.query(
    'SELECT finished_snapshot,finished_at_ms FROM dog_room_pending_finishes WHERE room_code=$1 AND match_id=$2',
@@ -122,8 +123,8 @@ export function createDogPostgresFinalization({
  }
 
  async function markComplete({roomCode,matchId,fingerprint}={}){
-  if(!CODE.test(String(roomCode||''))||
-     typeof matchId!=='string'||!/^[a-f0-9]{64}$/.test(String(fingerprint||'')))
+  if(!CODE.test(String(roomCode||''))||!MATCH_UUID.test(String(matchId||''))||
+     !/^[a-f0-9]{64}$/.test(String(fingerprint||'')))
    fail('DOG_PG_FINAL_INVALID_CONFIRMATION');
   const client=await pool.connect();
   let open=false;
