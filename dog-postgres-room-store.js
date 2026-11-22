@@ -36,7 +36,7 @@ function canonical(value){
   fail('DOG_STORAGE_BAD_ACTION');
  return value;
 }
-function requestHash(actorUid,expectedDogRevision,action){
+export function dogPostgresActionHash(actorUid,expectedDogRevision,action){
  return createHash('sha256')
   .update(JSON.stringify(canonical({actorUid,expectedDogRevision,action})))
   .digest('hex');
@@ -113,7 +113,7 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
      !action||typeof action!=='object'||Array.isArray(action)||
      typeof authorize!=='function'||typeof reduce!=='function')
     fail('DOG_STORAGE_BAD_ACTION');
-  const hash=requestHash(uid,expectedDogRevision,action);
+  const hash=dogPostgresActionHash(uid,expectedDogRevision,action);
   const client=await pool.connect();
   let open=false;
   try{
@@ -123,6 +123,13 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
     [code]);
    const row=lock.rows?.[0];
    if(!row||Number(row.expires_at_ms)<=clock())fail('DOG_STORAGE_ROOM_MISSING');
+   // A previously committed terminal move freezes this room until the
+   // Firestore XP receipt is committed and the PG finish is confirmed.
+   // Even a stale reconnect must not execute a second DOG move.
+   const finalPending=await client.query(
+    'SELECT action_id FROM dog_room_pending_finishes WHERE room_code=$1',
+    [code]);
+   if(finalPending.rows?.length)fail('DOG_STORAGE_SETTLEMENT_PENDING');
    const before=structuredClone(row.snapshot);
    // Authenticate and authorize with the CURRENT durable roster, not a
    // stale WebSocket projection. The application supplies its verifier.
