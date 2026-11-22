@@ -24,6 +24,9 @@ export const DOG_GIFT_FIELD_ORDER=Object.freeze([3,9,15,21,27,33,39,45,51,57,6,1
 export const DOG_TOWER_FIELDS=Object.freeze([10,12,15,18,20]);
 export const DOG_SCRATCH_FIELDS_PER_DEAL=8;
 export const DOG_SCRATCH_FIELDS_PER_INN_LEVEL=2;
+// Exactly four unique personal coin prizes per classic Christmas DOG match.
+// Hidden locations are selected by the server and never re-rolled on a deal.
+export const DOG_HIDDEN_GOLD_AMOUNTS=Object.freeze([1,500,1000,2000]);
 /** The inn grants two more hidden scratch spaces for each completed upgrade. */
 export function dogInnScratchFieldCount(level=1){
  if(!Number.isInteger(level)||level<1||level>CHRISTMAS_BUILDING_MAX_LEVEL)throw Error('INVALID_INN_LEVEL');
@@ -32,10 +35,11 @@ export function dogInnScratchFieldCount(level=1){
 export const DOG_FIELD_SCRATCH_TIER_ODDS=Object.freeze({simple:88,medium:10,premium:2});
 const eligibleDogTrackFields=Object.freeze(Array.from({length:64},(_,i)=>i).filter(i=>i%16!==0));
 /** Random, disjoint, unmarked spaces. The server never publishes the placement. */
-export function drawHiddenDogChristmasFields(giftCount,draw=randomInt,scratchCount=DOG_SCRATCH_FIELDS_PER_DEAL){
+export function drawHiddenDogChristmasFields(giftCount,draw=randomInt,scratchCount=DOG_SCRATCH_FIELDS_PER_DEAL,exclude=[]){
  if(!Number.isInteger(giftCount)||giftCount<0||giftCount>20)throw Error('INVALID_GIFT_FIELD_COUNT');
- if(!Number.isInteger(scratchCount)||scratchCount<0||scratchCount>eligibleDogTrackFields.length-giftCount)throw Error('INVALID_SCRATCH_FIELD_COUNT');
- const fields=[...eligibleDogTrackFields];
+ const reserved=new Set(Array.isArray(exclude)?exclude.filter(field=>eligibleDogTrackFields.includes(field)):[]);
+ const fields=eligibleDogTrackFields.filter(field=>!reserved.has(field));
+ if(!Number.isInteger(scratchCount)||scratchCount<0||scratchCount>fields.length-giftCount)throw Error('INVALID_SCRATCH_FIELD_COUNT');
  for(let i=fields.length-1;i>0;i--){const j=draw(i+1);[fields[i],fields[j]]=[fields[j],fields[i]];}
  return {giftFields:fields.slice(0,giftCount),
   scratchFields:fields.slice(giftCount,giftCount+scratchCount)};
@@ -109,11 +113,34 @@ export function createDogChristmasMatch(village,enabled,draw=randomInt,round=1){
  if(!enabled)return null;
  const levels={...normalizedDogVillage(village,village?.hostUid||'').levels};
  const positions=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[levels.tower-1],draw,dogInnScratchFieldCount(levels.inn));
- return {enabled:true,levels,round,...positions,
+ const match={enabled:true,levels,round,...positions,
   claimedFields:[],claimedScratchFields:[],foundGiftFields:[],foundScratchFields:[],eventSerial:0,
   roundGiftCollected:0,roundScratchCollected:0,
   giftCount:0,scratchCount:0,bonusGiftCount:0,earnedTenths:0,innCredited:false,activity:[]};
+ ensureDogChristmasGoldFields(match,draw);
+ return match;
 }
+/** One-time randomized assignment, including safe migration of active pre-feature rooms.
+ * Avoid all light/scratch locations and START cells. Reuses the same four
+ * immutable positions for the whole match, including every card deal.
+ */
+export function ensureDogChristmasGoldFields(match,draw=randomInt){
+ if(!match?.enabled)return false;
+ if(Array.isArray(match.goldFields)&&match.goldFields.length===DOG_HIDDEN_GOLD_AMOUNTS.length)return false;
+ const occupied=new Set([...(match.giftFields||[]),...(match.scratchFields||[])]);
+ const available=eligibleDogTrackFields.filter(field=>!occupied.has(field));
+ if(available.length<DOG_HIDDEN_GOLD_AMOUNTS.length)throw Error('NOT_ENOUGH_HIDDEN_GOLD_FIELDS');
+ for(let i=available.length-1;i>0;i--){
+  const j=draw(i+1);[available[i],available[j]]=[available[j],available[i]];
+ }
+ // The four values have exactly the same chance of appearing on any eligible
+ // field. Neither value nor position is sent to the clients before claim.
+ match.goldFields=DOG_HIDDEN_GOLD_AMOUNTS.map((amount,i)=>({field:available[i],amount}));
+ match.claimedGoldFields=Array.isArray(match.claimedGoldFields)?match.claimedGoldFields:[];
+ match.foundGoldFields=Array.isArray(match.foundGoldFields)?match.foundGoldFields:[];
+ return true;
+}
+
 /** Add an inn upgrade to an active match without reshuffling existing
  * hidden fields or allowing players to collect any space twice.
  * Called only after an authoritative village purchase, not by clients.
@@ -124,7 +151,7 @@ export function applyDogInnUpgradeToMatch(match,newInnLevel,draw=randomInt){
  const target=dogInnScratchFieldCount(newInnLevel);
  if(target<=dogInnScratchFieldCount(current))return 0;
  if(!Array.isArray(match.giftFields)||!Array.isArray(match.scratchFields))throw Error('INVALID_CHRISTMAS_MATCH');
- const occupied=new Set([...match.giftFields,...match.scratchFields]);
+ const occupied=new Set([...match.giftFields,...match.scratchFields,...(match.goldFields||[]).map(x=>x.field)]);
  const available=eligibleDogTrackFields.filter(field=>!occupied.has(field));
  for(let i=available.length-1;i>0;i--){
   const j=draw(i+1);[available[i],available[j]]=[available[j],available[i]];
@@ -169,7 +196,8 @@ export function refreshDogChristmasDeal(match,round,draw=randomInt){
  if(!match?.enabled||!Number.isInteger(round)||round<1||round===match.round)return false;
  if(round<match.round)return false;
  retainDogChristmasFoundFields(match); // rescue old claims before the phase clears them
- const newFields=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[match.levels.tower-1],draw,dogInnScratchFieldCount(match.levels.inn||1));
+ ensureDogChristmasGoldFields(match,draw);
+ const newFields=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[match.levels.tower-1],draw,dogInnScratchFieldCount(match.levels.inn||1),(match.goldFields||[]).map(x=>x.field));
  Object.assign(match,newFields,{round,claimedFields:[],claimedScratchFields:[],
   roundGiftCollected:0,roundScratchCollected:0});
  return true;
@@ -193,6 +221,10 @@ export function publicDogChristmasMatch(match){
  // the next card deal replaces the hidden field maps. Never expose an
  // undiscovered position. The current claims also cover older saved rooms.
  const {foundGiftFields,foundScratchFields}=collectDogChristmasFoundFields(match);
+ const goldClaims=new Set(Array.isArray(match.claimedGoldFields)?match.claimedGoldFields:[]);
+ const foundGoldFields=(Array.isArray(match.goldFields)?match.goldFields:[])
+  .filter(entry=>goldClaims.has(entry.field)&&DOG_HIDDEN_GOLD_AMOUNTS.includes(entry.amount))
+  .map(({field,amount})=>({field,amount}));
  const boardFields=DOG_CHRISTMAS_SHOW_BOARD_FIELDS?{
   visibleGiftFields:(match.giftFields||[]).filter(i=>!(match.claimedFields||[]).includes(i)),
   visibleScratchFields:(match.scratchFields||[]).filter(i=>!(match.claimedScratchFields||[]).includes(i))
@@ -200,7 +232,8 @@ export function publicDogChristmasMatch(match){
  return {enabled,levels,round,giftFieldCount:DOG_TOWER_FIELDS[levels.tower-1],
   scratchFieldCount:Array.isArray(match.scratchFields)?match.scratchFields.length:DOG_SCRATCH_FIELDS_PER_DEAL,giftCount,scratchCount,
   roundGiftCollected,roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,
-  foundGiftFields,foundScratchFields,eventSerial:match.eventSerial||0,
+  foundGiftFields,foundScratchFields,foundGoldFields,goldFieldCount:DOG_HIDDEN_GOLD_AMOUNTS.length,
+  eventSerial:match.eventSerial||0,
   ...boardFields,activity:(activity||[]).slice(-12)};
 }
 function landedDogTrackField(before,after,action){
@@ -234,6 +267,26 @@ export function claimDogChristmasGift(match,before,after,action,seat,draw=random
  match.earnedTenths+=tenths;
  match.activity=[...match.activity.slice(-11),{id:match.eventSerial,type:'gift',field,seat,gifts,bonus,earnedTenths:tenths}];
  return tenths;
+}
+/** Four fixed-value hidden coins: grant only once per authoritative landing.
+ * This is a pure match mutation. The server writes the personal coin balance
+ * inside the SAME action transaction; the client can never choose an amount.
+ */
+export function claimDogChristmasGold(match,before,after,action,seat){
+ if(!match?.enabled)return 0;
+ const field=landedDogTrackField(before,after,action);
+ if(field===null||!Number.isInteger(seat))return 0;
+ const found=match.goldFields?.find(entry=>entry.field===field);
+ if(!found||!DOG_HIDDEN_GOLD_AMOUNTS.includes(found.amount)||
+   match.claimedGoldFields?.includes(field))return 0;
+ match.claimedGoldFields=Array.isArray(match.claimedGoldFields)?match.claimedGoldFields:[];
+ match.claimedGoldFields.push(field);
+ match.foundGoldFields=Array.isArray(match.foundGoldFields)?match.foundGoldFields:[];
+ match.foundGoldFields.push({field,amount:found.amount});
+ match.eventSerial=(Number.isSafeInteger(match.eventSerial)?match.eventSerial:0)+1;
+ match.activity=[...(match.activity||[]).slice(-11),
+  {id:match.eventSerial,type:'gold',field,seat,amount:found.amount}];
+ return found.amount;
 }
 /** Server-verified, one-use landing on a hidden scratch field. */
 export function claimDogChristmasScratch(match,before,after,action,seat,draw=randomInt){
