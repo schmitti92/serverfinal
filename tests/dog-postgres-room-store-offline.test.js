@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createDogPostgresRoomStore} from '../dog-postgres-room-store.js';
+import {createGame,legalActions} from '../dog/engine.js';
+import {newDogMatchCounters} from '../dog/player-stats.js';
+import {reduceDogClassicInPostgresRoom,projectPostgresDogState} from '../dog-postgres-classic-adapter.js';
 
 const clone=value=>structuredClone(value);
 function fakePool(){
@@ -278,3 +281,158 @@ test('Oversized DOG document rejects before SQL UPDATE, with no fake or partial 
  assert.equal((await store.getRoom('123')).room.match.dog.revision,7);
  assert.equal(f.metrics.rollbacks,1);
 });
+
+function realClassicRoom({three=true,bots=false}={}){
+ const r=room(),ids=['alice','bob','cara','dana'];
+ const roster=Array.from({length:4},(_,seat)=>({
+  seat,uid:three&&seat===3?null:bots&&seat>0?'dog-bot:'+seat:ids[seat],
+  name:['Alice','Bob','Cara','Dana'][seat],
+  bot:bots&&seat>0,inactive:three&&seat===3
+ }));
+ r.players=roster.filter(p=>!p.bot&&!p.inactive).map(p=>({uid:p.uid,name:p.name,participating:true}));
+ r.match.dogRoster=roster;
+ r.match.members=r.players.map(p=>({uid:p.uid,name:p.name}));
+ r.match.dog=createGame({
+  names:roster.map(p=>p.name),bots:roster.map(p=>p.bot),
+  inactiveSeats:roster.filter(p=>p.inactive).map(p=>p.seat),
+  rng:()=>0.37
+ });
+ r.match.dogCommands=[];
+ r.match.dogCounters=newDogMatchCounters();
+ return r;
+}
+const actualCommit=(store,r,uid,action,id)=>store.commitMove({
+ code:r.code,matchId:r.match.id,uid,action,actionId:id,
+ expectedDogRevision:r.match.dog.revision,
+ authorize,reduce:reduceDogClassicInPostgresRoom
+});
+
+test('Real DOG engine: 3 humans complete exchange via durable PG, no bots or fourth cards',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ const first=realClassicRoom({three:true});
+ assert.equal(first.match.dog.players.filter(p=>p.bot).length,0);
+ assert.equal(first.match.dog.players.filter(p=>p.inactive).length,1);
+ await store.seedRoom(first);
+ let current=(await store.getRoom('123')).room;
+ for(const [i,uid]of ['alice','bob','cara'].entries()){
+  const seat=current.match.dogRoster.find(p=>p.uid===uid).seat;
+  const cardId=current.match.dog.hands[seat][0].id;
+  const result=await actualCommit(store,current,uid,{type:'exchange',cardId},
+   'pg-real-exchange-'+i);
+  assert.equal(result.replayed,false);
+  current=result.room;
+  assert.equal(current.match.dog.revision,first.match.dog.revision+i+1);
+  const view=projectPostgresDogState(current,uid);
+  assert.equal(view.dog.deck,undefined);
+  assert.equal(view.dog.discard,undefined);
+  assert.equal(view.dogSeat,seat);
+  for(let opponent=0;opponent<4;opponent++){
+   if(opponent!==seat)assert.equal(Array.isArray(view.dog.hands[opponent]),false);
+  }
+ }
+ assert.equal(current.match.dog.phase,'play');
+ assert.equal(current.match.dog.players[3].inactive,true);
+ assert.equal(current.match.dog.hands[3].length,0);
+ assert.equal(f.state.actions.size,3);
+ assert.equal(f.state.outbox.length,3);
+ const restored=(await createDogPostgresRoomStore({pool:f.pool,clock:()=>2100}).getRoom('123')).room;
+ assert.deepEqual(restored.match.dog,current.match.dog,'full private deck survives restart');
+ assert.equal(projectPostgresDogState(restored,'cara').dog.hands[0].count,
+  current.match.dog.hands[0].length);
+ const seat=restored.match.dog.current;
+ const uid=restored.match.dogRoster[seat].uid;
+ const action=legalActions(restored.match.dog,seat)[0];
+ assert.ok(action,'human player must have at least one legal action');
+ const played=await actualCommit(store,restored,uid,action,'pg-real-first-play-1');
+ assert.equal(played.room.match.dog.revision,restored.match.dog.revision+1);
+ assert.equal(f.state.actions.size,4);
+});
+
+test('Real DOG engine: captures persist correct attacker and victim counters',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ const r=realClassicRoom({three:true});
+ const s=r.match.dog;
+ s.phase='play';s.current=0;s.starter=0;s.revision=44;
+ s.hands=[[{id:9999,type:'4'}],[],[],[]];
+ s.exchanges=[null,null,null,true];s.seven=null;
+ s.pieces.find(p=>p.id===0).place='track';
+ s.pieces.find(p=>p.id===0).pos=0;
+ s.pieces.find(p=>p.id===4).place='track';
+ s.pieces.find(p=>p.id===4).pos=4;
+ await store.seedRoom(r);
+ const action=legalActions(s,0).find(m=>m.type==='move'&&m.pieceId===0&&m.steps===4&&m.viaGoal===false);
+ assert.ok(action,'genuine DOG rules should allow capture with a four');
+ const out=await actualCommit(store,r,'alice',action,'pg-real-capture-1');
+ const counters=out.room.match.dogCounters.seats;
+ assert.equal(counters[0].knockedOut,1);
+ assert.equal(counters[1].wasKnockedOut,1);
+ assert.equal(out.room.match.dog.pieces.find(p=>p.id===4).place,'home');
+ const recovered=(await store.getRoom('123')).room;
+ assert.deepEqual(recovered.match.dogCounters,out.room.match.dogCounters);
+ assert.equal(f.state.actions.size,1);
+});
+
+test('Real DOG engine: split seven (3+4) is durable across a simulated restart',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ const r=realClassicRoom({three:true}),s=r.match.dog;
+ s.phase='play';s.current=0;s.starter=0;s.revision=44;
+ s.hands=[[{id:9999,type:'7'}],[],[],[]];
+ s.exchanges=[null,null,null,true];s.seven=null;
+ const pawn=s.pieces.find(p=>p.id===0);pawn.place='track';pawn.pos=3;
+ await store.seedRoom(r);
+ const begin=await actualCommit(store,r,'alice',
+  {type:'seven',cardId:9999,as:'7'},'pg-real-seven-start');
+ assert.equal(begin.room.match.dog.phase,'seven');
+ const first=await actualCommit(store,begin.room,'alice',
+  {type:'seven-step',pieceId:0,steps:3,viaGoal:false,to:'track:6'},
+  'pg-real-seven-step-3');
+ assert.equal(first.room.match.dog.seven.spent,3);
+ assert.equal(first.room.match.dog.pieces[0].pos,6);
+ const restart=createDogPostgresRoomStore({pool:f.pool,clock:()=>3000});
+ const restored=(await restart.getRoom('123')).room;
+ assert.equal(restored.match.dog.seven.spent,3);
+ assert.equal(projectPostgresDogState(restored,'bob').dog.seven.snapshot,undefined,
+  'private rollback snapshot must not reach opponents');
+ const last=await actualCommit(restart,restored,'alice',
+  {type:'seven-step',pieceId:0,steps:4,viaGoal:false,to:'track:10'},
+  'pg-real-seven-step-4');
+ assert.equal(last.room.match.dog.seven,null);
+ assert.equal(last.room.match.dog.pieces[0].pos,10);
+ assert.equal(f.state.actions.size,3);
+ assert.equal(f.state.outbox.length,3);
+});
+
+test('Real DOG bot exchange completes automatically in the same durable transaction',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ const r=realClassicRoom({three:false,bots:true});
+ assert.equal(r.players.length,1);
+ assert.equal(r.match.dog.phase,'exchange');
+ await store.seedRoom(r);
+ const out=await actualCommit(store,r,'alice',
+  {type:'exchange',cardId:r.match.dog.hands[0][0].id},'pg-real-bot-exchange');
+ assert.equal(out.room.match.dog.phase,'play');
+ assert.equal(out.room.match.dog.exchanges.every(x=>x===null),true);
+ assert.ok(out.room.match.dog.revision>=r.match.dog.revision+4);
+ assert.equal(f.state.actions.size,1,'automated bots do not cause separate DB writes');
+ assert.equal(f.state.outbox.length,1);
+});
+
+test('A PG reducer cannot reduce verified knockouts or add a fake reward',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ const r=realClassicRoom({three:true});
+ r.match.dogCounters.seats[0].knockedOut=5;
+ await store.seedRoom(r);
+ for(const reducer of [
+  candidate=>{candidate.match.dog.revision++;candidate.match.dogCounters.seats[0].knockedOut=4;return candidate;},
+  candidate=>{candidate.match.dog.revision++;candidate.match.dogCounters.recorded=true;return candidate;}
+ ]){
+  await assert.rejects(()=>store.commitMove({
+   ...actualCommitInput(r),reduce:reducer
+  }),/DOG_STORAGE_TRANSACTION_REQUIRED/);
+ }
+ assert.equal(f.state.outbox.length,0);
+ assert.equal((await store.getRoom('123')).room.match.dogCounters.seats[0].knockedOut,5);
+});
+function actualCommitInput(r){return {code:r.code,matchId:r.match.id,
+ actionId:'pg-real-invalid-counter-1',uid:'alice',expectedDogRevision:r.match.dog.revision,
+ action:{type:'exchange',cardId:1},authorize};}
