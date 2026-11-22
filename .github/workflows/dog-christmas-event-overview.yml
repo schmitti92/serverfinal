@@ -1,0 +1,26 @@
+name: DOG live Christmas event overview
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/christmas-village.js'
+      - 'tests/dog-christmas-event-overview.test.js'
+      - 'tests/dog-christmas-bot-fields.test.js'
+      - '.github/workflows/dog-christmas-event-overview.yml'
+  pull_request:
+    paths:
+      - 'dog/christmas-village.js'
+      - 'tests/dog-christmas-event-overview.test.js'
+      - 'tests/dog-christmas-bot-fields.test.js'
+      - '.github/workflows/dog-christmas-event-overview.yml'
+  workflow_dispatch:
+jobs:
+  event-overview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/christmas-village.js
+      - run: node --test tests/dog-christmas-event-overview.test.js tests/dog-christmas-bot-fields.test.js
