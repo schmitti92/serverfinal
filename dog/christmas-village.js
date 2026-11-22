@@ -305,6 +305,26 @@ export function claimDogChristmasScratch(match,before,after,action,seat,draw=ran
  match.activity=[...match.activity.slice(-11),{id:match.eventSerial,type:'scratch',field,seat,tier}];
  return tier;
 }
+/** Hidden Christmas fields belong exclusively to verified HUMAN seats.
+ * Bot visits are intentionally invisible and do not consume a field, so a
+ * later real player can still uncover it. This is server-side only.
+ */
+export function claimDogChristmasHumanFields(match,before,after,action,roster,seat,draw=randomInt){
+ const empty={recipient:null,baseLights:0,tier:null,gold:0};
+ const recipient=Array.isArray(roster)?roster.find(p=>
+  p?.seat===seat&&p.bot===false&&p.inactive!==true&&
+  typeof p.uid==='string'&&p.uid.length>0&&!p.uid.startsWith('dog-bot:')):null;
+ // Cross-check against the authoritative game state, never player labels or
+ // client-provided claims. A disconnected/legacy bot is still a bot.
+ if(!recipient||before?.players?.[seat]?.bot===true||after?.players?.[seat]?.bot===true)
+  return empty;
+ return {
+  recipient,
+  baseLights:claimDogChristmasGift(match,before,after,action,seat,draw),
+  tier:claimDogChristmasScratch(match,before,after,action,seat,draw),
+  gold:claimDogChristmasGold(match,before,after,action,seat)
+ };
+}
 export function finishDogChristmasMatch(match,after){
  if(!match?.enabled||after?.phase!=='finished'||match.innCredited)return 0;
  match.innCredited=true;
