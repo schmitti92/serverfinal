@@ -16,6 +16,8 @@ on:
       - 'tests/dog-postgres-settlement-recovery-offline.test.js'
       - 'dog-postgres-seasonal-final-settlement.js'
       - 'tests/dog-postgres-seasonal-final-settlement-offline.test.js'
+      - 'dog-postgres-seasonal-adapter.js'
+      - 'tests/dog-postgres-seasonal-adapter-offline.test.js'
       - 'migrations/20261122_dog_durable_rooms.sql'
       - 'tests/dog-postgres-room-store-offline.test.js'
       - '.github/workflows/dog-postgres-room-store-offline.yml'
@@ -36,6 +38,8 @@ on:
       - 'tests/dog-postgres-settlement-recovery-offline.test.js'
       - 'dog-postgres-seasonal-final-settlement.js'
       - 'tests/dog-postgres-seasonal-final-settlement-offline.test.js'
+      - 'dog-postgres-seasonal-adapter.js'
+      - 'tests/dog-postgres-seasonal-adapter-offline.test.js'
       - 'migrations/20261122_dog_durable_rooms.sql'
       - 'tests/dog-postgres-room-store-offline.test.js'
       - '.github/workflows/dog-postgres-room-store-offline.yml'
@@ -50,5 +54,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --check dog-postgres-room-store.js && node --check dog-postgres-classic-adapter.js && node --check dog-postgres-private-fanout.js && node --check tests/dog-postgres-room-store-offline.test.js && node --check tests/dog-postgres-private-fanout-offline.test.js && node --check dog-postgres-xp-settlement.js && node --check tests/dog-postgres-xp-settlement-offline.test.js && node --check dog-postgres-finalization.js && node --check tests/dog-postgres-finalization-offline.test.js && node --check dog-postgres-christmas-settlement.js && node --check tests/dog-postgres-christmas-settlement-offline.test.js && node --check dog-postgres-settlement-recovery.js && node --check tests/dog-postgres-settlement-recovery-offline.test.js && node --check dog-postgres-seasonal-final-settlement.js && node --check tests/dog-postgres-seasonal-final-settlement-offline.test.js
-      - run: node --test tests/dog-postgres-room-store-offline.test.js tests/dog-postgres-private-fanout-offline.test.js tests/dog-postgres-xp-settlement-offline.test.js tests/dog-postgres-finalization-offline.test.js tests/dog-postgres-christmas-settlement-offline.test.js tests/dog-postgres-settlement-recovery-offline.test.js tests/dog-postgres-seasonal-final-settlement-offline.test.js
+      - run: node --check dog-postgres-room-store.js && node --check dog-postgres-classic-adapter.js && node --check dog-postgres-private-fanout.js && node --check tests/dog-postgres-room-store-offline.test.js && node --check tests/dog-postgres-private-fanout-offline.test.js && node --check dog-postgres-xp-settlement.js && node --check tests/dog-postgres-xp-settlement-offline.test.js && node --check dog-postgres-finalization.js && node --check tests/dog-postgres-finalization-offline.test.js && node --check dog-postgres-christmas-settlement.js && node --check tests/dog-postgres-christmas-settlement-offline.test.js && node --check dog-postgres-settlement-recovery.js && node --check tests/dog-postgres-settlement-recovery-offline.test.js && node --check dog-postgres-seasonal-final-settlement.js && node --check tests/dog-postgres-seasonal-final-settlement-offline.test.js && node --check dog-postgres-seasonal-adapter.js && node --check tests/dog-postgres-seasonal-adapter-offline.test.js
+      - run: node --test tests/dog-postgres-room-store-offline.test.js tests/dog-postgres-private-fanout-offline.test.js tests/dog-postgres-xp-settlement-offline.test.js tests/dog-postgres-finalization-offline.test.js tests/dog-postgres-christmas-settlement-offline.test.js tests/dog-postgres-settlement-recovery-offline.test.js tests/dog-postgres-seasonal-final-settlement-offline.test.js tests/dog-postgres-seasonal-adapter-offline.test.js
