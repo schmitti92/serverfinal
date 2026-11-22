@@ -395,3 +395,106 @@ test('Seasonal DOG gift remains an atomic Firestore village update, not a fast r
  assert.equal(h.docs.get(DOG_VILLAGE_COLLECTION+'/'+DOG_GLOBAL_VILLAGE_ID).lightsTenths,village.lightsTenths);
  ws.close();
 });
+
+test('Render WebSocket DOG exchange shares HTTP rules but avoids another HTTP identity handshake and Firestore room GET',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const ws=await h.subscribe(code,'alice');
+ const initial=ws.messages.filter(m=>m.type==='room').at(-1).room;
+ const payload={type:'dog_action',matchId:initial.match.id,
+  expectedRevision:initial.match.dog.revision,
+  actionId:'dog-ws-cas-verified-0001',
+  action:{type:'exchange',cardId:initial.match.dog.hands[0][0].id}
+ };
+ const reads=h.counted.gets,updates=h.counted.casUpdates;
+ ws.emit('message',Buffer.from(JSON.stringify(payload)));
+ for(let i=0;i<12&&!ws.messages.some(m=>m.type==='dog_action_result');i++)
+  await new Promise(resolve=>setImmediate(resolve));
+ const result=ws.messages.find(m=>m.type==='dog_action_result');
+ assert.ok(result,JSON.stringify(ws.messages.slice(-3)));
+ assert.equal(result.actionId,payload.actionId);
+ assert.equal(result.room.match.dog.revision,initial.match.dog.revision+1);
+ assert.equal(result.room.match.dog.deck,undefined,'private deck never sent to browser');
+ assert.equal(result.room.match.dog.hands[1].count>=0,true,'other hands remain hidden');
+ assert.equal(h.counted.gets,reads,'standard WS DOG CAS needs 0 additional Firestore GET');
+ assert.equal(h.counted.casUpdates,updates+1,'one durable Firestore room save');
+ ws.emit('message',Buffer.from(JSON.stringify(payload)));
+ for(let i=0;i<12&&ws.messages.filter(m=>m.type==='dog_action_result').length<2;i++)
+  await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(ws.messages.filter(m=>m.type==='dog_action_result').length,2);
+ assert.equal(h.counted.casUpdates,updates+1,'repeated actionId never credits twice');
+ ws.close();
+});
+
+test('WS move and HTTP retry share one action receipt even if the socket acknowledgement is lost',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const ws=await h.subscribe(code);
+ const initial=ws.messages.filter(m=>m.type==='room').at(-1).room;
+ const payload={matchId:initial.match.id,
+  expectedRevision:initial.match.dog.revision,actionId:'dog-ws-http-retry-0001',
+  action:{type:'exchange',cardId:initial.match.dog.hands[0][0].id}
+ };
+ const prior=h.counted.casUpdates;
+ ws.emit('message',Buffer.from(JSON.stringify({type:'dog_action',...payload})));
+ for(let i=0;i<12&&!ws.messages.some(m=>m.type==='dog_action_result');i++)
+  await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.counted.casUpdates,prior+1);
+ const retry=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',payload);
+ assert.equal(retry.status,200);
+ assert.equal(h.counted.casUpdates,prior+1);
+ assert.equal(retry.room.match.dog.revision,initial.match.dog.revision+1);
+ ws.close();
+});
+
+test('Room-bound WebSocket refuses unauthenticated or revoked memberships without a durable DOG write',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const ws=await h.subscribe(code);
+ const initial=ws.messages.filter(m=>m.type==='room').at(-1).room;
+ const payload={type:'dog_action',matchId:initial.match.id,
+  expectedRevision:initial.match.dog.revision,actionId:'dog-ws-revoked-member-0001',
+  action:{type:'exchange',cardId:initial.match.dog.hands[0][0].id}
+ };
+ h.externalChange(code,room=>{room.players=room.players.filter(p=>p.uid!=='alice');});
+ await new Promise(resolve=>setImmediate(resolve));
+ const prior=h.counted.casUpdates;
+ ws.emit('message',Buffer.from(JSON.stringify(payload)));
+ for(let i=0;i<12&&!ws.messages.some(m=>m.type==='dog_action_error');i++)
+  await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.counted.casUpdates,prior);
+ assert.equal(ws.messages.filter(m=>m.type==='dog_action_result').length,0);
+ ws.close();
+});
+
+test('WebSocket action cannot forge an actor, change room, or expose private opponent cards',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const uid of ['bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/join',uid);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ for(const uid of ['alice','bob','cara'])
+  await h.api('POST','/api/hub/rooms/'+code+'/ready',uid,{ready:true});
+ const ws=await h.subscribe(code,'alice');
+ const view=ws.messages.filter(m=>m.type==='room').at(-1).room;
+ const payload={type:'dog_action',matchId:view.match.id,
+  code:'999',uid:'bob',actor:'bob',
+  expectedRevision:view.match.dog.revision,
+  actionId:'dog-ws-forged-actor-0001',
+  action:{type:'exchange',cardId:view.match.dog.hands[0][0].id}
+ };
+ ws.emit('message',Buffer.from(JSON.stringify(payload)));
+ for(let i=0;i<12&&!ws.messages.some(m=>m.type==='dog_action_result');i++)
+  await new Promise(resolve=>setImmediate(resolve));
+ const result=ws.messages.find(m=>m.type==='dog_action_result');
+ assert.ok(result,'actor is server-side socket identity; claimed user/room are discarded');
+ assert.equal(result.room.code,code);
+ assert.equal(result.room.match.dogSeat,0);
+ assert.equal(result.room.match.dog.deck,undefined);
+ assert.equal(typeof result.room.match.dog.hands[1].count,'number');
+ assert.equal(Array.isArray(result.room.match.dog.hands[1]),false);
+ ws.close();
+});
