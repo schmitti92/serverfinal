@@ -286,3 +286,51 @@ Integration und ein geprüfter Scheduler verbunden werden. Die
 Weihnachts-Gewinnjobs benutzen diesen XP-Worker ausdrücklich noch
 nicht. Ein fehlgeschlagener klassischer PG-Abschluss kann im
 späteren Live-Pilot sicher aus Postgres rekonstruiert werden.
+
+## P4: Kombinierter Weihnachts-Spielabschluss – XP + Lichter + Lose
+
+`dog-postgres-seasonal-final-settlement.js` ist eine weitere
+**noch NICHT mit dem Live-Hub verbundene** vorbereitete Buchungsbrücke.
+
+Beim entscheidenden Weihnachts-DOG-Zug dürfen nicht zwei unabhängige
+Firestore-Transaktionen die XP und den Eventgewinn buchen. Stattdessen
+schützt der **eine gemeinsame Match-Receipt** in
+`dog_pg_match_settlements_v1/<Match-ID>` alle folgenden Änderungen:
+
+- Spielerstatistik und XP jedes realen Mitspielers (Drei-Spieler-Modus
+  ohne vierten Phantomspieler), mit Sieges-, Schlag-, Forschungs- und
+  eingefrorenem Akademiebonus aus dem serverseitig gespeicherten Match.
+- Weihnachtslichter im gemeinsamen Dorfkonto, tatsächlich gesammelte
+  Geschenke/Bonusgeschenke und genau **einen** zusätzlichen abgeschlossenen
+  DOG-Match-Zähler, auch wenn der Inn-Bonus null beträgt.
+- Sämtliche beim letzten Zug gewonnenen Rubbellos-Gutscheine,
+  zusammengefasst auf höchstens ein Update pro betroffenem Spieler.
+
+Alle notwendigen Firestore-Lesevorgänge erfolgen VOR dem ersten
+Schreibvorgang; anschließend werden alle Werte und der Receipt in **einer**
+Firestore-Transaktion aktualisiert. Der eindeutige Receipt kann nicht durch
+einen normalen XP-Receipt ersetzt werden. Außerdem wird der
+`dog_pg_christmas_move_receipts_v1`-Beleg für die **identische letzte
+Aktion** ausdrücklich geprüft, damit der Endzug nicht als gewöhnlicher
+Weihnachtszug und zusätzlich als Matchabschluss ausgezahlt werden kann.
+
+Ein verifizierter SHA-256-Fingerprint deckt Match-ID, Endzeitpunkt,
+Spieler/Schlagzähler, Sieger, Akademie-Level, Licht-/Geschenk-Deltas und
+alle Los-Gutschriften ab. Die vollständigen Handkarten oder das private
+Deck sind weder Teil des Receipts noch Teil des Fingerprints.
+
+Die neue Brücke benötigt künftig eine in Postgres **vor der Firebase-
+Abrechnung dauerhaft und unveränderlich gespeicherte** Abschlussmeldung
+mit Ausgangsraum, vollständigem Endraum und Los-Deltas. Sie trägt nur nach
+erfolgreicher Firestore-Buchung den identischen Beleg an die PG-
+Abschlussbestätigung zurück. Bei Render-Ausfall davor wird beim
+Wiederholen kein zweites Mal ausgezahlt.
+
+**Nicht aktivieren, bevor** eine saisonale Postgres-DOG-Regelengine
+samt gültiger serverseitiger Geschenk-/Los-Ermittlung, dauerhaftem
+Pending-Abschluss und exklusiver Endzug-Sperre vorhanden ist. Das
+bestehende `dog-postgres-finalization.js` verarbeitet bislang
+absichtlich nur klassische Partien; sein bisheriger Proof ist für ein
+Weihnachtsereignis nicht verwendbar. Die neuen isolierten Tests
+bestätigen daher den Firestore-Buchungsteil, **nicht** die vollständige
+Postgres-Endzug-Integration und nicht den produktiven Firebase-Verbrauch.
