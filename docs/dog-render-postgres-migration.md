@@ -403,3 +403,54 @@ Das Event darf keinesfalls mit einem nicht quittierten Gewinnzug
 weiterspielen. Erst danach kann der normale Firestore-Watch/Write-Pfad
 für **neue DOG-Räume** abgeschaltet werden; laufende Match-IDs bleiben
 unangetastet.
+
+## P5 – Unveränderliches PostgreSQL-Gewinnjournal für Weihnachten
+
+`dog-postgres-seasonal-journal.js` baut auf dem reinen
+`dog-postgres-seasonal-adapter.js` auf und hält sich weiterhin vom
+Produktiv-Hub fern. Die SQL-Migration erweitert die dauerhafte
+Raumdatenbank um `dog_room_pending_rewards` und
+`dog_room_reward_completions`.
+
+**Ablauf bei einem gewöhnlichen Zug ohne Gewinn:**
+Ein authentifizierter Serverzug nimmt die SQL-Zeilensperre, prüft
+Mitgliedschaft, Spielversion und Kartenregel, speichert Raum + Zug-ID +
+Outbox-Verweis atomar und bestätigt erst danach. Dabei erfolgt
+**kein Firebase-Lesen oder -Schreiben**.
+
+**Ablauf bei Geschenk, Rubbellos oder Spielende:**
+Dieselbe SQL-Zeilensperre ermittelt die echten Gewinne aus dem geheimen
+Postgres-Raum und erstellt eine private, dauerhafte Pending-Zeile samt
+Vorher-/Nachher-Zustand, Losen und Fingerprint. Der bisher sichtbare Raum
+bleibt unverändert, es entsteht **noch kein** auslieferbares Outbox-Ereignis
+und weitere Züge werden solange blockiert. Die vorhandenen Bridges
+`createDogPostgresChristmasRewardBridge` bzw.
+`createDogPostgresSeasonalFinalBridge` verbuchen die Gewinne später
+**exakt einmal** innerhalb einer Firestore-Transaktion. Erst deren
+erfolgreicher Beleg erlaubt `markRewardComplete` /
+`markFinalComplete` die Veröffentlichung des neuen Raumzustands
+plus unveränderlichem Zugbeleg und Outbox-Ereignis in einer SQL-Transaktion.
+
+Ein verlorenes Render-/PG-ACK ist sicher:
+`dog_room_reward_completions` bestätigt die identische Buchung erneut,
+ohne eine weitere Auszahlung oder ein weiteres Outbox-Ereignis.
+Ein verlorenes Firestore-ACK wird von der vorhandenen
+eindeutigen Firestore-Receipt-Brücke abgefangen. Pending-Inhalte
+dürfen niemals ungefiltert an WebSocket, Logs oder den Browser gelangen.
+
+Der separate CI-Test startet **echtes PostgreSQL 16** mit der
+neuen Migration und prüft SQL-Zugjournal, eingefrorenen Geschenkzug,
+Wiederholung nach verlorener PG-Bestätigung, einmalige Dorf-Gutschrift,
+Final-Zug mit Friedensherbergenbonus sowie XP für exakt drei Menschen.
+Die Datenbank in CI ist flüchtig; es wird **kein** Render-Dienst
+gebucht und kein Live-Spiel umgestellt.
+
+**Offene Voraussetzungen zur Aktivierung:**
+Ein verantwortlicher, automatisch wiederholbarer Recovery-Worker
+für `dog_room_pending_rewards` mit Quarantäne fataler Belege;
+eine abgeschirmte, opt-in Live-Hub-Raumerstellung und private
+Postgres-WebSocket-Raumprojektion mit derselben API wie Firestore;
+Crash-/Rekonnekt- und Berechtigungsentzugstests unter mehreren Render-
+Instanzen; sichere Code-Wiederverwendung; eine dauerhaft aktive
+freigegebene Postgres-Instanz. Niemals ein gemischtes Firestore/PG-Spiel
+innerhalb einer laufenden Match-ID betreiben.
