@@ -1,0 +1,28 @@
+name: DOG Christmas actionable tab badges
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/christmas-tab-badges.js'
+      - 'tests/dog-christmas-tab-badges.test.js'
+      - 'tests/dog-christmas-tab-badges-endpoint.test.js'
+      - '.github/workflows/dog-christmas-tab-badges.yml'
+  pull_request:
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/christmas-tab-badges.js'
+      - 'tests/dog-christmas-tab-badges.test.js'
+      - 'tests/dog-christmas-tab-badges-endpoint.test.js'
+      - '.github/workflows/dog-christmas-tab-badges.yml'
+  workflow_dispatch:
+jobs:
+  actionable-counters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js && node --check dog/christmas-tab-badges.js
+      - run: node --test tests/dog-christmas-tab-badges.test.js tests/dog-christmas-tab-badges-endpoint.test.js
