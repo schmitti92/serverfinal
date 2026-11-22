@@ -23,6 +23,7 @@ import {createDogChristmasMatch,DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID} fr
 import {createDogPostgresSeasonalJournal} from '../dog-postgres-seasonal-journal.js';
 import {createDogPostgresChristmasRewardBridge,DOG_PG_CHRISTMAS_RECEIPTS_COLLECTION} from '../dog-postgres-christmas-settlement.js';
 import {createDogPostgresSeasonalFinalBridge} from '../dog-postgres-seasonal-final-settlement.js';
+import {createDogPostgresPilotCoordinator} from '../dog-postgres-pilot-coordinator.js';
 
 const {Pool}=pg;
 const db=new Pool({
@@ -384,6 +385,135 @@ test('DOG durable room, idempotency, privacy and winner settlement on REAL Postg
   assert.equal((await db.query(
    'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
    [room.code])).rows[0].n,1);
+ });
+
+
+ await t.test('Pilot coordinator uses authenticated private PG rooms: healthy DOG moves cost ZERO Firebase and are privately fanned out',async()=>{
+  const room=dogRoom('PAA234'),fb=fakeFirebase();
+  await store.seedRoom(room);
+  const calls=[];
+  const pilot=createDogPostgresPilotCoordinator({
+   pool:db,getFirestore:()=>{calls.push('firebase-provider');return fb.db},
+   verifyProfile:async token=>{
+    if(!['alice-token','bob-token','cara-token'].includes(token))
+     throw Error('INVALID_FIREBASE_LOGIN');
+    return {uid:token.slice(0,-6),name:'Verified'};
+   },clock:Date.now
+  });
+  const received=[[],[]];
+  const stopAlice=await pilot.subscribe({
+   code:room.code,token:'alice-token',send:msg=>received[0].push(msg)
+  });
+  const stopBob=await pilot.subscribe({
+   code:room.code,token:'bob-token',send:msg=>received[1].push(msg)
+  });
+  assert.equal(received[0][0].room.dogSeat,0);
+  assert.equal(received[1][0].room.dogSeat,1);
+  assert.equal(Array.isArray(received[0][0].room.dog.hands[1]),false);
+  assert.equal(Array.isArray(received[1][0].room.dog.hands[0]),false);
+  await assert.rejects(()=>pilot.read({
+   code:room.code,token:'invalid'
+  }),/DOG_PG_LOGIN_REQUIRED/);
+  await assert.rejects(()=>pilot.move({
+   code:'123',token:'alice-token',matchId:room.match.id,
+   expectedDogRevision:0,actionId:'pilot-bad-room-0001',
+   action:{type:'exchange',cardId:1}
+  }),/DOG_PG_PILOT_ONLY/);
+  const payload={
+   code:room.code,token:'alice-token',matchId:room.match.id,
+   actionId:'pilot-real-classic-exchange-0001',
+   expectedDogRevision:room.match.dog.revision,
+   action:{type:'exchange',cardId:room.match.dog.hands[0][0].id}
+  };
+  const result=await pilot.move({...payload,uid:'bob'});
+  assert.equal(result.room.dogSeat,0,'actor UID must originate only from the verified Firebase token');
+  assert.equal(result.room.dog.revision,1);
+  assert.equal(result.replayed,false);
+  assert.equal(result.settled,false);
+  assert.equal(calls.length,0,'healthy non-reward PG move does not even request Firebase provider');
+  assert.equal(fb.metrics().reads,0);
+  assert.equal(fb.metrics().writes,0);
+  const replay=await pilot.move(payload);
+  assert.equal(replay.replayed,true);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,1);
+  await pilot.fanoutOnce();
+  assert.equal(received[0].length,2,'confirmed SQL move is delivered once to Alice');
+  assert.equal(received[1].length,2,'Bob gets his OWN hand after the same confirmed move');
+  assert.equal(Array.isArray(received[0][1].room.dog.hands[1]),false);
+  assert.equal(Array.isArray(received[1][1].room.dog.hands[0]),false);
+  assert.equal(calls.length,0);
+  stopAlice();stopBob();
+ });
+
+ await t.test('Authenticated pilot gift move cannot ACK or publish before Firebase; recovery resumes an interrupted payout',async()=>{
+  const room=dogRoom('PGB234'),s=room.match.dog;
+  s.phase='play';s.current=0;s.starter=0;s.revision=44;
+  s.hands=[[{id:9000,type:'2'}],[{id:9001,type:'3'}],
+   [{id:9002,type:'3'}],[]];
+  s.exchanges=[null,null,null,true];s.seven=null;
+  const pawn=s.pieces.find(p=>p.id===0);
+  pawn.place='track';pawn.pos=3;
+  room.match.christmas=createDogChristmasMatch(null,true,()=>0,s.round);
+  room.match.christmas.giftFields=[5];
+  room.match.christmas.scratchFields=[];
+  await store.seedRoom(room);
+  const action=legalActions(s,0).find(a=>a.type==='move'&&
+   a.pieceId===0&&a.steps===2&&!a.viaGoal);
+  assert.ok(action);
+  let firebaseUp=false;
+  const fb=fakeFirebase();
+  const pilot=createDogPostgresPilotCoordinator({
+   pool:db,getFirestore:()=>{
+    if(!firebaseUp)throw Error('FIREBASE_OFFLINE');
+    return fb.db;
+   },
+   verifyProfile:async token=>token==='alice-token'?{uid:'alice'}:null,
+   clock:Date.now
+  });
+  const req={
+   token:'alice-token',code:room.code,matchId:room.match.id,
+   expectedDogRevision:44,actionId:'pilot-gift-freeze-0001',action
+  };
+  await assert.rejects(()=>pilot.move(req),/DOG_PG_PAYOUT_PENDING/);
+  assert.equal((await store.getRoom(room.code)).room.match.christmas.giftCount,0);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,0,'no reward is sent over WebSocket before payment');
+  firebaseUp=true;
+  const retried=await pilot.move(req);
+  assert.equal(retried.settled,true);
+  assert.equal(retried.replayed,true);
+  assert.equal(retried.room.dog.revision,45);
+  assert.equal(fb.metrics().writes,2);
+  const before=fb.metrics().writes;
+  const again=await pilot.move(req);
+  assert.equal(again.replayed,true);
+  assert.equal(again.settled,false);
+  assert.equal(fb.metrics().writes,before,'repeat after receipt commits no other Firebase write');
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,1);
+ });
+
+ await t.test('Pilot classic terminal step settles real human XP before publishing winner',async()=>{
+  const {room,last}=finishingRoom();room.code='PCF234';
+  await store.seedRoom(room);
+  const fb=fakeFirebase();
+  const pilot=createDogPostgresPilotCoordinator({
+   pool:db,getFirestore:()=>fb.db,
+   verifyProfile:async token=>token==='alice-token'?{uid:'alice'}:null
+  });
+  const result=await pilot.move({
+   token:'alice-token',code:room.code,matchId:room.match.id,
+   expectedDogRevision:42,actionId:'pilot-classic-final-0001',
+   action:last
+  });
+  assert.equal(result.settled,true);
+  assert.equal(result.room.dog.phase,'finished');
+  assert.equal(fb.metrics().writes,4,'three actual player XP accounts plus one receipt');
+  assert.equal((await store.getRoom(room.code)).room.match.dogCounters.recorded,true);
  });
 
 });
