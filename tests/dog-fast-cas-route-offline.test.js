@@ -65,7 +65,9 @@ function harness({fastCasEnabled=true}={}){
   use(path,middleware){middles.push({path,middleware});}
  };
  const auth=async token=>token==='alice'?{uid:'alice',name:'Alice'}:
-  token==='bob'?{uid:'bob',name:'Bob'}:null;
+  token==='bob'?{uid:'bob',name:'Bob'}:
+  token==='cara'?{uid:'cara',name:'Cara'}:
+  token==='dana'?{uid:'dana',name:'Dana'}:null;
  const adapter=installSharedLobby(app,{verifyProfile:auth,getFirestore:()=>db,
   clock:()=>now,codeGenerator:()=> '123',christmasEventActive:()=>false,
   fastCasEnabled});
