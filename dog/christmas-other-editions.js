@@ -103,6 +103,57 @@ function solveThree(amounts,slots,budget){
  }
  return null;
 }
+/** The legacy solver took the FIRST exact solution (maximum number of
+ * suitcases). For premium guarantees use the most varied mathematically
+ * possible composition instead. An already promised edition budget is
+ * never changed: at very high budgets many high prizes remain inevitable.
+ */
+export function solvePremiumMoneyMix(amounts,slots,budget){
+ if(!whole(slots,0,1000)||!whole(budget,0,OTHER_EDITION_MAX_COINS)||
+  !Array.isArray(amounts)||amounts.length!==3)return null;
+ const [a,b,c]=amounts;
+ if(!whole(a,1,50000000)||!whole(b,a+1,50000000)||
+  !whole(c,b+1,50000000))return null;
+ const delta=budget-slots*a;
+ if(delta<0||budget>slots*c)return null;
+ let best=null,bestScore=-Infinity;
+ for(let high=0;high<=slots;high++){
+  const rem=delta-high*(c-a);
+  if(rem<0||rem%(b-a))continue;
+  const middle=rem/(b-a),low=slots-high-middle;
+  if(low<0||middle<0)continue;
+  const distribution=[low,middle,high];
+  // Shannon entropy rewards the presence of ALL three symbols, rather
+  // than choosing almost exclusively the highest denomination.
+  const score=-distribution.reduce((sum,count)=>
+   count?sum+(count/slots)*Math.log(count/slots):sum,0);
+  if(score>bestScore+1e-12){bestScore=score;best=distribution}
+ }
+ return best;
+}
+/** Two guaranteed win rows per card, drawn from the planned exact totals.
+ * Whenever another denomination remains, pair distinct symbols first;
+ * shuffle the finished cards, not just groups of identical suitcases.
+ */
+function mixPremiumMoneyPairs(distribution,count,draw){
+ const remaining=[...distribution];
+ const pick=(exclude=-1)=>{
+  const eligible=remaining.map((n,i)=>i).filter(i=>remaining[i]>0&&i!==exclude);
+  const choices=eligible.length?eligible:remaining.map((n,i)=>i).filter(i=>n>0);
+  const total=choices.reduce((sum,i)=>sum+remaining[i],0);
+  if(total===0)throw Error('SCRATCH_OTHER_EDITION_MONEY_PLAN_INVALID');
+  let roll=randint(draw,total);
+  for(const i of choices){roll-=remaining[i];if(roll<0){remaining[i]--;return String(i)}}
+  throw Error('SCRATCH_OTHER_EDITION_MONEY_PLAN_INVALID');
+ };
+ const pairs=[];
+ for(let i=0;i<count;i++){
+  const first=pick(),second=pick(Number(first));
+  pairs.push(shuffle([first,second],draw).join(''));
+ }
+ if(remaining.some(Boolean))throw Error('SCRATCH_OTHER_EDITION_MONEY_PLAN_INVALID');
+ return shuffle(pairs,draw);
+}
 function nearTarget(n,target,max){
  return Array.from({length:max+1},(_,i)=>i).sort((a,b)=>
   Math.abs(a-target)-Math.abs(b-target)||a-b);
@@ -114,15 +165,15 @@ function premiumPlan(budget,c,count,draw){
  const wanted=Math.round(count*c.goldChancePer1000/1000);
  let selected=null;
  for(const gold of nearTarget(count,wanted,count)){
-  const distribution=solveThree(c.coinAmounts,2*count,budget-gold*1000);
+  const distribution=solvePremiumMoneyMix(c.coinAmounts,2*count,budget-gold*1000);
   if(distribution){selected={gold,distribution};break}
  }
  if(!selected)throw Error('SCRATCH_OTHER_EDITION_BUDGET_UNREACHABLE');
- const money=selected.distribution.flatMap((n,i)=>Array(n).fill(String(i)));
+ const pairs=mixPremiumMoneyPairs(selected.distribution,count,draw);
  const goldCount=selected.gold;
  const giftCount=Math.min(goldCount,Math.round(count*c.giftPer1000/1000));
  const indexes=shuffle(Array.from({length:count},(_,i)=>i),draw);
- const cards=Array.from({length:count},(_,i)=>'v6:'+money[2*i]+money[2*i+1]);
+ const cards=pairs.map(pair=>'v6:'+pair);
  for(let i=0;i<goldCount;i++)cards[indexes[i]]+=i<giftCount?'g':'m';
  return shuffle(cards,draw);
 }
@@ -202,7 +253,8 @@ export function createOtherEdition({id,variant,createdAt,createdBy,maxTotalCoins
  const c=validateOtherEditionConfig(variant,config);
  return {id,createdAt,createdBy,variantId:variant,size:OTHER_EDITION_SIZE,
   issued:0,paidCoins:0,maxTotalCoins,revision:1,budgetMode:'fixed',
-  config:c,prizePlan:createOtherEditionPlan(variant,maxTotalCoins,c,500,draw)};
+  config:c,prizePlan:createOtherEditionPlan(variant,maxTotalCoins,c,500,draw),
+  ...(variant==='premium_27'?{premiumPrizeMixApplied:true}:{})};
 }
 export function otherEditionPublic(raw){
  if(!raw||!OTHER_EDITION_VARIANTS.includes(raw.variantId))return null;
@@ -238,7 +290,8 @@ export function editOtherEdition(raw,{config,maxTotalCoins,now=Date.now(),draw=r
  return {...raw,config:c,
   ...(premiumReprice?{premiumPrice1200Applied:true}:{}),
   ...(luckyReprice?{luckyPrice600Applied:true}:{}),
-  ...(undoElfReprice?{mistakenMediumRepriceReverted:true}:{}),maxTotalCoins,
+  ...(undoElfReprice?{mistakenMediumRepriceReverted:true}:{}),
+  ...(raw.variantId==='premium_27'?{premiumPrizeMixApplied:true}:{}),maxTotalCoins,
   prizePlan:[...raw.prizePlan.slice(0,raw.issued),...future],
   revision:(raw.revision||0)+1,updatedAt:now};
 }
@@ -265,17 +318,19 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
    luckyPrice600Applied:true,revision:(raw.revision||0)+1}:
   undoElfReprice?{...raw,config:{...raw.config,price:500},
    mistakenMediumRepriceReverted:true,revision:(raw.revision||0)+1}:raw;
- // Existing active Premium editions were preprinted with four money rows.
- // Reprint only their still-unissued codes as v6 two-row cards, atomically
- // with the next actual ticket purchase. Issued receipts/ledger are immutable.
+ // Existing active Premium editions may already have v6 two-row codes,
+ // but the old planner clustered the same suitcase prizes together. Replan
+ // ONLY their unsold cards once, atomically with the next purchase, retaining
+ // the edition's exact remaining budget, price and all issued receipts.
  // No extra Firebase read, standalone migration write or background polling.
  let active=base;
  if(variant==='premium_27'&&
-    !String(base.prizePlan[base.issued]||'').startsWith('v6:')){
+    (base.premiumPrizeMixApplied!==true||
+     !String(base.prizePlan[base.issued]||'').startsWith('v6:'))){
   const future=createOtherEditionPlan(variant,
    base.maxTotalCoins-base.paidCoins,base.config,500-base.issued,
    options.draw||randomInt);
-  active={...base,
+  active={...base,premiumPrizeMixApplied:true,
    prizePlan:[...base.prizePlan.slice(0,base.issued),...future],
    revision:(base.revision||0)+1};
  }
