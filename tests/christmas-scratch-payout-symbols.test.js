@@ -73,7 +73,7 @@ test('purchases of all classes pay only the three published amounts per icon',()
     tier,commandId:'coin-symbol-'+tier+'-'+i,free:false
    });
    assert.ok(verifyScratchPrizes(result.board));
-   assert.equal(result.board.symbolVersion,tier==='premium'?5:3);
+   assert.equal(result.board.symbolVersion,tier==='premium'?6:3);
    for(const prize of result.winnings){
     if(prize.type==='unlock')assert.ok(SCRATCH_GIFT_SYMBOLS.includes(prize.symbol));
     else{
