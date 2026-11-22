@@ -334,3 +334,32 @@ absichtlich nur klassische Partien; sein bisheriger Proof ist für ein
 Weihnachtsereignis nicht verwendbar. Die neuen isolierten Tests
 bestätigen daher den Firestore-Buchungsteil, **nicht** die vollständige
 Postgres-Endzug-Integration und nicht den produktiven Firebase-Verbrauch.
+
+## Echte PostgreSQL-16-Integration im GitHub-CI-Test
+
+Zusätzlich zu den Offline-Simulatoren steht jetzt
+`tests-integration/dog-postgres-real-db.mjs` zur Verfügung.
+Der gesonderte GitHub-Actions-Workflow
+`.github/workflows/dog-postgres-real-db.yml`
+startet für diese Prüfung **einen flüchtigen PostgreSQL-16-Service**.
+Dort wird die echte SQL-Migration ausgeführt.
+
+Die Tests umfassen:
+- Mehrere konkurrierende, authentisch reduzierte DOG-Aktionen mit
+  `SELECT ... FOR UPDATE`: doppelte Requests dürfen nur einen
+  Spielzug und ein Outbox-Ereignis speichern.
+- Versionskonflikte, Nichtmitgliedschaft und private per-Spieler-
+  Projektionen aus dem echten gespeicherten JSONB-Spielstand.
+- Den finalen DOG-Spielzug: vor der Firebase-Gutschrift bleibt der
+  öffentlich sichtbare Raum offen und die Outbox leer; nach
+  abgeschlossener **simulierter** Firestore-XP-Transaktion werden
+  der Gewinnerstand, das Aktionsprotokoll und ein Outbox-Ereignis
+  zusammen in PostgreSQL freigegeben.
+- Doppelte Abschlussbestätigungen dürfen kein zweites Ereignis erzeugen.
+
+**Was die Tests nicht beweisen:** Es wird kein echter Firebase-
+Abrechnungszugriff erzeugt. Die GitHub-Testdatenbank wird nach
+dem Test verworfen und ersetzt keine produktive, dauerhafte
+Postgres-Instanz. Die PostgreSQL-JavaScript-Bibliothek wird nur
+innerhalb des CI-Jobs installiert; die Render-Anwendung benötigt
+sie noch nicht, solange keine produktive PG-Integration existiert.
