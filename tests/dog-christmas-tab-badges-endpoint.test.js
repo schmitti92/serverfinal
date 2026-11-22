@@ -67,7 +67,7 @@ test('one private readonly Christmas tab-badge endpoint counts current personal 
  const h=harness();
  h.docs.set('dog_player_statistics_v1/user_alice123',{xp:3000,played:11});
  h.docs.set('dog_christmas_research_v1/user_alice123',{levels:{card_swap:1}});
- h.docs.set('dog_christmas_scratch_v1/user_alice123',{
+ h.docs.set('dog_christmas_scratch_wallet_v1/user_alice123',{
   vouchers:{simple:2,medium:1,premium:0},
   variantVouchers:{gifts:3},
   levelRewardClaims:{1:1000,2:1200}
