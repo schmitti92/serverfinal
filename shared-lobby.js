@@ -16,7 +16,7 @@ import {tryDogFastCas} from './dog-fast-cas.js';
 import {dogMetadataWasWritten,dogWrittenMetadataPaths} from './dog-meta-write-policy.js';
 import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
 import {dogFirebaseBudgetSummary} from './dog-firebase-budget-summary.js';
-import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
+import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState,completedDogSeat,finalizeCompletedDogGame} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
@@ -2218,6 +2218,8 @@ function finishEisstock(ch,members){
       const seat=match.dogRoster.find(r=>r.uid===identity.uid)?.seat;
       if(!Number.isInteger(seat))throw error(403,'DOG_SPECTATOR');
       if((match.dogCommands||[]).includes(actionId))return {unchanged:true};
+      // A second repair notification can arrive after the victory committed.
+      if(action.type==='finalize-completed'&&match.dog.phase==='finished')return {unchanged:true};
       if(match.dog.revision!==expectedRevision)throw error(409,'DOG_STALE_REVISION');
       const ability=match.dogResearchSkills?.[identity.uid]||{};
       if(action.type==='research-swap'&&(!ability.card_swap||match.dog.phase!=='exchange'))
@@ -2273,8 +2275,16 @@ function finishEisstock(ch,members){
         }
         creditedTenths+=finishDogChristmasMatch(event,after);
       };
+      // Older matches may already have 4/4 and be stuck waiting for their
+      // teammate's pieces. Finish atomically WITHOUT taking another move.
+      // A regular attempted action from an old client repairs this as well.
+      const legacyCompleted=match.dog.phase!=='finished'&&completedDogSeat(match.dog)!==null;
       try{
-        if(action.type==='research-swap'){
+        if(legacyCompleted){
+          match.dog=finalizeCompletedDogGame(match.dog);
+        }else if(action.type==='finalize-completed'){
+          throw Error('DOG_NOT_READY_TO_FINISH');
+        }else if(action.type==='research-swap'){
           match.dog=dogResearchSwapCard(match.dog,seat,action.cardId);
         }else if(action.type==='exchange'){
           const prior=match.dog;
@@ -2289,7 +2299,7 @@ function finishEisstock(ch,members){
         }
       }catch(e){throw error(409,e.message||'DOG_RULE_REJECTED');}
       match.dogCommands=[...(match.dogCommands||[]).slice(-90),actionId];
-      advanceDogBots(match,collect,newDeal);
+      if(!legacyCompleted)advanceDogBots(match,collect,newDeal);
       // On the single winning transaction, persist each human player's
       // counters once. Do not write to Firestore for normal move updates.
       let completedDogStats=[];
