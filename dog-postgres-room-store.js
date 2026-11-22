@@ -47,6 +47,25 @@ function validRoom(room,code){
   Number.isSafeInteger(room.revision)&&room.revision>=1&&
   Number.isSafeInteger(room.expiresAt)&&room.expiresAt>0;
 }
+function safeKnockoutCounterProgress(before,after){
+ if(before==null&&after==null)return true;
+ if(!after||typeof after!=='object'||!Array.isArray(after.seats)||
+    after.seats.length!==4)return false;
+ const prior=before||{recorded:false,seats:Array.from({length:4},
+  ()=>({knockedOut:0,wasKnockedOut:0}))};
+ if(prior.recorded!==after.recorded||
+    !Array.isArray(prior.seats)||prior.seats.length!==4)return false;
+ for(let seat=0;seat<4;seat++){
+  for(const key of ['knockedOut','wasKnockedOut']){
+   const oldValue=prior.seats[seat]?.[key];
+   const newValue=after.seats[seat]?.[key];
+   if(!Number.isSafeInteger(oldValue)||oldValue<0||
+      !Number.isSafeInteger(newValue)||newValue<oldValue||
+      newValue-oldValue>4500)return false;
+  }
+ }
+ return true;
+}
 function validateBasicMove(room,{uid,matchId}){
  if(room.phase!=='playing'||room.match?.game!=='dog'||room.match.id!==matchId)
   fail('DOG_STORAGE_WRONG_MATCH');
@@ -123,7 +142,7 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
    const candidate=structuredClone(before);
    // The reducer must be a pure, synchronous rules function. It must never
    // grant wallets/XP, access Firestore or produce externally visible effects.
-   const returned=reduce(candidate,{uid,matchId,action});
+   const returned=reduce(candidate,{uid,matchId,action,actionId});
    if(returned&&typeof returned.then==='function')
     fail('DOG_STORAGE_ASYNC_REDUCER_FORBIDDEN');
    const after=returned?.room||candidate;
@@ -138,7 +157,7 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
       !identical(after.match?.members,before.match?.members)||
       !identical(after.match?.dogResearchSkills,before.match?.dogResearchSkills)||
       !identical(after.match?.christmas,before.match?.christmas)||
-      !identical(after.match?.dogCounters,before.match?.dogCounters))
+      !safeKnockoutCounterProgress(before.match?.dogCounters,after.match?.dogCounters))
     fail('DOG_STORAGE_TRANSACTION_REQUIRED');
    if(!validRoom(after,code)||after.match?.id!==matchId||
       after.match.dogChristmasEligibilityChecked!==true||
