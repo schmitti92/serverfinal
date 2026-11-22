@@ -116,7 +116,13 @@ function harness({fastCasEnabled=true}={}){
   assert.ok(ws.messages.some(msg=>msg.type==='room'),'authenticated stream emitted a room');
   return ws;
  }
- return {api,docs,versions,counted,subscribe};
+ const externalChange=(code,edit)=>{
+  const path='spielesammlung_hub_v1/'+code;
+  const updated=structuredClone(docs.get(path));edit(updated);
+  updated.revision++;
+  save(path,updated);
+ };
+ return {api,docs,versions,counted,subscribe,externalChange};
 }
 
 test('DOG exchange uses one durable CAS update and zero transactional room reads with live Render stream',async()=>{
@@ -171,5 +177,25 @@ test('DOG fast CAS remains opt-in: standard action takes classic transaction wit
  assert.equal(r.status,200);
  assert.equal(h.counted.gets>reads,true,'original Firestore transaction is retained');
  assert.equal(h.counted.casUpdates,0);
+ ws.close();
+});
+
+test('Removed room member cannot use cached DOG match roster to commit a move',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ assert.equal(ready.status,200);
+ const ws=await h.subscribe(code);
+ const state=ws.messages.filter(msg=>msg.type==='room').at(-1).room;
+ h.externalChange(code,room=>{room.players=room.players.filter(p=>p.uid!=='alice');});
+ await new Promise(resolve=>setImmediate(resolve));
+ const baseline=h.counted.casUpdates;
+ const response=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:state.match.id,expectedRevision:state.match.dog.revision,
+  actionId:'dog-cas-removed-member-1',
+  action:{type:'exchange',cardId:state.match.dog.hands[0][0].id}});
+ assert.equal(response.status,403,'membership must be checked by authoritative transaction');
+ assert.equal(h.counted.casUpdates,baseline,'no CAS writes after membership was revoked');
  ws.close();
 });
