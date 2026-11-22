@@ -3768,6 +3768,10 @@ function finishEisstock(ch,members){
             send({type:'room',room:expose(room,identity)});
           }catch(_e){send({type:'error',error:'NOT_A_MEMBER'});try{ws.close(4003);}catch(_e){}}
         });
+        // Feature negotiation: older Render deployments do not support
+        // dog_action messages. DOG clients use HTTP until the authenticated
+        // socket explicitly advertises this feature. No Firestore traffic.
+        if(!closed)send({type:'dog_capabilities',actions:true});
       }catch(e){send({type:'error',error:e?.message||'STREAM_UNAVAILABLE'});try{ws.close(4003);}catch(_e){}}
     });
     ws.on('close',teardown);ws.on('error',teardown);
