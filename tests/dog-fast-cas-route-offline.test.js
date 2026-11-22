@@ -116,11 +116,15 @@ function harness({fastCasEnabled=true}={}){
   assert.ok(ws.messages.some(msg=>msg.type==='room'),'authenticated stream emitted a room');
   return ws;
  }
- const externalChange=(code,edit)=>{
+ const externalChange=(code,edit,{notifySubscribers=true}={})=>{
   const path='spielesammlung_hub_v1/'+code;
   const updated=structuredClone(docs.get(path));edit(updated);
   updated.revision++;
-  save(path,updated);
+  if(notifySubscribers)save(path,updated);
+  else{
+   docs.set(path,updated);
+   versions.set(path,(versions.get(path)||0)+1);
+  }
  };
  return {api,docs,versions,counted,subscribe,externalChange};
 }
@@ -197,5 +201,123 @@ test('Removed room member cannot use cached DOG match roster to commit a move',a
   action:{type:'exchange',cardId:state.match.dog.hands[0][0].id}});
  assert.equal(response.status,403,'membership must be checked by authoritative transaction');
  assert.equal(h.counted.casUpdates,baseline,'no CAS writes after membership was revoked');
+ ws.close();
+});
+
+test('Three humans exchange using CAS with no computer, no extra Firestore GET and private cards',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const name of ['bob','cara'])
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/join',name)).status,200);
+ assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'})).status,200);
+ for(const name of ['alice','bob'])
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/ready',name,{ready:true})).status,200);
+ const ready=await h.api('POST','/api/hub/rooms/'+code+'/ready','cara',{ready:true});
+ assert.equal(ready.status,200);
+ assert.equal(ready.room.match.dog.mode,'solo3');
+ assert.equal(ready.room.match.dog.players.filter(p=>p.bot).length,0);
+ assert.equal(ready.room.match.dog.players.filter(p=>p.inactive).length,1);
+ const sockets=await Promise.all(['alice','bob','cara'].map(name=>h.subscribe(code,name)));
+ const last=(ws)=>ws.messages.filter(x=>x.type==='room').at(-1).room;
+ let successful=0;
+ for(let seat=0;seat<3;seat++){
+  const ws=sockets[seat],name=['alice','bob','cara'][seat],view=last(ws);
+  assert.equal(view.match.dogSeat,seat,'player's private projection uses correct seat');
+  assert.equal(Array.isArray(view.match.dog.hands[seat]),true);
+  for(let other=0;other<3;other++)if(other!==seat)
+   assert.equal(Array.isArray(view.match.dog.hands[other]),false,'opponent hand is hidden');
+  const cardId=view.match.dog.hands[seat][0].id;
+  const before=h.counted.gets;
+  const updateCount=h.counted.casUpdates;
+  const response=await h.api('POST','/api/hub/rooms/'+code+'/dog/action',name,{
+   matchId:view.match.id,expectedRevision:view.match.dog.revision,
+   actionId:'dog-cas-three-exchange-'+seat,action:{type:'exchange',cardId}});
+  assert.equal(response.status,200,JSON.stringify(response));
+  assert.equal(h.counted.gets,before,'an accepted normal DOG exchange is read-free');
+  assert.equal(h.counted.casUpdates,updateCount+1,'each move persists before acknowledgement');
+  assert.equal(response.room.match.dog.deck,undefined);
+  assert.equal(typeof response.room.match.dog.hands[(seat+1)%3].count,'number');
+  successful++;
+ }
+ assert.equal(successful,3);
+ assert.equal(last(sockets[0]).match.dog.phase,'play');
+ const saved=h.docs.get('spielesammlung_hub_v1/'+code);
+ assert.equal(saved.match.dog.revision,ready.room.match.dog.revision+3);
+ // Reconnected clients restore from durable server room, not transient UI.
+ for(const ws of sockets)ws.close();
+ const restored=await h.subscribe(code,'bob');
+ assert.equal(last(restored).match.dog.revision,saved.match.dog.revision);
+ assert.equal(last(restored).match.dog.deck,undefined);
+ restored.close();
+});
+
+test('Split-seven steps use CAS and keep correct remaining fields, even on reconnect',async()=>{
+ const h=harness();
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const name of ['bob','cara','dana'])
+  await h.api('POST','/api/hub/rooms/'+code+'/join',name);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ for(const name of ['alice','bob','cara','dana'])
+  await h.api('POST','/api/hub/rooms/'+code+'/ready',name,{ready:true});
+ const ws=await h.subscribe(code,'alice');
+ h.externalChange(code,room=>{
+  const state=room.match.dog;
+  state.phase='play';state.current=0;state.starter=0;
+  state.hands=[[{id:9999,type:'7'}],[],[],[]];
+  state.exchanges=[null,null,null,null];
+  state.seven=null;state.revision=44;
+  state.pieces[0].place='track';state.pieces[0].pos=3;
+  room.match.dogCommands=[];
+ });
+ await new Promise(resolve=>setImmediate(resolve));
+ const last=()=>ws.messages.filter(msg=>msg.type==='room').at(-1).room;
+ const path='/api/hub/rooms/'+code+'/dog/action';
+ const execute=async(action,id)=>{
+  const view=last(),before=h.counted.gets,updates=h.counted.casUpdates;
+  const r=await h.api('POST',path,'alice',{
+   matchId:view.match.id,expectedRevision:view.match.dog.revision,
+   actionId:id,action});
+  assert.equal(r.status,200,JSON.stringify(r));
+  assert.equal(h.counted.gets,before,'split-seven move must not GET the room');
+  assert.equal(h.counted.casUpdates,updates+1,'split-seven move must be durably saved');
+  return r;
+ };
+ const started=await execute({type:'seven',cardId:9999,as:'7'},'dog-cas-seven-start-01');
+ assert.equal(started.room.match.dog.phase,'seven');
+ const stepped=await execute({type:'seven-step',pieceId:0,steps:3,viaGoal:false,to:'track:6'},'dog-cas-seven-step-03');
+ assert.equal(stepped.room.match.dog.seven.spent,3);
+ assert.equal(stepped.room.match.dog.pieces[0].pos,6);
+ assert.equal(stepped.room.match.dog.seven.snapshot,undefined);
+ const latest=last();
+ ws.close();
+ const connected=await h.subscribe(code,'alice');
+ const restored=connected.messages.filter(msg=>msg.type==='room').at(-1).room;
+ assert.equal(restored.match.dog.revision,latest.match.dog.revision);
+ assert.equal(restored.match.dog.seven.spent,3);
+ const view=restored;
+ const lastMove=await h.api('POST',path,'alice',{
+  matchId:view.match.id,expectedRevision:view.match.dog.revision,
+  actionId:'dog-cas-seven-last-04',
+  action:{type:'seven-step',pieceId:0,steps:4,viaGoal:false,to:'track:10'}});
+ assert.equal(lastMove.status,200,JSON.stringify(lastMove));
+ assert.equal(lastMove.room.match.dog.pieces[0].pos,10);
+ assert.equal(lastMove.room.match.dog.seven,null);
+ connected.close();
+});
+
+test('A revoked player is blocked even when the active WebSocket missed the revocation event',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const ws=await h.subscribe(code,'alice');
+ const view=ws.messages.filter(x=>x.type==='room').at(-1).room;
+ const prior=h.counted.casUpdates;
+ h.externalChange(code,room=>{room.players=[];},{notifySubscribers:false});
+ const result=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:view.match.id,expectedRevision:view.match.dog.revision,
+  actionId:'dog-cas-revoked-silent-01',
+  action:{type:'exchange',cardId:view.match.dog.hands[0][0].id}});
+ assert.equal(result.status,403,'Firestore precondition rejects stale cached membership');
+ assert.equal(h.counted.casUpdates,prior,'revocation must not allow a write');
  ws.close();
 });
