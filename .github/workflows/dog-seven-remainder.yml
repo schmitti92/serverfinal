@@ -6,6 +6,9 @@ on:
       - 'dog/engine.js'
       - 'tests/dog-seven-last-pawn-remainder.test.js'
       - 'tests/dog-seven-goal-entry.test.js'
+      - 'tests/dog-first-four-wins.test.js'
+      - 'tests/dog-engine.test.js'
+      - 'tests/dog-official-rules.test.js'
       - '.github/workflows/dog-seven-remainder.yml'
   workflow_dispatch:
 jobs:
@@ -17,4 +20,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog/engine.js
-      - run: node --test tests/dog-seven-last-pawn-remainder.test.js tests/dog-seven-goal-entry.test.js
+      - run: node --test tests/dog-seven-last-pawn-remainder.test.js tests/dog-seven-goal-entry.test.js tests/dog-first-four-wins.test.js tests/dog-engine.test.js tests/dog-official-rules.test.js
