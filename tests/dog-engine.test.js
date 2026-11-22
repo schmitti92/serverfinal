@@ -68,11 +68,12 @@ test('7 takes out every figure it crosses, including partner pieces',()=>{
  assert.equal(s.pieces[4].place,'track');
  assert.equal(s.pieces[8].place,'track');
 });
-test('finished owner may use cards for teammate',()=>{
+test('first player at 4/4 ends classic DOG instead of playing partner pawns',()=>{
  const s=card(ready(),0,'2');
  for(let i=0;i<4;i++){s.pieces[i].place='goal';s.pieces[i].pos=i;}
  s.pieces[8].place='track';s.pieces[8].pos=34;
- assert.equal(legalActions(s,0).some(a=>a.pieceId===8),true);
+ assert.deepEqual(legalActions(s,0),[],'victorious player cannot act again');
+ assert.throws(()=>takeAction(s,0,{type:'move',cardId:999}),/GAME_ALREADY_FINISHED/);
 });
 test('illegal actions are rejected rather than accepted',()=>{
  const s=card(ready(),0,'5');
