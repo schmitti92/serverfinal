@@ -50,16 +50,42 @@ for(const variant of OTHER_EDITION_VARIANTS){
   assert.equal(changed.config.prizeCategory,c.prizeCategory===3?2:3);
  });
 }
-test('Premium 27 always has exactly four visible paid money rows',()=>{
+test('Premium 27 current edition prints exactly two visible paid money rows',()=>{
  const variant='premium_27';
  const c=OTHER_EDITION_DEFAULT[variant];
- const e=createOtherEdition({id:'premium-four',createdAt:12345,createdBy:'admin',
+ const e=createOtherEdition({id:'premium-two',createdAt:12345,createdBy:'admin',
   variant,maxTotalCoins:2000000,config:c,draw:zero});
  const a=issueOtherEditionTicket(null,null,{
   tier:'premium',variantId:variant,commandId:'p27-check-123456'
  },e,null,{draw:zero,now:()=>12345});
- assert.equal(a.purchase.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize?.type==='coins').length,4);
- assert.equal(a.purchase.result.winnings.filter(w=>w.type==='coins'&&w.milestone!=='gold-20').length,4);
+ assert.equal(a.purchase.result.board.symbolVersion,6);
+ assert.equal(a.purchase.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize?.type==='coins').length,2);
+ assert.equal(a.purchase.result.winnings.filter(w=>w.type==='coins'&&w.milestone!=='gold-20').length,2);
+});
+test('current legacy Premium edition automatically converts unsold cards on purchase',()=>{
+ const c=OTHER_EDITION_DEFAULT.premium_27;
+ const oldCard='0'; // legacy v5: three denominations plus a fourth small win
+ const oldAmount=otherTicketAmount('premium_27',oldCard,c);
+ const raw={
+  id:'live-old-premium',createdAt:12345,createdBy:'admin',
+  variantId:'premium_27',size:500,issued:1,paidCoins:oldAmount,
+  maxTotalCoins:500*oldAmount,revision:3,budgetMode:'fixed',config:c,
+  prizePlan:Array(500).fill(oldCard)
+ };
+ const issued=issueOtherEditionTicket(null,null,{
+  tier:'premium',variantId:'premium_27',commandId:'premium-migrate-live'
+ },raw,null,{draw:zero,now:()=>12345});
+ assert.equal(issued.edition.prizePlan[0],oldCard,'historical sold code must not change');
+ assert.ok(issued.edition.prizePlan.slice(1).every(code=>code.startsWith('v6:')),
+  'every remaining card must be converted to the two-row edition format');
+ assert.equal(issued.edition.issued,2);
+ assert.equal(issued.edition.paidCoins,oldAmount+issued.purchase.result.totalCoins);
+ assert.equal(issued.purchase.result.board.symbolVersion,6);
+ assert.equal(issued.purchase.result.board.wins.filter(win=>win.rule==='row-3'&&
+  win.prize?.type==='coins').length,2);
+ assert.equal(otherPlanTotal('premium_27',issued.edition.prizePlan.slice(2),c),
+  raw.maxTotalCoins-issued.edition.paidCoins);
+ assert.equal(verifyScratchPrizes(issued.purchase.result.board),true);
 });
 test('DOG 9 jackpot has either zero or eight actual paid fields',()=>{
  const variant='dog_jackpot_9',c=OTHER_EDITION_DEFAULT[variant];
