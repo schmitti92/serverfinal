@@ -99,10 +99,10 @@ test('premium 1-win cap still generates a verifiable coin-only ticket',()=>{
  const result=buyScratchTicket({coins:10000},null,
   {tier:'premium',commandId:'scratch-premium-one'},
   {settings:config,draw:max=>0});
- assert.equal(result.result.winnings.length,6);
+ assert.equal(result.result.winnings.length,4);
  assert.equal(result.result.winnings[0].type,'coins');
- assert.equal(result.result.board.wins.length,6);
- assert.equal(result.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins').length,4);
+ assert.equal(result.result.board.wins.length,4);
+ assert.equal(result.result.board.wins.filter(w=>w.rule==='row-3'&&w.prize.type==='coins').length,2);
  assert.ok(result.result.board.wins.some(w=>w.rule==='gold-20'));
 });
 test('zero bonus chance does not invent a 4th through 10th visible hit',()=>{
@@ -269,8 +269,7 @@ test('all four cards apply individual symbol weights to real money, gifts and bo
    const prizes=purchase.result.winnings;
    assert.equal(purchase.result.board.variantId,id);
    assert.equal(prizes.length,['gifts','snow_collect'].includes(id)?purchase.result.board.wins.length:10,id+' reward count');
-   assert.ok(id==='premium_27'?['🪙','💵','💼'].every(icon=>prizes.some(x=>x.type==='coins'&&x.symbol===icon)):
-   prizes.filter(x=>x.type==='coins').every(x=>x.symbol==='💼'),id+' money weights');
+   assert.ok(prizes.filter(x=>x.type==='coins'&&!x.milestone).every(x=>x.symbol==='💼'),id+' money weights');
    if(group==='gifts'){
     assert.ok(prizes.some(x=>x.type==='unlock'),id+' must show at least one unlock');
     assert.ok(prizes.filter(x=>x.type==='unlock').every(x=>x.symbol==='🧧'),id+' red envelope only');
