@@ -868,13 +868,16 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
   return true;
  };
  if(variantId==='premium_27'){
-  // Every NEW Premiumlos pays FOUR real horizontal money triples.
-  // All three denominations occur at least once; a weighted fourth
-  // can repeat any money icon. Three matching glyphs on DIFFERENT rows
-  // remain separate prizes, credited exactly once each.
-  const fourth=pickWeightedScratchSymbol(config.moneySymbolWeights,random);
-  if(fourth<0)throw Error('SCRATCH_PREMIUM_MONEY_ODDS_INVALID');
-  const moneyRows=[0,1,2,fourth];
+  // Every NEW premium ticket has exactly TWO paid horizontal money triples.
+  // Choose their symbols from the host's configured weights; if possible use
+  // two distinct denominations, so that both guaranteed rows are easy to see.
+  const first=pickWeightedScratchSymbol(config.moneySymbolWeights,random);
+  if(first<0)throw Error('SCRATCH_PREMIUM_MONEY_ODDS_INVALID');
+  const second=pickWeightedScratchSymbol(config.moneySymbolWeights,random,
+   config.moneySymbolWeights.some((weight,index)=>index!==first&&weight>0)?
+    [0,1,2].filter(index=>index!==first):null);
+  if(second<0)throw Error('SCRATCH_PREMIUM_MONEY_ODDS_INVALID');
+  const moneyRows=[first,second];
   for(let i=moneyRows.length-1;i>0;i--){
    const j=random(i+1);[moneyRows[i],moneyRows[j]]=[moneyRows[j],moneyRows[i]];
   }
@@ -996,17 +999,22 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  }
  if(variantId==='premium_27'&&typeof printControl?.fixedPremiumCode==='string'){
   const code=printControl.fixedPremiumCode;
-  if(!/^[012](?:[mg])?$/.test(code))throw Error('SCRATCH_PREMIUM_EDITION_PLAN_INVALID');
+  if(!/^(?:[012](?:[mg])?|v6:[012]{2}(?:[mg])?)$/.test(code))throw Error('SCRATCH_PREMIUM_EDITION_PLAN_INVALID');
   for(const id of newUnlocks)owned.delete(id);
   winnings.length=0;newUnlocks.length=0;
   doubleMain=false;rareMainMultiplier=false;multiplier=1;
-  // Four genuine gold-framed money triples on every Premium card.
-  for(const index of [0,1,2,Number(code[0])])winnings.push({
+  // Pre-existing custom editions keep their old four-row v5 format.
+  // Newly created editions use v6:<two row symbols>[m|g] with two rows.
+  const isNewPremiumCode=code.startsWith('v6:');
+  const indexes=isNewPremiumCode?
+   [Number(code[3]),Number(code[4])]:[0,1,2,Number(code[0])];
+  for(const index of indexes)winnings.push({
    type:'coins',symbol:SCRATCH_PAYOUT_ORDER[index],amount:config.coinAmounts[index]
   });
-  if(code.length===2){
+  const milestone=isNewPremiumCode?code[5]:code[1];
+  if(milestone){
    winnings.push({type:'coins',symbol:'🪙',amount:1000,milestone:'gold-20'});
-   if(code[1]==='g'){
+   if(milestone==='g'){
     const canUnlock=awardMain();
     const gift=canUnlock?winnings.find(p=>p.type==='unlock'):null;
     if(gift)gift.milestone='premium-24';
@@ -1016,7 +1024,9 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // The two normal ticket types share one pool; premium gets its own pair.
  // Older medium-priced tickets still use normal game types until shop migration.
  const board=variantId==='premium_27'?
-  generatePremium27(winnings,{draw:random,version:5,
+  generatePremium27(winnings,{draw:random,
+   version:typeof printControl?.fixedPremiumCode==='string'&&
+    !printControl.fixedPremiumCode.startsWith('v6:')?5:6,
    forceFull27:printControl?.forceFull27===true,
    excludeFull27:printControl?.excludeFull27===true}):
   attachScratchPrizes(generateScratchGrid(variantId,winnings.length,{draw:random,
