@@ -242,3 +242,39 @@ test('Reducer must be synchronous and must not invent a reward or shorten a sign
  }}),/DOG_STORAGE_TRANSACTION_REQUIRED/);
  assert.equal(f.state.actions.size,0);
 });
+
+test('Neither a reducer nor a verifier may modify participants or cosmetics indirectly',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ await store.seedRoom(room());
+ for(const reduce of [
+  (r)=>{r.match.dog.revision++;r.players=[];return r;},
+  (r)=>{r.match.dog.revision++;r.match.dogRoster=[];return r;},
+  (r)=>{r.match.dog.revision++;r.match.dogResearchSkills={alice:{lights_bonus:10}};return r;},
+  (r)=>{r.match.dog.revision++;r.match.christmas={enabled:false};return r;}
+ ]){
+  await assert.rejects(()=>store.commitMove({...move(),reduce}),/DOG_STORAGE_TRANSACTION_REQUIRED/);
+ }
+ assert.equal(f.state.actions.size,0);
+ assert.equal(f.metrics.rollbacks,4);
+ // An authorization helper sees an isolated copy; it cannot accidentally
+ // forge a committed participant while checking the caller's access.
+ const result=await store.commitMove({...move(),
+  authorize:async r=>{r.players.push({uid:'mallory'})}});
+ assert.equal(result.replayed,false);
+ assert.equal(result.room.players.length,2);
+ assert.equal(f.state.actions.size,1);
+});
+
+test('Oversized DOG document rejects before SQL UPDATE, with no fake or partial success',async()=>{
+ const f=fakePool(),store=createDogPostgresRoomStore({pool:f.pool,clock:()=>2000});
+ await store.seedRoom(room());
+ await assert.rejects(()=>store.commitMove({...move(),reduce:r=>{
+  r.match.dog.revision++;
+  r.match.dog.history=['x'.repeat(1_000_000)];
+  return r;
+ }}),/DOG_STORAGE_STATE_TOO_LARGE/);
+ assert.equal(f.state.actions.size,0);
+ assert.equal(f.state.outbox.length,0);
+ assert.equal((await store.getRoom('123')).room.match.dog.revision,7);
+ assert.equal(f.metrics.rollbacks,1);
+});
