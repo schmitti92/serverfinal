@@ -1,0 +1,26 @@
+name: DOG victory next round
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/engine.js'
+      - 'tests/dog-post-victory-rematch.test.js'
+      - '.github/workflows/dog-victory-next-round.yml'
+  pull_request:
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/engine.js'
+      - 'tests/dog-post-victory-rematch.test.js'
+      - '.github/workflows/dog-victory-next-round.yml'
+  workflow_dispatch:
+jobs:
+  victory-next-round:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js && node --check dog/engine.js
+      - run: node --test tests/dog-post-victory-rematch.test.js tests/dog-first-four-wins.test.js
