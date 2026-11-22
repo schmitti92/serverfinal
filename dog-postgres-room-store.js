@@ -108,7 +108,7 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
    // Authenticate and authorize with the CURRENT durable roster, not a
    // stale WebSocket projection. The application supplies its verifier.
    validateBasicMove(before,{uid,matchId});
-   await authorize(before,{uid,matchId,action});
+   await authorize(structuredClone(before),{uid,matchId,action});
    const receipts=await client.query(
     'SELECT request_hash,room_version FROM dog_room_actions WHERE room_code=$1 AND match_id=$2 AND action_id=$3',
     [code,matchId,actionId]);
@@ -127,6 +127,19 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
    if(returned&&typeof returned.then==='function')
     fail('DOG_STORAGE_ASYNC_REDUCER_FORBIDDEN');
    const after=returned?.room||candidate;
+   // Game reducers are not allowed to reassign room membership, rewrite
+   // entitlements or alter room ownership. Those transitions require separate
+   // verified server commands and may involve other durable documents.
+   const identical=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+   if(after.game!==before.game||after.phase!==before.phase||
+      after.hostUid!==before.hostUid||after.createdAt!==before.createdAt||
+      !identical(after.players,before.players)||
+      !identical(after.match?.dogRoster,before.match?.dogRoster)||
+      !identical(after.match?.members,before.match?.members)||
+      !identical(after.match?.dogResearchSkills,before.match?.dogResearchSkills)||
+      !identical(after.match?.christmas,before.match?.christmas)||
+      !identical(after.match?.dogCounters,before.match?.dogCounters))
+    fail('DOG_STORAGE_TRANSACTION_REQUIRED');
    if(!validRoom(after,code)||after.match?.id!==matchId||
       after.match.dogChristmasEligibilityChecked!==true||
       after.match.christmas?.enabled===true||
@@ -139,9 +152,12 @@ export function createDogPostgresRoomStore({pool,clock=Date.now}={}){
    after.revision=Number(row.version)+1;
    after.updatedAt=clock();
    after.expiresAt=clock()+WINDOW_MS;
+   const serialized=JSON.stringify(after);
+   if(Buffer.byteLength(serialized,'utf8')>900000)
+    fail('DOG_STORAGE_STATE_TOO_LARGE');
    const write=await client.query(
     'UPDATE dog_room_states SET snapshot=$2::jsonb,version=$3,expires_at_ms=$4,updated_at_ms=$5 WHERE room_code=$1 AND version=$6',
-    [code,JSON.stringify(after),after.revision,after.expiresAt,after.updatedAt,Number(row.version)]);
+    [code,serialized,after.revision,after.expiresAt,after.updatedAt,Number(row.version)]);
    if(write.rowCount!==1)fail('DOG_STORAGE_VERSION_CONFLICT');
    await client.query(
     'INSERT INTO dog_room_actions (room_code,match_id,action_id,actor_uid,request_hash,room_version,created_at_ms) VALUES ($1,$2,$3,$4,$5,$6,$7)',
