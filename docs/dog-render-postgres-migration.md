@@ -485,3 +485,48 @@ dauerhaften Postgres-Pool injizieren.
 Diese Wiederholung ist erst nach der direkten Live-Anbindung eines
 dauerhaften Postgres-Dienstes zu aktivieren. Die alten Firestore-Räume
 und die bestehende gemeinsame Lobby bleiben unangetastet.
+
+## P6 – Separater authentifizierter PostgreSQL-Pilotablauf (noch ohne Live-Routen)
+
+`dog-postgres-pilot-coordinator.js` verbindet jetzt die bisherigen,
+einzeln geprüften Bausteine in einem serverseitigen Ablauf. Der Pilot ist
+**weder** in `server.js` **noch** in `shared-lobby.js` registriert.
+Er öffnet keine Datenbankverbindung und startet keine Hintergrundjobs bei
+Konstruktion oder Modulimport. Dadurch bleiben alle derzeitigen
+3-Ziffern-DOG-Räume uneingeschränkt auf dem bisherigen Firestore-Pfad.
+
+- Zug und Abfrage setzen eine **vom Server überprüfte Firebase-ID-Token-
+  Identität** voraus. Der Browser darf die UID nicht per JSON festlegen.
+- Für den Pilot sind ausschließlich `P`-präfixierte 6-Zeichen-Raumcodes
+  zulässig. Der dreistellige produktive DOG-Raumcode wird hart abgewiesen.
+  Die Pilot-Räume müssen separat und serverseitig aus autorisierten
+  Teilnehmern erstellt und mit `seedRoom` im dauerhaften PG gespeichert
+  werden; es gibt bewusst noch **keine** öffentliche Raum-Erstellung.
+- Ein normaler klassischer Zug nutzt die vorhandene SQL-CAS-Engine.
+  Ein normaler Weihnachtszug ohne Gewinn nutzt das eigene
+  `dog-postgres-seasonal-journal` – ohne Firebase-Aufruf.
+- Bei einem Weihnachtsgeschenk, Los oder bei einem Spielende werden
+  die bestehenden Firestore-Receipt-Bridges **erst nach dem dauerhaften
+  SQL-Pending-Commit** aufgerufen. Ein fehlgeschlagener Beleg lässt den
+  sichtbaren Raum unangetastet. Dieselbe `actionId` kann sicher erneut
+  übergeben werden; nach Render-Neustart stehen die beiden explizit
+  aufzurufenden Recovery-Worker bereit.
+- Die privaten Raum-Abos werden nach Firebase-Authentifizierung aus
+  PostgreSQL mit `projectPostgresDogState` **pro Nutzer getrennt**
+  erstellt; ein nach einem SQL-Commit bestätigtes Outbox-Ereignis
+  ermöglicht `fanoutOnce()`. Das ist derzeit **nur das DOG-Spielprojekt**,
+  noch nicht das vollständige `shared-lobby.expose()`-Nachrichtenformat.
+- Die neu hinzugefügten echten PostgreSQL-16-Integrationstests
+  kontrollieren Normalzüge mit **0 Firebase**, vertrauliche Handkarten
+  für drei Menschen, ungültige Tokens, den Ausschluss der Firestore-
+  Raumcodes, Geschenkzüge mit Firebase-Ausfall/Wiederholung, einmaliges
+  Dorfkonto und einen finalen klassischen XP-Abschluss.
+
+**Noch zu bauen, bevor eine einzige echte Partie auf PG umgeschaltet
+werden darf:** Separate, authentifizierte Pilotraum-Erstellung, vollständige
+Hub-Raumprojektion samt Avatar/Spielerstatus/Chat, eine per
+Feature-Flag isolierte Socket-/HTTP-Route, ein getesteter dauerhafter
+Scheduler samt PG-DB-Verbindungsverwaltung, Raumcode-Reservierung,
+Room-Replay mit mehreren Render-Instanzen und eine ausdrücklich
+freigegebene dauerhaft laufende Postgres-Instanz. Eine Auszahlung darf
+niemals nur im Render-RAM oder Browser bestätigt werden.
