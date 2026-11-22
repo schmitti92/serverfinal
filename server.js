@@ -20,6 +20,7 @@ import { installDogPrivatePreviewApi } from "./dog-private-preview.js";
 
 import { installProfileSeats } from "./profile-seats.js";
 import { installSharedLobby } from "./shared-lobby.js";
+import { installDogPostgresPilotHttp } from "./dog-postgres-pilot-http.js";
 import { createFirebaseMutationRequestDiagnostics } from "./firebase-mutation-request-diagnostics.js";
 import { createFirebaseReadRequestDiagnostics } from "./firebase-read-request-diagnostics.js";
 import {resetDogChristmasEventOnce,CHRISTMAS_RESET_ID} from "./dog-christmas-reset-once.js";
@@ -4623,6 +4624,25 @@ const sharedLobby=installSharedLobby(app,{
     }
     return legacyRoom?.state?.finished===true;
   }
+});
+// New DOG/Postgres experiments must NEVER replace an existing 3-digit
+// Firestore game room or silently move a live match between databases.
+// Disabled by default; when off, zero PG connections and no action routes.
+// Only an expressly provisioned durable PG instance and manually seeded,
+// isolated P-prefixed TEST rooms are eligible. Never fall back to RAM.
+installDogPostgresPilotHttp(app,{
+ enabled:process.env.DOG_PG_PILOT_ENABLED==='1',
+ getPool:async()=>{
+  const url=String(process.env.DOG_PG_DATABASE_URL||'');
+  if(!url)throw Error('DOG_PG_PILOT_DATABASE_NOT_CONFIGURED');
+  const {Pool}=await import('pg');
+  return new Pool({
+   connectionString:url,max:4,connectionTimeoutMillis:5000,
+   idleTimeoutMillis:30000
+  });
+ },
+ verifyProfile:profileStatsV8.identity,
+ getFirestore:()=>{if(!profileProjectMatches)return null;initFirebaseIfConfigured();return firestore;}
 });
 hubBusinessApi=installHubBusiness(app,{
   verifyProfile:profileStatsV8.identity,

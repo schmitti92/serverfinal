@@ -1,0 +1,32 @@
+name: DOG PostgreSQL opt-in pilot HTTP isolation (offline)
+on:
+  pull_request:
+    paths:
+      - 'server.js'
+      - 'package.json'
+      - 'dog-postgres-pilot-http.js'
+      - 'dog-postgres-pilot-coordinator.js'
+      - 'tests/dog-postgres-pilot-http-offline.test.js'
+      - '.github/workflows/dog-postgres-pilot-http-offline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server.js'
+      - 'package.json'
+      - 'dog-postgres-pilot-http.js'
+      - 'dog-postgres-pilot-coordinator.js'
+      - 'tests/dog-postgres-pilot-http-offline.test.js'
+      - '.github/workflows/dog-postgres-pilot-http-offline.yml'
+permissions:
+  contents: read
+jobs:
+  guarded-pilot-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check server.js && node --check dog-postgres-pilot-http.js && node --check dog-postgres-pilot-coordinator.js
+      - run: node --test tests/dog-postgres-pilot-http-offline.test.js
