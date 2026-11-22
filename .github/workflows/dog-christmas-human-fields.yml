@@ -1,0 +1,26 @@
+name: DOG Christmas human-only field rewards
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/christmas-village.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-christmas-bot-fields.test.js'
+      - '.github/workflows/dog-christmas-human-fields.yml'
+  pull_request:
+    paths:
+      - 'dog/christmas-village.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-christmas-bot-fields.test.js'
+      - '.github/workflows/dog-christmas-human-fields.yml'
+  workflow_dispatch:
+jobs:
+  human-only-christmas-fields:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/christmas-village.js && node --check shared-lobby.js
+      - run: node --test tests/dog-christmas-bot-fields.test.js tests/dog-christmas-village.test.js
