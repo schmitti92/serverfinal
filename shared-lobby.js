@@ -2206,9 +2206,11 @@ function finishEisstock(ch,members){
 
   // DOG Classic: room membership and authoritative rules in the same Firestore transaction.
   // Opponent hands, draw deck and private card exchanges never leave the server.
-  app.post('/api/hub/rooms/:code/dog/action',handler(async req=>{
-    const code=validCode(req.params.code),identity=req.hubIdentity;
-    const {matchId,action,expectedRevision,actionId}=req.body||{};
+  // One authoritative DOG move implementation for both HTTP and the
+  // already authenticated Render room WebSocket. Every state change still
+  // commits via the same durable Firestore CAS/transaction code.
+  async function commitDogAction(code,identity,body){
+    const {matchId,action,expectedRevision,actionId}=body||{};
     if(!code||typeof matchId!=='string'||!Number.isInteger(expectedRevision)||typeof actionId!=='string'||!/^[-a-zA-Z0-9_:]{8,90}$/.test(actionId)||!action||typeof action!=='object')throw error(400,'INVALID_DOG_ACTION');
     const room=await mutate(code,identity,async(room,tx,store)=>{
       const match=room.match;
@@ -2337,8 +2339,11 @@ function finishEisstock(ch,members){
       for(const item of voucherUpdates)tx.set(item.ref,item.wallet);
       for(const item of completedDogStats)tx.set(item.ref,item.data);
     },'dog-action');
-    return {room};
-  }));
+    return room;
+  }
+  app.post('/api/hub/rooms/:code/dog/action',handler(async req=>({
+    room:await commitDogAction(validCode(req.params.code),req.hubIdentity,req.body)
+  })));
 
   // Business: host-controlled virtual players for isolated gameplay tests.
   app.post('/api/hub/rooms/:code/business-test-players',handler(async req=>{
@@ -3633,6 +3638,7 @@ function finishEisstock(ch,members){
   }
   function attachSocket(ws){
     let unwatch=null,closed=false,authenticated=false,emojiIdentity=null,emojiRoomCode=null,emojiRoom=null,emojiClient=null;
+    let dogActionInFlight=false;
     let ownedEmojiCache=null,ownedEmojiAt=0,ownedEmojiUid='';
     // Suppress duplicate room payloads on reconnect/metadata-only snapshots.
     // Authentication and membership checks still run for every snapshot.
@@ -3663,6 +3669,30 @@ function finishEisstock(ch,members){
       if(String(bytes).length>9000){try{ws.close(1009,'HUB_MESSAGE_TOO_LARGE');}catch(_e){}return;}
       let msg;try{msg=JSON.parse(String(bytes));}catch(_e){return;}
       if(msg?.type==='ping'){send({type:'pong'});return;}
+      if(msg?.type==='dog_action'){
+        // This verified socket is bound to ONE Firebase user and room.
+        // Ignore any claimed actor or room in the submitted JSON. Each move
+        // remains revalidated in Firestore using the normal DOG rules.
+        const actionId=msg.actionId;
+        if(!emojiIdentity||!emojiRoomCode||!emojiRoom){
+          send({type:'dog_action_error',actionId,error:'NOT_CONNECTED',status:401});
+          return;
+        }
+        if(dogActionInFlight){
+          send({type:'dog_action_error',actionId,error:'DOG_ACTION_BUSY',status:429});
+          return;
+        }
+        dogActionInFlight=true;
+        try{
+          const room=await commitDogAction(emojiRoomCode,emojiIdentity,msg);
+          if(!closed)send({type:'dog_action_result',actionId,room});
+        }catch(e){
+          if(!closed)send({type:'dog_action_error',actionId,
+            error:e?.message||'DOG_ACTION_FAILED',
+            status:Number.isInteger(e?.status)?e.status:409});
+        }finally{dogActionInFlight=false;}
+        return;
+      }
       if(msg?.type==='dog_emoji'){
         const id=msg.emojiId,room=emojiRoom,identity=emojiIdentity;
         const reject=reason=>send({type:'dog_emoji_error',reason});
