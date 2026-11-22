@@ -530,3 +530,50 @@ Scheduler samt PG-DB-Verbindungsverwaltung, Raumcode-Reservierung,
 Room-Replay mit mehreren Render-Instanzen und eine ausdrücklich
 freigegebene dauerhaft laufende Postgres-Instanz. Eine Auszahlung darf
 niemals nur im Render-RAM oder Browser bestätigt werden.
+
+## P6 – Isolierte HTTP-Pilot-Verkabelung in `server.js` (standardmäßig AUS)
+
+Mit `dog-postgres-pilot-http.js` existiert jetzt erstmals eine
+**streng getrennte HTTP-Entrypoint-Registrierung** im realen Render-Server.
+Sie ist unter `/api/hub/dog/pg-pilot` reserviert und wird nur unter
+`DOG_PG_PILOT_ENABLED=1` installiert. Ohne das Flag:
+
+- Der einzige öffentliche Status-Endpunkt meldet `enabled:false`.
+- Es werden **keine** Postgres-Verbindungen geöffnet oder Tabellen
+  abgefragt; der eigentliche `pg`-Treiber wird nicht dynamisch geladen.
+- Es werden **keine** Pilot-Zug- oder Pilot-Raum-GET-Routen registriert.
+- Die normalen 3-Ziffern-Räume, `/api/hub/rooms/...` und `/hub`
+  bleiben vollständig beim bisherigen Firestore-Spiel.
+
+Selbst bei bewusst aktiviertem Flag öffnet der Pilot eine Verbindung
+erst bei einer authentifizierten Form der Pilot-Abfrage und überprüft
+die drei notwendigen SQL-Tabellen vor jeder Freigabe der ersten Route.
+Fehlt eine Migration oder PG-Verbindung, antwortet er mit `503` und
+schließt den unbrauchbaren Pool: **niemals RAM-Fallback** und niemals
+heimlicher Firestore-Schreibpfad. Ein bestehender Raumcode ohne `P`-
+Präfix wird bereits vor einem SQL-Aufruf abgewiesen. Geheimnisse und
+private Karten erscheinen nicht im Status und nicht in Fehlermeldungen.
+
+Isolierte, bereits angemeldete Pilot-Raume lassen sich später über
+`GET /api/hub/dog/pg-pilot/rooms/:code` lesen und über
+`POST /api/hub/dog/pg-pilot/rooms/:code/action` mit einer serverseitig
+verifizierten Firebase-ID bearbeiten. Es gibt derzeit **keinen** öffentlichen
+Pilot-Raum-Start und noch keine Pilot-WebSocket-URL, also weiterhin
+**keine** öffentliche spielbare PG-DOG-Partie.
+
+**Konfiguration erst nach ausdrücklicher Freigabe einer dauerhaften
+Datenbank:** `DOG_PG_PILOT_ENABLED=1` und
+`DOG_PG_DATABASE_URL` mit der serverseitigen Postgres-URL.
+Der `pg`-Treiber ist als reguläre Node-Abhängigkeit aufgenommen,
+stellt aber selbst keine Verbindung her und erzeugt keine DB-Kosten.
+Die SQL-Migration muss vorher kontrolliert ausgeführt sein; bei
+fehlender Tabelle bleiben alle Pilot-Aktionen gesperrt.
+
+Die Offline-CI prüft, dass ohne Flag kein SQL-/Firebase-Zugriff
+stattfindet, dass der Raumcode nicht die produktive DOG-Lobby übernimmt,
+dass falsche Tokens keinen Datenzugriff erhalten, dass PG-Fehler ohne
+Absturz abgefangen und ohne Secrets ausgegeben werden und dass
+parallele Erstzugriffe genau einen Pool anlegen. Vor einer Freigabe
+echter Pilotspieler fehlt weiterhin die vollständige Hub-Projection,
+Pilot-Raumerstellung, WebSocket-Anbindung, der sichere
+Wiederherstellungs-Scheduler und eine echte freigegebene Postgres-Instanz.
