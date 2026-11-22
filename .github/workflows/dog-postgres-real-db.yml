@@ -8,6 +8,9 @@ on:
       - 'dog-postgres-finalization.js'
       - 'dog-postgres-seasonal-adapter.js'
       - 'dog-postgres-seasonal-journal.js'
+      - 'dog-postgres-pilot-coordinator.js'
+      - 'dog-postgres-seasonal-recovery.js'
+      - 'dog-postgres-settlement-recovery.js'
       - 'dog-postgres-christmas-settlement.js'
       - 'dog-postgres-seasonal-final-settlement.js'
       - 'dog-postgres-xp-settlement.js'
@@ -23,6 +26,9 @@ on:
       - 'dog-postgres-finalization.js'
       - 'dog-postgres-seasonal-adapter.js'
       - 'dog-postgres-seasonal-journal.js'
+      - 'dog-postgres-pilot-coordinator.js'
+      - 'dog-postgres-seasonal-recovery.js'
+      - 'dog-postgres-settlement-recovery.js'
       - 'dog-postgres-christmas-settlement.js'
       - 'dog-postgres-seasonal-final-settlement.js'
       - 'dog-postgres-xp-settlement.js'
@@ -64,5 +70,5 @@ jobs:
       # ONLY on this disposable CI worker; no package.json dependency or
       # persistent database is created on Render.
       - run: npm install --no-save --package-lock=false pg@8
-      - run: node --check dog-postgres-seasonal-journal.js && node --check tests-integration/dog-postgres-real-db.mjs
+      - run: node --check dog-postgres-seasonal-journal.js && node --check dog-postgres-pilot-coordinator.js && node --check tests-integration/dog-postgres-real-db.mjs
       - run: node --test tests-integration/dog-postgres-real-db.mjs
