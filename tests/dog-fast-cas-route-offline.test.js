@@ -6,7 +6,7 @@ import {installSharedLobby} from '../shared-lobby.js';
 // In-memory Firestore version/precondition simulator. It NEVER contacts
 // Firebase and records transaction GETs separately from CAS document UPDATEs.
 function harness({fastCasEnabled=true}={}){
- const docs=new Map(),versions=new Map(),listeners=new Map(),routes=new Map();
+ const docs=new Map(),versions=new Map(),listeners=new Map(),routes=new Map(),middles=[];
  const counted={gets:0,casUpdates:0,transactions:0,watches:0};
  let now=100000;
  const stamp=n=>({toMillis:()=>n});
@@ -62,7 +62,7 @@ function harness({fastCasEnabled=true}={}){
  const app={
   get(path,...handlers){routes.set('GET '+path,handlers);},
   post(path,...handlers){routes.set('POST '+path,handlers);},
-  use(){}
+  use(path,middleware){middles.push({path,middleware});}
  };
  const auth=async token=>token==='alice'?{uid:'alice',name:'Alice'}:
   token==='bob'?{uid:'bob',name:'Bob'}:null;
@@ -86,12 +86,20 @@ function harness({fastCasEnabled=true}={}){
   const res={statusCode:200,status(n){this.statusCode=n;return this},
    json(value){this.body=value;return this}};
   const callbacks=routes.get(key);
-  if(callbacks.length===1)await callbacks[0](req,res);
-  else{
-   let nextCalled=false;
-   await callbacks[0](req,res,()=>{nextCalled=true});
-   if(nextCalled)await callbacks[1](req,res);
-  }
+  const invokeRoute=async()=>{
+   if(callbacks.length===1)await callbacks[0](req,res);
+   else{
+    let nextCalled=false;
+    await callbacks[0](req,res,()=>{nextCalled=true});
+    if(nextCalled)await callbacks[1](req,res);
+   }
+  };
+  const guard=middles.find(m=>path===m.path||path.startsWith(m.path+'/'));
+  if(guard){
+   let allowed=false;
+   await guard.middleware(req,res,()=>{allowed=true;});
+   if(allowed)await invokeRoute();
+  }else await invokeRoute();
   return {status:res.statusCode,...res.body};
  }
  class FakeWs extends EventEmitter{
