@@ -41,4 +41,24 @@ CREATE TABLE IF NOT EXISTS dog_room_outbox (
 CREATE INDEX IF NOT EXISTS dog_room_outbox_pending_idx
   ON dog_room_outbox (event_id) WHERE delivered_at_ms IS NULL;
 
+-- Keep the final move and immutable winner snapshot PRIVATE until the
+-- Firestore match receipt has credited every human player's XP.
+-- The unfinished live room remains untouched and can be safely restored.
+CREATE TABLE IF NOT EXISTS dog_room_pending_finishes (
+  room_code VARCHAR(6) PRIMARY KEY REFERENCES dog_room_states(room_code) ON DELETE CASCADE,
+  match_id TEXT NOT NULL,
+  action_id VARCHAR(90) NOT NULL,
+  actor_uid TEXT NOT NULL,
+  request_hash CHAR(64) NOT NULL,
+  base_version BIGINT NOT NULL,
+  finished_snapshot JSONB NOT NULL,
+  finished_at_ms BIGINT NOT NULL,
+  fingerprint CHAR(64) NOT NULL,
+  created_at_ms BIGINT NOT NULL,
+  UNIQUE (room_code,match_id,action_id)
+);
+
+CREATE INDEX IF NOT EXISTS dog_room_pending_finishes_by_match_idx
+  ON dog_room_pending_finishes (match_id);
+
 COMMIT;
