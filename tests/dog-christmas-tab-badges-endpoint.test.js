@@ -40,7 +40,7 @@ function harness(options={}){
   };
   return call(0);
  };
- const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')||path.startsWith('/api/hub/dog/video-library')||path.startsWith('/api/hub/dog/christmas-tab-badges')?
+ const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')||path.startsWith('/api/hub/dog/video-library')||path.startsWith('/api/hub/dog/christmas-tab-badges')||path.startsWith('/api/hub/dog/research/claim')||path.startsWith('/api/hub/dog/level/rewards/claim')?
   chain(handlers):handlers[0];
  const app={
   get(path,...handlers){routes.push({method:'GET',path,fn:routeFn(path,handlers)});},
@@ -95,4 +95,36 @@ test('menu summary does not depend on opening a DOG room or a Christmas village'
  assert.equal(result.badges.research,0);
  assert.equal(result.badges.level,1);
  assert.equal(h.watchStats().starts,0);
+});
+
+test('claiming a free research ticket reports the new voucher count without extra badge roundtrip',async()=>{
+ const h=harness();
+ const uid='user_alice123',walletKey='dog_christmas_scratch_wallet_v1/'+uid;
+ h.docs.set('dog_christmas_research_v1/'+uid,{levels:{free_ticket:1},freeTicketAt:0});
+ h.docs.set(walletKey,{vouchers:{simple:2,medium:0,premium:0},variantVouchers:{gifts:1}});
+ const before=await h.api('GET','/api/hub/dog/christmas-tab-badges','alice');
+ assert.equal(before.badges.scratch,3);
+ const result=await h.api('POST','/api/hub/dog/research/claim','alice',{type:'free_ticket',tier:'simple'});
+ assert.equal(result.status,200);
+ assert.equal(result.scratchVoucherCount,4);
+ assert.equal(result.research.cooldowns.freeTicketAt>1000,true);
+ assert.equal(h.docs.get(walletKey).vouchers.simple,3);
+ const after=await h.api('GET','/api/hub/dog/christmas-tab-badges','alice');
+ assert.equal(after.badges.scratch,4,'old 30-second wallet cache must be invalidated');
+});
+
+test('builder research returns committed shared village lights for instant buildings counter',async()=>{
+ const h=harness();
+ const uid='user_alice123';
+ h.docs.set('dog_christmas_research_v1/'+uid,{levels:{builder:2},builderAt:0});
+ h.docs.set('dog_christmas_villages_v1/lichtertal_2026_shared',{
+  levels:{tower:1,workshop:1,bakery:1,inn:1,luckhouse:1,academy:1},
+  lightsTenths:140,giftsCollected:0
+ });
+ const result=await h.api('POST','/api/hub/dog/research/claim','alice',{type:'builder'});
+ assert.equal(result.status,200);
+ assert.equal(result.lights,2);
+ assert.equal(result.villageLightsTenths,160);
+ const village=await h.api('GET','/api/hub/christmas-village','alice');
+ assert.equal(village.village.lightsTenths,160);
 });
