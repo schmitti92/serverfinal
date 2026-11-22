@@ -1,0 +1,60 @@
+name: DOG PostgreSQL real database integration
+on:
+  pull_request:
+    paths:
+      - 'dog-postgres-room-store.js'
+      - 'dog-postgres-classic-adapter.js'
+      - 'dog-postgres-private-fanout.js'
+      - 'dog-postgres-finalization.js'
+      - 'dog-postgres-xp-settlement.js'
+      - 'migrations/20261122_dog_durable_rooms.sql'
+      - 'tests-integration/dog-postgres-real-db.mjs'
+      - '.github/workflows/dog-postgres-real-db.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dog-postgres-room-store.js'
+      - 'dog-postgres-classic-adapter.js'
+      - 'dog-postgres-private-fanout.js'
+      - 'dog-postgres-finalization.js'
+      - 'dog-postgres-xp-settlement.js'
+      - 'migrations/20261122_dog_durable_rooms.sql'
+      - 'tests-integration/dog-postgres-real-db.mjs'
+      - '.github/workflows/dog-postgres-real-db.yml'
+permissions:
+  contents: read
+jobs:
+  real-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dog_test
+          POSTGRES_USER: dog_test
+          POSTGRES_PASSWORD: local-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dog_test -d dog_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: dog_test
+      PGPASSWORD: local-ci-only
+      PGDATABASE: dog_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The production Render service remains unchanged: pg is installed
+      # ONLY on this disposable CI worker; no package.json dependency or
+      # persistent database is created on Render.
+      - run: npm install --no-save --package-lock=false pg@8
+      - run: node --check tests-integration/dog-postgres-real-db.mjs
+      - run: node --test tests-integration/dog-postgres-real-db.mjs
