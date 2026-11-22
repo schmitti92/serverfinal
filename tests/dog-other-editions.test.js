@@ -128,6 +128,51 @@ test('Premium edition pricing correction applies once to the live edition only',
   maxTotalCoins:2000000,config:c,draw:zero});
  assert.equal(otherEditionPublic(stillNew).config.price,1000);
 });
+test('running middle Wichtelpfad edition costs 600 coins without changing issued receipts',()=>{
+ const variant='elf',c=OTHER_EDITION_DEFAULT.elf;
+ const historical=createOtherEdition({id:'active-elf',variant,createdAt:Date.parse('2026-11-21T00:00:00Z'),
+  createdBy:'admin',maxTotalCoins:100000,config:c,draw:zero});
+ const firstAmount=otherTicketAmount(variant,historical.prizePlan[0],c);
+ const current={...historical,issued:1,paidCoins:firstAmount,revision:9};
+ const oldPlan=[...current.prizePlan];
+ assert.equal(current.config.price,500);
+ assert.equal(otherEditionPublic(current).config.price,600,
+  'the currently running edition must show 600 coins before purchase');
+ const bought=issueOtherEditionTicket({coins:10000},null,{
+  tier:'medium',variantId:variant,commandId:'active-middle-price'
+ },current,null,{draw:zero,now:()=>12345});
+ assert.equal(bought.purchase.result.price,600);
+ assert.equal(bought.edition.config.price,600);
+ assert.equal(bought.edition.mediumPrice600Applied,true);
+ assert.equal(bought.edition.issued,2);
+ assert.equal(bought.edition.prizePlan[0],oldPlan[0],
+  'the issued first card must remain unchanged');
+ assert.deepEqual(bought.edition.prizePlan,oldPlan,
+  'price correction alone must not regenerate payout combinations');
+ assert.equal(bought.edition.paidCoins,firstAmount+bought.purchase.result.totalCoins);
+ assert.equal(verifyScratchPrizes(bought.purchase.result.board),true);
+ const replay=issueOtherEditionTicket(bought.purchase.wallet,null,{
+  tier:'medium',variantId:variant,commandId:'active-middle-price'
+ },bought.edition,null,{draw:()=>{throw Error('REPLAY_MUST_NOT_REDRAW')},now:()=>12345});
+ assert.equal(replay.purchase.unchanged,true);
+ assert.equal(replay.purchase.result.price,600);
+ assert.equal(replay.edition.issued,2);
+ const changed=editOtherEdition(bought.edition,{
+  config:{...c,price:700},maxTotalCoins:100000,draw:zero});
+ assert.equal(changed.config.price,700,'the correction should not lock future host price edits');
+});
+test('future middle editions keep their configured 500-coin price',()=>{
+ const variant='elf',c=OTHER_EDITION_DEFAULT.elf;
+ const future=createOtherEdition({id:'future-elf',variant,createdAt:Date.parse('2026-11-23T00:00:00Z'),
+  createdBy:'admin',maxTotalCoins:100000,config:c,draw:zero});
+ assert.equal(otherEditionPublic(future).config.price,500);
+ const bought=issueOtherEditionTicket({coins:10000},null,{
+  tier:'medium',variantId:variant,commandId:'future-middle-price'
+ },future,null,{draw:zero,now:()=>12345});
+ assert.equal(bought.purchase.result.price,500);
+ assert.equal(bought.edition.mediumPrice600Applied,undefined);
+ assert.equal(bought.edition.config.price,500);
+});
 test('DOG 9 jackpot has either zero or eight actual paid fields',()=>{
  const variant='dog_jackpot_9',c=OTHER_EDITION_DEFAULT[variant];
  const e=createOtherEdition({id:'dog-eight',createdAt:Date.parse('2026-11-23T00:00:00Z'),createdBy:'admin',
