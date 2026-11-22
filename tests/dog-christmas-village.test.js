@@ -214,3 +214,36 @@ test('claimed gift and scratch cells are reset after the next card deal, not eve
  assert.equal(match.roundGiftCollected,0);assert.equal(match.roundScratchCollected,0);
  assert.equal(match.giftCount,1);assert.equal(match.scratchCount,1);
 });
+
+test('verified Christmas discoveries stay visible for the entire match, not just one card deal',()=>{
+ const draw=()=>0;
+ const match=createDogChristmasMatch(null,true,draw,1);
+ const gift=match.giftFields[0],scratch=match.scratchFields[0];
+ const before=field=>({pieces:[{id:1,place:'track',pos:(field+63)%64}]});
+ const after=field=>({pieces:[{id:1,place:'track',pos:field}]});
+ const action={type:'move',pieceId:1};
+ const fresh=publicDogChristmasMatch(match);
+ assert.deepEqual(fresh.foundGiftFields,[]);
+ assert.deepEqual(fresh.foundScratchFields,[]);
+ assert.equal(fresh.eventSerial,0);
+ assert.equal(fresh.visibleGiftFields,undefined,'unclaimed positions remain secret');
+ assert.equal(fresh.visibleScratchFields,undefined,'unclaimed tickets remain secret');
+ assert.ok(claimDogChristmasGift(match,before(gift),after(gift),action,1,()=>99)>0);
+ assert.equal(claimDogChristmasScratch(match,before(scratch),after(scratch),action,1,()=>20),'simple');
+ const claimed=publicDogChristmasMatch(match);
+ assert.deepEqual(claimed.foundGiftFields,[gift]);
+ assert.deepEqual(claimed.foundScratchFields,[scratch]);
+ assert.equal(claimed.eventSerial,2);
+ assert.deepEqual(claimed.activity.filter(event=>event.id).map(event=>event.id),[1,2]);
+ assert.equal(claimed.activity.at(-1).seat,1);
+ assert.equal(claimDogChristmasScratch(match,before(scratch),after(scratch),action,1,()=>20),null);
+ assert.equal(publicDogChristmasMatch(match).eventSerial,2,'duplicate landing must not trigger new popup');
+ refreshDogChristmasDeal(match,2,draw);
+ const next=publicDogChristmasMatch(match);
+ assert.deepEqual(next.foundGiftFields,[gift],'gift remains marked after redeal');
+ assert.deepEqual(next.foundScratchFields,[scratch],'ticket remains marked after redeal');
+ assert.deepEqual(match.claimedFields,[],'new secret gifts are still collectable');
+ assert.deepEqual(match.claimedScratchFields,[],'new secret tickets are still collectable');
+ assert.equal(next.visibleGiftFields,undefined,'revealed history must not expose the new map');
+ assert.equal(next.visibleScratchFields,undefined,'revealed history must not expose the new scratch map');
+});
