@@ -97,3 +97,12 @@ test('Integration is opt-in and keeps transaction fallback, private views and li
  assert.match(source,/stream\.updateTime=snapshot\.updateTime\|\|null/);
  assert.match(source,/documentFor\(store,code\)\.onSnapshot/);
 });
+
+test('DOG CAS instrumentation is passive and visible in the existing 1-minute Render hub log',()=>{
+ const source=readFileSync(new URL('../shared-lobby.js',import.meta.url),'utf8');
+ assert.match(source,/dogFastCas:dogCasMinute/);
+ assert.match(source,/lastDogCasStats=\{\.\.\.dogFastCasCounts\}/);
+ assert.match(source,/if\(httpRoomGets\|\|watchNotifications\|\|committedDogActions\|\|avoidedWatchRestarts\|\|dogCasMinute\.attempts\)/);
+ assert.match(source,/console\.info\('\[hub-read-sources\/1min\]'/);
+ assert.doesNotMatch(source,/await\s+dogFastCasCounts/);
+});
