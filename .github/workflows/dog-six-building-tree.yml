@@ -1,0 +1,29 @@
+name: DOG six-building Christmas tree progression
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/christmas-building-costs.js'
+      - 'dog/christmas-tree-rewards.js'
+      - 'tests/dog-christmas-tree-rewards.test.js'
+      - 'tests/dog-christmas-new-buildings.test.js'
+      - '.github/workflows/dog-six-building-tree.yml'
+  pull_request:
+    paths:
+      - 'dog/christmas-building-costs.js'
+      - 'dog/christmas-tree-rewards.js'
+      - 'tests/dog-christmas-tree-rewards.test.js'
+      - 'tests/dog-christmas-new-buildings.test.js'
+      - '.github/workflows/dog-six-building-tree.yml'
+  workflow_dispatch:
+jobs:
+  six-building-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/christmas-building-costs.js && node --check dog/christmas-tree-rewards.js
+      - run: node --test tests/dog-christmas-tree-rewards.test.js
+      - run: node --test --test-name-pattern='luckhouse and academy' tests/dog-christmas-new-buildings.test.js
