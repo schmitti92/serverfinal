@@ -114,3 +114,55 @@ Adapter. Er ersetzt derzeit **nicht** den Firestore-Watcher des Live-Hubs.
 
 Keine Einsparung von abgerechneten Firebase-Zugriffen allein durch das
 Hinzufügen dieser bisher nicht angebundenen Dateien.
+
+## P4: Firestore-XP-Abschlussbrücke (vorbereitet, noch nicht aktiv)
+
+`dog-postgres-xp-settlement.js` nutzt die ORIGINAL-Berechnung von
+`dogCompletedPlayerStats()` für 1–4 reale Teilnehmer, einschließlich der
+3-Spieler-Partie ohne vierten Phantomspieler. Dazu werden beim einmaligen
+Partieabschluss pro menschlichem Konto die Statistik und die Forschungsstufen
+`xp` und `win_xp` gelesen, **in derselben Firestore-Transaktion** neu
+berechnet und geschrieben.
+
+Die neue Firestore-Collection `dog_pg_match_settlements_v1` erhält
+pro servergenerierter Match-UUID genau **einen** gesicherten Beleg mit
+einem SHA-256-Fingerprint des unveränderlichen Auszahlungsergebnisses.
+Jede erneute Buchung mit demselben Fingerprint endet ohne zusätzliche
+Statistik-/XP-Schreibvorgänge. Abweichende Belege und mögliche
+Überschneidungen mit bereits abgeschlossenen Legacy-Partien werden
+ausdrücklich zurückgewiesen.
+
+**Absturz-Szenario:**
+
+1. Noch zu implementieren: Der letzte DOG-Zug legt in Postgres einen
+   unveränderlichen Status `settlement-pending` ab. Die Partie darf in
+   diesem Zustand nicht als vollständig ausgezahlt angezeigt werden.
+2. `loadPendingMatch()` muss ausschließlich den zuvor serverseitig in
+   Postgres gesicherten vollständigen Endstand laden, niemals eine vom
+   Browser gesendete Gewinnbehauptung.
+3. Eine Firestore-Transaktion liest den Match-Beleg zuerst, danach alle
+   nötigen menschlichen Kontodokumente; erst dann schreibt sie sämtliche
+   XP-/Statistikdaten und den Beleg atomar.
+4. `markComplete()` markiert den **identischen** Endstand in Postgres
+   erst nach erfolgreicher Firestore-Transaktion als bestätigt.
+5. Stürzt Render vor Schritt 4 ab, bleibt die PG-Arbeit offen. Wiederholtes
+   Ausführen sieht den bestehenden Firestore-Beleg und vermerkt den
+   Abschluss in PG ohne doppelte XP-/Statistikgutschrift.
+
+**Wichtige Grenzen:**
+
+- Diese Brücke arbeitet vorerst nur für **nicht-saisonale klassische
+  DOG-Abschlüsse**. Bei aktivem Weihnachtsevent fehlen noch die gemeinsame
+  sichere Auszahlung von Weihnachtslichtern, Rubbellosen, Preisen,
+  Jahres-/Eventbelohnungen und Gebäude-/Forschungsboni.
+- Es wurde noch **keine** Postgres-Endzug-/Pending-Transaktion implementiert,
+  keine Datenbank migriert und kein API-/WebSocket-Routing darauf umgestellt.
+- Eine mehrstufige Auszahlungsbrücke darf niemals einen noch nicht
+  bestätigten PG-Abschluss als dauerhaft erledigt anzeigen.
+- Die Firestore-Receipt-Sammlung selbst wird nur später beim ersten
+  produktiv geprüften PG-Partieabschluss angelegt; das bloße Hinzufügen des
+  Moduls belastet Firebase nicht.
+- Die Research-XP-Berechnung liest die aktuell in Firestore gültigen
+  Forschungsstufen beim Abschluss; falls künftig eine genaue
+  Spielstart-/Finishing-Zeit-Snapshot-Semantik erforderlich wird, ist dieser
+  Zeitbezug zusätzlich zu versionieren und serverseitig zu fixieren.
