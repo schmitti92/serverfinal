@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {installSharedLobby} from '../shared-lobby.js';
+import {createDogChristmasMatch} from '../dog/christmas-village.js';
 
 // In-memory Firestore version/precondition simulator. It NEVER contacts
 // Firebase and records transaction GETs separately from CAS document UPDATEs.
-function harness({fastCasEnabled=true}={}){
+function harness({fastCasEnabled=true,christmasEventActive=false}={}){
  const docs=new Map(),versions=new Map(),listeners=new Map(),routes=new Map(),middles=[];
  const counted={gets:0,casUpdates:0,transactions:0,watches:0};
  let now=100000;
@@ -69,7 +70,7 @@ function harness({fastCasEnabled=true}={}){
   token==='cara'?{uid:'cara',name:'Cara'}:
   token==='dana'?{uid:'dana',name:'Dana'}:null;
  const adapter=installSharedLobby(app,{verifyProfile:auth,getFirestore:()=>db,
-  clock:()=>now,codeGenerator:()=> '123',christmasEventActive:()=>false,
+  clock:()=>now,codeGenerator:()=> '123',christmasEventActive:()=>christmasEventActive,
   fastCasEnabled});
  async function api(method,path,token='alice',body={}){
   const key=[...routes.keys()].find(pattern=>{
@@ -321,5 +322,72 @@ test('A revoked player is blocked even when the active WebSocket missed the revo
   action:{type:'exchange',cardId:view.match.dog.hands[0][0].id}});
  assert.equal(result.status,403,'Firestore precondition rejects stale cached membership');
  assert.equal(h.counted.casUpdates,prior,'revocation must not allow a write');
+ ws.close();
+});
+
+test('Seasonal DOG exchanges with zero prizes skip a Firestore GET and still persist all event fields',async()=>{
+ const h=harness({christmasEventActive:true});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const user of ['bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/join',user);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ for(const user of ['alice','bob','cara'])await h.api('POST','/api/hub/rooms/'+code+'/ready',user,{ready:true});
+ // Existing eligible player with a complete verified seasonal event snapshot.
+ h.externalChange(code,room=>{
+  room.match.dogChristmasEligibilityChecked=true;
+  room.match.christmas=createDogChristmasMatch(null,true,()=>0,room.match.dog.round);
+ });
+ const ws=await h.subscribe(code,'alice');
+ const view=ws.messages.filter(msg=>msg.type==='room').at(-1).room;
+ assert.equal(view.match.christmas.enabled,true);
+ const beforeReads=h.counted.gets,beforeWrites=h.counted.casUpdates;
+ const res=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',{
+  matchId:view.match.id,expectedRevision:view.match.dog.revision,
+  actionId:'seasonal-exchange-no-prize-1',
+  action:{type:'exchange',cardId:view.match.dog.hands[0][0].id}});
+ assert.equal(res.status,200,JSON.stringify(res));
+ assert.equal(h.counted.gets,beforeReads,'no village/wallet read if no gift was triggered');
+ assert.equal(h.counted.casUpdates,beforeWrites+1);
+ assert.equal(h.docs.get('spielesammlung_hub_v1/'+code).match.christmas.enabled,true);
+ assert.equal(res.room.match.dog.deck,undefined);
+ ws.close();
+});
+
+test('Seasonal DOG gift remains an atomic Firestore village update, not a fast room-only CAS',async()=>{
+ const h=harness({christmasEventActive:true});
+ const code=(await h.api('POST','/api/hub/rooms')).room.code;
+ for(const user of ['bob','cara','dana'])await h.api('POST','/api/hub/rooms/'+code+'/join',user);
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ for(const user of ['alice','bob','cara','dana'])
+  await h.api('POST','/api/hub/rooms/'+code+'/ready',user,{ready:true});
+ h.externalChange(code,room=>{
+  const state=room.match.dog;
+  state.phase='play';state.current=0;state.starter=0;
+  state.hands=[[{id:9999,type:'4'}],[],[],[]];
+  state.exchanges=[null,null,null,null];state.seven=null;
+  state.pieces[0].place='track';state.pieces[0].pos=63;
+  state.revision=44;
+  room.match.dogCommands=[];
+  room.match.dogChristmasEligibilityChecked=true;
+  const event=createDogChristmasMatch(null,true,()=>0,state.round);
+  event.giftFields=[3];event.scratchFields=[];
+  room.match.christmas=event;
+ });
+ const ws=await h.subscribe(code,'alice');
+ const view=ws.messages.filter(msg=>msg.type==='room').at(-1).room;
+ const beforeReads=h.counted.gets,beforeCas=h.counted.casUpdates;
+ const input={
+  matchId:view.match.id,expectedRevision:view.match.dog.revision,
+  actionId:'seasonal-gift-safe-tx-01',
+  action:{type:'move',cardId:9999,as:'4',pieceId:0,steps:4,viaGoal:false}};
+ const r=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',input);
+ assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(h.counted.casUpdates,beforeCas,'gift must not take CAS route');
+ assert.ok(h.counted.gets>beforeReads,'gift must read village from the old transaction');
+ assert.equal(h.docs.get('spielesammlung_hub_v1/'+code).match.christmas.giftCount,1);
+ const village=h.docs.get('dog_christmas_village_v1/global');
+ assert.ok(village&&village.lightsTenths>0,'village credited exactly once');
+ const repeated=await h.api('POST','/api/hub/rooms/'+code+'/dog/action','alice',input);
+ assert.equal(repeated.status,200);
+ assert.equal(h.docs.get('dog_christmas_village_v1/global').lightsTenths,village.lightsTenths);
  ws.close();
 });
