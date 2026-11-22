@@ -323,3 +323,14 @@ test('Terminal SQL migration locks one winning action per room and remains priva
  assert.match(sql,/fingerprint CHAR\(64\) NOT NULL/);
  assert.match(sql,/UNIQUE \(room_code,match_id,action_id\)/);
 });
+
+test('A non-UUID match cannot be frozen into a PG pending state that Firestore can never settle',async()=>{
+ const h=fixture();
+ await h.state.seedRoom(h.room);
+ const before=h.pg.state.pending.size;
+ await assert.rejects(()=>h.fin.stageFinalMove({
+  ...h.request,matchId:'match-from-legacy-client'
+ }),/DOG_PG_FINAL_INVALID_ACTION/);
+ assert.equal(h.pg.state.pending.size,before);
+ assert.equal(h.fire.metrics.transactions,0);
+});
