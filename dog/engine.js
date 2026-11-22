@@ -35,7 +35,13 @@ function allInGoal(s,seat){const own=s.pieces.filter(x=>x.owner===seat);return o
 function pieceAt(s,space,except){
   return s.pieces.find(p=>p.id!==except && p.place===space.place && p.pos===space.pos && (space.place!=='goal'||p.owner===space.owner));
 }
-function protectedPiece(p){return p.place==='track'&&p.pos===p.owner*16;}
+const COLOURED_START_FIELDS = Object.freeze([0,16,32,48]);
+// Protection belongs to the PAWN'S colour, never to whichever coloured field it visits.
+// A foreign pawn on any start square can be captured by an ordinary move or by spawning.
+function protectedPiece(p){
+  return !!p && p.place==='track' && Number.isInteger(p.owner)
+    && COLOURED_START_FIELDS[p.owner]===p.pos;
+}
 function validateCardChoice(card,as){
   return card.type==='joker' ? CARD_TYPES.filter(t=>t!=='joker').includes(as) : card.type===as;
 }
