@@ -1,0 +1,30 @@
+name: DOG standard move CAS (offline)
+on:
+  pull_request:
+    paths:
+      - 'dog-fast-cas.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-fast-cas-offline.test.js'
+      - 'tests/dog-fast-cas-route-offline.test.js'
+      - '.github/workflows/dog-fast-cas-offline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dog-fast-cas.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-fast-cas-offline.test.js'
+      - 'tests/dog-fast-cas-route-offline.test.js'
+      - '.github/workflows/dog-fast-cas-offline.yml'
+permissions:
+  contents: read
+jobs:
+  dog-standard-cas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-fast-cas.js && node --check shared-lobby.js
+      - run: node --test tests/dog-fast-cas-offline.test.js tests/dog-firestore-read-budget-offline.test.js tests/dog-fast-cas-route-offline.test.js

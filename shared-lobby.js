@@ -12,6 +12,7 @@ import {createEierChaosMatch,acknowledgeEierChaos,moveEierChaos,advanceEierChaos
 import { randomInt, randomUUID } from 'node:crypto';
 import {createDogSharedReadCoordinator} from './dog-shared-read-coordinator.js';
 import {createDogFirestoreReadBudget} from './dog-firestore-read-budget.js';
+import {tryDogFastCas} from './dog-fast-cas.js';
 import {dogMetadataWasWritten,dogWrittenMetadataPaths} from './dog-meta-write-policy.js';
 import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
@@ -91,7 +92,7 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1'}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1'}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   // DOG read-only status widgets reuse the same short-lived Render-RAM
   // snapshots. Transactions/claims still fetch authoritative Firestore docs.
@@ -101,6 +102,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   });
   const dogWriteDiagnostics=createDogWriteDiagnostics({clock});
   const dogReadBudget=createDogFirestoreReadBudget({clock});
+  const dogFastCasCounts={attempts:0,commits:0,conflicts:0,fallthroughs:0};
   // Render-only aggregate write reports. No player details and no Firestore I/O.
   const dogWriteLogTimer=setInterval(()=>{
     const report=dogWriteDiagnostics.snapshot();
@@ -954,6 +956,45 @@ function finishEisstock(ch,members){
   async function mutate(code,identity,change,source=null){
     const store=db();if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=documentFor(store,code);
+    // Opt-in phase 2: For NON-SEASONAL moves only, reuse the last verified
+    // room watcher snapshot. A Firestore lastUpdateTime precondition makes
+    // this an atomic durable compare-and-swap; every conflict falls back to
+    // the existing authoritative read-and-validate transaction below.
+    if(source==='dog-action'&&fastCasEnabled){
+      const stream=roomStreams.get(code);
+      // Do not bypass the original room-membership/expiration protection:
+      // cached player rosters are a HINT only. Firestore's update-time
+      // precondition rejects any later membership change before commit.
+      const cachedRoom=stream?.hasSnapshot&&stream.subscribers.size>0?stream.room:null;
+      const cachedMember=cachedRoom?.expiresAt>clock()&&
+        cachedRoom.players?.some(player=>player.uid===identity.uid);
+      dogFastCasCounts.attempts++;
+      const fast=await tryDogFastCas({
+        room:cachedMember?cachedRoom:null,
+        updateTime:stream?.updateTime,ref,store,change,clock,ttlMs:TTL_MS
+      });
+      if(fast.used){
+        dogFastCasCounts.commits++;
+        dogWriteDiagnostics.record('dog-match',{[COLLECTION]:1},true);
+        hubStreamReadCounts.dogActionCommits++;
+        hubMutationReadCacheStats.committed++;
+        invalidateHubReadCache(code);
+        // Publish only AFTER the acknowledged Firestore commit. Preserve
+        // the private per-subscriber expose() filtering already in attachSocket.
+        const live=roomStreams.get(code);
+        if(live&&live.hasSnapshot&&(!live.room||
+           live.room.createdAt!==fast.room.createdAt||
+           (Number(live.room.revision)||0)<=fast.room.revision)){
+          live.room=fast.room;
+          live.updateTime=fast.writeTime;
+          live.snapshotAt=clock();
+          for(const notify of [...live.subscribers])notify(fast.room,null);
+        }
+        return expose(fast.room,identity);
+      }
+      if(fast.reason==='conflict')dogFastCasCounts.conflicts++;
+      dogFastCasCounts.fallthroughs++;
+    }
     // The transaction result carries its own committed-write flag: retries
     // cannot leak a previous attempt's decision into cache invalidation.
     const {value,changed,revision,dogWriteKind,writeCounts,writePaths,dogAutoNoop}=await store.runTransaction(async tx=>{
@@ -1070,6 +1111,7 @@ function finishEisstock(ch,members){
     hubMutationCache:{...hubMutationReadCacheStats},
     dogWrites10m:dogWriteDiagnostics.snapshot(),
     dogCoreReadAttempts10m:dogReadBudget.snapshot(),
+    dogStandardMoveCas:{...dogFastCasCounts,enabled:fastCasEnabled},
     dogMetaInFlightReads:dogMetaReadCoordinator.stats()
   }));
   // Lichtertal Rubbellose belong to the signed-in PLAYER, not a room.
@@ -3485,7 +3527,7 @@ function finishEisstock(ch,members){
   function watchRoom(code,store,subscriber){
     let stream=roomStreams.get(code);
     if(!stream){
-      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null,snapshotAt:null,idleTimer:null};
+      stream={subscribers:new Set(),unsubscribe:null,hasSnapshot:false,room:null,updateTime:null,snapshotAt:null,idleTimer:null};
       roomStreams.set(code,stream);
       try{
         hubStreamReadCounts.watchStarts++;
@@ -3502,7 +3544,13 @@ function finishEisstock(ch,members){
           }
           if(stream.hasSnapshot&&previous?.revision===next?.revision)
             hubStreamReadCounts.duplicateSnapshots++;
+          // A local CAS update may have been broadcast immediately after its
+          // durable write. Ignore any queued older Firestore notification.
+          if(next&&previous&&next.createdAt===previous.createdAt&&
+             Number.isInteger(next.revision)&&Number.isInteger(previous.revision)&&
+             next.revision<previous.revision)return;
           stream.room=next;
+          stream.updateTime=snapshot.updateTime||null;
           stream.hasSnapshot=true;
           stream.snapshotAt=clock();
           // Wake any short-lived HTTP sync cache with this newer DB revision.
