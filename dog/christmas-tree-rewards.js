@@ -4,8 +4,13 @@
  * no write and never changes an already-collected prize.
  */
 import {DOG_VILLAGE_DEFAULT_LEVELS} from './christmas-village.js';
+import {CHRISTMAS_BUILDING_IDS,CHRISTMAS_BUILDING_MAX_LEVEL} from './christmas-building-costs.js';
 export const DOG_TREE_REWARDS_COLLECTION='dog_christmas_tree_rewards_v1';
-export const DOG_TREE_THRESHOLDS=Object.freeze([4,5,7,9,11,13,15,17,19,20]);
+// A level-one village starts with six buildings at stage 1 (6 points).
+// There are 6 × 4 = 24 actual upgrades. Spread nine tree advances in
+// steps of 2 or 3 upgrades, reserving the last threshold (30 points)
+// exclusively for a fully built six-building village.
+export const DOG_TREE_THRESHOLDS=Object.freeze([6,9,12,14,17,20,22,25,28,30]);
 export const DOG_TREE_PRIZE_POOL=Object.freeze([
  {
   "unlockId": "christmas2026:scene:01",
@@ -397,8 +402,8 @@ if(new Set(DOG_TREE_FIXED_PRIZE_IDS).size!==10)throw Error('TREE_FIXED_PRIZE_DUP
 export function dogTreeLevelFromLevels(input){
  const levels=input&&typeof input==='object'&&input.levels?input.levels:input;
  const safe=levels&&typeof levels==='object'?levels:DOG_VILLAGE_DEFAULT_LEVELS;
- const amount=['tower','workshop','bakery','inn'].reduce((sum,id)=>{
-  const n=safe[id];return sum+(Number.isInteger(n)&&n>=1&&n<=5?n:1);
+ const amount=CHRISTMAS_BUILDING_IDS.reduce((sum,id)=>{
+  const n=safe[id];return sum+(Number.isInteger(n)&&n>=1&&n<=CHRISTMAS_BUILDING_MAX_LEVEL?n:1);
  },0);
  return DOG_TREE_THRESHOLDS.filter(n=>amount>=n).length;
 }
