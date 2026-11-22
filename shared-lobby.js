@@ -962,9 +962,15 @@ function finishEisstock(ch,members){
     // the existing authoritative read-and-validate transaction below.
     if(source==='dog-action'&&fastCasEnabled){
       const stream=roomStreams.get(code);
+      // Do not bypass the original room-membership/expiration protection:
+      // cached player rosters are a HINT only. Firestore's update-time
+      // precondition rejects any later membership change before commit.
+      const cachedRoom=stream?.hasSnapshot&&stream.subscribers.size>0?stream.room:null;
+      const cachedMember=cachedRoom?.expiresAt>clock()&&
+        cachedRoom.players?.some(player=>player.uid===identity.uid);
       dogFastCasCounts.attempts++;
       const fast=await tryDogFastCas({
-        room:stream?.hasSnapshot&&stream.subscribers.size>0?stream.room:null,
+        room:cachedMember?cachedRoom:null,
         updateTime:stream?.updateTime,ref,store,change,clock,ttlMs:TTL_MS
       });
       if(fast.used){
