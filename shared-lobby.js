@@ -1785,6 +1785,7 @@ function finishEisstock(ch,members){
       return {imported:merged.changed,checked:true,
         ...(metadataOnly?{}:{village:dogVillagePublic(merged.village,DOG_GLOBAL_VILLAGE_ID)})};
     });
+    if(result.imported)dogMetaReadCoordinator.invalidate(sharedRef.path);
     return {...result,shared:true,canUpgrade:christmasActive(),enabled:christmasActive()};
   }));
   app.post('/api/hub/christmas-village/upgrade',authentication,handler(async req=>{
@@ -1817,9 +1818,10 @@ function finishEisstock(ch,members){
           }
         }
       }
-      return {village:dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID),roomChanged};
+      return {village:dogVillagePublic(result.village,DOG_GLOBAL_VILLAGE_ID),roomChanged,unchanged:result.unchanged};
     });
     if(linkedCode&&villageResult.roomChanged)invalidateHubReadCache(linkedCode);
+    if(!villageResult.unchanged)dogMetaReadCoordinator.invalidate(dogVillageFor(store).path);
     return {village:villageResult.village,shared:true,canUpgrade:true,enabled:true};
   }));
   // The common tree unlocks ten *personal* fixed prizes, one claim per player.
