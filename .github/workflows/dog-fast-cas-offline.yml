@@ -5,6 +5,7 @@ on:
       - 'dog-fast-cas.js'
       - 'shared-lobby.js'
       - 'tests/dog-fast-cas-offline.test.js'
+      - 'tests/dog-fast-cas-route-offline.test.js'
       - '.github/workflows/dog-fast-cas-offline.yml'
   push:
     branches: [main]
@@ -12,6 +13,7 @@ on:
       - 'dog-fast-cas.js'
       - 'shared-lobby.js'
       - 'tests/dog-fast-cas-offline.test.js'
+      - 'tests/dog-fast-cas-route-offline.test.js'
       - '.github/workflows/dog-fast-cas-offline.yml'
 permissions:
   contents: read
@@ -25,4 +27,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check dog-fast-cas.js && node --check shared-lobby.js
-      - run: node --test tests/dog-fast-cas-offline.test.js tests/dog-firestore-read-budget-offline.test.js
+      - run: node --test tests/dog-fast-cas-offline.test.js tests/dog-firestore-read-budget-offline.test.js tests/dog-fast-cas-route-offline.test.js
