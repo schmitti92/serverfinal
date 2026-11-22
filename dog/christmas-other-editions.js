@@ -139,7 +139,7 @@ function mixPremiumMoneyPairs(distribution,count,draw){
  const remaining=[...distribution];
  const pick=(exclude=-1)=>{
   const eligible=remaining.map((n,i)=>i).filter(i=>remaining[i]>0&&i!==exclude);
-  const choices=eligible.length?eligible:remaining.map((n,i)=>i).filter(i=>n>0);
+  const choices=eligible.length?eligible:remaining.map((n,i)=>i).filter(i=>remaining[i]>0);
   const total=choices.reduce((sum,i)=>sum+remaining[i],0);
   if(total===0)throw Error('SCRATCH_OTHER_EDITION_MONEY_PLAN_INVALID');
   let roll=randint(draw,total);
