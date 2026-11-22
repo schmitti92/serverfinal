@@ -148,7 +148,13 @@ function mixPremiumMoneyPairs(distribution,count,draw){
  };
  const pairs=[];
  for(let i=0;i<count;i++){
-  const first=pick(),second=pick(Number(first));
+  // Consume the most common symbol first, so scarce coin/bill prizes are
+  // spread over as many DIFFERENT tickets as mathematically possible.
+  const biggest=Math.max(...remaining);
+  const firstCandidates=remaining.map((n,index)=>index).filter(index=>remaining[index]===biggest);
+  const first=String(firstCandidates[randint(draw,firstCandidates.length)]);
+  remaining[Number(first)]--;
+  const second=pick(Number(first));
   pairs.push(shuffle([first,second],draw).join(''));
  }
  if(remaining.some(Boolean))throw Error('SCRATCH_OTHER_EDITION_MONEY_PLAN_INVALID');
