@@ -222,7 +222,7 @@ test('Three humans exchange using CAS with no computer, no extra Firestore GET a
  let successful=0;
  for(let seat=0;seat<3;seat++){
   const ws=sockets[seat],name=['alice','bob','cara'][seat],view=last(ws);
-  assert.equal(view.match.dogSeat,seat,'player's private projection uses correct seat');
+  assert.equal(view.match.dogSeat,seat,'authenticated player projection uses correct seat');
   assert.equal(Array.isArray(view.match.dog.hands[seat]),true);
   for(let other=0;other<3;other++)if(other!==seat)
    assert.equal(Array.isArray(view.match.dog.hands[other]),false,'opponent hand is hidden');
