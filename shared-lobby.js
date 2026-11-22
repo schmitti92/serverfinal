@@ -26,7 +26,7 @@ import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearch
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
 import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
-import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,claimDogChristmasGold,ensureDogChristmasGoldFields,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasHumanFields,ensureDogChristmasGoldFields,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,grantDogScratchGold,claimDogLevelScratchVouchers,dogLevelRewardClaimFlags} from './dog/christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
@@ -2256,26 +2256,25 @@ function finishEisstock(ch,members){
         // transitions. No client-supplied knockout numbers are trusted.
         countDogKnockouts(match,before,after,playerSeat);
         if(!event?.enabled)return;
-        const baseLights=claimDogChristmasGift(event,before,after,move,playerSeat);
+        // A bot may LAND on a hidden field, but must never reveal or consume
+        // it. All gift/light, scratch and gold claims share the same verified
+        // human-only server gate, and do not trigger another Firebase read.
+        const {recipient,baseLights,tier,gold}=claimDogChristmasHumanFields(
+          event,before,after,move,match.dogRoster,playerSeat);
         creditedTenths+=baseLights;
-        const recipient=match.dogRoster.find(p=>p.seat===playerSeat);
-        if(baseLights>0&&recipient&&!recipient.bot){
-          const ranks=match.dogResearchSkills?.[recipient.uid]||{};
-          // Carry hundredths of a tenth to ensure a +5 % bonus works even
-          // when a gift pays a small amount of Christmas lights.
-          const carry=match.dogLightCarry?.[recipient.uid]||0;
-          const numerator=baseLights*Math.min(10,ranks.lights_bonus||0)*5+carry;
-          const bonusTenths=Math.floor(numerator/100);
-          match.dogLightCarry={...(match.dogLightCarry||{}),[recipient.uid]:numerator%100};
-          creditedTenths+=bonusTenths;
-          event.earnedTenths+=bonusTenths;
-        }
-        // Only real participants get personal scratch vouchers. Bot traffic
-        // never creates a wallet or extra Firestore reads.
-        if(recipient&&!recipient.bot){
-          const tier=claimDogChristmasScratch(event,before,after,move,playerSeat);
+        if(recipient){
+          if(baseLights>0){
+            const ranks=match.dogResearchSkills?.[recipient.uid]||{};
+            // Carry hundredths of a tenth to ensure a +5 % bonus works even
+            // when a gift pays a small amount of Christmas lights.
+            const carry=match.dogLightCarry?.[recipient.uid]||0;
+            const numerator=baseLights*Math.min(10,ranks.lights_bonus||0)*5+carry;
+            const bonusTenths=Math.floor(numerator/100);
+            match.dogLightCarry={...(match.dogLightCarry||{}),[recipient.uid]:numerator%100};
+            creditedTenths+=bonusTenths;
+            event.earnedTenths+=bonusTenths;
+          }
           if(tier)vouchersEarned.push({uid:recipient.uid,tier});
-          const gold=claimDogChristmasGold(event,before,after,move,playerSeat);
           if(gold>0)goldEarned.push({uid:recipient.uid,amount:gold});
         }
         creditedTenths+=finishDogChristmasMatch(event,after);
