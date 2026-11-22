@@ -99,7 +99,8 @@ test('DOG solo3 automatically discards last 7 card when final pawn reaches goal 
 });
 test('DOG first individual at 4/4 finishes and disposes of unused 7 steps',()=>{
  let s=lastRedPawn(setup());
- for(let i=8;i<12;i++)pawn(s,i,'goal',i-8);
+ // Teammate has not finished. The first player at 4/4 still ends the game.
+ pawn(s,8,'track',34);
  s=startSeven(s);
  s=takeAction(s,0,needed(s,m=>m.type==='seven-step'&&m.pieceId===0&&m.steps===2&&m.viaGoal));
  assert.equal(s.phase,'finished');
