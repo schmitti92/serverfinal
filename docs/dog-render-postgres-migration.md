@@ -247,3 +247,42 @@ Weihnachtsevent **nicht** über die PG-Speicherung laufen. Die neuen
 Offline-Tests verwenden nur Fake-Firebase und zuvor simulierte
 PG-Gewinnjobs. Kein produktiver Firebase-Zugriff entsteht durch das
 bloße Hinzufügen des Codes.
+
+## P4-Erweiterung: Ausstehende XP-Buchungen nach Neustart wiederaufnehmen
+
+`dog-postgres-settlement-recovery.js` enthält einen **noch nicht
+gestarteten** Recovery-Worker für bereits in Postgres vorgemerkte
+klassische DOG-Spielabschlüsse.
+
+- `runOnce({limit})` liest höchstens 32 **fällige** Pending-Aufträge
+  aus Postgres. Wenn keine ausstehenden Gewinne vorliegen, erfolgt
+  **kein** Firebase-GET.
+- Für jeden offenen Auftrag wird ausschließlich die bereits
+  abgesicherte XP-Bridge aufgerufen. Ihr eindeutiger Match-Receipt
+  verhindert eine zweite Gutschrift selbst dann, wenn mehrere Render-
+  Instanzen denselben Auftrag gleichzeitig untersuchen.
+- Bei vorübergehend ausgefallenem Firebase bleiben die Aufträge
+  unverändert auszahlbar. Fehlversuche und der nächste zulässige
+  Wiederholungszeitpunkt werden **dauerhaft in Postgres** gespeichert,
+  mit exponentiellem Backoff von zunächst 2 Sekunden bis maximal
+  10 Minuten. Damit entsteht kein Firebase-Lese-Sturm durch
+  wiederholte fehlgeschlagene Abrechnungen.
+- Bei falschem Gewinndigest oder Doppelbezahlung einer bisherigen
+  Legacy-Partie wird der Auftrag **nicht stillschweigend gelöscht**.
+  Er wird mit `requires_review=true` und einem anonymisierten
+  Fehlercode für die spätere manuelle Prüfung markiert.
+- `stats()` enthält ausschließlich aggregierte Zähler. Weder
+  Karten, Spieler-UIDs noch Match-/Raumcodes werden protokolliert.
+- Gleichzeitig gestartete `runOnce()`-Aufrufe einer Render-Instanz
+  teilen denselben laufenden Batch. Mehrere Instanzen müssen bei der
+  produktiven Migration zusätzlich auf DB-Leasing/Koordination
+  getestet werden; der Firebase-Beleg schützt bereits vor doppelten
+  Gutschriften.
+
+**Aktueller Stand:** Weder eine Zeitplanung noch ein Start beim
+Render-Server wurde eingerichtet. Für tatsächliche Wiederaufnahme
+müssen zunächst eine dauerhafte Postgres-Datenbank, die Auth-/Hub-
+Integration und ein geprüfter Scheduler verbunden werden. Die
+Weihnachts-Gewinnjobs benutzen diesen XP-Worker ausdrücklich noch
+nicht. Ein fehlgeschlagener klassischer PG-Abschluss kann im
+späteren Live-Pilot sicher aus Postgres rekonstruiert werden.
