@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {DOG_TREE_PRIZE_POOL,DOG_TREE_REWARD_SCHEDULE,DOG_TREE_FIXED_PRIZE_IDS,dogTreeLevelFromLevels,
+import {DOG_TREE_PRIZE_POOL,DOG_TREE_REWARD_SCHEDULE,DOG_TREE_FIXED_PRIZE_IDS,DOG_TREE_THRESHOLDS,dogTreeLevelFromLevels,
  dogTreeRewardStatus,claimDogTreeReward} from '../dog/christmas-tree-rewards.js';
+import {CHRISTMAS_BUILDING_IDS} from '../dog/christmas-building-costs.js';
 test('ten fixed prizes use the actual available catalogue and exact announced order',()=>{
  assert.equal(DOG_TREE_PRIZE_POOL.length,51);
  assert.equal(new Set(DOG_TREE_PRIZE_POOL.map(p=>p.unlockId)).size,51);
@@ -15,15 +16,39 @@ test('ten fixed prizes use the actual available catalogue and exact announced or
    item.unlockId===p.unlockId&&item.name===p.title&&item.icon===p.icon)));
 });
 
-test('tree stage follows authoritative four building levels, not client values',()=>{
- assert.equal(dogTreeLevelFromLevels({tower:1,workshop:1,bakery:1,inn:1}),1);
- assert.equal(dogTreeLevelFromLevels({tower:2,workshop:1,bakery:1,inn:1}),2);
- assert.equal(dogTreeLevelFromLevels({tower:5,workshop:5,bakery:5,inn:5}),10);
- assert.equal(dogTreeLevelFromLevels({tower:50,workshop:1,bakery:1,inn:1}),1);
- assert.equal(dogTreeLevelFromLevels({levels:{tower:5,workshop:5,bakery:5,inn:5}}),10);
+test('tree stage is computed from ALL six authoritative five-level buildings',()=>{
+ const base=Object.fromEntries(CHRISTMAS_BUILDING_IDS.map(id=>[id,1]));
+ const full=Object.fromEntries(CHRISTMAS_BUILDING_IDS.map(id=>[id,5]));
+ assert.deepEqual(CHRISTMAS_BUILDING_IDS,['tower','workshop','bakery','inn','luckhouse','academy']);
+ assert.deepEqual(DOG_TREE_THRESHOLDS,[6,9,12,14,17,20,22,25,28,30]);
+ assert.equal(dogTreeLevelFromLevels(base),1);
+ assert.equal(dogTreeLevelFromLevels({...base,tower:2}),1,'one upgrade alone cannot skip the first three-upgrade threshold');
+ assert.equal(dogTreeLevelFromLevels({...base,tower:4}),2);
+ assert.equal(dogTreeLevelFromLevels({...base,tower:50}),1,'invalid levels never grant progress');
+ assert.equal(dogTreeLevelFromLevels(full),10);
+ assert.equal(dogTreeLevelFromLevels({levels:full}),10);
+ for(const id of CHRISTMAS_BUILDING_IDS){
+  assert.equal(dogTreeLevelFromLevels({...full,[id]:4}),9,
+   'tree 10 needs EVERY building at level 5, including '+id);
+ }
+});
+test('24 building upgrades advance the tree evenly and never decrease its level',()=>{
+ const levels=Object.fromEntries(CHRISTMAS_BUILDING_IDS.map(id=>[id,1]));
+ let previous=1;
+ for(let upgrades=0;upgrades<=24;upgrades++){
+  const expected=1+Math.floor(9*upgrades/24);
+  assert.equal(dogTreeLevelFromLevels(levels),expected,'upgrade '+upgrades);
+  assert.ok(expected>=previous&&expected-previous<=1);
+  assert.equal(expected===10,upgrades===24);
+  previous=expected;
+  if(upgrades<24){
+   const id=CHRISTMAS_BUILDING_IDS[upgrades%CHRISTMAS_BUILDING_IDS.length];
+   levels[id]++;
+  }
+ }
 });
 test('one automatic persistent gift per tree stage, no reroll on replay',()=>{
- const village={levels:{tower:5,workshop:5,bakery:5,inn:5}};
+ const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:5}};
  let document={claims:{}},winner=[];
  for(let level=1;level<=10;level++){
   const result=claimDogTreeReward(document,village,level,{draw:()=>{throw Error('NO_RNG_ALLOWED')},clock:()=>1700000000000+level});
@@ -46,7 +71,7 @@ test('locked stages cannot be claimed; level one is claimable starter gift',()=>
  assert.throws(()=>claimDogTreeReward({},low,11),/INVALID_TREE_LEVEL/);
 });
 test('legacy random winnings are never replaced and cannot cause new duplicates',()=>{
- const village={levels:{tower:5,workshop:5,bakery:5,inn:5}};
+ const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:5}};
  // Before fixed rewards, player happened to win the now-announced Level-10
  // board on Level 5. Keep that receipt; Level 10 gets another board.
  const previous={claims:{
