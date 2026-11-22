@@ -247,3 +247,38 @@ test('verified Christmas discoveries stay visible for the entire match, not just
  assert.equal(next.visibleGiftFields,undefined,'revealed history must not expose the new map');
  assert.equal(next.visibleScratchFields,undefined,'revealed history must not expose the new scratch map');
 });
+
+test('old active DOG room backfills its recorded discoveries without guessing secret positions',()=>{
+ const match=createDogChristmasMatch(null,true,()=>0,5);
+ const oldGift=match.giftFields[0],oldScratch=match.scratchFields[0];
+ // Simulate the room format used before the permanent-found-fields feature.
+ delete match.foundGiftFields;delete match.foundScratchFields;delete match.eventSerial;
+ match.activity=[{type:'gift',field:oldGift,seat:0},{type:'scratch',field:oldScratch,seat:1},
+  {type:'inn',earnedTenths:10},{type:'gift',field:0,seat:0}];
+ match.claimedFields=[match.giftFields[1]];
+ match.claimedScratchFields=[match.scratchFields[1]];
+ const view=publicDogChristmasMatch(match);
+ assert.deepEqual(new Set(view.foundGiftFields),new Set([oldGift,match.giftFields[1]]));
+ assert.deepEqual(new Set(view.foundScratchFields),new Set([oldScratch,match.scratchFields[1]]));
+ assert.equal(view.visibleGiftFields,undefined);
+ assert.equal(view.visibleScratchFields,undefined);
+ const saved=refreshDogChristmasDeal(match,6,()=>0);
+ assert.equal(saved,true);
+ assert.deepEqual(new Set(match.foundGiftFields),new Set([oldGift,view.foundGiftFields[1]]));
+ assert.deepEqual(new Set(match.foundScratchFields),new Set([oldScratch,view.foundScratchFields[1]]));
+ assert.equal(match.roundGiftCollected,0);
+ assert.equal(match.roundScratchCollected,0);
+ assert.deepEqual(publicDogChristmasMatch(match).foundGiftFields,match.foundGiftFields);
+ assert.deepEqual(publicDogChristmasMatch(match).foundScratchFields,match.foundScratchFields);
+});
+test('new claims retain old event history when old room migrates on a move',()=>{
+ const match=createDogChristmasMatch(null,true,()=>0,3);
+ const oldField=match.giftFields[0],newField=match.giftFields[1];
+ delete match.foundGiftFields;delete match.foundScratchFields;
+ match.activity=[{type:'gift',field:oldField,seat:1}];
+ const before={pieces:[{id:1,owner:0,place:'track',pos:(newField+63)%64}]};
+ const after={pieces:[{id:1,owner:0,place:'track',pos:newField}]};
+ assert.ok(claimDogChristmasGift(match,before,after,{type:'move',pieceId:1},0,()=>99)>0);
+ assert.deepEqual(new Set(match.foundGiftFields),new Set([oldField,newField]));
+ assert.ok(!publicDogChristmasMatch(match).giftFields,'secret fields stay protected');
+});
