@@ -26,9 +26,9 @@ import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearch
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
 import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
-import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
+import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasGift,claimDogChristmasScratch,claimDogChristmasGold,ensureDogChristmasGoldFields,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
-import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,claimDogLevelScratchVouchers,dogLevelRewardClaimFlags} from './dog/christmas-scratch.js';
+import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,grantDogScratchGold,claimDogLevelScratchVouchers,dogLevelRewardClaimFlags} from './dog/christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings,updateGiftScratchSettings,updateSnowScratchSettings} from './dog/christmas-scratch-settings.js';
 import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COLLECTION,
@@ -2243,10 +2243,13 @@ function finishEisstock(ch,members){
       // The first match is standard DOG. Disabled seasonal snapshots must
       // never mint lights, vouchers or additional Firestore document writes.
       const event=seasonal&&match.christmas?.enabled?match.christmas:null;
+      // A running room created before the feature gets the four secret gold
+      // positions on its next authorized action, without a separate read/write.
+      if(event&&match.dog.phase!=='finished')ensureDogChristmasGoldFields(event);
       const initialGifts=event?.giftCount||0,initialBonus=event?.bonusGiftCount||0;
       const hadInn=event?.innCredited===true;
       let creditedTenths=0;
-      const vouchersEarned=[];
+      const vouchersEarned=[],goldEarned=[];
       const newDeal=round=>{if(event?.enabled)refreshDogChristmasDeal(event,round);};
       const collect=(before,after,move,playerSeat)=>{
         // Every human and bot move is checked against authoritative board
@@ -2272,6 +2275,8 @@ function finishEisstock(ch,members){
         if(recipient&&!recipient.bot){
           const tier=claimDogChristmasScratch(event,before,after,move,playerSeat);
           if(tier)vouchersEarned.push({uid:recipient.uid,tier});
+          const gold=claimDogChristmasGold(event,before,after,move,playerSeat);
+          if(gold>0)goldEarned.push({uid:recipient.uid,amount:gold});
         }
         creditedTenths+=finishDogChristmasMatch(event,after);
       };
@@ -2324,16 +2329,19 @@ function finishEisstock(ch,members){
         }));
         match.dogCounters.recorded=true;
       }
-      // Read all earned-voucher wallets BEFORE the first transaction write.
-      // Group by human account so a 7-step turn still needs only one wallet
-      // document write. Retried actions cannot grant the same field twice.
+      // Read once and write once PER affected wallet, even when a 7-step
+      // move awards both a scratch voucher and gold. A completed claim is in
+      // this same transaction as the room state: retries cannot double-pay.
       const voucherUpdates=[];
-      for(const uid of [...new Set(vouchersEarned.map(x=>x.uid))]){
+      const affectedUids=[...new Set([...vouchersEarned,...goldEarned].map(x=>x.uid))];
+      for(const uid of affectedUids){
         const ref=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
         const snap=await tx.get(ref);
         let wallet=snap.exists?snap.data():null;
         for(const {tier} of vouchersEarned.filter(x=>x.uid===uid))
           wallet=grantDogScratchVoucher(wallet,tier);
+        for(const {amount} of goldEarned.filter(x=>x.uid===uid))
+          wallet=grantDogScratchGold(wallet,amount);
         voucherUpdates.push({ref,wallet});
       }
       if(event?.enabled){
