@@ -13,6 +13,21 @@ export const OTHER_EDITION_COLLECTION='dog_christmas_other_editions_v1';
 export const OTHER_EDITION_HISTORY='dog_christmas_other_editions_archive_v1';
 export const OTHER_EDITION_SIZE=500;
 export const OTHER_EDITION_MAX_COINS=1000000000000;
+/**
+ * One-time price correction for the Premium edition that was already live
+ * when the user requested a 1,200-coin price on 22 Nov 2026, 12:11 CET.
+ * It is deliberately NOT a new default for future Premium editions.
+ * The current document is migrated with its next normal purchase/edit.
+ */
+const PREMIUM_CURRENT_PRICE_CUTOFF=Date.parse('2026-11-22T11:11:00Z');
+const PREMIUM_CURRENT_PRICE=1200;
+const needsCurrentPremiumReprice=raw=>
+ raw?.variantId==='premium_27'&&raw.premiumPrice1200Applied!==true&&
+ whole(raw.createdAt,1,PREMIUM_CURRENT_PRICE_CUTOFF-1)&&
+ whole(raw.issued,0,OTHER_EDITION_SIZE-1);
+const effectiveCurrentEditionConfig=raw=>needsCurrentPremiumReprice(raw)?
+ {...raw.config,price:PREMIUM_CURRENT_PRICE}:raw.config;
+
 export const OTHER_EDITION_DEFAULT=Object.freeze({
  elf:Object.freeze({price:500,coinAmounts:[100,300,800],prizeCategory:2,
   maxPrizes:3,nonePer1000:200,giftPer1000:30,doubleChancePer1000:110,
@@ -181,7 +196,7 @@ export function otherEditionPublic(raw){
   maxTicketCoinsRemaining:Array.isArray(raw.prizePlan)?remainingMaximum:null,
   status:issued>=500?'sold_out':'active',revision:raw.revision??0,
   budgetMode:'fixed',createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,
-  config:raw.config,
+  config:effectiveCurrentEditionConfig(raw),
   payingTicketsRemaining:future.filter(code=>otherTicketAmount(raw.variantId,code,raw.config)>0).length,
   giftTicketsRemaining:future.filter(code=>raw.variantId==='premium_27'?code.endsWith('g'):
    raw.variantId==='dog_jackpot_9'?code.includes('g'):false).length};
@@ -192,9 +207,11 @@ export function editOtherEdition(raw,{config,maxTotalCoins,now=Date.now(),draw=r
   throw Error('SCRATCH_OTHER_EDITION_MISSING');
  if(!whole(maxTotalCoins,0,OTHER_EDITION_MAX_COINS)||maxTotalCoins<raw.paidCoins)
   throw Error('SCRATCH_EDITION_FIXED_BUDGET_BELOW_PAID');
- const c=validateOtherEditionConfig(raw.variantId,config);
+ const reprice=needsCurrentPremiumReprice(raw);
+ const c=validateOtherEditionConfig(raw.variantId,
+  reprice?{...config,price:PREMIUM_CURRENT_PRICE}:config);
  const future=createOtherEditionPlan(raw.variantId,maxTotalCoins-raw.paidCoins,c,500-raw.issued,draw);
- return {...raw,config:c,maxTotalCoins,
+ return {...raw,config:c,...(reprice?{premiumPrice1200Applied:true}:{}),maxTotalCoins,
   prizePlan:[...raw.prizePlan.slice(0,raw.issued),...future],
   revision:(raw.revision||0)+1,updatedAt:now};
 }
@@ -206,33 +223,39 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
  if(!Array.isArray(raw.prizePlan)||raw.prizePlan.length!==500||
   !whole(raw.issued,0,500)||!whole(raw.paidCoins,0,raw.maxTotalCoins))
   throw Error('SCRATCH_OTHER_EDITION_PLAN_INVALID');
- const buyOptions={...options,settings,editionPrice:raw.config.price};
  const existing=wallet?.recent?.find(row=>row.commandId===request.commandId);
- if(existing)return {purchase:buyScratchTicket(wallet,tree,request,buyOptions),edition:raw};
+ if(existing)return {purchase:buyScratchTicket(wallet,tree,request,
+  {...options,settings,editionPrice:raw.config.price}),edition:raw};
  if(raw.issued>=500)throw Error('SCRATCH_OTHER_EDITION_SOLD_OUT');
+ // Apply the 1,200-coin price only to the edition already active at request
+ // time. Its published listing is corrected before this one-time write.
+ const reprice=needsCurrentPremiumReprice(raw);
+ const base=reprice?{...raw,config:{...raw.config,price:PREMIUM_CURRENT_PRICE},
+  premiumPrice1200Applied:true,revision:(raw.revision||0)+1}:raw;
  // Existing active Premium editions were preprinted with four money rows.
  // Reprint only their still-unissued codes as v6 two-row cards, atomically
  // with the next actual ticket purchase. Issued receipts/ledger are immutable.
  // No extra Firebase read, standalone migration write or background polling.
- let active=raw;
+ let active=base;
  if(variant==='premium_27'&&
-    !String(raw.prizePlan[raw.issued]||'').startsWith('v6:')){
+    !String(base.prizePlan[base.issued]||'').startsWith('v6:')){
   const future=createOtherEditionPlan(variant,
-   raw.maxTotalCoins-raw.paidCoins,raw.config,500-raw.issued,
+   base.maxTotalCoins-base.paidCoins,base.config,500-base.issued,
    options.draw||randomInt);
-  active={...raw,
-   prizePlan:[...raw.prizePlan.slice(0,raw.issued),...future],
-   revision:(raw.revision||0)+1};
+  active={...base,
+   prizePlan:[...base.prizePlan.slice(0,base.issued),...future],
+   revision:(base.revision||0)+1};
  }
  const code=active.prizePlan[active.issued];
  const expected=otherTicketAmount(variant,code,active.config);
  const printControl=variant==='elf'?{fixedEditionRows:decodeFixedEditionRows(code)}:
   variant==='number_one_20'?{fixedNumberSymbols:decodeFixedEditionRows(code)}:
   variant==='premium_27'?{fixedPremiumCode:code}: {fixedDogSymbols:code};
- const purchase=buyScratchTicket(wallet,tree,request,{...buyOptions,
-  editionSpecial:{prizeCategory:raw.config.prizeCategory,
-   other:{variantId:variant,config:raw.config},
-   numberOne20:{price:raw.config.price,coinAmounts:[...raw.config.coinAmounts],
+ const purchase=buyScratchTicket(wallet,tree,request,{
+  ...options,settings,editionPrice:active.config.price,
+  editionSpecial:{prizeCategory:active.config.prizeCategory,
+   other:{variantId:variant,config:active.config},
+   numberOne20:{price:active.config.price,coinAmounts:[...active.config.coinAmounts],
     symbolWeights:[334,333,333,0],hitPer1000:100,giftFallbackCoins:0},
    dogJackpot:{coinAmounts:[...raw.config.coinAmounts],
     symbolWeights:[334,333,333,0],dogChancePer1000:raw.config.dogChancePer1000,
