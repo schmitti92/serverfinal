@@ -1,0 +1,28 @@
+name: DOG verified personal Videothek
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/video-library.js'
+      - 'tests/dog-video-library.test.js'
+      - 'tests/shared-lobby.test.js'
+      - '.github/workflows/dog-video-library.yml'
+  pull_request:
+    paths:
+      - 'shared-lobby.js'
+      - 'dog/video-library.js'
+      - 'tests/dog-video-library.test.js'
+      - 'tests/shared-lobby.test.js'
+      - '.github/workflows/dog-video-library.yml'
+  workflow_dispatch:
+jobs:
+  verified-video-library:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check shared-lobby.js && node --check dog/video-library.js
+      - run: node --test tests/dog-video-library.test.js tests/shared-lobby.test.js
