@@ -6,7 +6,7 @@ import {dogTreeLevelFromLevels} from '../dog/christmas-tree-rewards.js';
 import {buyScratchTicket} from '../dog/christmas-scratch.js';
 import {creditDogMatchXp} from '../dog/player-levels.js';
 
-test('two new shared buildings retain the existing Christmas tree progression',()=>{
+test('luckhouse and academy now contribute equally to the six-building Christmas tree',()=>{
  const initial=dogVillagePublic(null,DOG_GLOBAL_VILLAGE_ID);
  assert.equal(initial.levels.luckhouse,1);
  assert.equal(initial.levels.academy,1);
@@ -21,8 +21,13 @@ test('two new shared buildings retain the existing Christmas tree progression',(
  assert.equal(upgraded.village.lightsTenths,4700);
  const publicVillage=dogVillagePublic(upgraded.village,DOG_GLOBAL_VILLAGE_ID);
  assert.equal(publicVillage.bonus.academyXpPercent,10);
- assert.equal(dogTreeLevelFromLevels(publicVillage),1);
+ assert.equal(dogTreeLevelFromLevels(publicVillage),1,
+  'two of 24 building upgrades do not yet reach the first tree milestone');
  assert.equal(buyDogVillageUpgrade(upgraded.village,DOG_GLOBAL_VILLAGE_ID,'academy',1,'academy-upgrade-001').unchanged,true);
+ const third=buyDogVillageUpgrade(upgraded.village,DOG_GLOBAL_VILLAGE_ID,
+  'workshop',1,'workshop-upgrade-001');
+ assert.equal(dogTreeLevelFromLevels(third.village),2,
+  'a third upgrade from any of the six buildings raises the tree');
 });
 
 test('shared new bonuses scale to their five-level maximum',()=>{
