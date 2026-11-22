@@ -19,6 +19,10 @@ import {
 import {createDogPostgresPrivateFanout} from '../dog-postgres-private-fanout.js';
 import {createDogPostgresFinalization} from '../dog-postgres-finalization.js';
 import {createDogPostgresXpSettlementBridge} from '../dog-postgres-xp-settlement.js';
+import {createDogChristmasMatch,DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID} from '../dog/christmas-village.js';
+import {createDogPostgresSeasonalJournal} from '../dog-postgres-seasonal-journal.js';
+import {createDogPostgresChristmasRewardBridge,DOG_PG_CHRISTMAS_RECEIPTS_COLLECTION} from '../dog-postgres-christmas-settlement.js';
+import {createDogPostgresSeasonalFinalBridge} from '../dog-postgres-seasonal-final-settlement.js';
 
 const {Pool}=pg;
 const db=new Pool({
@@ -219,4 +223,167 @@ test('DOG durable room, idempotency, privacy and winner settlement on REAL Postg
    [room.code]
   )).rows[0].n,1);
  });
+
+ await t.test('Real PG seasonal exchange commits without Firebase, pending payout preserves original board and retries are exact-once',async()=>{
+  const basic=dogRoom('PQZ234');
+  basic.match.christmas=createDogChristmasMatch(null,true,()=>0,basic.match.dog.round);
+  await store.seedRoom(basic);
+  const seasonal=createDogPostgresSeasonalJournal({pool:db,clock:Date.now});
+  const move={
+   code:basic.code,matchId:basic.match.id,uid:'alice',
+   actionId:'pg-real-seasonal-exchange-0001',
+   expectedDogRevision:basic.match.dog.revision,
+   action:{type:'exchange',cardId:basic.match.dog.hands[0][0].id},
+   authorize
+  };
+  const original=await store.getRoom(basic.code);
+  const result=await seasonal.commitSeasonalMove(move);
+  assert.equal(result.pending,false);
+  assert.equal(result.replayed,false);
+  assert.equal((await store.getRoom(basic.code)).room.match.dog.revision,
+   original.room.match.dog.revision+1);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [basic.code])).rows[0].n,1);
+  const repeat=await seasonal.commitSeasonalMove(move);
+  assert.equal(repeat.replayed,true);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [basic.code])).rows[0].n,1);
+
+  const room=dogRoom('SEA234');
+  const s=room.match.dog;
+  s.phase='play';s.current=0;s.starter=0;s.revision=44;
+  s.hands=[[{id:9000,type:'2'}],[{id:9001,type:'3'}],
+   [{id:9002,type:'3'}],[]];
+  s.exchanges=[null,null,null,true];s.seven=null;
+  const pawn=s.pieces.find(p=>p.id===0);pawn.place='track';pawn.pos=3;
+  room.match.christmas=createDogChristmasMatch(null,true,()=>0,s.round);
+  room.match.christmas.giftFields=[5];
+  room.match.christmas.scratchFields=[];
+  await store.seedRoom(room);
+  const action=legalActions(s,0).find(m=>m.type==='move'&&
+   m.pieceId===0&&m.steps===2&&!m.viaGoal);
+  assert.ok(action);
+  const job={
+   code:room.code,matchId:room.match.id,uid:'alice',
+   actionId:'pg-real-seasonal-gift-0001',expectedDogRevision:44,
+   action,authorize
+  };
+  const frozen=await seasonal.commitSeasonalMove(job);
+  assert.equal(frozen.pending,true);
+  assert.equal(frozen.finished,false);
+  assert.equal((await store.getRoom(room.code)).room.match.dog.revision,44,
+   'unsettled reward cannot be shown to players');
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,0,'no private websocket update before payout');
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_pending_rewards WHERE room_code=$1',
+   [room.code])).rows[0].n,1);
+  assert.equal((await seasonal.commitSeasonalMove(job)).replayed,true);
+  await assert.rejects(()=>seasonal.commitSeasonalMove({
+   ...job,actionId:'pg-real-seasonal-gift-0002'
+  }),/DOG_PG_SEASONAL_SETTLEMENT_PENDING/);
+
+  const fb=fakeFirebase();
+  let ackFailure=true;
+  const bridge=createDogPostgresChristmasRewardBridge({
+   getFirestore:()=>fb.db,
+   loadPendingReward:seasonal.loadPendingReward,
+   markRewardComplete:async args=>{
+    if(ackFailure)throw Error('SIMULATED_PG_ACK_LOST');
+    return seasonal.markRewardComplete(args);
+   },
+   clock:Date.now
+  });
+  await assert.rejects(()=>bridge.settle({
+   roomCode:room.code,matchId:room.match.id,actionId:job.actionId
+  }),/SIMULATED_PG_ACK_LOST/);
+  assert.equal((await store.getRoom(room.code)).room.match.christmas.giftCount,0,
+   'Firestore paid but PG room remains correctly frozen until ACK');
+  const firebaseWrites=fb.metrics().writes;
+  assert.equal(firebaseWrites,2,'one real village write and one immutable reward receipt');
+  ackFailure=false;
+  const paid=await bridge.settle({
+   roomCode:room.code,matchId:room.match.id,actionId:job.actionId
+  });
+  assert.equal(paid.settled,true);
+  assert.equal(paid.replayed,true,'lost ACK cannot pay the same gift twice');
+  assert.equal(fb.metrics().writes,firebaseWrites);
+  const saved=(await store.getRoom(room.code)).room;
+  assert.equal(saved.match.christmas.giftCount,1);
+  assert.equal(saved.match.christmas.earnedTenths,10);
+  assert.equal(saved.match.dog.revision,45);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_pending_rewards WHERE room_code=$1',
+   [room.code])).rows[0].n,0);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,1);
+  assert.equal(fb.docs.has(DOG_VILLAGE_COLLECTION+'/'+DOG_GLOBAL_VILLAGE_ID),true);
+  assert.equal(fb.docs.has(DOG_PG_CHRISTMAS_RECEIPTS_COLLECTION+
+   '/'+room.match.id+'_'+job.actionId),true);
+  const replay=await seasonal.markRewardComplete({
+   roomCode:room.code,matchId:room.match.id,
+   actionId:job.actionId,fingerprint:frozen.fingerprint
+  });
+  assert.equal(replay.replayed,true);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,1);
+ });
+
+ await t.test('Real PG terminal Christmas move freezes winner, then credits human XP and Inn bonus exactly once',async()=>{
+  const {room,last}=finishingRoom();
+  room.code='FNL234';
+  room.match.christmas=createDogChristmasMatch({
+   levels:{tower:1,workshop:1,bakery:1,inn:3,luckhouse:1,academy:1}
+  },true,()=>0,room.match.dog.round);
+  const seasonal=createDogPostgresSeasonalJournal({pool:db,clock:Date.now});
+  await store.seedRoom(room);
+  const request={
+   code:room.code,matchId:room.match.id,
+   uid:'alice',actionId:'pg-real-seasonal-final-0001',
+   expectedDogRevision:42,action:last,authorize
+  };
+  const waiting=await seasonal.commitSeasonalMove(request);
+  assert.equal(waiting.pending,true);
+  assert.equal(waiting.finished,true);
+  assert.equal((await store.getRoom(room.code)).room.match.dog.phase,'play');
+  const record=await seasonal.loadPendingFinal({
+   roomCode:room.code,matchId:room.match.id
+  });
+  assert.equal(record.room.match.dog.phase,'finished');
+  assert.equal(record.room.match.christmas.earnedTenths,20);
+  assert.equal(record.room.match.christmas.innCredited,true);
+  assert.equal(record.before.match.dog.phase,'play');
+  const fb=fakeFirebase();
+  const bridge=createDogPostgresSeasonalFinalBridge({
+   getFirestore:()=>fb.db,
+   loadPendingSeasonalFinal:seasonal.loadPendingFinal,
+   markComplete:seasonal.markFinalComplete,
+   clock:Date.now
+  });
+  const paid=await bridge.settle({roomCode:room.code,matchId:room.match.id});
+  assert.equal(paid.settled,true);
+  assert.equal(paid.creditedTenths,20);
+  assert.equal(paid.players,3);
+  const current=(await store.getRoom(room.code)).room;
+  assert.equal(current.match.dog.phase,'finished');
+  assert.equal(current.match.dogCounters.recorded,true);
+  assert.equal(current.match.pgSettledFingerprint,waiting.fingerprint);
+  assert.equal(fb.docs.get(DOG_VILLAGE_COLLECTION+'/'+DOG_GLOBAL_VILLAGE_ID).matchesCompleted,1);
+  const once=fb.metrics().writes;
+  assert.equal(once,5,'3 real XP documents + shared village + single receipt');
+  const replay=await seasonal.markFinalComplete({
+   roomCode:room.code,matchId:room.match.id,fingerprint:waiting.fingerprint
+  });
+  assert.equal(replay.replayed,true);
+  assert.equal(fb.metrics().writes,once);
+  assert.equal((await db.query(
+   'SELECT COUNT(*)::integer AS n FROM dog_room_outbox WHERE room_code=$1',
+   [room.code])).rows[0].n,1);
+ });
+
 });
