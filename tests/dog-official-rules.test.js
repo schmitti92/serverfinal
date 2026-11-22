@@ -1,6 +1,6 @@
 // Regression tests derived from the official Schmidt DOG (49201) instructions.
-// Classic four-seat TEAM DOG; the manufacturer's separate 2/3/5-player
-// variants are not enabled here (missing human seats are filled by bots).
+// DOG movement regression rules; this portal uses a custom first-4/4
+// victory condition. The Grinch missions use independent engines.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -156,18 +156,19 @@ test('DOG official: 7 burns ALL jumped figures including teammates',()=>{
  assert.notEqual(s.phase,'seven');
 });
 
-test('DOG official: a split 7 may use remaining points for partner once own last pawn reaches goal',()=>{
+test('DOG custom finish: split 7 ends immediately at first 4/4, even if points remain',()=>{
  let s=fixture('7',0);
- position(s,0,'track',63); // 63 -> 0 -> red goal0
+ position(s,0,'track',63);
  for(let j=1;j<4;j++)position(s,j,'goal',j);
  position(s,8,'track',34);
  s=takeAction(s,0,action(s,a=>a.type==='seven'));
  s=takeAction(s,0,action(s,a=>a.type==='seven-step'&&a.pieceId===0&&a.steps===2&&a.viaGoal));
- assert.equal(s.pieces[0].place,'goal');
- assert.ok(legalActions(s,0).some(a=>a.pieceId===8&&a.steps===5));
- s=takeAction(s,0,action(s,a=>a.pieceId===8&&a.steps===5));
- assert.notEqual(s.phase,'seven');
- assert.equal(s.pieces[8].pos,39);
+ assert.equal(s.phase,'finished');
+ assert.equal(s.winner,0);
+ assert.equal(s.winnerSeat,0);
+ assert.equal(s.seven,null);
+ assert.equal(s.pieces[8].pos,34);
+ assert.deepEqual(legalActions(s,0),[]);
 });
 
 test('DOG 7: red advances one field inside finish, then another red pawn moves six',()=>{
@@ -244,23 +245,27 @@ test('DOG official: a joker can become start, backward 4, or split 7',()=>{
  assert.ok(moves.some(a=>a.as==='7'&&a.type==='seven'));
 });
 
-test('DOG official: teammate may use my finished pieces only after all own pieces are home',()=>{
+test('DOG custom finish: completed player cannot keep playing teammate pieces',()=>{
  const s=fixture('2',0);
  position(s,8,'track',34);
  assert.equal(legalActions(s,0).some(a=>a.pieceId===8),false);
  for(let i=0;i<4;i++)position(s,i,'goal',i);
- assert.equal(legalActions(s,0).some(a=>a.pieceId===8),true);
+ assert.deepEqual(legalActions(s,0),[]);
 });
 
-test('DOG official: winning requires all EIGHT pieces of the team in the finish',()=>{
+test('DOG custom finish: one player at 4/4 wins without partner reaching goal',()=>{
  const s=fixture('2',0);
  position(s,0,'track',63);
  for(let j=1;j<4;j++)position(s,j,'goal',j);
- for(let j=8;j<12;j++)position(s,j,'goal',j-8);
+ // The teammate is not finished, deliberately.
+ assert.ok(s.pieces.filter(p=>p.owner===2).every(p=>p.place==='home'));
  const m=action(s,a=>a.type==='move'&&a.pieceId===0&&a.viaGoal);
  const next=takeAction(s,0,m);
  assert.equal(next.phase,'finished');
  assert.equal(next.winner,0);
+ assert.equal(next.winnerSeat,0);
+ assert.equal(next.pieces.filter(p=>p.owner===0&&p.place==='goal').length,4);
+ assert.equal(next.pieces.filter(p=>p.owner===2&&p.place==='goal').length,0);
 });
 
 test('DOG official: forged move with wrong distance or wrong card identity is denied',()=>{
