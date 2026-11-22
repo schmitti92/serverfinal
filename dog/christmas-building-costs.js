@@ -10,19 +10,21 @@ export const CHRISTMAS_BUILDING_IDS=Object.freeze([...CHRISTMAS_TREE_BUILDING_ID
 export const CHRISTMAS_BUILDING_MIN_LEVEL=1;
 export const CHRISTMAS_BUILDING_MAX_LEVEL=5;
 export const CHRISTMAS_BASE_UPGRADE_COST=15;
+// Every following upgrade costs three times the previous one.
+export const CHRISTMAS_UPGRADE_COST_MULTIPLIER=3;
 
 /** Preis für den Schritt `currentLevel → currentLevel + 1`.
  * Auf Maximalstufe oder bei ungültigem Level: null (kein kaufbares Upgrade).
  */
 export function christmasUpgradeCost(currentLevel){
  if(!Number.isInteger(currentLevel)||currentLevel<CHRISTMAS_BUILDING_MIN_LEVEL||currentLevel>=CHRISTMAS_BUILDING_MAX_LEVEL)return null;
- return CHRISTMAS_BASE_UPGRADE_COST*2**(currentLevel-1);
+ return CHRISTMAS_BASE_UPGRADE_COST*CHRISTMAS_UPGRADE_COST_MULTIPLIER**(currentLevel-1);
 }
 
 /** Kumulierte, theoretisch benötigte Lichter ab Level 1, nicht ein Guthaben. */
 export function christmasBuildingTotalCost(level){
  if(!Number.isInteger(level)||level<CHRISTMAS_BUILDING_MIN_LEVEL||level>CHRISTMAS_BUILDING_MAX_LEVEL)return null;
- return CHRISTMAS_BASE_UPGRADE_COST*(2**(level-1)-1);
+ return CHRISTMAS_BASE_UPGRADE_COST*(CHRISTMAS_UPGRADE_COST_MULTIPLIER**(level-1)-1)/(CHRISTMAS_UPGRADE_COST_MULTIPLIER-1);
 }
 
 /** Ein unverbindliches Angebot. Spätere Abbuchung muss atomar im Backend erfolgen. */
