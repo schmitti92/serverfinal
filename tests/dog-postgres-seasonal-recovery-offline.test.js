@@ -21,7 +21,7 @@ function fakeStore(seed=[]){
      return {rows:[...records.values()]
       .filter(row=>!row.requires_review&&row.next_attempt_at_ms<=args[0])
       .sort((a,b)=>a.created_at_ms-b.created_at_ms)
-      .slice(0,args[1]).map(clone)};
+      .slice(0,args[1]).map(row=>clone(row))};
     }
     if(sql.startsWith('UPDATE dog_room_pending_rewards SET attempts=')){
      if(failUpdate)throw Error('DATABASE_TEMPORARILY_OFFLINE');
