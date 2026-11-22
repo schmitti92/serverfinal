@@ -1,0 +1,30 @@
+name: DOG Firebase live budget diagnostics (offline)
+on:
+  pull_request:
+    paths:
+      - 'shared-lobby.js'
+      - 'dog-firebase-budget-summary.js'
+      - 'tests/dog-firebase-budget-summary-offline.test.js'
+      - 'tests/firebase-hub-noop-cache-offline.test.js'
+      - '.github/workflows/dog-firebase-budget-offline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'shared-lobby.js'
+      - 'dog-firebase-budget-summary.js'
+      - 'tests/dog-firebase-budget-summary-offline.test.js'
+      - 'tests/firebase-hub-noop-cache-offline.test.js'
+      - '.github/workflows/dog-firebase-budget-offline.yml'
+permissions:
+  contents: read
+jobs:
+  read-budget-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-firebase-budget-summary.js && node --check shared-lobby.js
+      - run: node --test tests/dog-firebase-budget-summary-offline.test.js tests/firebase-hub-noop-cache-offline.test.js
