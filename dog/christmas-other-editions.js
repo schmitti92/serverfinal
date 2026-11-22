@@ -22,19 +22,31 @@ export const OTHER_EDITION_MAX_COINS=1000000000000;
 const PREMIUM_CURRENT_PRICE_CUTOFF=Date.parse('2026-11-22T11:11:00Z');
 const PREMIUM_CURRENT_PRICE=1200;
 const MEDIUM_CURRENT_PRICE_CUTOFF=Date.parse('2026-11-22T11:15:42Z');
-const MEDIUM_CURRENT_PRICE=600;
+const LUCKY_CURRENT_PRICE_CUTOFF=Date.parse('2026-11-22T11:21:26Z');
+const LUCKY_CURRENT_PRICE=600;
 const needsCurrentPremiumReprice=raw=>
  raw?.variantId==='premium_27'&&raw.premiumPrice1200Applied!==true&&
  whole(raw.createdAt,1,PREMIUM_CURRENT_PRICE_CUTOFF-1)&&
  whole(raw.issued,0,OTHER_EDITION_SIZE-1);
-const needsCurrentMediumReprice=raw=>
- raw?.variantId==='elf'&&raw.mediumPrice600Applied!==true&&
+// Correct variant: Glückszahl 1 is number_one_20, NOT the elf Wichtelpfad.
+// Restrict to the edition running before the request, never future editions.
+const needsCurrentLuckyReprice=raw=>
+ raw?.variantId==='number_one_20'&&raw.luckyPrice600Applied!==true&&
  raw.config?.price===500&&
+ whole(raw.createdAt,1,LUCKY_CURRENT_PRICE_CUTOFF-1)&&
+ whole(raw.issued,0,OTHER_EDITION_SIZE-1);
+// Undo the earlier mistaken 600-coin Wichtelpfad update, including an edition
+// where the erroneous value was already saved during a normal purchase.
+// Previously sold tickets always keep their original receipts.
+const needsUndoMistakenElfReprice=raw=>
+ raw?.variantId==='elf'&&raw.mediumPrice600Applied===true&&
+ raw.mistakenMediumRepriceReverted!==true&&raw.config?.price===600&&
  whole(raw.createdAt,1,MEDIUM_CURRENT_PRICE_CUTOFF-1)&&
  whole(raw.issued,0,OTHER_EDITION_SIZE-1);
 const effectiveCurrentEditionConfig=raw=>needsCurrentPremiumReprice(raw)?
  {...raw.config,price:PREMIUM_CURRENT_PRICE}:
- needsCurrentMediumReprice(raw)?{...raw.config,price:MEDIUM_CURRENT_PRICE}:raw.config;
+ needsCurrentLuckyReprice(raw)?{...raw.config,price:LUCKY_CURRENT_PRICE}:
+ needsUndoMistakenElfReprice(raw)?{...raw.config,price:500}:raw.config;
 
 export const OTHER_EDITION_DEFAULT=Object.freeze({
  elf:Object.freeze({price:500,coinAmounts:[100,300,800],prizeCategory:2,
@@ -216,14 +228,17 @@ export function editOtherEdition(raw,{config,maxTotalCoins,now=Date.now(),draw=r
  if(!whole(maxTotalCoins,0,OTHER_EDITION_MAX_COINS)||maxTotalCoins<raw.paidCoins)
   throw Error('SCRATCH_EDITION_FIXED_BUDGET_BELOW_PAID');
  const premiumReprice=needsCurrentPremiumReprice(raw);
- const mediumReprice=needsCurrentMediumReprice(raw);
+ const luckyReprice=needsCurrentLuckyReprice(raw);
+ const undoElfReprice=needsUndoMistakenElfReprice(raw);
  const c=validateOtherEditionConfig(raw.variantId,
   premiumReprice?{...config,price:PREMIUM_CURRENT_PRICE}:
-  mediumReprice?{...config,price:MEDIUM_CURRENT_PRICE}:config);
+  luckyReprice?{...config,price:LUCKY_CURRENT_PRICE}:
+  undoElfReprice?{...config,price:500}:config);
  const future=createOtherEditionPlan(raw.variantId,maxTotalCoins-raw.paidCoins,c,500-raw.issued,draw);
  return {...raw,config:c,
   ...(premiumReprice?{premiumPrice1200Applied:true}:{}),
-  ...(mediumReprice?{mediumPrice600Applied:true}:{}),maxTotalCoins,
+  ...(luckyReprice?{luckyPrice600Applied:true}:{}),
+  ...(undoElfReprice?{mistakenMediumRepriceReverted:true}:{}),maxTotalCoins,
   prizePlan:[...raw.prizePlan.slice(0,raw.issued),...future],
   revision:(raw.revision||0)+1,updatedAt:now};
 }
@@ -239,15 +254,17 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
  if(existing)return {purchase:buyScratchTicket(wallet,tree,request,
   {...options,settings,editionPrice:raw.config.price}),edition:raw};
  if(raw.issued>=500)throw Error('SCRATCH_OTHER_EDITION_SOLD_OUT');
- // Correct only the editions that were already active when their owner
- // requested the price changes. The public listing reflects the change
- // immediately; the same atomic purchase/edit stores the updated price.
+ // The Render purchase already reads and writes this edition atomically;
+ // migrate the live price in that SAME transaction (no extra Firebase IO).
  const premiumReprice=needsCurrentPremiumReprice(raw);
- const mediumReprice=needsCurrentMediumReprice(raw);
+ const luckyReprice=needsCurrentLuckyReprice(raw);
+ const undoElfReprice=needsUndoMistakenElfReprice(raw);
  const base=premiumReprice?{...raw,config:{...raw.config,price:PREMIUM_CURRENT_PRICE},
   premiumPrice1200Applied:true,revision:(raw.revision||0)+1}:
-  mediumReprice?{...raw,config:{...raw.config,price:MEDIUM_CURRENT_PRICE},
-   mediumPrice600Applied:true,revision:(raw.revision||0)+1}:raw;
+  luckyReprice?{...raw,config:{...raw.config,price:LUCKY_CURRENT_PRICE},
+   luckyPrice600Applied:true,revision:(raw.revision||0)+1}:
+  undoElfReprice?{...raw,config:{...raw.config,price:500},
+   mistakenMediumRepriceReverted:true,revision:(raw.revision||0)+1}:raw;
  // Existing active Premium editions were preprinted with four money rows.
  // Reprint only their still-unissued codes as v6 two-row cards, atomically
  // with the next actual ticket purchase. Issued receipts/ledger are immutable.
