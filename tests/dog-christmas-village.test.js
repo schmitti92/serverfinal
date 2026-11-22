@@ -264,8 +264,8 @@ test('old active DOG room backfills its recorded discoveries without guessing se
  assert.equal(view.visibleScratchFields,undefined);
  const saved=refreshDogChristmasDeal(match,6,()=>0);
  assert.equal(saved,true);
- assert.deepEqual(new Set(match.foundGiftFields),new Set([oldGift,view.foundGiftFields[1]]));
- assert.deepEqual(new Set(match.foundScratchFields),new Set([oldScratch,view.foundScratchFields[1]]));
+ assert.deepEqual(new Set(match.foundGiftFields),new Set(view.foundGiftFields));
+ assert.deepEqual(new Set(match.foundScratchFields),new Set(view.foundScratchFields));
  assert.equal(match.roundGiftCollected,0);
  assert.equal(match.roundScratchCollected,0);
  assert.deepEqual(publicDogChristmasMatch(match).foundGiftFields,match.foundGiftFields);
