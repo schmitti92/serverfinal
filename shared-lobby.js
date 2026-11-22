@@ -1098,6 +1098,9 @@ function finishEisstock(ch,members){
          // DOG moves are handled using committed per-collection write counts
          // above, not an indiscriminate invalidation on every board move.
          route!=='/api/hub/rooms/:code/dog/action'&&
+         // Avatar changes only write the hub room. Invalidate that room's
+         // sync cache inside mutate(), NOT unrelated stats/wallet/XP caches.
+         route!=='/api/hub/rooms/:code/dog/avatar'&&
          /^\/api\/hub\/(?:dog\/|scratch(?:\/|$)|christmas(?:-|\/)|grinch\/|rooms\/:code\/(?:dog\/|grinch\/))/.test(route))
         dogMetaReadCoordinator.invalidate();
       return res.json({ok:true,...result});
