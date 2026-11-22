@@ -1487,6 +1487,11 @@ function finishEisstock(ch,members){
          nextOtherEdition||(otherSnap?.exists?otherSnap.data():null))}:{}),
         ...(village?{village:dogVillagePublic(village,DOG_GLOBAL_VILLAGE_ID)}:{})};
     });
+    if(!award.replayed){
+      dogMetaReadCoordinator.invalidate(accountRef.path);
+      if(award.village)dogMetaReadCoordinator.invalidate(sharedVillageRef.path);
+      if(award.result?.pityVoucherEarned)dogMetaReadCoordinator.invalidate(researchRef.path);
+    }
     return award;
   }));
   // One authenticated, room-independent DOG Christmas village for every player.
@@ -1735,7 +1740,7 @@ function finishEisstock(ch,members){
     const store=db(),uid=req.hubIdentity.uid;
     const walletRef=store.collection(DOG_SCRATCH_COLLECTION).doc(uid);
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
-    return dogWriteDiagnostics.transaction(store,'dog-level-claim',async tx=>{
+    const claimed=await dogWriteDiagnostics.transaction(store,'dog-level-claim',async tx=>{
       const [statsSnap,walletSnap]=await Promise.all([tx.get(statsRef),tx.get(walletRef)]);
       const current=dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null);
       if(current.level<level||current.totalXp<DOG_LEVEL_THRESHOLDS[level-1])
@@ -1747,6 +1752,8 @@ function finishEisstock(ch,members){
       return {replayed:grant.unchanged,levelRewardClaims:dogLevelRewardClaimFlags(grant.wallet),
         scratch:dogScratchStatus(grant.wallet)};
     });
+    if(!claimed.replayed)dogMetaReadCoordinator.invalidate(walletRef.path);
+    return claimed;
   }));
   app.get('/api/hub/christmas-village',authentication,handler(async req=>{
     const store=db(),snap=await readDogMeta(store,dogVillageFor(store));
