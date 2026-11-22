@@ -110,7 +110,8 @@ export function createDogChristmasMatch(village,enabled,draw=randomInt,round=1){
  const levels={...normalizedDogVillage(village,village?.hostUid||'').levels};
  const positions=drawHiddenDogChristmasFields(DOG_TOWER_FIELDS[levels.tower-1],draw,dogInnScratchFieldCount(levels.inn));
  return {enabled:true,levels,round,...positions,
-  claimedFields:[],claimedScratchFields:[],roundGiftCollected:0,roundScratchCollected:0,
+  claimedFields:[],claimedScratchFields:[],foundGiftFields:[],foundScratchFields:[],eventSerial:0,
+  roundGiftCollected:0,roundScratchCollected:0,
   giftCount:0,scratchCount:0,bonusGiftCount:0,earnedTenths:0,innCredited:false,activity:[]};
 }
 /** Add an inn upgrade to an active match without reshuffling existing
@@ -152,12 +153,17 @@ export function refreshDogChristmasDeal(match,round,draw=randomInt){
 export const DOG_CHRISTMAS_SHOW_BOARD_FIELDS=false;
 
 /** Public room snapshot: during the preview only UNCLAIMED field positions
- * are exposed. Internal arrays and claimed indices remain private.
+ * are exposed. Internal maps stay private; already collected positions are safe to show.
  */
 export function publicDogChristmasMatch(match){
  if(!match?.enabled)return null;
  const {enabled,levels,round,giftCount,scratchCount,roundGiftCollected,
   roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,activity}=match;
+ // A found field remains marked throughout the entire match, even when
+ // the next card deal replaces the hidden field maps. Never expose an
+ // undiscovered position. The current claims also cover older saved rooms.
+ const foundGiftFields=[...new Set([...(match.foundGiftFields||[]),...(match.claimedFields||[])])];
+ const foundScratchFields=[...new Set([...(match.foundScratchFields||[]),...(match.claimedScratchFields||[])])];
  const boardFields=DOG_CHRISTMAS_SHOW_BOARD_FIELDS?{
   visibleGiftFields:(match.giftFields||[]).filter(i=>!(match.claimedFields||[]).includes(i)),
   visibleScratchFields:(match.scratchFields||[]).filter(i=>!(match.claimedScratchFields||[]).includes(i))
@@ -165,6 +171,7 @@ export function publicDogChristmasMatch(match){
  return {enabled,levels,round,giftFieldCount:DOG_TOWER_FIELDS[levels.tower-1],
   scratchFieldCount:Array.isArray(match.scratchFields)?match.scratchFields.length:DOG_SCRATCH_FIELDS_PER_DEAL,giftCount,scratchCount,
   roundGiftCollected,roundScratchCollected,bonusGiftCount,earnedTenths,innCredited,
+  foundGiftFields,foundScratchFields,eventSerial:match.eventSerial||0,
   ...boardFields,activity:(activity||[]).slice(-12)};
 }
 function landedDogTrackField(before,after,action){
@@ -184,6 +191,9 @@ export function claimDogChristmasGift(match,before,after,action,seat,draw=random
  if(field===null)return 0;
  if(!match.giftFields.includes(field)||match.claimedFields.includes(field))return 0;
  match.claimedFields.push(field);
+ if(!Array.isArray(match.foundGiftFields))match.foundGiftFields=[];
+ if(!match.foundGiftFields.includes(field))match.foundGiftFields.push(field);
+ match.eventSerial=(Number.isSafeInteger(match.eventSerial)?match.eventSerial:0)+1;
  const chance=match.levels.workshop*5;
  const bonus=draw(100)<chance?1:0;
  const gifts=1+bonus;
@@ -192,7 +202,7 @@ export function claimDogChristmasGift(match,before,after,action,seat,draw=random
  match.roundGiftCollected=(match.roundGiftCollected||0)+1;
  match.bonusGiftCount+=bonus;
  match.earnedTenths+=tenths;
- match.activity=[...match.activity.slice(-11),{type:'gift',field,seat,gifts,bonus,earnedTenths:tenths}];
+ match.activity=[...match.activity.slice(-11),{id:match.eventSerial,type:'gift',field,seat,gifts,bonus,earnedTenths:tenths}];
  return tenths;
 }
 /** Server-verified, one-use landing on a hidden scratch field. */
@@ -203,9 +213,12 @@ export function claimDogChristmasScratch(match,before,after,action,seat,draw=ran
   match.claimedScratchFields?.includes(field))return null;
  const tier=drawDogScratchTier(draw);
  match.claimedScratchFields.push(field);
+ if(!Array.isArray(match.foundScratchFields))match.foundScratchFields=[];
+ if(!match.foundScratchFields.includes(field))match.foundScratchFields.push(field);
+ match.eventSerial=(Number.isSafeInteger(match.eventSerial)?match.eventSerial:0)+1;
  match.scratchCount=(match.scratchCount||0)+1;
  match.roundScratchCollected=(match.roundScratchCollected||0)+1;
- match.activity=[...match.activity.slice(-11),{type:'scratch',field,seat,tier}];
+ match.activity=[...match.activity.slice(-11),{id:match.eventSerial,type:'scratch',field,seat,tier}];
  return tier;
 }
 export function finishDogChristmasMatch(match,after){
