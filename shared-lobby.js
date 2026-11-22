@@ -1531,7 +1531,7 @@ function finishEisstock(ch,members){
     if(typeof id!=='string'||id.length>48)throw error(400,'VIDEO_UNKNOWN');
     const store=db(),uid=req.hubIdentity.uid;
     const seenRef=store.collection(DOG_VIDEO_LIBRARY_COLLECTION).doc(uid);
-    return dogWriteDiagnostics.transaction(store,'dog-video-seen',async tx=>{
+    const saved=await dogWriteDiagnostics.transaction(store,'dog-video-seen',async tx=>{
       const [introSnap,villageSnap,seenSnap]=await Promise.all([
         tx.get(introRef(store,uid)),tx.get(dogVillageFor(store)),tx.get(seenRef)
       ]);
@@ -1545,6 +1545,8 @@ function finishEisstock(ch,members){
       if(result.changed)tx.set(seenRef,{...result.record,uid});
       return {watched:true,unchanged:!result.changed,id};
     });
+    if(!saved.unchanged)dogMetaReadCoordinator.invalidate(seenRef.path);
+    return saved;
   }));
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
