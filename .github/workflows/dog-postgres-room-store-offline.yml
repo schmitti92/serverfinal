@@ -4,6 +4,8 @@ on:
     paths:
       - 'dog-postgres-room-store.js'
       - 'dog-postgres-classic-adapter.js'
+      - 'dog-postgres-private-fanout.js'
+      - 'tests/dog-postgres-private-fanout-offline.test.js'
       - 'migrations/20261122_dog_durable_rooms.sql'
       - 'tests/dog-postgres-room-store-offline.test.js'
       - '.github/workflows/dog-postgres-room-store-offline.yml'
@@ -12,6 +14,8 @@ on:
     paths:
       - 'dog-postgres-room-store.js'
       - 'dog-postgres-classic-adapter.js'
+      - 'dog-postgres-private-fanout.js'
+      - 'tests/dog-postgres-private-fanout-offline.test.js'
       - 'migrations/20261122_dog_durable_rooms.sql'
       - 'tests/dog-postgres-room-store-offline.test.js'
       - '.github/workflows/dog-postgres-room-store-offline.yml'
@@ -26,5 +30,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --check dog-postgres-room-store.js && node --check dog-postgres-classic-adapter.js && node --check tests/dog-postgres-room-store-offline.test.js
-      - run: node --test tests/dog-postgres-room-store-offline.test.js
+      - run: node --check dog-postgres-room-store.js && node --check dog-postgres-classic-adapter.js && node --check dog-postgres-private-fanout.js && node --check tests/dog-postgres-room-store-offline.test.js && node --check tests/dog-postgres-private-fanout-offline.test.js
+      - run: node --test tests/dog-postgres-room-store-offline.test.js tests/dog-postgres-private-fanout-offline.test.js
