@@ -24,6 +24,7 @@ import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/pla
 import {DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,dogChristmasScratchMinLevel,dogChristmasScratchUnlocked} from './dog/christmas-unlock-levels.js';
 import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearchLevel,dogResearchTicketMs,dogResearchPityThreshold} from './dog/christmas-research.js';
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
+import {dogChristmasTabBadges} from './dog/christmas-tab-badges.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
 import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasHumanFields,ensureDogChristmasGoldFields,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
@@ -1678,6 +1679,22 @@ function finishEisstock(ch,members){
         entry.reward?.id==='kartendesign-05'),
       scope:'verified-personal-dog-cosmetics'
     };
+  }));
+  // One small authenticated read for personal sidebar badges on event entry.
+  // Reuse the existing short-lived DOG metadata read coordinator: no extra
+  // listeners, intervals, room reads, sales editions, or automatic writes.
+  app.get('/api/hub/dog/christmas-tab-badges',authentication,handler(async req=>{
+    const store=db(),uid=req.hubIdentity.uid;
+    const [statsSnap,walletSnap,researchSnap]=await Promise.all([
+      readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
+      readDogMeta(store,store.collection(DOG_SCRATCH_COLLECTION).doc(uid)),
+      readDogMeta(store,store.collection(DOG_RESEARCH_COLLECTION).doc(uid))
+    ]);
+    return {badges:dogChristmasTabBadges(
+      statsSnap.exists?statsSnap.data():null,
+      walletSnap.exists?walletSnap.data():null,
+      researchSnap.exists?researchSnap.data():null,clock()),
+      scope:'authenticated-personal-dog-christmas-menu'};
   }));
   // Persönlicher 50-Level-Sammlerpass. Serverseitig bestätigte DOG-XP.
   app.get('/api/hub/dog/level',authentication,handler(async req=>{
