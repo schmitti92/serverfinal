@@ -3495,6 +3495,7 @@ function finishEisstock(ch,members){
   let lastDogActionCommits=hubStreamReadCounts.dogActionCommits;
   let lastWatchReuses=hubStreamReadCounts.watchReuses;
   let lastIdleSnapshotEvents=hubStreamReadCounts.idleSnapshotEvents;
+  let lastDogCasStats={...dogFastCasCounts};
   const hubReadLogTimer=setInterval(()=>{
     const httpRoomGets=hubHttpReadCounts.firestoreGets-lastHubRoomGetCount;
     const watchNotifications=hubStreamReadCounts.snapshotEvents-lastHubWatchEvents;
@@ -3502,10 +3503,13 @@ function finishEisstock(ch,members){
     const committedDogActions=hubStreamReadCounts.dogActionCommits-lastDogActionCommits;
     const avoidedWatchRestarts=hubStreamReadCounts.watchReuses-lastWatchReuses;
     const idleWatchNotifications=hubStreamReadCounts.idleSnapshotEvents-lastIdleSnapshotEvents;
-    if(httpRoomGets||watchNotifications||committedDogActions||avoidedWatchRestarts)
+    const dogCasMinute=Object.fromEntries(Object.entries(dogFastCasCounts)
+      .map(([key,count])=>[key,count-(lastDogCasStats[key]||0)]));
+    if(httpRoomGets||watchNotifications||committedDogActions||avoidedWatchRestarts||dogCasMinute.attempts)
       console.info('[hub-read-sources/1min]',JSON.stringify({
         httpRoomGetAttempts:httpRoomGets,watchNotifications,dogWatchNotifications,
         committedDogActions,avoidedWatchRestarts,idleWatchNotifications,
+        dogFastCas:dogCasMinute,
         watchNotificationsPerDogAction:committedDogActions?
           Math.round(100*dogWatchNotifications/committedDogActions)/100:null,
         activeRoomWatches:roomStreams.size,
@@ -3517,6 +3521,7 @@ function finishEisstock(ch,members){
     lastDogActionCommits=hubStreamReadCounts.dogActionCommits;
     lastWatchReuses=hubStreamReadCounts.watchReuses;
     lastIdleSnapshotEvents=hubStreamReadCounts.idleSnapshotEvents;
+    lastDogCasStats={...dogFastCasCounts};
   },60000);
   hubReadLogTimer.unref?.();
   // DOG emoji reactions travel over already-authenticated room sockets.
