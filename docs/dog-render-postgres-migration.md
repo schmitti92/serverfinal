@@ -199,3 +199,51 @@ Postgres-Provisioning, echte Datenbank-Integrationstests, Session-Auth,
 das gemeinsame Weihnachts-/Rubbellos-/Dorfsettlement und der sichere
 Rückweg zu Firestore müssen vor dem Aktivieren abgeschlossen sein.
 Diese vorbereitete Migration darf keine vorhandene DOG-Partie betreffen.
+
+## P4-Erweiterung: Weihnachtslichter und Rubbellose gemeinsam buchen
+
+Der **noch nicht in Live-Routen verwendete** Adapter
+`dog-postgres-christmas-settlement.js` bereitet die einmalige Auszahlung
+einzelner DOG-Weihnachtsereignisse **während einer noch laufenden Partie**
+vor. Ein späterer verifizierter Postgres-Gewinnjob muss aus dem
+authentischen **serverseitigen** Ausgangs- und Folgezustand eines DOG-Zugs
+stammen. Er ist niemals eine beliebige Gewinnmeldung aus dem Browser.
+
+- Der Server prüft dieselbe Match-ID, Raum-ID, Spielergruppe und die
+  gültige DOG-Revisionsfolge in beiden Zuständen. Unzulässige
+  Rücksetzungen, fremde Gutscheinempfänger, erfundene Kategorien und
+  negative/zu große Gewinndifferenzen werden vor Firebase abgewiesen.
+- Der tatsächliche Gewinn ergibt sich aus der **Differenz** der
+  verifizierten Eventzähler `earnedTenths`, `giftCount`,
+  `bonusGiftCount` und `scratchCount`. Genau so bucht die bestehende
+  DOG-Engine in der Firestore-Transaktion.
+- Ein einziger Firestore-Beleg
+  `dog_pg_christmas_move_receipts_v1/{matchId}_{actionId}` wird
+  zusammen mit **allen** im selben Zug betroffenen Dokumenten
+  transaktional gespeichert: `dog_christmas_villages_v1` für das
+  gemeinsam verdiente Licht sowie je **einem** persönlichen
+  `dog_christmas_scratch_wallet_v1`-Dokument pro betroffenem Konto.
+  Mehrere Lose desselben Spielers werden in **einem** Wallet-Schreiben
+  zusammengefasst.
+- Der Beleg erhält einen SHA-256-Fingerprint der festgestellten
+  Buchungsdaten. Nach Firestore-Commit muss der identische
+  Postgres-Auftrag bestätigt werden. Nach einem Absturz vor der
+  Postgres-Bestätigung werden die Lichter und Lose nicht doppelt
+  ausgezahlt.
+- Bei reinen Kartenzügen ohne Licht/Geschenk/Los wird überhaupt
+  **kein** Firebase-Buchungsbeleg benötigt. Diese sollen künftig
+  ausschließlich über Render/Postgres laufen.
+
+**Noch ausdrücklich gesperrt:** Endzüge, die Weihnachtsbelohnungen und
+XP gemeinsam auslösen, sowie die Belohnungen aus Rubbellosen selbst.
+Eine kombinierte Abschlussbrücke muss XP, Dorfkonto, persönlichen
+Losbestand, Sieg und jeden Buchungsbeleg **in EINER** Firestore-Transaktion
+abwickeln, wenn sie denselben letzten DOG-Zug betreffen.
+
+**Noch nicht umgesetzt:** Die unveränderliche Postgres-Erzeugung
+dieser per-Zug-Gewinnjobs und die Freigabe des neuen Spielstands erst
+nach Auszahlung. Ohne diesen abgesicherten Erzeuger darf das
+Weihnachtsevent **nicht** über die PG-Speicherung laufen. Die neuen
+Offline-Tests verwenden nur Fake-Firebase und zuvor simulierte
+PG-Gewinnjobs. Kein produktiver Firebase-Zugriff entsteht durch das
+bloße Hinzufügen des Codes.
