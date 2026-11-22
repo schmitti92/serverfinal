@@ -5,6 +5,7 @@ on:
     paths:
       - 'shared-lobby.js'
       - 'tests/firebase-dog-cosmetics-low-read-offline.test.js'
+      - 'tests/firebase-dog-intro-read-budget-offline.test.js'
       - '.github/workflows/firebase-dog-cosmetics-low-read.yml'
   workflow_dispatch:
 permissions:
@@ -19,4 +20,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check shared-lobby.js
-      - run: node --test tests/firebase-dog-cosmetics-low-read-offline.test.js
+      - run: node --test tests/firebase-dog-cosmetics-low-read-offline.test.js tests/firebase-dog-intro-read-budget-offline.test.js
