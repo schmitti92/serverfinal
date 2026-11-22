@@ -17,7 +17,7 @@ export function isDogCasConflict(error){
 export async function tryDogFastCas({room,updateTime,ref,store,change,clock,ttlMs}){
  if(room?.phase!=='playing'||room?.match?.game!=='dog'||
     room.match.dogChristmasEligibilityChecked!==true||
-    room.match.christmas?.enabled!==false||
+    room.match.christmas?.enabled===true||
     typeof updateTime?.toMillis!=='function'||
     typeof ref?.update!=='function')return fallback('not-eligible');
  // Cloned state is speculative until the Firestore compare-and-swap commits.
@@ -31,7 +31,7 @@ export async function tryDogFastCas({room,updateTime,ref,store,change,clock,ttlM
  try{changeResult=await change(candidate,forbiddenTx,store);}
  catch{return fallback('must-validate-in-transaction');}
  if(changeResult?.remove||changeResult?.unchanged||
-    candidate.match?.game!=='dog'||candidate.match.christmas?.enabled!==false||
+    candidate.match?.game!=='dog'||candidate.match.christmas?.enabled===true||
     candidate.match.dogChristmasEligibilityChecked!==true||
     candidate.match.dog?.phase==='finished')return fallback('transaction-required');
  // update(data) merges fields at the root. If a key disappeared, only a
