@@ -6,14 +6,14 @@ on:
       - 'shared-lobby.js'
       - 'dog/video-library.js'
       - 'tests/dog-video-library.test.js'
-      - 'tests/shared-lobby.test.js'
+      - 'tests/dog-video-library-endpoint.test.js'
       - '.github/workflows/dog-video-library.yml'
   pull_request:
     paths:
       - 'shared-lobby.js'
       - 'dog/video-library.js'
       - 'tests/dog-video-library.test.js'
-      - 'tests/shared-lobby.test.js'
+      - 'tests/dog-video-library-endpoint.test.js'
       - '.github/workflows/dog-video-library.yml'
   workflow_dispatch:
 jobs:
@@ -25,4 +25,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check shared-lobby.js && node --check dog/video-library.js
-      - run: node --test tests/dog-video-library.test.js tests/shared-lobby.test.js
+      - run: node --test tests/dog-video-library.test.js tests/dog-video-library-endpoint.test.js
