@@ -15,6 +15,7 @@ import {createDogFirestoreReadBudget} from './dog-firestore-read-budget.js';
 import {tryDogFastCas} from './dog-fast-cas.js';
 import {dogMetadataWasWritten,dogWrittenMetadataPaths} from './dog-meta-write-policy.js';
 import {createDogWriteDiagnostics} from './dog-write-diagnostics.js';
+import {dogFirebaseBudgetSummary} from './dog-firebase-budget-summary.js';
 import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwapCard as dogResearchSwapCard,legalActions as dogLegalActions,takeAction as dogTakeAction,botAction as dogBotAction,publicState as publicDogState} from './dog/engine.js';
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
@@ -104,11 +105,27 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const dogReadBudget=createDogFirestoreReadBudget({clock});
   const dogFastCasCounts={attempts:0,commits:0,conflicts:0,fallthroughs:0};
   // Render-only aggregate write reports. No player details and no Firestore I/O.
+  // The alert and the health summary are computed only from counters in
+  // Render RAM. They never trigger a Firestore GET or expose player data.
+  let lastDogBudgetAlertAt=-Infinity;
   const dogWriteLogTimer=setInterval(()=>{
     const report=dogWriteDiagnostics.snapshot();
     if(report.writeCalls)console.info('[dog-firestore/10min]',JSON.stringify({
       writes:report.writeCalls,byCollection:report.byCollection,byKind:report.byKind
     }));
+    const budget=dogFirebaseBudgetSummary({
+      writes:report,reads:dogReadBudget.snapshot(),roomCollection:COLLECTION
+    });
+    if(budget.status==='critical'&&clock()-lastDogBudgetAlertAt>=10*60*1000){
+      lastDogBudgetAlertAt=clock();
+      console.warn('[dog-firestore-budget-alert/10min]',JSON.stringify({
+        writes:budget.writeCalls,roomWrites:budget.roomWrites,
+        otherWrites:budget.nonRoomWrites,
+        getAttempts:budget.transactionGetAttempts+budget.httpRoomGetResults,
+        watchNotifications:budget.watchNotifications,
+        note:'SDK-observed traffic, not billed Firebase usage'
+      }));
+    }
   },60000);
   dogWriteLogTimer.unref?.();
   // Count actual server GET attempts per DOG collection without extra
@@ -1114,6 +1131,10 @@ function finishEisstock(ch,members){
     hubMutationCache:{...hubMutationReadCacheStats},
     dogWrites10m:dogWriteDiagnostics.snapshot(),
     dogCoreReadAttempts10m:dogReadBudget.snapshot(),
+    dogFirebaseDiagnostics10m:dogFirebaseBudgetSummary({
+      writes:dogWriteDiagnostics.snapshot(),reads:dogReadBudget.snapshot(),
+      roomCollection:COLLECTION
+    }),
     dogStandardMoveCas:{...dogFastCasCounts,enabled:fastCasEnabled},
     dogMetaInFlightReads:dogMetaReadCoordinator.stats()
   }));
