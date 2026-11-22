@@ -25,7 +25,7 @@ const ROOM_CODE=/^(?:[0-9]{3}|[A-HJ-NP-Z2-9]{6})$/;
 const MATCH_UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fail=code=>{const error=new Error(code);error.code=code;throw error};
 
-function normalizeForSettlement(record,roomCode,matchId){
+export function dogPostgresSettlementProof(record,roomCode,matchId){
  const room=record?.room;
  const match=room?.match;
  if(!room||room.code!==roomCode||room.phase!=='playing'||
@@ -104,7 +104,7 @@ export function createDogPostgresXpSettlementBridge({
   // decides when to enqueue/retry still-PENDING jobs.
   const record=await loadPendingMatch({roomCode,matchId});
   if(!record)fail('DOG_PG_SETTLEMENT_NOT_PENDING');
-  const {payload,fingerprint}=normalizeForSettlement(record,roomCode,matchId);
+  const {payload,fingerprint}=dogPostgresSettlementProof(record,roomCode,matchId);
   const store=getFirestore();
   if(!store||typeof store.runTransaction!=='function'||
      typeof store.collection!=='function')

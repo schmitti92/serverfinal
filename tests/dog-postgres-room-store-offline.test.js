@@ -34,6 +34,9 @@ function fakePool(){
    const r=data.rooms.get(args[0]);
    return {rows:r?[clone(r)]:[],rowCount:r?1:0};
   }
+  if(sql.startsWith('SELECT action_id FROM dog_room_pending_finishes')){
+   return {rows:[],rowCount:0};
+  }
   if(sql.startsWith('SELECT request_hash,room_version FROM dog_room_actions')){
    const r=data.actions.get(args.slice(0,3).join('|'));
    return {rows:r?[clone(r)]:[],rowCount:r?1:0};

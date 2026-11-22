@@ -134,9 +134,10 @@ ausdrücklich zurückgewiesen.
 
 **Absturz-Szenario:**
 
-1. Noch zu implementieren: Der letzte DOG-Zug legt in Postgres einen
-   unveränderlichen Status `settlement-pending` ab. Die Partie darf in
-   diesem Zustand nicht als vollständig ausgezahlt angezeigt werden.
+1. Vorbereitete Schnittstelle: `stageFinalMove()` legt den unveränderlichen
+   Gewinnerstand in `dog_room_pending_finishes` ab; der letzte Zug wird noch
+   NICHT in den öffentlich sichtbaren Raum übernommen. Die laufende
+   Raumzeile bleibt eingefroren, bis alle XP bestätigt sind.
 2. `loadPendingMatch()` muss ausschließlich den zuvor serverseitig in
    Postgres gesicherten vollständigen Endstand laden, niemals eine vom
    Browser gesendete Gewinnbehauptung.
@@ -155,8 +156,9 @@ ausdrücklich zurückgewiesen.
   DOG-Abschlüsse**. Bei aktivem Weihnachtsevent fehlen noch die gemeinsame
   sichere Auszahlung von Weihnachtslichtern, Rubbellosen, Preisen,
   Jahres-/Eventbelohnungen und Gebäude-/Forschungsboni.
-- Es wurde noch **keine** Postgres-Endzug-/Pending-Transaktion implementiert,
-  keine Datenbank migriert und kein API-/WebSocket-Routing darauf umgestellt.
+- Die Endzug-/Pending-Transaktion ist als **unbenutzter** PG-Adapter vorbereitet.
+  Es wurde keine Datenbank migriert und kein API-/WebSocket-Routing darauf
+  umgestellt; die Live-Spielzüge und alle Event-Gewinne bleiben auf Firestore.
 - Eine mehrstufige Auszahlungsbrücke darf niemals einen noch nicht
   bestätigten PG-Abschluss als dauerhaft erledigt anzeigen.
 - Die Firestore-Receipt-Sammlung selbst wird nur später beim ersten
@@ -166,3 +168,34 @@ ausdrücklich zurückgewiesen.
   Forschungsstufen beim Abschluss; falls künftig eine genaue
   Spielstart-/Finishing-Zeit-Snapshot-Semantik erforderlich wird, ist dieser
   Zeitbezug zusätzlich zu versionieren und serverseitig zu fixieren.
+
+## P4-Erweiterung: Letzten Spielzug atomar vormerken
+
+`dog-postgres-finalization.js` ergänzt die noch nicht verwendete
+Postgres-Basis um drei serverseitige Operationen:
+
+- `stageFinalMove()` verriegelt die aktive Postgres-Raumzeile, prüft
+  Mitgliedschaft, Match-ID, DOG-Revisionsstand und Original-Spielregeln
+  und speichert den **vollständigen terminalen Spielstand** als
+  unveränderlichen Pending-Auftrag. Die öffentlich sichtbare Raumzeile
+  und ihre WebSocket-Outbox bleiben dabei unverändert.
+- `commitMove()` wurde abgesichert: Solange ein Pending-Finish existiert,
+  sind **sämtliche anderen normalen DOG-Züge gesperrt**. Auch mehrere
+  gleichzeitig eingelieferte letzte Züge können nicht parallel gewinnen.
+- Die Firestore-XP-Brücke nutzt `loadPendingMatch()` und anschließend
+  `markComplete()`. Postgres gleicht den gespeicherten SHA-256-Beleg
+  erneut ab, markiert die Statistik als erfasst und speichert erst dann
+  den finalen Spielstand, den Aktionsbeleg und das WebSocket-Ereignis
+  **atomar in einer Postgres-Transaktion**.
+
+Ein erneuter `markComplete()`-Aufruf nach einem erfolgreich committeten
+Postgres-Abschluss erkennt denselben Fingerprint und ist harmlos.
+Ein Firestore-Fehler lässt den Pending-Auftrag bestehen und unterbindet
+einen falschen Gewinnerabschluss.
+
+**Noch nicht produktionsfähig:** Die vollständige Hub-Routenumschaltung,
+automatisches Retry/Monitoring offener Pending-Aufträge, neues
+Postgres-Provisioning, echte Datenbank-Integrationstests, Session-Auth,
+das gemeinsame Weihnachts-/Rubbellos-/Dorfsettlement und der sichere
+Rückweg zu Firestore müssen vor dem Aktivieren abgeschlossen sein.
+Diese vorbereitete Migration darf keine vorhandene DOG-Partie betreffen.
