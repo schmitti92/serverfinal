@@ -28,6 +28,7 @@ import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionSta
 import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasHumanFields,ensureDogChristmasGoldFields,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
+import {DOG_VIDEO_LIBRARY_COLLECTION,dogVideoLibraryAccess,recordDogVideoSeen} from './dog/video-library.js';
 import {DOG_SCRATCH_COLLECTION,dogScratchStatus,buyScratchTicket,grantDogScratchVoucher,grantDogScratchGold,claimDogLevelScratchVouchers,dogLevelRewardClaimFlags} from './dog/christmas-scratch.js';
 import {SCRATCH_VARIANT_IDS_BY_TIER} from './dog/christmas-scratch-grid.js';
 import {DOG_SCRATCH_SETTINGS_COLLECTION,DOG_SCRATCH_SETTINGS_ID,normalizeScratchSettings,validateScratchSettings,updateGiftScratchSettings,updateSnowScratchSettings} from './dog/christmas-scratch-settings.js';
@@ -1507,6 +1508,44 @@ function finishEisstock(ch,members){
   const christmasPreviewGranted=identity=>String(identity?.name||'').trim().toLowerCase()==='chris';
   const christmasGrantRef=(store,uid)=>store.collection('dog_christmas_event_access_v1').doc(uid);
   const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
+  // Open-on-demand DOG Videothek. All unlock conditions are derived from the
+  // signed-in player's acknowledged intro plus verified shared village levels.
+  // No room polling or per-frame Firestore requests.
+  app.get('/api/hub/dog/video-library',authentication,handler(async req=>{
+    const store=db(),uid=req.hubIdentity.uid;
+    const [introSnap,villageSnap,seenSnap]=await Promise.all([
+      readDogMeta(store,introRef(store,uid)),
+      readDogMeta(store,dogVillageFor(store)),
+      readDogMeta(store,store.collection(DOG_VIDEO_LIBRARY_COLLECTION).doc(uid))
+    ]);
+    return {library:dogVideoLibraryAccess(
+      introSnap.exists?introSnap.data():null,
+      villageSnap.exists?villageSnap.data():null,
+      seenSnap.exists?seenSnap.data():null)};
+  }));
+  // A one-time viewed receipt is written only after a film was played.
+  // Duplicate replays are no-ops. Never accept client-supplied levels or
+  // locally guessed unlocks; the transaction rechecks the server records.
+  app.post('/api/hub/dog/video-library/seen',authentication,handler(async req=>{
+    const id=req.body?.id;
+    if(typeof id!=='string'||id.length>48)throw error(400,'VIDEO_UNKNOWN');
+    const store=db(),uid=req.hubIdentity.uid;
+    const seenRef=store.collection(DOG_VIDEO_LIBRARY_COLLECTION).doc(uid);
+    return dogWriteDiagnostics.transaction(store,'dog-video-seen',async tx=>{
+      const [introSnap,villageSnap,seenSnap]=await Promise.all([
+        tx.get(introRef(store,uid)),tx.get(dogVillageFor(store)),tx.get(seenRef)
+      ]);
+      const intro=introSnap.exists?introSnap.data():null;
+      const village=villageSnap.exists?villageSnap.data():null;
+      const seen=seenSnap.exists?seenSnap.data():null;
+      const permitted=dogVideoLibraryAccess(intro,village,seen);
+      let result;
+      try{result=recordDogVideoSeen(seen,id,permitted.available,clock());}
+      catch(e){throw error(e.message==='VIDEO_LOCKED'?403:400,e.message);}
+      if(result.changed)tx.set(seenRef,{...result.record,uid});
+      return {watched:true,unchanged:!result.changed,id};
+    });
+  }));
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
     // Before the first verified DOG win, there is no intro to acknowledge.
