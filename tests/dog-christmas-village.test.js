@@ -118,7 +118,7 @@ test('every card deal has 10–20 hidden random gift spaces and eight separate s
 });
 test('every Friedensherberge upgrade spawns exactly two more hidden scratch spots per deal',()=>{
  assert.equal(DOG_SCRATCH_FIELDS_PER_INN_LEVEL,2);
- let village=normalizedDogVillage({lightsTenths:3000},host);
+ let village=normalizedDogVillage({lightsTenths:6500},host);
  for(let innLevel=1;innLevel<=5;innLevel++){
   const expected=8+2*(innLevel-1);
   assert.equal(dogInnScratchFieldCount(innLevel),expected);
