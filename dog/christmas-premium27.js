@@ -209,8 +209,9 @@ function generatePremium27V4(prizes,{draw,maxAttempts,forceFull27=false,excludeF
  throw Error('PREMIUM27_SYMBOL_BOARD_GENERATION_FAILED');
 }
 
-/** New premium rule: at least four paid horizontal money triples per ticket. */
-function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false,excludeFull27=false}){
+/** Version 5 preserves old four-row receipts. Version 6 has two guaranteed money rows. */
+function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false,excludeFull27=false,
+ moneyRowsRequired=4,symbolVersion=5}){
  const gold=prizes.filter(p=>p.milestone==='gold-20');
  const premium=prizes.filter(p=>p.milestone==='premium-24');
  if(gold.length>1||premium.length>1||
@@ -224,13 +225,14 @@ function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false,excludeF
  const rowPrizes=prizes.filter(p=>p!==milestoneGold&&p!==milestonePremium);
  const moneyRows=rowPrizes.filter(p=>p.type==='coins');
  const giftRows=rowPrizes.filter(p=>p.type==='unlock');
- // Four genuine money-row wins, including all three denominations.
- // Money symbols MAY repeat across different rows. Each duplicate pays once.
- if(moneyRows.length!==4||!P27_MONEY.every(icon=>moneyRows.some(p=>p.symbol===icon))||
+ // Existing v5 tickets include all three money icons; newly issued v6
+ // tickets guarantee two genuine rows instead, without a third forced payout.
+ if(moneyRows.length!==moneyRowsRequired||
+   (symbolVersion===5&&!P27_MONEY.every(icon=>moneyRows.some(p=>p.symbol===icon)))||
    giftRows.length>2||
    new Set([...(milestonePremium?[milestonePremium.symbol]:[]),...giftRows.map(p=>p.symbol)]).size!==
     giftRows.length+(milestonePremium?1:0))
-  throw Error('PREMIUM27_FOUR_MONEY_ROWS_INVALID');
+  throw Error('PREMIUM27_MONEY_ROWS_INVALID');
  const fixedRows=[...(milestonePremium?[milestonePremium]:[]),...rowPrizes];
  // A published edition can reserve an EXACT number of fully uncovered
  // 27-symbol tickets. Other premium cards are explicitly excluded from 27.
@@ -240,12 +242,9 @@ function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false,excludeF
  const targetReal=forceFull27?27:
   milestonePremium?24+choose(excludeFull27?3:4,draw):
   milestoneGold?20+choose(4,draw):13+choose(7,draw);
- // Money icons are part of the actual premium scratch field, not merely
- // the prize legend. Guarantee all three icons on every NEW ticket, even if
- // none forms a paid triple. A three-of-a-kind is still validated server-side.
- // Only non-prize decorations fill leftover squares. This prevents
- // accidentally adding a fifth cash row and works even for deterministic
- // draws used by older integrations (draw(max) always returning zero).
+ // Fill only non-prize decorations; accidental extra cash rows are rejected.
+ // Version 5 keeps all three payout denominations via its fixed money rows.
+ // Version 6 guarantees only the two paid money rows.
  const filler=PREMIUM_27_SYMBOLS.filter(symbol=>symbol!=='🎁');
  for(let attempt=0;attempt<maxAttempts;attempt++){
   const cells=Array(27).fill(PREMIUM_27_DUD);
@@ -257,10 +256,9 @@ function generatePremium27V5(prizes,{draw,maxAttempts,forceFull27=false,excludeF
   const empty=randomOrder(cells.flatMap((s,i)=>s===PREMIUM_27_DUD?[i]:[]),draw);
   const remaining=targetReal-fixedRows.length*3;
   if(remaining<0)throw Error('PREMIUM27_PRIZE_CAPACITY');
-  // The four paid rows already include all money icons. Fill only
-  // remaining space, rejecting accidental fifth money rows afterward.
+  // Extra decoration must not create an unplanned matching money row.
   for(let i=0;i<remaining;i++)cells[empty[i]]=filler[choose(filler.length,draw)];
-  const board={variantId:PREMIUM_27_ID,symbolVersion:5,
+  const board={variantId:PREMIUM_27_ID,symbolVersion,
    milestoneSymbols:{gold:milestoneGold?.symbol||null,premium:milestonePremium?.symbol||null},cells};
   const wins=evaluatePremium27V3(board);
   if(wins.length!==prizes.length)continue;
@@ -319,6 +317,7 @@ function generatePremium27V2(prizes,{draw,maxAttempts}){
 export function evaluatePremium27(board){
  if(board?.variantId!==PREMIUM_27_ID||!Array.isArray(board.cells)||board.cells.length!==27)
   throw Error('PREMIUM27_GRID_INVALID');
+ if(board.symbolVersion===6)return evaluatePremium27V3(board);
  if(board.symbolVersion===5)return evaluatePremium27V3(board);
  if(board.symbolVersion===4)return evaluatePremium27V3(board);
  if(board.symbolVersion===3)return evaluatePremium27V3(board);
@@ -338,10 +337,12 @@ export function evaluatePremium27(board){
  return wins;
 }
 export function generatePremium27(prizes,{draw=randomInt,maxAttempts=16000,version=null,forceFull27=false,excludeFull27=false}={}){
- if(!Array.isArray(prizes)||prizes.length>(version===5?10:3)||
+ if(!Array.isArray(prizes)||prizes.length>([5,6].includes(version)?10:3)||
   prizes.some(p=>!p||!['coins','unlock'].includes(p.type))||
   !Number.isInteger(maxAttempts)||maxAttempts<1||typeof draw!=='function')
   throw Error('PREMIUM27_PRIZES_INVALID');
+ if(version===6)return generatePremium27V5(prizes,{draw,maxAttempts,forceFull27,
+  excludeFull27,moneyRowsRequired:2,symbolVersion:6});
  if(version===5)return generatePremium27V5(prizes,{draw,maxAttempts,forceFull27,excludeFull27});
  if(version===4)return generatePremium27V4(prizes,{draw,maxAttempts,forceFull27,excludeFull27});
  if(prizes.every(p=>typeof p.symbol==='string'))
@@ -389,14 +390,16 @@ export function verifyPremium27(board){
    if(JSON.stringify(w.indices)!==JSON.stringify(exact[i].indices)||
      w.symbol!==exact[i].symbol||w.rule!==exact[i].rule)return false;
    const p=w.prize;
-   if([2,3,4,5].includes(board.symbolVersion)&&
+   if([2,3,4,5,6].includes(board.symbolVersion)&&
     (p?.symbol!==w.symbol||
      (p?.type==='coins'&&!P27_MONEY.includes(p.symbol))||
      (p?.type==='unlock'&&!(board.symbolVersion===2?p.symbol==='🎁':SCRATCH_GIFT_SYMBOLS.includes(p.symbol)))))return false;
-   if([4,5].includes(board.symbolVersion)&&
+   if([4,5,6].includes(board.symbolVersion)&&
      ((w.rule==='gold-20'&&(p.amount!==1000||p.milestone!=='gold-20'))||
       (w.rule==='premium-24'&&p.milestone!=='premium-24')||
       (w.rule==='row-3'&&p.milestone)))return false;
+   if(board.symbolVersion===6&&
+     board.wins.filter(win=>win.rule==='row-3'&&win.prize?.type==='coins').length!==2)return false;
    if(board.symbolVersion===5&&
      (board.wins.filter(win=>win.rule==='row-3'&&win.prize?.type==='coins').length<4||
       !P27_MONEY.every(icon=>board.wins.some(win=>
