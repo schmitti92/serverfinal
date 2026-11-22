@@ -454,3 +454,34 @@ Crash-/Rekonnekt- und Berechtigungsentzugstests unter mehreren Render-
 Instanzen; sichere Code-Wiederverwendung; eine dauerhaft aktive
 freigegebene Postgres-Instanz. Niemals ein gemischtes Firestore/PG-Spiel
 innerhalb einer laufenden Match-ID betreiben.
+
+## P5 – Wiederaufnahme unterbrochener Weihnachtsauszahlungen
+
+`dog-postgres-seasonal-recovery.js` verarbeitet die dauerhaft gespeicherten
+`dog_room_pending_rewards`-Einträge nach einem Render-Neustart. Es startet
+selbst **keine** Hintergrundschleife und öffnet **keine** Datenbank oder
+Firebase-Verbindung – eine spätere Produktivverkabelung muss beide
+existierenden, exakt-einmaligen Firestore-Settlement-Bridges sowie einen
+dauerhaften Postgres-Pool injizieren.
+
+- Ein Index-SELECT sucht nur fällige, nicht gesperrte Pending-Buchungen,
+  standardmäßig maximal acht pro Durchlauf (hartes Maximum: 16).
+- Ein Geschenk- oder Loszug geht ausschließlich an die
+  `christmasBridge`; ein Spielabschluss mit XP/Lichtern/Losen ausschließlich
+  an die `finalBridge`.
+- Nach einem transienten Firestore-/Render-Ausfall wird die Wiederholung
+  **dauerhaft in SQL** von 2 Sekunden schrittweise auf maximal zehn Minuten
+  zurückgestellt. Bei keiner offenen Buchung entstehen **null Firebase-GETs**.
+- Unveränderliche Belegkonflikte und unmögliche Rewards werden für eine
+  manuelle Prüfung gesperrt, statt unendlich wiederholt.
+- Fehlermeldungen/Statistiken enthalten ausschließlich anonymisierte
+  Fehlercodes und Summen, keine Spieler-IDs, Raumcodes, Beträge oder Karten.
+- Gleichzeitige Worker dürfen denselben Gewinn versuchen: Die
+  Firebase-Receipts verhindern doppelte Auszahlungen. Eine fehlgeschlagene
+  alte Wiederholung darf eine inzwischen **neue** Pending-Aktion desselben
+  Raums nicht überschreiben (SQL-CAS mit Raum, Match, Aktion und
+  beobachtetem Versuchszähler).
+
+Diese Wiederholung ist erst nach der direkten Live-Anbindung eines
+dauerhaften Postgres-Dienstes zu aktivieren. Die alten Firestore-Räume
+und die bestehende gemeinsame Lobby bleiben unangetastet.
