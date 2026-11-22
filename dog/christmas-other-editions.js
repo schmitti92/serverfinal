@@ -21,12 +21,20 @@ export const OTHER_EDITION_MAX_COINS=1000000000000;
  */
 const PREMIUM_CURRENT_PRICE_CUTOFF=Date.parse('2026-11-22T11:11:00Z');
 const PREMIUM_CURRENT_PRICE=1200;
+const MEDIUM_CURRENT_PRICE_CUTOFF=Date.parse('2026-11-22T11:15:42Z');
+const MEDIUM_CURRENT_PRICE=600;
 const needsCurrentPremiumReprice=raw=>
  raw?.variantId==='premium_27'&&raw.premiumPrice1200Applied!==true&&
  whole(raw.createdAt,1,PREMIUM_CURRENT_PRICE_CUTOFF-1)&&
  whole(raw.issued,0,OTHER_EDITION_SIZE-1);
+const needsCurrentMediumReprice=raw=>
+ raw?.variantId==='elf'&&raw.mediumPrice600Applied!==true&&
+ raw.config?.price===500&&
+ whole(raw.createdAt,1,MEDIUM_CURRENT_PRICE_CUTOFF-1)&&
+ whole(raw.issued,0,OTHER_EDITION_SIZE-1);
 const effectiveCurrentEditionConfig=raw=>needsCurrentPremiumReprice(raw)?
- {...raw.config,price:PREMIUM_CURRENT_PRICE}:raw.config;
+ {...raw.config,price:PREMIUM_CURRENT_PRICE}:
+ needsCurrentMediumReprice(raw)?{...raw.config,price:MEDIUM_CURRENT_PRICE}:raw.config;
 
 export const OTHER_EDITION_DEFAULT=Object.freeze({
  elf:Object.freeze({price:500,coinAmounts:[100,300,800],prizeCategory:2,
@@ -207,11 +215,15 @@ export function editOtherEdition(raw,{config,maxTotalCoins,now=Date.now(),draw=r
   throw Error('SCRATCH_OTHER_EDITION_MISSING');
  if(!whole(maxTotalCoins,0,OTHER_EDITION_MAX_COINS)||maxTotalCoins<raw.paidCoins)
   throw Error('SCRATCH_EDITION_FIXED_BUDGET_BELOW_PAID');
- const reprice=needsCurrentPremiumReprice(raw);
+ const premiumReprice=needsCurrentPremiumReprice(raw);
+ const mediumReprice=needsCurrentMediumReprice(raw);
  const c=validateOtherEditionConfig(raw.variantId,
-  reprice?{...config,price:PREMIUM_CURRENT_PRICE}:config);
+  premiumReprice?{...config,price:PREMIUM_CURRENT_PRICE}:
+  mediumReprice?{...config,price:MEDIUM_CURRENT_PRICE}:config);
  const future=createOtherEditionPlan(raw.variantId,maxTotalCoins-raw.paidCoins,c,500-raw.issued,draw);
- return {...raw,config:c,...(reprice?{premiumPrice1200Applied:true}:{}),maxTotalCoins,
+ return {...raw,config:c,
+  ...(premiumReprice?{premiumPrice1200Applied:true}:{}),
+  ...(mediumReprice?{mediumPrice600Applied:true}:{}),maxTotalCoins,
   prizePlan:[...raw.prizePlan.slice(0,raw.issued),...future],
   revision:(raw.revision||0)+1,updatedAt:now};
 }
@@ -227,11 +239,15 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
  if(existing)return {purchase:buyScratchTicket(wallet,tree,request,
   {...options,settings,editionPrice:raw.config.price}),edition:raw};
  if(raw.issued>=500)throw Error('SCRATCH_OTHER_EDITION_SOLD_OUT');
- // Apply the 1,200-coin price only to the edition already active at request
- // time. Its published listing is corrected before this one-time write.
- const reprice=needsCurrentPremiumReprice(raw);
- const base=reprice?{...raw,config:{...raw.config,price:PREMIUM_CURRENT_PRICE},
-  premiumPrice1200Applied:true,revision:(raw.revision||0)+1}:raw;
+ // Correct only the editions that were already active when their owner
+ // requested the price changes. The public listing reflects the change
+ // immediately; the same atomic purchase/edit stores the updated price.
+ const premiumReprice=needsCurrentPremiumReprice(raw);
+ const mediumReprice=needsCurrentMediumReprice(raw);
+ const base=premiumReprice?{...raw,config:{...raw.config,price:PREMIUM_CURRENT_PRICE},
+  premiumPrice1200Applied:true,revision:(raw.revision||0)+1}:
+  mediumReprice?{...raw,config:{...raw.config,price:MEDIUM_CURRENT_PRICE},
+   mediumPrice600Applied:true,revision:(raw.revision||0)+1}:raw;
  // Existing active Premium editions were preprinted with four money rows.
  // Reprint only their still-unissued codes as v6 two-row cards, atomically
  // with the next actual ticket purchase. Issued receipts/ledger are immutable.
