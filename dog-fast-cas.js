@@ -2,7 +2,9 @@
  * Optional DOG standard-match write fast path.
  *
  * Uses an already-authenticated server-side room snapshot plus Firestore's
- * lastUpdateTime precondition. Still awaits a DURABLE Firestore write before
+ * lastUpdateTime precondition. Seasonal turns are eligible ONLY when they
+ * need no other transactional documents: tx.get/set/update/delete/create
+ * deliberately throw before any speculative Firestore room write. Still awaits a DURABLE Firestore write before
  * acknowledging a move. A failed precondition goes through the normal
  * Firestore transaction, never an unverified overwrite.
  *
@@ -17,7 +19,6 @@ export function isDogCasConflict(error){
 export async function tryDogFastCas({room,updateTime,ref,store,change,clock,ttlMs}){
  if(room?.phase!=='playing'||room?.match?.game!=='dog'||
     room.match.dogChristmasEligibilityChecked!==true||
-    room.match.christmas?.enabled===true||
     typeof updateTime?.toMillis!=='function'||
     typeof ref?.update!=='function')return fallback('not-eligible');
  // Cloned state is speculative until the Firestore compare-and-swap commits.
@@ -31,7 +32,7 @@ export async function tryDogFastCas({room,updateTime,ref,store,change,clock,ttlM
  try{changeResult=await change(candidate,forbiddenTx,store);}
  catch{return fallback('must-validate-in-transaction');}
  if(changeResult?.remove||changeResult?.unchanged||
-    candidate.match?.game!=='dog'||candidate.match.christmas?.enabled===true||
+    candidate.match?.game!=='dog'||
     candidate.match.dogChristmasEligibilityChecked!==true||
     candidate.match.dog?.phase==='finished')return fallback('transaction-required');
  // update(data) merges fields at the root. If a key disappeared, only a
