@@ -21,7 +21,7 @@ const fail=code=>{const e=new Error(code);e.code=code;throw e};
 const isHuman=p=>p&&p.bot!==true&&p.inactive!==true&&typeof p.uid==='string'&&p.uid.length>0;
 
 export function reduceDogClassicInPostgresRoom(room,{uid,matchId,action,actionId},{
-  chooseBot=dogBotAction,rng=Math.random
+  chooseBot=dogBotAction,rng=Math.random,allowFinished=false
 }={}){
  if(room?.phase!=='playing'||room?.match?.game!=='dog'||room.match.id!==matchId)
   fail('DOG_MATCH_MISMATCH');
@@ -79,7 +79,7 @@ export function reduceDogClassicInPostgresRoom(room,{uid,matchId,action,actionId
 
  // End-of-match counters and the winning settlement must be written
  // atomically with Firebase XP. Do NOT acknowledge a finished PG-only turn.
- if(state.phase==='finished')fail('DOG_REWARD_SETTLEMENT_REQUIRED');
+ if(state.phase==='finished'&&!allowFinished)fail('DOG_REWARD_SETTLEMENT_REQUIRED');
  return {room};
 }
 
