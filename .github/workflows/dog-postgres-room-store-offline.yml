@@ -1,0 +1,28 @@
+name: DOG durable room Postgres foundation (offline)
+on:
+  pull_request:
+    paths:
+      - 'dog-postgres-room-store.js'
+      - 'migrations/20261122_dog_durable_rooms.sql'
+      - 'tests/dog-postgres-room-store-offline.test.js'
+      - '.github/workflows/dog-postgres-room-store-offline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dog-postgres-room-store.js'
+      - 'migrations/20261122_dog_durable_rooms.sql'
+      - 'tests/dog-postgres-room-store-offline.test.js'
+      - '.github/workflows/dog-postgres-room-store-offline.yml'
+permissions:
+  contents: read
+jobs:
+  durable-room-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-postgres-room-store.js && node --check tests/dog-postgres-room-store-offline.test.js
+      - run: node --test tests/dog-postgres-room-store-offline.test.js
