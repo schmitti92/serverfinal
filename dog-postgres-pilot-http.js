@@ -63,20 +63,28 @@ export function installDogPostgresPilotHttp(app,{
  async function coordinator(){
   if(connection)return connection;
   const starting=(async()=>{
-   const pool=await getPool();
-   if(!pool||typeof pool.query!=='function'||typeof pool.connect!=='function')
-    throw Error('DOG_PG_PILOT_INVALID_POOL');
-   // Fail closed when the required durable journal or completion proof
-   // migrations were not installed. Never downgrade to RAM or Firebase.
-   const check=await pool.query(
-    "SELECT to_regclass('dog_room_states') AS room,"+
-    "to_regclass('dog_room_pending_rewards') AS rewards,"+
-    "to_regclass('dog_room_reward_completions') AS completions"
-   );
-   const row=check.rows?.[0];
-   if(!row?.room||!row?.rewards||!row?.completions)
-    throw Error('DOG_PG_PILOT_SCHEMA_MISSING');
-   return coordinatorFactory({pool,verifyProfile,getFirestore,clock});
+   let pool;
+   try{
+    pool=await getPool();
+    if(!pool||typeof pool.query!=='function'||typeof pool.connect!=='function')
+     throw Error('DOG_PG_PILOT_INVALID_POOL');
+    // Fail closed when the required durable journal or completion proof
+    // migrations were not installed. Never downgrade to RAM or Firebase.
+    const check=await pool.query(
+     "SELECT to_regclass('dog_room_states') AS room,"+
+     "to_regclass('dog_room_pending_rewards') AS rewards,"+
+     "to_regclass('dog_room_reward_completions') AS completions"
+    );
+    const row=check.rows?.[0];
+    if(!row?.room||!row?.rewards||!row?.completions)
+     throw Error('DOG_PG_PILOT_SCHEMA_MISSING');
+    return coordinatorFactory({pool,verifyProfile,getFirestore,clock});
+   }catch(e){
+    // A disconnected or unmigrated database may be retried later. Never
+    // accumulate abandoned connection pools during repeated pilot probes.
+    try{await pool?.end?.()}catch(_closeError){}
+    throw e;
+   }
   })();
   connection=starting;
   try{return await starting}
