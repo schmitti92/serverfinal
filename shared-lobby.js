@@ -1437,9 +1437,12 @@ function finishEisstock(ch,members){
   const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
   app.get('/api/hub/dog/christmas-intro',authentication,handler(async req=>{
     const uid=req.hubIdentity.uid,store=db();
-    const [stats,intro,grant]=await Promise.all([
+    // Before the first verified DOG win, there is no intro to acknowledge.
+    // Read stats + explicit founder grant first; only eligible profiles
+    // require the third Firestore document. A post-win refresh still reads
+    // the authoritative receipt immediately, never a browser-stored claim.
+    const [stats,grant]=await Promise.all([
       readDogMeta(store,store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid)),
-      readDogMeta(store,introRef(store,uid)),
       readDogMeta(store,christmasGrantRef(store,uid))
     ]);
     const played=dogPlayerStats(stats.exists?stats.data():null,uid).played;
@@ -1448,8 +1451,10 @@ function finishEisstock(ch,members){
     const previewGranted=earlyAccess||christmasPreviewGranted(req.hubIdentity);
     const introReady=earlyAccess||(played>=1&&Number(stats.data()?.updatedAt||0)>=INTRO_SEASON_START_AT);
     const eligible=previewGranted||introReady;
+    const intro=eligible?await readDogMeta(store,introRef(store,uid)):null;
     return {eligible,introReady,
-      completed:eligible&&Number.isSafeInteger(intro.data()?.completedAt)&&intro.data().completedAt>0,
+      completed:eligible&&intro?.exists===true&&
+        Number.isSafeInteger(intro.data()?.completedAt)&&intro.data().completedAt>0,
       played,previewGranted,resetId:earlyAccess?grant.data().resetId||null:null,
       freshStart:earlyAccess};
   }));
