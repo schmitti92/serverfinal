@@ -1,0 +1,24 @@
+name: DOG startfield colour protection
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/engine.js'
+      - 'tests/dog-startfield-color-protection.test.js'
+      - '.github/workflows/dog-startfield-protection.yml'
+  pull_request:
+    paths:
+      - 'dog/engine.js'
+      - 'tests/dog-startfield-color-protection.test.js'
+      - '.github/workflows/dog-startfield-protection.yml'
+  workflow_dispatch:
+jobs:
+  startfield-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/engine.js
+      - run: node --test tests/dog-startfield-color-protection.test.js tests/dog-engine.test.js tests/dog-official-rules.test.js
