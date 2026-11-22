@@ -210,8 +210,22 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
  const existing=wallet?.recent?.find(row=>row.commandId===request.commandId);
  if(existing)return {purchase:buyScratchTicket(wallet,tree,request,buyOptions),edition:raw};
  if(raw.issued>=500)throw Error('SCRATCH_OTHER_EDITION_SOLD_OUT');
- const code=raw.prizePlan[raw.issued];
- const expected=otherTicketAmount(variant,code,raw.config);
+ // Existing active Premium editions were preprinted with four money rows.
+ // Reprint only their still-unissued codes as v6 two-row cards, atomically
+ // with the next actual ticket purchase. Issued receipts/ledger are immutable.
+ // No extra Firebase read, standalone migration write or background polling.
+ let active=raw;
+ if(variant==='premium_27'&&
+    !String(raw.prizePlan[raw.issued]||'').startsWith('v6:')){
+  const future=createOtherEditionPlan(variant,
+   raw.maxTotalCoins-raw.paidCoins,raw.config,500-raw.issued,
+   options.draw||randomInt);
+  active={...raw,
+   prizePlan:[...raw.prizePlan.slice(0,raw.issued),...future],
+   revision:(raw.revision||0)+1};
+ }
+ const code=active.prizePlan[active.issued];
+ const expected=otherTicketAmount(variant,code,active.config);
  const printControl=variant==='elf'?{fixedEditionRows:decodeFixedEditionRows(code)}:
   variant==='number_one_20'?{fixedNumberSymbols:decodeFixedEditionRows(code)}:
   variant==='premium_27'?{fixedPremiumCode:code}: {fixedDogSymbols:code};
@@ -228,8 +242,8 @@ export function issueOtherEditionTicket(wallet,tree,request,raw,settings,options
  const expectedBalance=normalizedScratchWallet(wallet).coins-purchase.result.price+expected;
  if(expectedBalance>1000000000||purchase.wallet.coins!==expectedBalance)
   throw Error('SCRATCH_EDITION_WALLET_LIMIT');
- const next={...raw,issued:raw.issued+1,paidCoins:raw.paidCoins+expected,
-  revision:(raw.revision||0)+1};
+ const next={...active,issued:active.issued+1,paidCoins:active.paidCoins+expected,
+  revision:(active.revision||0)+1};
  if(next.paidCoins>raw.maxTotalCoins||(next.issued===500&&next.paidCoins!==raw.maxTotalCoins))
   throw Error('SCRATCH_OTHER_EDITION_BUDGET_MISMATCH');
  purchase.result.otherEditionId=raw.id;
