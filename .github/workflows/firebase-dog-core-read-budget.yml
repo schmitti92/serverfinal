@@ -1,0 +1,28 @@
+name: Firebase DOG core read budget (offline)
+on:
+  pull_request:
+    paths:
+      - 'dog-firestore-read-budget.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-firestore-read-budget-offline.test.js'
+      - '.github/workflows/firebase-dog-core-read-budget.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dog-firestore-read-budget.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-firestore-read-budget-offline.test.js'
+      - '.github/workflows/firebase-dog-core-read-budget.yml'
+permissions:
+  contents: read
+jobs:
+  dog-read-budget-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog-firestore-read-budget.js && node --check shared-lobby.js
+      - run: node --test tests/dog-firestore-read-budget-offline.test.js
