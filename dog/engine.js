@@ -22,8 +22,16 @@ function shuffle(list,rng=Math.random){
   for(let i=a.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
   return a;
 }
-function allInGoal(s,seat){return s.pieces.filter(x=>x.owner===seat).every(x=>x.place==='goal');}
-function moverOwner(s,seat){return soloThree(s)?seat:allInGoal(s,seat)?(seat+2)%4:seat;}
+function allInGoal(s,seat){const own=s.pieces.filter(x=>x.owner===seat);return own.length===4&&own.every(x=>x.place==='goal');}
+ /** First participant with four pawns in the finish wins classic DOG.
+  * Grinch missions use separate engines and are deliberately unaffected.
+  */
+ export function completedDogSeat(s){
+   if(!s||!Array.isArray(s.players)||!Array.isArray(s.pieces))return null;
+   const seat=activeSeats(s).find(seat=>allInGoal(s,seat));
+   return Number.isInteger(seat)?seat:null;
+ }
+ function moverOwner(s,seat){return seat;}
 function pieceAt(s,space,except){
   return s.pieces.find(p=>p.id!==except && p.place===space.place && p.pos===space.pos && (space.place!=='goal'||p.owner===space.owner));
 }
@@ -97,7 +105,7 @@ export function createGame(options={}){
     bot:!missing.includes(seat)&&!!bots[seat],inactive:missing.includes(seat),team:mode==='solo3'?seat:seat%2}));
   const s={schemaVersion:1,ruleset:RULESET.id,mode,phase:'exchange',round:0,revision:0,starter:0,current:0,players,
     pieces:Array.from({length:16},(_,i)=>({id:i,owner:Math.floor(i/4),place:'home',pos:-1})).filter(p=>!players[p.owner].inactive),
-    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,rescue:null,winner:null,history:[]};
+    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,rescue:null,winner:null,winnerSeat:null,history:[]};
   deal(s,rng);return s;
 }
 function history(s,text){s.history.unshift(text);s.history.length=Math.min(s.history.length,12);}
@@ -230,6 +238,7 @@ function winningSevenMoves(s,seat,left){
   return good;
 }
 export function legalActions(s,seat=s.current){
+  if(s.phase==='finished'||completedDogSeat(s)!==null)return [];
   if(!s.players[seat]||s.players[seat].inactive)return [];
   if(s.phase==='exchange')return s.exchanges[seat]===null?s.hands[seat].map(c=>({type:'exchange',cardId:c.id})): [];
   if(s.phase==='seven'){
@@ -264,22 +273,31 @@ export function legalActions(s,seat=s.current){
     s.hands[seat].map(card=>({type:'discardDraw',cardId:card.id}));
 }
 function finishIfWon(s){
-  if(soloThree(s)){
-    for(const seat of activeSeats(s)){
-      if(s.pieces.filter(p=>p.owner===seat).every(p=>p.place==='goal')){
-        s.winner=seat;s.phase='finished';history(s,s.players[seat].name+' gewinnt die Dreierpartie!');
-        return true;
-      }
-    }
-    return false;
-  }
-  for(const team of [0,1]){
-    if(s.pieces.filter(p=>p.owner%2===team).every(p=>p.place==='goal')){
-      s.winner=team;s.phase='finished';history(s,'Team '+(team===0?'Rot/Grün':'Blau/Gelb')+' gewinnt!');
-      return true;
-    }
-  }
-  return false;
+  if(s.phase==='finished')return true;
+  const seat=completedDogSeat(s);
+  if(seat===null)return false;
+  s.winnerSeat=seat;
+  // Preserve winner's team parity for existing scoreboards and statistics.
+  s.winner=soloThree(s)?seat:seat%2;
+  s.phase='finished';
+  history(s,'🏆 '+s.players[seat].name+' gewinnt! Alle vier eigenen Figuren sind im Ziel.');
+  return true;
+}
+/** One-time, idempotent repair for legacy online matches already at 4/4.
+ * Only the server can persist this result and its corresponding stats.
+ */
+export function finalizeCompletedDogGame(original){
+ if(!original||original.phase==='finished')return null;
+ const s=clone(original);
+ if(!finishIfWon(s))return null;
+ if(s.seven){
+  const cardId=s.seven.cardId;
+  if(s.hands[s.current]?.some(card=>card.id===cardId))discardCard(s,s.current,cardId);
+  s.seven=null;
+ }
+ s.rescue=null;
+ s.revision++;
+ return s;
 }
 function settle(s,rng=Math.random){
   if(finishIfWon(s))return;
@@ -298,6 +316,7 @@ function cardFor(s,seat,id){const c=s.hands[seat].find(x=>x.id===id);if(!c)throw
 function discardCard(s,seat,id){const index=s.hands[seat].findIndex(x=>x.id===id);if(index<0)throw Error('CARD_NOT_HELD');const card=s.hands[seat].splice(index,1)[0];s.discard.push(card);s.lastPlayedCard={type:card.type,seat};}
 export function takeAction(original,seat,action,rng=Math.random){
   const s=clone(original);
+  if(s.phase==='finished'||completedDogSeat(s)!==null)throw Error('GAME_ALREADY_FINISHED');
   if(s.phase==='exchange')return exchangeCard(s,seat,action.cardId,rng);
   if(s.current!==seat)throw Error('NOT_YOUR_TURN');
   const avail=legalActions(s,seat);
@@ -374,8 +393,8 @@ export function takeAction(original,seat,action,rng=Math.random){
     s.current=nextSeat(s,seat);settle(s,rng);
   }
   finishIfWon(s);
-  // In solo3, or when the last team pawn finishes, the game ends before a
-  // seven-finish button could be pressed. Discard the card atomically here.
+  // The first player to finish all four pawns ends the match immediately,
+  // including during a split seven. Discard its remainder atomically.
   if(s.phase==='finished'&&s.seven){
     if(s.seven.spent<7&&!s.seven.canForfeit)throw Error('SEVEN_REMAINDER_MUST_BE_USED');
     const rest=7-s.seven.spent;
