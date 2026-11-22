@@ -52,7 +52,6 @@ test('Stale concurrent DOG actions cannot overwrite each other; CAS must fall ba
 test('Seasonal gifts, completed matches, unfinished eligibility and transaction side effects use old path',async()=>{
  const f=fixture();
  const cases=[
-  room=>{room.match.christmas.enabled=true;},
   room=>{room.match.dogChristmasEligibilityChecked=false;},
   room=>{room.phase='lobby';}
  ];
@@ -105,4 +104,24 @@ test('DOG CAS instrumentation is passive and visible in the existing 1-minute Re
  assert.match(source,/if\(httpRoomGets\|\|watchNotifications\|\|committedDogActions\|\|avoidedWatchRestarts\|\|dogCasMinute\.attempts\)/);
  assert.match(source,/console\.info\('\[hub-read-sources\/1min\]'/);
  assert.doesNotMatch(source,/await\s+dogFastCasCounts/);
+});
+
+test('Normal seasonal DOG moves use read-free CAS but paid rewards always use the transaction',async()=>{
+ const f=fixture();
+ const seasonal=structuredClone(f.current);
+ seasonal.match.christmas={enabled:true,earnedTenths:0,giftCount:0};
+ const accepted=await tryDogFastCas({room:seasonal,updateTime:f.time(1),
+  ref:f.ref,store:{},clock:()=>600,ttlMs:36000,
+  change:async room=>{room.match.dog.revision++;room.match.christmas.giftCount++;}});
+ assert.equal(accepted.used,true,'room-only event marker needs no additional Firestore read');
+ assert.equal(accepted.room.match.christmas.giftCount,1);
+ assert.equal(f.updates(),1);
+ // A reward requiring a shared village read or wallet grant must not commit
+ // any second room update. It is handled atomically by the original tx.
+ const blocked=await tryDogFastCas({room:seasonal,updateTime:f.time(2),
+  ref:f.ref,store:{},clock:()=>700,ttlMs:36000,
+  change:async(room,tx)=>{room.match.christmas.earnedTenths+=10;
+   await tx.get({path:'dog_christmas_village_v1/global'});}});
+ assert.equal(blocked.used,false);
+ assert.equal(f.updates(),1,'gift must NEVER be saved outside the wallet/village transaction');
 });
