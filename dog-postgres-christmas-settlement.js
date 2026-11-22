@@ -116,6 +116,13 @@ function verifyEvent(record,{roomCode,matchId,actionId}){
  return {summary,fingerprint,event:updated};
 }
 
+// Shared, pure proof for the future SQL staging transaction and the
+// existing Firestore reward bridge. Both sides must fingerprint identical
+// server-derived gifts, lights, vouchers and DOG revisions.
+export function dogPostgresChristmasRewardProof(record,identity){
+ return verifyEvent(record,identity);
+}
+
 /**
  * loadPendingReward only accepts {roomCode,matchId,actionId} and must read an
  * immutable, previously committed server-verified PG reward entry.
