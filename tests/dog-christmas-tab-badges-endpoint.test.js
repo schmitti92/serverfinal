@@ -40,7 +40,7 @@ function harness(options={}){
   };
   return call(0);
  };
- const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')||path.startsWith('/api/hub/dog/video-library')||path.startsWith('/api/hub/dog/christmas-tab-badges')||path.startsWith('/api/hub/dog/research/claim')||path.startsWith('/api/hub/dog/level/rewards/claim')?
+ const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')||path.startsWith('/api/hub/dog/video-library')||path.startsWith('/api/hub/dog/christmas-tab-badges')||path.startsWith('/api/hub/dog/research/claim')||path.startsWith('/api/hub/dog/level/rewards/claim')||path.startsWith('/api/hub/christmas-village')?
   chain(handlers):handlers[0];
  const app={
   get(path,...handlers){routes.push({method:'GET',path,fn:routeFn(path,handlers)});},
