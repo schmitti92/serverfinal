@@ -3438,6 +3438,37 @@ function finishEisstock(ch,members){
       });
     })};
   }));
+  // A finished classical DOG match stays visible for its victory ceremony.
+  // Once the host requests another round, archive it atomically and reopen
+  // the SAME shared room in DOG preparation (never invent another room).
+  // Grinch missions deliberately use their own completion flow.
+  app.post('/api/hub/rooms/:code/dog/rematch',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const previousMatchId=req.body?.matchId;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(typeof previousMatchId!=='string'||!/^[0-9a-f-]{36}$/i.test(previousMatchId))
+      throw error(400,'INVALID_MATCH_ID');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      // Retry after a lost socket/HTTP acknowledgement is an idempotent no-op.
+      if(room.phase==='preparing'&&room.game==='dog'&&
+         room.lastCompleted?.id===previousMatchId)return {unchanged:true};
+      if(room.phase!=='playing'||room.match?.game!=='dog'||
+         room.match.id!==previousMatchId)throw error(409,'DOG_MATCH_MISMATCH');
+      if(room.match.dog?.phase!=='finished')throw error(409,'MATCH_NOT_FINISHED');
+      const participants=new Set((room.match.members||[]).map(member=>member.uid));
+      archiveCompletedMatch(room);
+      room.game='dog';
+      room.phase='preparing';
+      // Keep original humans and reserved DOG colours, but clear readiness.
+      // Any new lobby spectators remain spectators until host seat selection.
+      room.players=room.players.filter(player=>!player.testBot&&!player.bot);
+      room.players.forEach(player=>{
+        player.ready=false;
+        player.participating=participants.has(player.uid);
+      });
+    })};
+  }));
   app.post('/api/hub/rooms/:code/finish',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
