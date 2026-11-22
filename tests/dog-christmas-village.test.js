@@ -80,6 +80,23 @@ test('only sufficient saved lights can pay for levels, and duplicated commands c
  assert.throws(()=>buyDogVillageUpgrade(village,host,'tower',5,'christmas-upgrade-004'),/STALE_BUILDING_LEVEL|BUILDING_MAX_LEVEL/);
  for(const key of ['__proto__','not-a-building',null])assert.throws(()=>buyDogVillageUpgrade(village,host,key,1,'christmas-upgrade-005'));
 });
+test('each later building upgrade costs triple while historical purchases remain unchanged',()=>{
+ const starting=normalizedDogVillage({
+  levels:{tower:2},lightsTenths:6000,totalSpentTenths:150
+ },host);
+ assert.equal(dogVillagePublic(starting,host).nextCosts.tower,45);
+ let current=starting;
+ for(const [level,price,remaining] of [[2,45,5550],[3,135,4200],[4,405,150]]){
+  const result=buyDogVillageUpgrade(current,host,'tower',level,'triple-price-stage-'+level);
+  assert.equal(result.price,price);
+  assert.equal(result.village.lightsTenths,remaining);
+  assert.equal(result.village.totalSpentTenths,150+6000-remaining);
+  current=result.village;
+ }
+ assert.equal(current.levels.tower,5);
+ assert.equal(dogVillagePublic(current,host).nextCosts.tower,null);
+});
+
 test('disabled Christmas mode never awards gifts or inn bonuses',()=>{
  assert.equal(createDogChristmasMatch(null,false),null);
  assert.equal(claimDogChristmasGift(null,{pieces:[]},{pieces:[]},{type:'move',pieceId:0},0),0);
