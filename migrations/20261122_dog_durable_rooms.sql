@@ -55,10 +55,18 @@ CREATE TABLE IF NOT EXISTS dog_room_pending_finishes (
   finished_at_ms BIGINT NOT NULL,
   fingerprint CHAR(64) NOT NULL,
   created_at_ms BIGINT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at_ms BIGINT NOT NULL DEFAULT 0,
+  requires_review BOOLEAN NOT NULL DEFAULT FALSE,
+  last_error_code TEXT,
   UNIQUE (room_code,match_id,action_id)
 );
 
 CREATE INDEX IF NOT EXISTS dog_room_pending_finishes_by_match_idx
   ON dog_room_pending_finishes (match_id);
+
+CREATE INDEX IF NOT EXISTS dog_room_pending_finishes_due_idx
+  ON dog_room_pending_finishes (next_attempt_at_ms,created_at_ms)
+  WHERE requires_review=FALSE;
 
 COMMIT;
