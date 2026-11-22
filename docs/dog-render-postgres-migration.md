@@ -81,3 +81,36 @@ Gewinn-Bridge ist noch nicht implementiert.
   Wiederherstellungs-/Aufbewahrungsfrist entfernen.
 - `npm test` meldet zurzeit unabhängige Fehler in anderen Spielen;
   die neuen Offline-Tests müssen zusätzlich gezielt grün sein.
+
+## P3-Erweiterung: PostgreSQL-Outbox zu privaten DOG-WebSockets
+
+`dog-postgres-private-fanout.js` ist ein weiterer **noch nicht genutzter**
+Adapter. Er ersetzt derzeit **nicht** den Firestore-Watcher des Live-Hubs.
+
+- Der Server gibt ausschließlich eine bereits authentifizierte
+  `{uid}`-Identität an `subscribe()` weiter; die echte Firebase-ID-Token-
+  Prüfung bleibt Aufgabe der bestehenden HTTP-/WebSocket-Grenze.
+- Erst nach einem bestätigten SQL-Commit erscheint ein Ereignis in der
+  Outbox. `pollOnce()` liest den vollständigen privaten Spielstand erneut
+  aus der dauerhaften Datenbank und sendet **pro Spieler getrennt**
+  projizierte Daten, nie den Rohspielstand.
+- Neue WebSockets werden vor dem initialen Datenbank-GET registriert.
+  Revisionsprüfung und pro-Socket-Warteschlange verhindern, dass eine
+  verspätete initiale Antwort einen neueren Zug überschreibt.
+- Schon zugestellte Revisionen werden pro Verbindung unterdrückt.
+  Misslingt eine Zustellung, bleibt der Ereignisverweis bis zur
+  Wiederholung unbestätigt. Ein später wiederverbundener Spieler erhält
+  den neuesten dauerhaft gespeicherten Zustand.
+- Wurde ein Spieler aus dem Raum entfernt, erhält er aus dieser Outbox
+  keine weiteren Spielkarten; ungültige Abonnements werden verworfen.
+- Die vorhandene `expose()`-Funktion muss bei einer Liveintegration als
+  `project()` übergeben werden. Der voreingestellte reine DOG-
+  Spielprojektionstest ist **kein** Ersatz für den vollständigen Hub-Raum-
+  Nachrichtenvertrag.
+- Der Adapter hat absichtlich keinen Scheduler. Timer, mehrere Render-
+  Instanzen, Authentisierung, Benachrichtigungen bei Spielerwechseln,
+  Firestore-Reward-Settlement und echte Postgres-Transaktionen müssen
+  in einer späteren geprüften Integrationsphase folgen.
+
+Keine Einsparung von abgerechneten Firebase-Zugriffen allein durch das
+Hinzufügen dieser bisher nicht angebundenen Dateien.
