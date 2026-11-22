@@ -1,5 +1,10 @@
 name: Firebase hub no-op cache (offline)
 on:
+  pull_request:
+    paths:
+      - 'shared-lobby.js'
+      - 'tests/firebase-hub-noop-cache-offline.test.js'
+      - '.github/workflows/firebase-hub-noop-cache-offline.yml'
   push:
     branches: [main]
     paths:
