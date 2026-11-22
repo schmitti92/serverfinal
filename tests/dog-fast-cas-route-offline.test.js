@@ -1,8 +1,11 @@
-import test from 'node:test';
+import test, {afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {installSharedLobby} from '../shared-lobby.js';
 import {createDogChristmasMatch} from '../dog/christmas-village.js';
+
+const openWebSockets=new Set();
+afterEach(()=>{for(const socket of [...openWebSockets])socket.close();});
 
 // In-memory Firestore version/precondition simulator. It NEVER contacts
 // Firebase and records transaction GETs separately from CAS document UPDATEs.
@@ -108,8 +111,9 @@ function harness({fastCasEnabled=true,christmasEventActive=false}={}){
  class FakeWs extends EventEmitter{
   readyState=1;
   messages=[];
+  constructor(){super();openWebSockets.add(this);}
   send(raw){this.messages.push(JSON.parse(raw));}
-  close(){this.readyState=3;this.emit('close');}
+  close(){if(this.readyState===3)return;this.readyState=3;openWebSockets.delete(this);this.emit('close');}
  }
  async function subscribe(code,token='alice'){
   const ws=new FakeWs();adapter.attachSocket(ws);
