@@ -446,8 +446,12 @@ export function chooseDogBotAction(game,seat=game?.current,difficulty=DEFAULT,rn
  if(!game?.players?.[seat]?.bot||game.players[seat].inactive)return null;
  const level=normalizeDogBotDifficulty(difficulty);
  if(level==='medium')return botAction(game,seat);
- const actions=legalActions(game,seat);
- if(actions.length===0)return null;
+ const choices=legalActions(game,seat);
+ if(choices.length===0)return null;
+ // Bots must progress through a playable seven instead of repeatedly
+ // cancelling and selecting it again. Human deselection stays available.
+ const actions=game.phase==='seven'&&choices.some(action=>action.type==='seven-step')?
+  choices.filter(action=>action.type!=='seven-cancel'):choices;
  if(level==='easy'){
   const roll=Number(rng());
   return actions[Math.max(0,Math.min(actions.length-1,
