@@ -6,6 +6,7 @@
  */
 import {randomUUID} from 'node:crypto';
 import {isDogChristmasEventActive} from './dog/christmas-village.js';
+import {createScratchEditionPermissionPolicy} from './dog/scratch-edition-permissions.js';
 import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COLLECTION,
  giftsEditionPublic} from './dog/christmas-gifts-edition.js';
 import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLECTION,
@@ -17,17 +18,15 @@ import {OTHER_EDITION_VARIANTS,OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,
 
 export function installDogScratchEditionApi(app,{
  getFirestore,admin,scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||'',
+ developerUids=process.env.DOG_DEVELOPER_UIDS||'',
  christmasEventActive=isDogChristmasEventActive
 }){
- // Same explicit UID allowlist as shared-lobby.js. The room host,
- // public profile and an arbitrary Firebase account are not sufficient.
- // Missing configuration fails CLOSED for all edition mutations.
- const allowedScratchAdmins=new Set(
-  (Array.isArray(scratchAdminUids)?scratchAdminUids:
-   String(scratchAdminUids||'').split(/[\s,;]+/))
-    .filter(uid=>typeof uid==='string'&&/^[A-Za-z0-9_-]{4,200}$/.test(uid))
- );
- const isScratchAdmin=uid=>typeof uid==='string'&&allowedScratchAdmins.has(uid);
+ // Match shared-lobby's server-verified role permissions.
+ // Browser developer mode and the local PIN never authorize writes.
+ const editionPermissions=createScratchEditionPermissionPolicy({
+  scratchAdminUids,developerUids
+ });
+ const isScratchAdmin=uid=>editionPermissions.canManage(uid);
  const denyNonAdmin=(uid,res)=>{
   if(isScratchAdmin(uid))return false;
   res.status(403).set('Cache-Control','no-store').json({ok:false,error:'SCRATCH_ADMIN_ONLY'});
@@ -111,7 +110,7 @@ export function installDogScratchEditionApi(app,{
      if(!current||current.id!==req.body?.editionId||
       !Number.isInteger(req.body?.expectedRevision)||
       current.revision!==req.body.expectedRevision)throw Error('SCRATCH_EDITION_CHANGED');
-     if(current.createdBy!==uid)throw Error('SCRATCH_EDITION_ONLY_CREATOR');
+     if(!editionPermissions.canEdit(uid,current.createdBy))throw Error('SCRATCH_EDITION_ONLY_CREATOR');
      if(current.issued>=500)throw Error('SCRATCH_EDITION_ALREADY_COMPLETE');
      const revised=variant==='tic_tac_toe'?
       editTicEdition(current,{config:req.body?.tic,maxTotalCoins:req.body?.maxTotalCoins}):
@@ -135,7 +134,7 @@ export function installDogScratchEditionApi(app,{
     const current=snap.exists?snap.data():null;
     return res.set('Cache-Control','no-store').json({
      ok:true,[meta.response]:meta.public(current),
-     canRetire:Boolean(isScratchAdmin(uid)&&current&&current.createdBy===uid&&
+     canRetire:Boolean(current&&editionPermissions.canEdit(uid,current.createdBy)&&
       Number.isInteger(current.issued)&&current.issued>=0&&current.issued<500)
     });
    }catch(e){return fail(res,e)}
@@ -154,7 +153,7 @@ export function installDogScratchEditionApi(app,{
       !Number.isSafeInteger(req.body?.expectedRevision)||
       current.revision!==req.body.expectedRevision)
       throw Error('SCRATCH_EDITION_CHANGED');
-     if(current.createdBy!==uid)throw Error('SCRATCH_EDITION_ONLY_CREATOR');
+     if(!editionPermissions.canEdit(uid,current.createdBy))throw Error('SCRATCH_EDITION_ONLY_CREATOR');
      if(!Number.isInteger(current.issued)||current.issued<0||current.issued>500)
       throw Error('SCRATCH_EDITION_INVALID_LEDGER');
      if(current.issued===500)throw Error('SCRATCH_EDITION_ALREADY_COMPLETE');
