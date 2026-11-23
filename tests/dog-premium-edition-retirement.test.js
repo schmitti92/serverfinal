@@ -41,7 +41,8 @@ function fixture(){
  const app={post:(route,fn)=>routes.post.set(route,fn),
   get:(route,fn)=>routes.get.set(route,fn)};
  const admin={auth:()=>({verifyIdToken:async token=>({uid:token})})};
- installDogScratchEditionApi(app,{getFirestore:()=>db,admin});
+ installDogScratchEditionApi(app,{getFirestore:()=>db,admin,
+  scratchAdminUids:['creator','different-account'],christmasEventActive:()=>true});
  async function call(suffix,uid,body,method='post'){
   const req={body,get:key=>key==='authorization'?'Bearer '+uid:null};
   const res={statusCode:200,status(code){this.statusCode=code;return this},
