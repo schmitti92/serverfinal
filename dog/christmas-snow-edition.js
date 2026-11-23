@@ -92,7 +92,7 @@ export function issueSnowEditionTicket(wallet,tree,request,rawEdition,liveSettin
    throw Error('SCRATCH_EDITION_FIXED_PLAN_MISSING');
   const plannedRows=decodeFixedEditionRows(rawEdition.prizePlan[issued]);
   const result=buyScratchTicket(wallet,tree,request,{...ticketOptions,
-   printControl:{...options.printControl,fixedEditionRows:plannedRows}});
+   printControl:{...ticketOptions.printControl,fixedEditionRows:plannedRows}});
   const actual=plannedRows.reduce((sum,code)=>sum+
     rawEdition.config.coinAmounts[code%3]*(code>=3?2:1),0);
   if(result.result.totalCoins!==actual)
