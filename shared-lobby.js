@@ -165,6 +165,25 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const christmasActive=()=>christmasEventActive()===true;
   const grinchActive=()=>grinchOnlineEnabled===true;
   const error=(status,message)=>Object.assign(new Error(message),{status});
+  // One eligibility policy for the Christmas event. Verified DOG history or an
+  // explicit Firestore grant; never a nickname, room-host flag or client claim.
+  const INTRO_SEASON_START_AT=Date.parse('2026-11-21T13:00:00Z');
+  const christmasGrantRef=(store,uid)=>store.collection('dog_christmas_event_access_v1').doc(uid);
+  const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
+  const hasCompletedDogIntro=record=>Number.isSafeInteger(record?.played)&&record.played>=1&&
+    Number(record.updatedAt||0)>=INTRO_SEASON_START_AT;
+  const hasExplicitChristmasGrant=record=>record?.access===true;
+  async function assertChristmasEventAccess(tx,store,uid,statsSnap=null){
+    if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
+    // Existing purchase/research flows already have a stats document; reuse it.
+    const stats=statsSnap||await tx.get(store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid));
+    if(hasCompletedDogIntro(stats.exists?stats.data():null))return true;
+    // Only first-time players need one extra grant read, not every purchase.
+    const grant=await tx.get(christmasGrantRef(store,uid));
+    if(!grant.exists||!hasExplicitChristmasGrant(grant.data()))
+      throw error(403,'DOG_CHRISTMAS_EVENT_LOCKED');
+    return true;
+  }
   const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
   const validDogBotCount=n=>Number.isInteger(n)&&n>=0&&n<=2;
   const dogBotCount=room=>validDogBotCount(room.settings?.dog?.botCount)?room.settings.dog.botCount:2;
@@ -190,16 +209,13 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
     if(!humans.length)return false;
     const snaps=await Promise.all(humans.map(p=>tx.get(
       store.collection(DOG_PLAYER_STATS_COLLECTION).doc(p.uid))));
-    const wonBefore=humans.map((p,i)=>snaps[i].exists&&
-      dogPlayerStats(snaps[i].data(),p.uid).played>=1&&
-      Number(snaps[i].data()?.updatedAt||0)>=INTRO_SEASON_START_AT);
-    if(wonBefore.every(Boolean))return true;
-    // The three freshly restarted founders may play Christmas immediately
-    // even though their verifiable DOG match counters are zero.
-    const grants=await Promise.all(humans.map(p=>tx.get(
-      store.collection('dog_christmas_event_access_v1').doc(p.uid))));
-    return humans.every((_p,i)=>wonBefore[i]||
-      (grants[i].exists&&grants[i].data()?.access===true));
+    const missing=humans.filter((_p,i)=>!hasCompletedDogIntro(
+      snaps[i].exists?snaps[i].data():null));
+    if(!missing.length)return true;
+    // Read only grants for participants who have not completed the intro
+    // match. This avoids 2-4 unnecessary Firebase reads at match start.
+    const grants=await Promise.all(missing.map(p=>tx.get(christmasGrantRef(store,p.uid))));
+    return grants.every(g=>g.exists&&hasExplicitChristmasGrant(g.data()));
   }
   function privateChristmasMarks(match,uid){
     if(!match?.christmas?.enabled||!match.dogResearchSkills?.[uid])return {};
@@ -1415,6 +1431,7 @@ function finishEisstock(ch,members){
         snowEditionRef?tx.get(snowEditionRef):Promise.resolve(null),
         ticEditionRef?tx.get(ticEditionRef):Promise.resolve(null),
         otherEditionRef?tx.get(otherEditionRef):Promise.resolve(null),tx.get(playerStatsRef)]);
+      await assertChristmasEventAccess(tx,store,identity.uid,playerStatsSnap);
       const verifiedPlayerLevel=dogPlayerLevelStatus(playerStatsSnap.exists?playerStatsSnap.data():null).level;
       if(!dogChristmasScratchUnlocked(body.variantId,verifiedPlayerLevel))
         throw error(403,'SCRATCH_PLAYER_LEVEL_LOCKED');
@@ -1528,12 +1545,9 @@ function finishEisstock(ch,members){
   // The Christmas portal stays SEALED until a server-verified completed DOG
   // online match. The introductory film is acknowledged per profile so it
   // does not replay on another device after a successful first viewing.
-  const INTRO_SEASON_START_AT=Date.parse('2026-11-21T13:00:00Z');
   // Verified Firebase profile name (never a client-submitted nickname). Chris
   // gets a preview invitation without changing his real DOG match statistics.
   const christmasPreviewGranted=identity=>String(identity?.name||'').trim().toLowerCase()==='chris';
-  const christmasGrantRef=(store,uid)=>store.collection('dog_christmas_event_access_v1').doc(uid);
-  const introRef=(store,uid)=>store.collection('dog_christmas_intro_unlock_v1').doc(uid);
   // Open-on-demand DOG Videothek. All unlock conditions are derived from the
   // signed-in player's acknowledged intro plus verified shared village levels.
   // No room polling or per-frame Firestore requests.
@@ -1637,6 +1651,7 @@ function finishEisstock(ch,members){
     const researchRef=store.collection(DOG_RESEARCH_COLLECTION).doc(uid);
     const upgraded=await dogWriteDiagnostics.transaction(store,'dog-research-upgrade',async tx=>{
       const [statsSnap,researchSnap]=await Promise.all([tx.get(statsRef),tx.get(researchRef)]);
+      await assertChristmasEventAccess(tx,store,uid,statsSnap);
       const xp=statsSnap.exists?statsSnap.data()?.xp:0;
       let next;
       try{next=dogResearchUpgrade(researchSnap.exists?researchSnap.data():null,xp,id,now);}
@@ -1661,6 +1676,7 @@ function finishEisstock(ch,members){
         tx.get(researchRef),tx.get(statsRef),
         type==='free_ticket'?tx.get(walletRef):tx.get(villageRef)
       ]);
+      await assertChristmasEventAccess(tx,store,uid,statsSnap);
       const research=researchSnap.exists?researchSnap.data():null;
       const rank=dogResearchLevel(research,type);
       if(rank<1)throw error(403,'RESEARCH_NOT_UNLOCKED');
@@ -1762,6 +1778,7 @@ function finishEisstock(ch,members){
     const statsRef=store.collection(DOG_PLAYER_STATS_COLLECTION).doc(uid);
     const claimed=await dogWriteDiagnostics.transaction(store,'dog-level-claim',async tx=>{
       const [statsSnap,walletSnap]=await Promise.all([tx.get(statsRef),tx.get(walletRef)]);
+      await assertChristmasEventAccess(tx,store,uid,statsSnap);
       const current=dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null);
       if(current.level<level||current.totalXp<DOG_LEVEL_THRESHOLDS[level-1])
         throw error(403,'DOG_LEVEL_NOT_REACHED');
@@ -1790,6 +1807,7 @@ function finishEisstock(ch,members){
     // Existing API clients still receive the full village response by default.
     const metadataOnly=req.body?.metadataOnly===true;
     const result=await dogWriteDiagnostics.transaction(store,'dog-village-import',async tx=>{
+      await assertChristmasEventAccess(tx,store,identity.uid);
       const oldSnap=await tx.get(oldRef);
       const alreadyMerged=oldSnap.exists&&oldSnap.data()?.mergedToGlobal===DOG_GLOBAL_VILLAGE_ID;
       if(metadataOnly&&(!oldSnap.exists||alreadyMerged))
@@ -1816,6 +1834,7 @@ function finishEisstock(ch,members){
     const linkedCode=building==='inn'?validCode(req.body?.roomCode):null,
       linkedRef=linkedCode?documentFor(store,linkedCode):null;
     const villageResult=await dogWriteDiagnostics.transaction(store,'dog-village-upgrade',async tx=>{
+      await assertChristmasEventAccess(tx,store,req.hubIdentity.uid);
       let roomChanged=false;
       const ref=dogVillageFor(store);
       const [snap,roomSnap]=await Promise.all([tx.get(ref),linkedRef?tx.get(linkedRef):Promise.resolve(null)]);
@@ -1856,6 +1875,7 @@ function finishEisstock(ch,members){
     if(!Number.isInteger(level)||level<1||level>10)throw error(400,'INVALID_TREE_LEVEL');
     const accountRef=store.collection(DOG_TREE_REWARDS_COLLECTION).doc(req.hubIdentity.uid);
     const result=await dogWriteDiagnostics.transaction(store,'dog-tree-claim',async tx=>{
+      await assertChristmasEventAccess(tx,store,req.hubIdentity.uid);
       const [villageSnap,accountSnap]=await Promise.all([tx.get(dogVillageFor(store)),tx.get(accountRef)]);
       let granted;
       try{granted=claimDogTreeReward(
@@ -2092,6 +2112,7 @@ function finishEisstock(ch,members){
     const result=await dogWriteDiagnostics.transaction(store,'dog-room-tree-claim',async tx=>{
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
+      await assertChristmasEventAccess(tx,store,identity.uid);
       if(room.game!=='dog'&&room.match?.game!=='dog')throw error(409,'DOG_NOT_SELECTED');
       const player=room.players.find(p=>p.uid===identity.uid);
       if(!player?.participating)throw error(403,'JOIN_DOG_FIRST');
@@ -2117,8 +2138,8 @@ function finishEisstock(ch,members){
       let roomChanged=false;
       const roomSnap=await tx.get(roomRef),room=roomSnap.exists?roomSnap.data():null;
       validateRead(room,identity);
-      // Any authenticated room member may use the common funds.
-      if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
+      // Every member spending shared lights must have verified event access.
+      await assertChristmasEventAccess(tx,store,identity.uid);
       const ref=dogVillageFor(store),prior=await tx.get(ref);
       let result;
       try{result=buyDogVillageUpgrade(prior.exists?prior.data():null,DOG_GLOBAL_VILLAGE_ID,building,expectedLevel,commandId);}
