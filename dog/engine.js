@@ -115,7 +115,7 @@ export function createGame(options={}){
   const startingSeat=startingSeats[Math.min(startingSeats.length-1,Math.floor(rng()*startingSeats.length))];
   const s={schemaVersion:1,ruleset:RULESET.id,mode,phase:'exchange',round:0,revision:0,starter:startingSeat,current:startingSeat,players,
     pieces:Array.from({length:16},(_,i)=>({id:i,owner:Math.floor(i/4),place:'home',pos:-1})).filter(p=>!players[p.owner].inactive),
-    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,rescue:null,winner:null,winnerSeat:null,history:[]};
+    hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,rescue:null,winner:null,winnerSeat:null,history:[],drawEvents:[]};
   deal(s,rng);return s;
 }
 function history(s,text){s.history.unshift(text);s.history.length=Math.min(s.history.length,12);}
@@ -342,6 +342,10 @@ export function takeAction(original,seat,action,rng=Math.random){
     const types=drawn.type==='joker'?['1/11','13']:[drawn.type];
     const canExit=types.some(as=>startCards.has(as)&&
       candidateMoves(s,seat,drawn,as).some(m=>m.type==='start'));
+    // Public presentation event, not a second move. Players see the drawn
+    // replacement face once; never publish the private deck/hand card ID.
+    s.drawEvents=[...(Array.isArray(s.drawEvents)?s.drawEvents:[]),
+      {revision:s.revision+1,seat,cardType:drawn.type,canExit}].slice(-12);
     if(canExit){
       s.hands[seat].push(drawn);
       s.phase='rescue';s.rescue={cardId:drawn.id};
