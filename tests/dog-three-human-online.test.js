@@ -230,3 +230,44 @@ test('DOG Christmas rewards become available on a later match only after every p
  assert.equal(room.match.christmas.enabled,true,
   'subsequent verified matches keep all existing Christmas rewards');
 });
+
+
+test('DOG host can choose 0, 1, or 2 computer opponents for two real online players',async()=>{
+ for(const botCount of [0,1,2]){
+  const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+  await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+  await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+  const set=await h.api('POST','/api/hub/rooms/'+code+'/dog/bots','alice',{botCount});
+  assert.equal(set.status,200);
+  assert.equal(set.room.settings.botCount,botCount);
+  assert.equal((await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true})).room.phase,'preparing');
+  const launched=await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+  assert.equal(launched.status,200);
+  assert.equal(launched.room.phase,'playing');
+  const state=launched.room.match.dog;
+  assert.equal(launched.room.match.settings.botCount,botCount);
+  assert.equal(state.players.filter(p=>p.bot).length,botCount);
+  assert.equal(state.players.filter(p=>p.inactive).length,2-botCount);
+  assert.equal(state.pieces.length,4*(2+botCount));
+  assert.equal(state.mode,botCount===2?'teams4':botCount===1?'solo3':'solo2');
+  for(const p of state.players.filter(p=>p.inactive)){
+   assert.equal(state.hands[p.seat].count,0);
+   assert.equal(state.exchanges[p.seat],true);
+  }
+  assert.deepEqual(launched.room.match.dogRoster.filter(p=>!p.bot&&!p.inactive).map(p=>p.uid),[h.identities.alice.uid,h.identities.bob.uid]);
+ }
+});
+test('DOG bot choice is host-only, validated, idempotent and resets all readiness',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ const endpoint='/api/hub/rooms/'+code+'/dog/bots';
+ assert.equal((await h.api('POST',endpoint,'bob',{botCount:0})).status,403);
+ for(const botCount of [-1,3,0.5,'1',null])assert.equal((await h.api('POST',endpoint,'alice',{botCount})).status,400);
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const updated=await h.api('POST',endpoint,'alice',{botCount:0});
+ assert.equal(updated.room.players.find(p=>p.me).ready,false,'host readiness reset');
+ assert.equal(updated.room.players.find(p=>!p.me).ready,false,'peer readiness reset');
+ const repeated=await h.api('POST',endpoint,'alice',{botCount:0});
+ assert.equal(repeated.room.revision,updated.room.revision,'repeat bot choice is a Firestore no-op');
+});

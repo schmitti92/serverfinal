@@ -154,6 +154,8 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const grinchActive=()=>grinchOnlineEnabled===true;
   const error=(status,message)=>Object.assign(new Error(message),{status});
   const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
+  const validDogBotCount=n=>Number.isInteger(n)&&n>=0&&n<=2;
+  const dogBotCount=room=>validDogBotCount(room.settings?.dog?.botCount)?room.settings.dog.botCount:2;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
   const dogVillageFor=store=>store.collection(DOG_VILLAGE_COLLECTION).doc(DOG_GLOBAL_VILLAGE_ID);
   const legacyDogVillageFor=(store,uid)=>store.collection(DOG_VILLAGE_COLLECTION).doc(uid);
@@ -675,16 +677,17 @@ function finishEisstock(ch,members){
     const players=activeSeats(room);
     if(players.length<1||players.length>4)throw error(409,'INVALID_PLAYER_COUNT');
     const seats=dogLobbySeats(players);
-    // Exactly three verified human players form a three-way match. No
-    // fourth computer participant, hidden hand or phantom player is created.
-    const threeHuman=players.length===3;
+    // Host chooses 0/1/2 bots for exactly two people. Other rosters retain
+    // their existing defaults (1 human = 3 bots; 3 humans = none).
+    const botCount=players.length===2?dogBotCount(room):players.length===1?3:0;
+    let botsLeft=botCount;
     const roster=Array.from({length:4},(_,seat)=>{
       const player=seats[seat];
-      return player?{seat,uid:player.uid,name:player.name,bot:false,inactive:false}:
-        threeHuman?{seat,uid:null,name:'Freier Platz',bot:false,inactive:true}:
-        {seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true,inactive:false};
+      if(player)return {seat,uid:player.uid,name:player.name,bot:false,inactive:false};
+      if(botsLeft-->0)return {seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true,inactive:false};
+      return {seat,uid:null,name:'Freier Platz',bot:false,inactive:true};
     });
-    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot),
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1,botCount},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot),
       inactiveSeats:roster.filter(r=>r.inactive).map(r=>r.seat)})};
     // No host or room switch: the active seasonal event is automatic for DOG.
     room.phase='playing';
@@ -777,7 +780,7 @@ function finishEisstock(ch,members){
       gameTitle:game?.title||null,minPlayers:game?.min||null,maxPlayers:game?.max||null,
       // Start button stays disabled until a game-specific adapter is implemented.
       canLaunch:!!HUB_GAMES[room.game],
-      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='dog'?{christmasActive:christmasActive()}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
+      settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='dog'?{christmasActive:christmasActive(),botCount:dogBotCount(room)}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
       players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,dogAvatar:validDogAvatar(p.dogAvatar)?p.dogAvatar:0,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
@@ -1999,6 +2002,20 @@ function finishEisstock(ch,members){
     })};
   }));
 
+  // Real player count is never changed by bots: this is host-owned room setup.
+  // Reset readiness when the selection changes; a repeat request costs no write.
+  app.post('/api/hub/rooms/:code/dog/bots',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity,botCount=req.body?.botCount;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(!validDogBotCount(botCount))throw error(400,'INVALID_DOG_BOT_COUNT');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.game!=='dog'||room.phase!=='preparing')throw error(409,'DOG_NOT_PREPARING');
+      if(dogBotCount(room)===botCount)return {unchanged:true};
+      room.settings={...(room.settings||{}),dog:{...(room.settings?.dog||{}),botCount}};
+      room.players.forEach(player=>{player.ready=false;});
+    })};
+  }));
   // DOG avatars are cosmetic metadata and never change cards, turns or readiness.
   app.post('/api/hub/rooms/:code/dog/avatar',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,avatar=req.body?.avatar;
