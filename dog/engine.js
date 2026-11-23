@@ -110,7 +110,10 @@ export function createGame(options={}){
   const players=Array.from({length:4},(_,seat)=>({seat,
     name:missing.includes(seat)?'Freier Platz':String(names[seat]||'Spieler '+(seat+1)).slice(0,25),
     bot:!missing.includes(seat)&&!!bots[seat],inactive:missing.includes(seat),team:mode==='teams4'?seat%2:seat}));
-  const s={schemaVersion:1,ruleset:RULESET.id,mode,phase:'exchange',round:0,revision:0,starter:0,current:0,players,
+  const startingSeats=players.filter(p=>!p.inactive).map(p=>p.seat);
+  // Select the opening player once per match (humans and bots have equal chances).
+  const startingSeat=startingSeats[Math.min(startingSeats.length-1,Math.floor(rng()*startingSeats.length))];
+  const s={schemaVersion:1,ruleset:RULESET.id,mode,phase:'exchange',round:0,revision:0,starter:startingSeat,current:startingSeat,players,
     pieces:Array.from({length:16},(_,i)=>({id:i,owner:Math.floor(i/4),place:'home',pos:-1})).filter(p=>!players[p.owner].inactive),
     hands:[[],[],[],[]],exchanges:[null,null,null,null],deck:shuffle(makeDeck(),rng),discard:[],seven:null,rescue:null,winner:null,winnerSeat:null,history:[]};
   deal(s,rng);return s;
@@ -120,7 +123,9 @@ function deal(s,rng){
   s.round++;
   const count=[6,5,4,3,2][(s.round-1)%5];
   const seats=activeSeats(s);
-  s.starter=seats[(s.round-1)%seats.length];s.current=s.starter;s.phase='exchange';
+  // The initial starter was randomized at game creation; later card rounds rotate.
+  if(s.round>1)s.starter=nextSeat(s,s.starter);
+  s.current=s.starter;s.phase='exchange';
   s.exchanges=s.players.map(p=>p.inactive?true:null);
   s.seven=null;s.rescue=null;
   s.hands=[[],[],[],[]];
