@@ -477,7 +477,11 @@ function score(s,action,player=s.current){
 export function botAction(s,seat=s.current){
   const opts=legalActions(s,seat);
   if(!opts.length)return null;
-  return [...opts].sort((a,b)=>score(s,b,seat)-score(s,a,seat))[0];
+  // A bot must not play a seven, cancel it, and pick the same seven forever.
+  // Human players still retain the explicit cancel button.
+  const usable=s.phase==='seven'&&opts.some(m=>m.type==='seven-step')?
+   opts.filter(m=>m.type!=='seven-cancel'):opts;
+  return [...usable].sort((a,b)=>score(s,b,seat)-score(s,a,seat))[0];
 }
 export function publicState(s,seat=null){
   const t=clone(s);t.deckCount=t.deck.length;delete t.deck;t.discardCount=t.discard.length;delete t.discard; // lastPlayedCard remains public: only the last played card, never a hidden hand.
