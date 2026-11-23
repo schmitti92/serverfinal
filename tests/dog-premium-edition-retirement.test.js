@@ -8,7 +8,7 @@ const CURRENT=OTHER_EDITION_COLLECTION+'/current_premium_27';
 const ARCHIVE=OTHER_EDITION_HISTORY+'/premium_27_premium-latest';
 
 function fixture(){
- const routes=new Map(),documents=new Map();
+ const routes={get:new Map(),post:new Map()},documents=new Map();
  const edition={
   id:'premium-latest',variantId:'premium_27',createdBy:'creator',
   createdAt:Date.parse('2026-11-22T09:00:00Z'),revision:6,
@@ -19,7 +19,9 @@ function fixture(){
  documents.set(CURRENT,structuredClone(edition));
  documents.set('dog_christmas_scratch_v1/creator',{coins:1000,paidReceipt:'unchanged'});
  const db={
-  collection:name=>({doc:id=>({path:name+'/'+id})}),
+  collection:name=>({doc:id=>({path:name+'/'+id,
+   get:async()=>({exists:documents.has(name+'/'+id),
+    data:()=>structuredClone(documents.get(name+'/'+id))})})}),
   runTransaction:async fn=>{
    const writes=[];
    const tx={
@@ -36,14 +38,15 @@ function fixture(){
    return output;
   }
  };
- const app={post:(route,fn)=>routes.set(route,fn)};
+ const app={post:(route,fn)=>routes.post.set(route,fn),
+  get:(route,fn)=>routes.get.set(route,fn)};
  const admin={auth:()=>({verifyIdToken:async token=>({uid:token})})};
  installDogScratchEditionApi(app,{getFirestore:()=>db,admin});
- async function call(suffix,uid,body){
+ async function call(suffix,uid,body,method='post'){
   const req={body,get:key=>key==='authorization'?'Bearer '+uid:null};
   const res={statusCode:200,status(code){this.statusCode=code;return this},
    set(){return this},json(payload){this.payload=payload;return this}};
-  const route=routes.get('/api/hub/scratch/editions/premium_27'+suffix);
+  const route=routes[method].get('/api/hub/scratch/editions/premium_27'+suffix);
   assert.equal(typeof route,'function');
   await route(req,res);
   return res;
@@ -101,4 +104,27 @@ test('Premium: retirement refuses to overwrite an existing historical archive',a
  assert.equal(result.payload.error,'SCRATCH_EDITION_ARCHIVE_CONFLICT');
  assert.equal(env.documents.has(CURRENT),true);
  assert.deepEqual(env.documents.get(ARCHIVE),{retained:'historic'});
+});
+
+test('Premium: live one-document status permits finding a run missing from cached shop data',async()=>{
+ const env=fixture();
+ const creator=await env.call('/status','creator',undefined,'get');
+ assert.equal(creator.statusCode,200);
+ assert.equal(creator.payload.ok,true);
+ assert.equal(creator.payload.otherEdition.id,env.edition.id);
+ assert.equal(creator.payload.otherEdition.revision,6);
+ assert.equal(creator.payload.otherEdition.remaining,465);
+ assert.equal(creator.payload.canRetire,true);
+ assert.equal(creator.payload.otherEdition.prizePlan,undefined,
+  'the 500 internal ticket outcomes must never be sent to the client');
+ assert.equal(creator.payload.otherEdition.createdBy,undefined);
+ const other=await env.call('/status','other-member',undefined,'get');
+ assert.equal(other.statusCode,200);
+ assert.equal(other.payload.canRetire,false);
+ const archived=await env.call('/retire','creator',env.payload);
+ assert.equal(archived.statusCode,200);
+ const after=await env.call('/status','creator',undefined,'get');
+ assert.equal(after.statusCode,200);
+ assert.equal(after.payload.otherEdition,null);
+ assert.equal(after.payload.canRetire,false);
 });
