@@ -11,10 +11,16 @@ export function scratchUidAllowlist(input){
 }
 export function createScratchEditionPermissionPolicy({
  scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||'',
- developerUids=process.env.DOG_DEVELOPER_UIDS||''
+ developerUids=process.env.DOG_DEVELOPER_UIDS||'',
+ // Dedicated additive grant for Chris. Never replace existing developer or
+ // scratch-admin allowlists just to register one additional account.
+ chrisDeveloperUid=process.env.DOG_SCRATCH_CHRIS_DEVELOPER_UID||''
 }={}){
  const administrators=scratchUidAllowlist(scratchAdminUids);
- const developers=scratchUidAllowlist(developerUids);
+ const developers=new Set([
+  ...scratchUidAllowlist(developerUids),
+  ...scratchUidAllowlist(chrisDeveloperUid)
+ ]);
  const isDeveloper=uid=>typeof uid==='string'&&developers.has(uid);
  const canManage=uid=>typeof uid==='string'&&(administrators.has(uid)||isDeveloper(uid));
  // Registered developers can manage older print runs made by another
