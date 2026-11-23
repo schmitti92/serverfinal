@@ -494,3 +494,40 @@ test('DOG: replacement card reveal uses the existing public state without leakin
  assert.equal(s.lastPlayedCard.type,'13');
  assert.equal(s.phase,'play');
 });
+
+
+test('DOG: selected 7 can be deselected before movement without losing card or turn',()=>{
+ let s=createGame({rng:()=>0.42,bots:[false,false,false,false]});
+ s.phase='play';s.current=0;
+ s.hands=[[{id:991,type:'7'},{id:992,type:'4'}],[],[],[]];
+ for(const [id,pos] of [[0,2],[1,8]]){
+  const p=s.pieces.find(piece=>piece.id===id);
+  p.place='track';p.pos=pos;
+ }
+ const begin=legalActions(s,0).find(m=>m.type==='seven'&&m.cardId===991);
+ assert.ok(begin);
+ s=takeAction(s,0,begin);
+ assert.equal(s.phase,'seven');
+ assert.equal(s.seven.spent,0);
+ const cancel=legalActions(s,0).find(m=>m.type==='seven-cancel'&&m.cardId===991);
+ assert.ok(cancel,'the selected 7 must be deselectable before moving any figure');
+ const before=structuredClone(s);
+ s=takeAction(s,0,cancel);
+ assert.equal(s.phase,'play');
+ assert.equal(s.seven,null);
+ assert.equal(s.current,0,'turn stays with the player');
+ assert.equal(s.revision,before.revision+1,'one authoritative state change');
+ assert.deepEqual(s.pieces,before.pieces,'no figure is moved');
+ assert.deepEqual(s.hands,before.hands,'the 7 stays in the hand');
+ assert.deepEqual(s.discard,before.discard,'no card is discarded');
+ assert.deepEqual(s.deck,before.deck,'no card is drawn');
+ assert.ok(legalActions(s,0).some(m=>m.type==='seven'&&m.cardId===991),'7 can be selected again');
+ s=takeAction(s,0,legalActions(s,0).find(m=>m.type==='seven'&&m.cardId===991));
+ const step=legalActions(s,0).find(m=>m.type==='seven-step'&&m.steps===1);
+ assert.ok(step);
+ s=takeAction(s,0,step);
+ assert.equal(s.seven.spent,1);
+ assert.equal(legalActions(s,0).some(m=>m.type==='seven-cancel'),false,
+  'after a partial movement the 7 cannot simply be deselected');
+ assert.throws(()=>takeAction(s,0,{type:'seven-cancel',cardId:991}),/ILLEGAL_ACTION/);
+});
