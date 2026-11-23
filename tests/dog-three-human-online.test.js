@@ -306,3 +306,64 @@ test('DOG scratch administration fails closed when no verified UID list is confi
  assert.equal((await h.api('GET','/api/hub/scratch','alice')).canManageScratch,false);
  assert.equal((await h.api('POST','/api/hub/scratch/settings','alice',{settings:{}})).status,403);
 });
+
+
+test('earned DOG portraits, nameframes and turn icons require server-owned rewards',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ const owner='dog_christmas_scratch_wallet_v1/user_alice123';
+ h.docs.set(owner,{coins:1000,owned:{
+  'christmas2026:avatar:01':1100,
+  'christmas2026:nameframe:01':1100,
+  'christmas2026:activeicon:02':1100
+ }});
+ const avatar='/api/hub/rooms/'+code+'/dog/avatar';
+ const cosmetic='/api/hub/rooms/'+code+'/dog/cosmetic';
+ assert.equal((await h.api('POST',avatar,'bob',{avatar:16})).status,403,'another player cannot take the event portrait');
+ assert.equal((await h.api('POST',avatar,'alice',{avatar:17})).status,403,'another unowned avatar is rejected');
+ const changedAvatar=await h.api('POST',avatar,'alice',{avatar:16});
+ assert.equal(changedAvatar.status,200,changedAvatar.error);
+ assert.equal(changedAvatar.room.players.find(p=>p.me).dogAvatar,16);
+ assert.equal((await h.api('POST',cosmetic,'bob',{kind:'nameFrame',unlockId:'christmas2026:nameframe:01'})).status,403);
+ assert.equal((await h.api('POST',cosmetic,'alice',{kind:'nameFrame',unlockId:'christmas2026:nameframe:04'})).status,403);
+ const frame=await h.api('POST',cosmetic,'alice',{kind:'nameFrame',unlockId:'christmas2026:nameframe:01'});
+ assert.equal(frame.status,200,frame.error);
+ assert.equal(frame.room.players.find(p=>p.me).dogNameFrame,'christmas2026:nameframe:01');
+ const emblem=await h.api('POST',cosmetic,'alice',{kind:'activeIcon',unlockId:'christmas2026:activeicon:02'});
+ assert.equal(emblem.status,200,emblem.error);
+ const copy=await h.api('POST',cosmetic,'alice',{kind:'activeIcon',unlockId:'christmas2026:activeicon:02'});
+ assert.equal(copy.room.revision,emblem.room.revision,'repeated equipment is an atomic no-op');
+ assert.equal((await h.api('POST',cosmetic,'alice',{kind:'activeIcon',unlockId:'evil'})).status,400);
+ const other=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ const alice=other.players.find(p=>p.name==='Alice');
+ assert.equal(alice.dogAvatar,16,'another real player sees the earned picture');
+ assert.equal(alice.dogNameFrame,'christmas2026:nameframe:01');
+ assert.equal(alice.dogActiveIcon,'christmas2026:activeicon:02');
+ const reset=await h.api('POST',cosmetic,'alice',{kind:'nameFrame',unlockId:null});
+ assert.equal(reset.status,200,'a user can return to the default frame');
+ assert.equal(reset.room.players.find(p=>p.me).dogNameFrame,null);
+ const freshAvatar=await h.api('POST',avatar,'bob',{avatar:2});
+ assert.equal(freshAvatar.status,200,'all classic portraits remain free');
+});
+test('earned DOG cosmetics appear in the authorized match snapshot without exposing private wallets',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ h.docs.set('dog_christmas_scratch_wallet_v1/user_alice123',{owned:{
+  'christmas2026:activeicon:01':1000,
+  'christmas2026:nameframe:02':1000
+ }});
+ const endpoint='/api/hub/rooms/'+code+'/dog/cosmetic';
+ await h.api('POST',endpoint,'alice',{kind:'nameFrame',unlockId:'christmas2026:nameframe:02'});
+ await h.api('POST',endpoint,'alice',{kind:'activeIcon',unlockId:'christmas2026:activeicon:01'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true});
+ assert.equal(started.status,200,started.error);
+ assert.equal(started.room.phase,'playing');
+ assert.equal(started.room.match.dogCosmetics[0].nameFrame,'christmas2026:nameframe:02');
+ assert.equal(started.room.match.dogCosmetics[0].activeIcon,'christmas2026:activeicon:01');
+ assert.equal(started.room.match.dogCosmetics[1].nameFrame,null);
+ assert.equal(started.room.match.dogCosmetics[2],null,'bot never gets human-owned cosmetics');
+ assert.equal(started.room.match.dog.ownedUnlockIds,undefined,'wallets are never embedded in game state');
+});
