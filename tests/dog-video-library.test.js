@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {dogVideoLibraryAccess,recordDogVideoSeen,DOG_VIDEO_IDS} from '../dog/video-library.js';
 
 test('movie catalogue unlocks only from verified intro and shared village progress',()=>{
- const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:1},
+ const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:3},
   giftsCollected:2};
  const closed=dogVideoLibraryAccess(null,village,{watched:['tree-3','building-bakery','welcome']});
  assert.deepEqual(closed.available,['welcome']);
@@ -13,12 +13,12 @@ test('movie catalogue unlocks only from verified intro and shared village progre
  assert.deepEqual(unlocked.available,DOG_VIDEO_IDS);
  assert.deepEqual(unlocked.watched,['welcome','tree-3','building-bakery']);
  assert.equal(unlocked.treeLevel,10);
- assert.equal(unlocked.unlockedCount,11);
- assert.equal(unlocked.totalCount,11);
+ assert.equal(unlocked.unlockedCount,17);
+ assert.equal(unlocked.totalCount,17);
 });
 
 test('early village stages do not reveal future tree and building movies',()=>{
- const village={levels:{tower:1,workshop:1,bakery:1,inn:1,luckhouse:4,academy:1},giftsCollected:0};
+ const village={levels:{tower:1,workshop:1,bakery:1,inn:1,luckhouse:1,academy:1},giftsCollected:0};
  const got=dogVideoLibraryAccess({completedAt:200},village);
  assert.deepEqual(got.available,['welcome','intro']);
  assert.equal(got.treeLevel,1);
@@ -40,6 +40,7 @@ test('seen receipts are idempotent, whitelisted and never grant unavailable film
  assert.equal(replay.changed,false);assert.equal(replay.record.updatedAt,1000);
  assert.throws(()=>recordDogVideoSeen(null,'tree-3',unlocked,1000),/VIDEO_LOCKED/);
  assert.throws(()=>recordDogVideoSeen(null,'tree-4',unlocked,1000),/VIDEO_LOCKED/);
+ assert.throws(()=>recordDogVideoSeen(null,'building-workshop-3',unlocked,1000),/VIDEO_LOCKED/);
  assert.throws(()=>recordDogVideoSeen(null,'evil',unlocked,1000),/VIDEO_UNKNOWN/);
  const next=recordDogVideoSeen(first.record,'welcome',unlocked,3000);
  assert.deepEqual(next.record.watched,['tree-2','welcome']);
@@ -52,4 +53,23 @@ test('malformed historical watched records cannot gain access',()=>{
  assert.deepEqual(v.watched,['welcome']);
  const whitelist=new Set(DOG_VIDEO_IDS);
  assert.equal(whitelist.size,DOG_VIDEO_IDS.length);
+});
+
+test('building stage 3 movies unlock from actual building level, never previews',()=>{
+ const village={levels:{tower:2,workshop:3,bakery:4,inn:5,luckhouse:2,academy:3},giftsCollected:0};
+ const result=dogVideoLibraryAccess({completedAt:123},village);
+ assert.ok(result.available.includes('building-workshop-3'));
+ assert.ok(result.available.includes('building-bakery-3'));
+ assert.ok(result.available.includes('building-inn-3'));
+ assert.ok(result.available.includes('building-academy-3'));
+ assert.ok(result.available.includes('building-inn'));
+ assert.ok(!result.available.includes('building-workshop'));
+ assert.ok(!result.available.includes('building-bakery'));
+ assert.ok(!result.available.includes('building-luckhouse-3'));
+ const replay=recordDogVideoSeen(null,'building-academy-3',result.available,99);
+ assert.deepEqual(replay.record.watched,['building-academy-3']);
+ assert.equal(recordDogVideoSeen(replay.record,'building-academy-3',result.available,100).changed,false);
+ const locked=dogVideoLibraryAccess({completedAt:123},{...village,levels:{...village.levels,academy:2}});
+ assert.ok(!locked.available.includes('building-academy-3'));
+ assert.throws(()=>recordDogVideoSeen(null,'building-academy-3',locked.available,101),/VIDEO_LOCKED/);
 });
