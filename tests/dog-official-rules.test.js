@@ -354,7 +354,7 @@ test('DOG: blocked starting square stops a drawn 13, even if 13 could move',()=>
 
 test('DOG: card counts still cycle 6,5,4,3,2,6 with manual rescue discards',()=>{
  let s=createGame({rng:()=>0.3,bots:[false,false,false,false]});
- assert.deepEqual({round:s.round,starter:s.starter,hand:s.hands[0].length},{round:1,starter:0,hand:6});
+ assert.deepEqual({round:s.round,starter:s.starter,hand:s.hands[0].length},{round:1,starter:1,hand:6});
  for(const [index,want] of [5,4,3,2,6].entries()){
    s.hands=Array.from({length:4},(_,seat)=>[{id:3000+index*4+seat,type:'3'}]);
    s.deck=Array.from({length:40},(_,n)=>({id:5000+index*100+n,type:'3'}));
@@ -366,7 +366,7 @@ test('DOG: card counts still cycle 6,5,4,3,2,6 with manual rescue discards',()=>
      s=takeAction(s,s.current,move);
    }
    assert.equal(s.round,index+2);
-   assert.equal(s.starter,(index+1)%4);
+   assert.equal(s.starter,(index+2)%4);
    assert.equal(s.current,s.starter);
    assert.ok(s.hands.every(hand=>hand.length===want));
    assert.equal(s.phase,'exchange');
@@ -439,4 +439,22 @@ test('DOG Phase 1: turns preserve the original 110-card inventory and disallow t
    }
  }
  check();
+});
+
+
+test('DOG: a random opening starter is chosen from occupied seats, then turn order remains clockwise',()=>{
+ for(const [roll,seat] of [[0,0],[0.26,1],[0.51,2],[0.76,3]]){
+  const game=createGame({rng:()=>roll,bots:[false,false,false,false]});
+  assert.equal(game.starter,seat,'all four start colors must be possible');
+  assert.equal(game.current,seat,'the drawn color gets the first turn');
+  assert.equal(game.phase,'exchange');
+ }
+ const three=createGame({rng:()=>0.99,inactiveSeats:[1],bots:[false,false,false,false]});
+ assert.equal(three.starter,3,'vacant colors cannot be drawn');
+ const two=createGame({rng:()=>0.99,inactiveSeats:[0,3],bots:[false,true,true,false]});
+ assert.equal(two.starter,2,'a bot can be drawn when it participates');
+ for(const seat of [1,2]){
+  const selected=two.players[seat];
+  assert.equal(selected.inactive,false);
+ }
 });
