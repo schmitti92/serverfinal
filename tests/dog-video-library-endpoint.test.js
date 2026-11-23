@@ -73,13 +73,14 @@ test('DOG videothek is identity-scoped, replays do not write, and future movies 
   giftsCollected:2,revision:22,lightsTenths:100});
  const alice=await h.api('GET','/api/hub/dog/video-library','alice');
  assert.equal(alice.status,200);
- assert.deepEqual(alice.library.available,['welcome','intro','first-light','tree-2','tree-3',
+ assert.deepEqual(alice.library.available,['welcome','intro','first-light','tree-2','tree-3','tree-4',
   'building-bakery','building-workshop','building-tower','building-luckhouse']);
  assert.equal(alice.library.available.includes('building-inn'),false);
  assert.equal((await h.api('GET','/api/hub/dog/video-library','stranger')).status,401);
  const bob=await h.api('GET','/api/hub/dog/video-library','bob');
  assert.deepEqual(bob.library.available,['welcome'],'another user cannot borrow a completed intro');
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','bob',{id:'tree-3'})).status,403);
+ assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','bob',{id:'tree-4'})).status,403);
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'building-inn'})).status,403);
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'not-a-film'})).status,400);
  const oldVillage=structuredClone(h.docs.get(villageRef));
