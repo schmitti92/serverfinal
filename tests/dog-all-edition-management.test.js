@@ -41,7 +41,8 @@ function setup(){
   }
   return result;
  }};
- installDogScratchEditionApi(app,{admin,getFirestore:()=>db});
+ installDogScratchEditionApi(app,{admin,getFirestore:()=>db,
+  scratchAdminUids:['creator','different-person'],christmasEventActive:()=>true});
  async function call(method,variant,path,uid,body){
   const req={body,get:name=>name==='authorization'?'Bearer '+uid:null};
   const res={statusCode:200,status(n){this.statusCode=n;return this},
