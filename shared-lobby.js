@@ -39,6 +39,7 @@ import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COL
 import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLECTION,
  createSnowEdition,snowEditionPublic,issueSnowEditionTicket} from './dog/christmas-snow-edition.js';
 import {editFixedEdition} from './dog/christmas-edition-plan.js';
+import {createScratchEditionPermissionPolicy} from './dog/scratch-edition-permissions.js';
 import {TIC_EDITION_COLLECTION,TIC_EDITION_CURRENT,ticEditionPublic,issueTicEditionTicket}
  from './dog/christmas-tic-edition.js';
 import {OTHER_EDITION_VARIANTS,OTHER_EDITION_COLLECTION,otherEditionPublic,issueOtherEditionTicket}
@@ -96,17 +97,14 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1',scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||''}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1',scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||'',developerUids=process.env.DOG_DEVELOPER_UIDS||''}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
-  // Global print-run and odds administration is privileged. Room-host status,
-  // a display name, and possession of a valid Firebase token are NOT enough.
-  // Render DOG_SCRATCH_ADMIN_UIDS is a comma/space-separated UID allowlist.
-  // Empty/unconfigured means FAIL CLOSED: purchases remain available.
-  const scratchAdminSet=new Set(
-    (Array.isArray(scratchAdminUids)?scratchAdminUids:String(scratchAdminUids||'').split(/[\s,;]+/))
-      .filter(uid=>typeof uid==='string'&&/^[A-Za-z0-9_-]{4,200}$/.test(uid))
-  );
-  const canManageScratch=identity=>!!identity?.uid&&scratchAdminSet.has(identity.uid);
+  // Only server-verified developer UIDs or scratch administrators may
+  // manage global print runs. Client-side PIN / preview flags never count.
+  const editionPermissions=createScratchEditionPermissionPolicy({
+   scratchAdminUids,developerUids
+  });
+  const canManageScratch=identity=>editionPermissions.canManage(identity?.uid);
   const assertScratchAdmin=req=>{
     if(!canManageScratch(req.hubIdentity))throw error(403,'SCRATCH_ADMIN_ONLY');
   };
@@ -1396,7 +1394,7 @@ function finishEisstock(ch,members){
       const current=editionSnap.data(),revision=Number.isInteger(current.revision)?current.revision:0;
       if(current.variantId!==variantId||current.id!==req.body?.editionId)
         throw error(409,'SCRATCH_EDITION_CHANGED');
-      if(current.createdBy!==req.hubIdentity.uid)
+      if(!editionPermissions.canEdit(req.hubIdentity.uid,current.createdBy))
         throw error(403,'SCRATCH_EDITION_ONLY_CREATOR');
       if(current.issued>=500)throw error(409,'SCRATCH_EDITION_ALREADY_COMPLETE');
       if(!Number.isInteger(req.body?.expectedRevision)||req.body.expectedRevision!==revision)
