@@ -73,6 +73,14 @@ for(const [variant,spec] of Object.entries(variants)){
    'unissued prize plans must not leave the server');
   const stranger=await env.call('get',variant,'/status','different-person');
   assert.equal(stranger.result.canRetire,false);
+  const untrusted=await env.call('post',variant,'/retire','regular-player',{
+   editionId:id,expectedRevision:9,confirmation:'RETIRE_'+variant.toUpperCase()
+  });
+  assert.equal(untrusted.statusCode,403);
+  assert.equal(untrusted.result.error,'SCRATCH_ADMIN_ONLY');
+  const publicStatus=await env.call('get',variant,'/status','regular-player');
+  assert.equal(publicStatus.statusCode,200);
+  assert.equal(publicStatus.result.canRetire,false);
   const request={editionId:id,expectedRevision:9,
    confirmation:'RETIRE_'+variant.toUpperCase()};
   const forbidden=await env.call('post',variant,'/retire','different-person',request);
