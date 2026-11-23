@@ -464,7 +464,7 @@ test('DOG: replacement card reveal uses the existing public state without leakin
  const setup=(drawnType,blockOwnStart=false)=>{
   const s=createGame({rng:()=>0.43,bots:[false,false,false,false]});
   s.phase='play';s.current=0;
-  s.hands=[[{id:999,type:'3'}],...Array.from({length:3},(_,i)=>[{id:1200+i,type:'3'}])];
+  s.hands=[[{id:999,type:'swap'}],...Array.from({length:3},(_,i)=>[{id:1200+i,type:'3'}])];
   s.deck=[{id:7000,type:drawnType}];
   if(blockOwnStart){const pawn=s.pieces.find(p=>p.id===0);pawn.place='track';pawn.pos=0;}
   return s;
