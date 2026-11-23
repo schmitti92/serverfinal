@@ -151,7 +151,7 @@ for(const [variant,spec] of Object.entries(variants)){
   env.storage.set(spec.collection+'/'+spec.doc,{
    id,variantId:variant,createdBy:'other_creator',createdAt:Date.now(),
    issued:20,paidCoins:2000,maxTotalCoins:100000,revision:8,
-   config:spec.config,prizePlan:Array(500).fill(''),budgetMode:'fixed'
+   config:spec.config,prizePlan:[],budgetMode:'fixed'
   });
   const status=await env.call('get',variant,'/status','trusted_developer');
   assert.equal(status.statusCode,200);
