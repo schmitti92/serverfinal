@@ -276,6 +276,7 @@ export function otherEditionPublic(raw){
   budgetMode:'fixed',createdAt:raw.createdAt,updatedAt:raw.updatedAt??null,
   config:effectiveCurrentEditionConfig(raw),
   payingTicketsRemaining:future.filter(code=>otherTicketAmount(raw.variantId,code,raw.config)>0).length,
+  nonPayingTicketsRemaining:future.filter(code=>otherTicketAmount(raw.variantId,code,raw.config)===0).length,
   giftTicketsRemaining:future.filter(code=>raw.variantId==='premium_27'?code.endsWith('g'):
    raw.variantId==='dog_jackpot_9'?code.includes('g'):false).length};
 }
