@@ -1,0 +1,31 @@
+name: DOG replacement draw and classic engine
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dog/engine.js'
+      - 'tests/dog-engine.test.js'
+      - 'tests/dog-official-rules.test.js'
+      - '.github/workflows/dog-replacement-draw.yml'
+  pull_request:
+    paths:
+      - 'dog/engine.js'
+      - 'tests/dog-engine.test.js'
+      - 'tests/dog-official-rules.test.js'
+      - '.github/workflows/dog-replacement-draw.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check dog/engine.js
+      - run: node --test tests/dog-engine.test.js tests/dog-official-rules.test.js
