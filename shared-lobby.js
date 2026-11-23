@@ -95,8 +95,20 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1'}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1',scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||''}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
+  // Global print-run and odds administration is privileged. Room-host status,
+  // a display name, and possession of a valid Firebase token are NOT enough.
+  // Render DOG_SCRATCH_ADMIN_UIDS is a comma/space-separated UID allowlist.
+  // Empty/unconfigured means FAIL CLOSED: purchases remain available.
+  const scratchAdminSet=new Set(
+    (Array.isArray(scratchAdminUids)?scratchAdminUids:String(scratchAdminUids||'').split(/[\s,;]+/))
+      .filter(uid=>typeof uid==='string'&&/^[A-Za-z0-9_-]{4,200}$/.test(uid))
+  );
+  const canManageScratch=identity=>!!identity?.uid&&scratchAdminSet.has(identity.uid);
+  const assertScratchAdmin=req=>{
+    if(!canManageScratch(req.hubIdentity))throw error(403,'SCRATCH_ADMIN_ONLY');
+  };
   // DOG read-only status widgets reuse the same short-lived Render-RAM
   // snapshots. Transactions/claims still fetch authoritative Firestore docs.
   // Every private key contains the verified profile UID. Max age: 30 seconds.
@@ -1161,8 +1173,8 @@ function finishEisstock(ch,members){
        ...OTHER_EDITION_VARIANTS.map(variant=>
         readDogMeta(store,store.collection(OTHER_EDITION_COLLECTION).doc('current_'+variant)))
      ]);
-     // The event odds are global, and every authenticated player may edit them
-     // even if they did not open a shared room. No room document read needed.
+     // Odds are global but may be edited only by approved administrators.
+     // No room membership or extra Firestore read is needed.
      return {scratch:dogScratchStatus(snap.exists?snap.data():null,tree.exists?tree.data():null,
        clock(),settingsSnap.exists?settingsSnap.data():null),
        discountPercent:dogLuckhouseDiscountPercent(villageSnap.exists?villageSnap.data()?.levels?.luckhouse:1)+
@@ -1174,11 +1186,11 @@ function finishEisstock(ch,members){
         [variant,otherEditionPublic(otherEditionSnaps[i]?.exists?otherEditionSnaps[i].data():null)])),
        playerLevel:dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null).level,
        variantUnlockLevels:DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,
-       canManageScratch:true};
+       canManageScratch:canManageScratch(identity)};
    }));
-   // Authenticate all writes, but do not require host/room membership:
-   // DOG Christmas settings are intentionally shared by all online players.
+   // Global scratch settings are NOT editable by regular players or room hosts.
    app.post('/api/hub/scratch/settings',authentication,handler(async req=>{
+     assertScratchAdmin(req);
      const identity=req.hubIdentity,store=db();
      let settings;
     try{settings=validateScratchSettings(req.body?.settings);}
@@ -1229,6 +1241,7 @@ function finishEisstock(ch,members){
   }));
   // One atomic write updates only Geschenkelinie, not other ticket types.
   app.post('/api/hub/scratch/settings/gifts',authentication,handler(async req=>{
+    assertScratchAdmin(req);
     const store=db();
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
@@ -1245,6 +1258,7 @@ function finishEisstock(ch,members){
   // Create a complete 500-ticket Geschenkelinie series with one hard coin cap.
   // Individual winning cards are drawn when purchased, avoiding a costly preview.
   app.post('/api/hub/scratch/editions/gifts',authentication,handler(async req=>{
+    assertScratchAdmin(req);
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const store=db();
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
@@ -1275,6 +1289,7 @@ function finishEisstock(ch,members){
   }));
   // These actions affect Schneeflocken-Bingo only, never Geschenkelinie.
   app.post('/api/hub/scratch/settings/snow_collect',authentication,handler(async req=>{
+    assertScratchAdmin(req);
     const store=db();
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
     const ref=store.collection(DOG_SCRATCH_SETTINGS_COLLECTION).doc(DOG_SCRATCH_SETTINGS_ID);
@@ -1290,6 +1305,7 @@ function finishEisstock(ch,members){
   }));
   // 500 snow scratch tickets share one hard cap; no mass-generation timeout.
   app.post('/api/hub/scratch/editions/snow_collect',authentication,handler(async req=>{
+    assertScratchAdmin(req);
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const store=db();
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
@@ -1323,6 +1339,7 @@ function finishEisstock(ch,members){
   // editor never overwrites prizes of tickets sold while the form was open.
   // History and already issued receipts are strictly immutable.
   async function reviseChristmasEdition(req,variantId){
+    assertScratchAdmin(req);
     if(!christmasActive())throw error(409,'DOG_CHRISTMAS_EVENT_ENDED');
     const store=db();
     if(!store)throw error(503,'DATABASE_UNAVAILABLE');
