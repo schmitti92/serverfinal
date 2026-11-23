@@ -249,6 +249,14 @@ function winningSevenMoves(s,seat,left){
   }
   return good;
 }
+// Replacement draws are an exception for a player whose four own figures
+// are still in the starting house. A figure on the start square (including
+// another player's pawn) means the player is blocked, not eligible to draw.
+export function houseRescueAllowed(s,seat){
+ const own=s.pieces.filter(piece=>piece.owner===seat);
+ return own.length===4 && own.every(piece=>piece.place==='home') &&
+  !s.pieces.some(piece=>piece.place==='track'&&piece.pos===seat*16);
+}
 export function legalActions(s,seat=s.current){
   if(s.phase==='finished'||completedDogSeat(s)!==null)return [];
   if(!s.players[seat]||s.players[seat].inactive)return [];
@@ -282,10 +290,13 @@ export function legalActions(s,seat=s.current){
       if(canSeven(s,seat,7))list.push({type:'seven',cardId:card.id,as});
     }else list.push(...candidateMoves(s,seat,card,as));
   }
-  // A swap with nobody to exchange is not a genuine move. If the entire
-  // hand is blocked, ANY held card may be discarded for one replacement draw.
-  return list.some(m=>m.type!=='emptySwap')?list:
-    s.hands[seat].map(card=>({type:'discardDraw',cardId:card.id}));
+  // A swap with nobody to exchange is not a genuine move.
+  // Only four figures inside an unblocked starting house justify a single
+  // replacement draw. Any other blocked hand simply discards one chosen
+  // card and passes immediately to the next player.
+  if(list.some(m=>m.type!=='emptySwap'))return list;
+  const type=houseRescueAllowed(s,seat)?'discardDraw':'discard';
+  return s.hands[seat].map(card=>({type,cardId:card.id}));
 }
 function finishIfWon(s){
   if(s.phase==='finished')return true;
@@ -320,8 +331,8 @@ function settle(s,rng=Math.random){
   while(s.phase==='play'&&++guard<30){
     if(s.hands.every(h=>h.length===0)){deal(s,rng);return;}
     if(s.hands[s.current].length===0){s.current=nextSeat(s,s.current);continue;}
-    // Blocked players must be allowed to choose which ONE card to discard.
-    // legalActions() exposes their discardDraw actions and waits for input.
+    // No legal move: wait for a human/bot to choose ONE discard.
+    // Only the true house exception exposes discardDraw (with a draw).
     if(legalActions(s,s.current).length)break;
     s.current=nextSeat(s,s.current);
   }
@@ -337,7 +348,18 @@ export function takeAction(original,seat,action,rng=Math.random){
   const avail=legalActions(s,seat);
   const found=avail.find(m=>m.type===action.type&&m.cardId===action.cardId&&m.as===action.as&&m.pieceId===action.pieceId&&m.targetId===action.targetId&&m.steps===action.steps&&m.viaGoal===action.viaGoal);
   if(!found)throw Error('ILLEGAL_ACTION');
+  if(action.type==='discard'){
+    // Physical blocking never draws a new card, even if the deck has
+    // start cards or the player selected a joker. Do not emit drawEvents.
+    discardCard(s,seat,action.cardId);
+    history(s,s.players[seat].name+' ist blockiert, wirft eine Karte ab und setzt aus');
+    s.current=nextSeat(s,seat);
+    settle(s,rng);
+    s.revision++;
+    return s;
+  }
   if(action.type==='discardDraw'){
+    if(!houseRescueAllowed(s,seat))throw Error('REPLACEMENT_DRAW_NOT_ALLOWED');
     discardCard(s,seat,action.cardId);
     if(!s.deck.length&&s.discard.length)s.deck=shuffle(s.discard.splice(0),rng);
     if(!s.deck.length)throw Error('NO_CARDS');
