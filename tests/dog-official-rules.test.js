@@ -458,3 +458,39 @@ test('DOG: a random opening starter is chosen from occupied seats, then turn ord
   assert.equal(selected.inactive,false);
  }
 });
+
+
+test('DOG: replacement card reveal uses the existing public state without leaking deck IDs',()=>{
+ const setup=(drawnType,blockOwnStart=false)=>{
+  const s=createGame({rng:()=>0.43,bots:[false,false,false,false]});
+  s.phase='play';s.current=0;
+  s.hands=[[{id:999,type:'3'}],...Array.from({length:3},(_,i)=>[{id:1200+i,type:'3'}])];
+  s.deck=[{id:7000,type:drawnType}];
+  if(blockOwnStart){const pawn=s.pieces.find(p=>p.id===0);pawn.place='track';pawn.pos=0;}
+  return s;
+ };
+ let s=setup('12');
+ const oldRevision=s.revision;
+ s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.deepEqual(s.drawEvents,[{revision:oldRevision+1,seat:0,cardType:'12',canExit:false}]);
+ assert.equal(s.lastPlayedCard.type,'12');
+ assert.equal(s.current,1,'the next player continues without another click');
+ const other=publicState(s,1);
+ assert.deepEqual(other.drawEvents,s.drawEvents,'all online clients see the same visual event');
+ assert.equal(JSON.stringify(other.drawEvents).includes('7000'),false,'no hidden deck IDs in the event');
+ assert.equal(Array.isArray(other.hands[0]),false,'the player hand stays private');
+
+ s=setup('13');
+ s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.equal(s.drawEvents.at(-1).cardType,'13');
+ assert.equal(s.drawEvents.at(-1).canExit,true);
+ assert.equal(s.phase,'rescue','the new start card must remain playable');
+ assert.equal(s.rescue.cardId,7000);
+ assert.equal(publicState(s,1).rescue,undefined,'the private rescue card ID stays private');
+
+ s=setup('13',true);
+ s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.equal(s.drawEvents.at(-1).canExit,false,'a blocked start goes to discard');
+ assert.equal(s.lastPlayedCard.type,'13');
+ assert.equal(s.phase,'play');
+});
