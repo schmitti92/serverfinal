@@ -7,10 +7,13 @@ import {dogTreeLevelFromLevels} from './christmas-tree-rewards.js';
 export const DOG_VIDEO_LIBRARY_COLLECTION='dog_video_library_seen_v1';
 export const DOG_VIDEO_IDS=Object.freeze([
  'welcome','intro','first-light','tree-2','tree-3','tree-4',
+ 'building-bakery-3','building-workshop-3','building-inn-3',
+ 'building-tower-3','building-luckhouse-3','building-academy-3',
  'building-bakery','building-workshop','building-inn',
  'building-tower','building-luckhouse'
 ]);
 const BUILDING_IDS=Object.freeze(['bakery','workshop','inn','tower','luckhouse']);
+const LEVEL3_BUILDING_IDS=Object.freeze([...BUILDING_IDS,'academy']);
 const watched=(raw)=>Array.isArray(raw?.watched)?[...new Set(
  raw.watched.filter(id=>typeof id==='string'&&DOG_VIDEO_IDS.includes(id))
  )].slice(0,DOG_VIDEO_IDS.length):[];
@@ -25,6 +28,9 @@ export function dogVideoLibraryAccess(intro,village,rawWatched){
   available.push('intro');
   if((Number(village?.giftsCollected)||0)>0)available.push('first-light');
   for(const stage of [2,3,4])if(level>=stage)available.push('tree-'+stage);
+  for(const building of LEVEL3_BUILDING_IDS){
+   if(Number(village?.levels?.[building])>=3)available.push('building-'+building+'-3');
+  }
   for(const building of BUILDING_IDS){
    if(Number(village?.levels?.[building])===5)available.push('building-'+building);
   }
