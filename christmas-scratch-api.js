@@ -5,6 +5,10 @@
  * current tree entitlements and Christmas-event gating.
  */
 import {randomUUID} from 'node:crypto';
+import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COLLECTION,
+ giftsEditionPublic} from './dog/christmas-gifts-edition.js';
+import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLECTION,
+ snowEditionPublic} from './dog/christmas-snow-edition.js';
 import {TIC_EDITION_COLLECTION,TIC_EDITION_CURRENT,TIC_EDITION_HISTORY_COLLECTION,
  createTicEdition,ticEditionPublic,editTicEdition} from './dog/christmas-tic-edition.js';
 import {OTHER_EDITION_VARIANTS,OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,
@@ -19,6 +23,13 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
    collection:OTHER_EDITION_COLLECTION,history:OTHER_EDITION_HISTORY,
    document:'current_'+variant,public:otherEditionPublic,response:'otherEdition'
   }]))
+ };
+ const lifecycleSpecs={
+  ...specs,
+  gifts:{collection:GIFTS_EDITION_COLLECTION,history:GIFTS_EDITION_HISTORY_COLLECTION,
+   document:GIFTS_EDITION_CURRENT,public:giftsEditionPublic,response:'giftsEdition'},
+  snow_collect:{collection:SNOW_EDITION_COLLECTION,history:SNOW_EDITION_HISTORY_COLLECTION,
+   document:SNOW_EDITION_CURRENT,public:snowEditionPublic,response:'snowEdition'}
  };
  const fail=(res,e)=>{
   const message=String(e?.message||'SCRATCH_SERVER_ERROR');
@@ -67,57 +78,6 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
     return res.set('Cache-Control','no-store').json({ok:true,[meta.response]:meta.public(edition)});
    }catch(e){return fail(res,e)}
   });
-  // One on-demand Firestore document read for the Premium edition editor.
-  // This avoids a full personal scratch-wallet reload just to locate the
-  // current edition when the editor is opened from an old/stale client.
-  if(variant==='premium_27')app.get(root+variant+'/status',async(req,res)=>{
-   const uid=await identify(req,res);if(!uid)return;
-   const db=storage(res);if(!db)return;
-   try{
-    const snap=await db.collection(meta.collection).doc(meta.document).get();
-    const current=snap.exists?snap.data():null;
-    return res.set('Cache-Control','no-store').json({
-     ok:true,otherEdition:meta.public(current),
-     canRetire:Boolean(current&&current.createdBy===uid&&current.issued<500)
-    });
-   }catch(e){return fail(res,e)}
-  });
-  // Creator-only retirement of the current Premium edition. Only the
-  // unsold tickets stop being offered; paid receipts and all previous prizes
-  // remain untouched. Archive the complete ledger before releasing "current".
-  if(variant==='premium_27')app.post(root+variant+'/retire',async(req,res)=>{
-   const uid=await identify(req,res);if(!uid)return;
-   const db=storage(res);if(!db)return;
-   try{
-    if(req.body?.confirmation!=='RETIRE_PREMIUM_27')
-     throw Error('SCRATCH_EDITION_CONFIRMATION_REQUIRED');
-    const result=await db.runTransaction(async tx=>{
-     const ref=db.collection(meta.collection).doc(meta.document);
-     const snap=await tx.get(ref),current=snap.exists?snap.data():null;
-     if(!current||current.variantId!==variant||
-      current.id!==req.body?.editionId||
-      !Number.isSafeInteger(req.body?.expectedRevision)||
-      current.revision!==req.body.expectedRevision)
-      throw Error('SCRATCH_EDITION_CHANGED');
-     if(current.createdBy!==uid)throw Error('SCRATCH_EDITION_ONLY_CREATOR');
-     if(!Number.isInteger(current.issued)||current.issued<0||current.issued>500)
-      throw Error('SCRATCH_EDITION_INVALID_LEDGER');
-     if(current.issued===500)throw Error('SCRATCH_EDITION_ALREADY_COMPLETE');
-     const archive=db.collection(meta.history).doc(variant+'_'+current.id);
-     const oldArchive=await tx.get(archive);
-     if(oldArchive.exists)throw Error('SCRATCH_EDITION_ARCHIVE_CONFLICT');
-     const closedAt=Date.now();
-     tx.set(archive,{...current,retiredAt:closedAt,retiredBy:uid,
-      retiredUnsoldCount:500-current.issued,retirementReason:'creator_requested'});
-     tx.delete(ref);
-     return {id:current.id,variantId:variant,issued:current.issued,
-      unsoldCancelled:500-current.issued};
-    });
-    return res.set('Cache-Control','no-store').json({
-     ok:true,otherEdition:null,retiredEdition:result
-    });
-   }catch(e){return fail(res,e)}
-  });
   app.post(root+variant+'/edit',async(req,res)=>{
    const uid=await identify(req,res);if(!uid)return;
    const db=storage(res);if(!db)return;
@@ -140,4 +100,57 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
    }catch(e){return fail(res,e)}
   });
  }
+ // Every ticket has its own latest-edition lookup and retirement endpoint.
+ // These only touch the selected edition document and its own archive.
+ // The creation/editing routes for gifts and snow stay in shared-lobby.js.
+ for(const [variant,meta] of Object.entries(lifecycleSpecs)){
+  app.get(root+variant+'/status',async(req,res)=>{
+   const uid=await identify(req,res);if(!uid)return;
+   const db=storage(res);if(!db)return;
+   try{
+    const snap=await db.collection(meta.collection).doc(meta.document).get();
+    const current=snap.exists?snap.data():null;
+    return res.set('Cache-Control','no-store').json({
+     ok:true,[meta.response]:meta.public(current),
+     canRetire:Boolean(current&&current.createdBy===uid&&
+      Number.isInteger(current.issued)&&current.issued>=0&&current.issued<500)
+    });
+   }catch(e){return fail(res,e)}
+  });
+  app.post(root+variant+'/retire',async(req,res)=>{
+   const uid=await identify(req,res);if(!uid)return;
+   const db=storage(res);if(!db)return;
+   try{
+    if(req.body?.confirmation!=='RETIRE_'+variant.toUpperCase())
+     throw Error('SCRATCH_EDITION_CONFIRMATION_REQUIRED');
+    const result=await db.runTransaction(async tx=>{
+     const ref=db.collection(meta.collection).doc(meta.document);
+     const snap=await tx.get(ref),current=snap.exists?snap.data():null;
+     if(!current||current.variantId!==variant||current.id!==req.body?.editionId||
+      !Number.isSafeInteger(req.body?.expectedRevision)||
+      current.revision!==req.body.expectedRevision)
+      throw Error('SCRATCH_EDITION_CHANGED');
+     if(current.createdBy!==uid)throw Error('SCRATCH_EDITION_ONLY_CREATOR');
+     if(!Number.isInteger(current.issued)||current.issued<0||current.issued>500)
+      throw Error('SCRATCH_EDITION_INVALID_LEDGER');
+     if(current.issued===500)throw Error('SCRATCH_EDITION_ALREADY_COMPLETE');
+     const archiveId=['gifts','snow_collect','tic_tac_toe'].includes(variant)?
+      current.id:variant+'_'+current.id;
+     const archive=db.collection(meta.history).doc(archiveId);
+     const priorArchive=await tx.get(archive);
+     if(priorArchive.exists)throw Error('SCRATCH_EDITION_ARCHIVE_CONFLICT');
+     const retiredAt=Date.now();
+     tx.set(archive,{...current,retiredAt,retiredBy:uid,
+      retiredUnsoldCount:500-current.issued,retirementReason:'creator_requested'});
+     tx.delete(ref);
+     return {id:current.id,variantId:variant,issued:current.issued,
+      unsoldCancelled:500-current.issued};
+    });
+    return res.set('Cache-Control','no-store').json({
+     ok:true,[meta.response]:null,retiredEdition:result
+    });
+   }catch(e){return fail(res,e)}
+  });
+ }
+
 }
