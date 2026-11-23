@@ -37,3 +37,20 @@ test('DOG: malformed or duplicate UIDs never enter the privileged allowlist',()=
  const result=scratchUidAllowlist('dev_one;dev_one,dev_two invalid.email $foo');
  assert.deepEqual([...result].sort(),['dev_one','dev_two']);
 });
+
+test('DOG: separate Chris UID grant adds full developer powers without removing existing permissions',()=>{
+ const policy=createScratchEditionPermissionPolicy({
+  scratchAdminUids:'other_admin',
+  developerUids:'existing_developer',
+  chrisDeveloperUid:'chris_verified_uid_123'
+ });
+ assert.equal(policy.canManage('chris_verified_uid_123'),true);
+ assert.equal(policy.canEdit('chris_verified_uid_123','unrelated_creator'),true);
+ assert.equal(policy.canEdit('existing_developer','unrelated_creator'),true);
+ assert.equal(policy.canManage('other_admin'),true);
+ assert.equal(policy.canEdit('other_admin','unrelated_creator'),false);
+ const invalid=createScratchEditionPermissionPolicy({
+  scratchAdminUids:'',developerUids:'',chrisDeveloperUid:'not valid uid'
+ });
+ assert.equal(invalid.canManage('not valid uid'),false);
+});
