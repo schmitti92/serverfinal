@@ -1,46 +1,64 @@
 name: DOG 500er Rubbellos-Auflagen
 on:
   push:
+    branches: [main]
     paths:
-      - 'dog/christmas-scratch-editions.js'
+      - 'dog/christmas-edition-plan.js'
+      - 'dog/christmas-gifts-edition.js'
+      - 'dog/christmas-snow-edition.js'
+      - 'dog/christmas-tic-edition.js'
+      - 'dog/christmas-other-editions.js'
+      - 'dog/scratch-edition-permissions.js'
       - 'dog/christmas-scratch.js'
-      - 'dog/christmas-scratch-settings.js'
-      - 'dog/christmas-scratch-symbols.js'
-      - 'dog/christmas-tictactoe-duel.js'
-      - 'dog/christmas-special-scratch.js'
-      - 'tests/dog-christmas-five-gifts.test.js'
-      - 'tests/dog-christmas-scratch-settings.test.js'
+      - 'christmas-scratch-api.js'
       - 'shared-lobby.js'
-      - 'tests/dog-christmas-scratch-editions.test.js'
+      - 'tests/dog-christmas-fixed-editions.test.js'
+      - 'tests/dog-christmas-gifts-edition.test.js'
+      - 'tests/dog-christmas-snow-edition.test.js'
+      - 'tests/dog-tic-edition.test.js'
+      - 'tests/dog-all-edition-management.test.js'
+      - 'tests/dog-scratch-developer-permissions.test.js'
       - '.github/workflows/dog-christmas-scratch-editions.yml'
   pull_request:
     paths:
-      - 'dog/christmas-scratch-editions.js'
+      - 'dog/christmas-edition-plan.js'
+      - 'dog/christmas-gifts-edition.js'
+      - 'dog/christmas-snow-edition.js'
+      - 'dog/christmas-tic-edition.js'
+      - 'dog/christmas-other-editions.js'
+      - 'dog/scratch-edition-permissions.js'
       - 'dog/christmas-scratch.js'
-      - 'dog/christmas-scratch-settings.js'
-      - 'dog/christmas-scratch-symbols.js'
-      - 'dog/christmas-tictactoe-duel.js'
-      - 'dog/christmas-special-scratch.js'
-      - 'tests/dog-christmas-five-gifts.test.js'
-      - 'tests/dog-christmas-scratch-settings.test.js'
+      - 'christmas-scratch-api.js'
       - 'shared-lobby.js'
-      - 'tests/dog-christmas-scratch-editions.test.js'
+      - 'tests/dog-christmas-fixed-editions.test.js'
+      - 'tests/dog-christmas-gifts-edition.test.js'
+      - 'tests/dog-christmas-snow-edition.test.js'
+      - 'tests/dog-tic-edition.test.js'
+      - 'tests/dog-all-edition-management.test.js'
+      - 'tests/dog-scratch-developer-permissions.test.js'
       - '.github/workflows/dog-christmas-scratch-editions.yml'
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 jobs:
   edition-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify JavaScript syntax
+      - name: Validate current 500-ticket edition modules
         run: |
           node --check shared-lobby.js
-          node --check dog/christmas-scratch-editions.js
-          node --check dog/christmas-scratch.js
-          node --check dog/christmas-special-scratch.js
-          node --check dog/christmas-tictactoe-duel.js
-      - name: Test 500-ticket edition generator and redemption
-        run: node --test tests/dog-christmas-scratch-editions.test.js tests/dog-christmas-five-gifts.test.js tests/dog-christmas-scratch-settings.test.js
+          node --check christmas-scratch-api.js
+          node --check dog/christmas-edition-plan.js
+          node --check dog/christmas-gifts-edition.js
+          node --check dog/christmas-snow-edition.js
+          node --check dog/christmas-tic-edition.js
+          node --check dog/christmas-other-editions.js
+          node --check dog/scratch-edition-permissions.js
+      - name: Verify fixed payouts, all seven editions and developer roles
+        run: node --test tests/dog-christmas-fixed-editions.test.js tests/dog-christmas-gifts-edition.test.js tests/dog-christmas-snow-edition.test.js tests/dog-tic-edition.test.js tests/dog-all-edition-management.test.js tests/dog-scratch-developer-permissions.test.js
