@@ -184,7 +184,9 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
       throw error(403,'DOG_CHRISTMAS_EVENT_LOCKED');
     return true;
   }
-  const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=15;
+  const validDogAvatar=n=>Number.isInteger(n)&&n>=0&&n<=35;
+  const validDogNameFrame=id=>typeof id==='string'&&/^christmas2026:nameframe:0[1-5]$/.test(id);
+  const validDogActiveIcon=id=>typeof id==='string'&&/^christmas2026:activeicon:0[1-5]$/.test(id);
   const validDogBotCount=n=>Number.isInteger(n)&&n>=0&&n<=2;
   const dogBotCount=room=>validDogBotCount(room.settings?.dog?.botCount)?room.settings.dog.botCount:2;
   const documentFor=(store,code)=>store.collection(COLLECTION).doc(code);
@@ -810,7 +812,10 @@ function finishEisstock(ch,members){
       canLaunch:!!HUB_GAMES[room.game],
       settings:room.game==='barikade'?gameSettings(room.settings?.barikade):room.game==='skyjo'?skyjoSettings(room.settings?.skyjo):room.game==='business'?businessSettings(room.settings?.business):room.game==='kniffel'?{mode:room.settings?.kniffel?.mode||'classic'}:room.game==='dog'?{christmasActive:christmasActive(),botCount:dogBotCount(room)}:room.game==='partychallenge'?{count:room.settings?.partychallenge?.selectedGame?1:CHALLENGE_READY_GAMES.length,selectedGame:room.settings?.partychallenge?.selectedGame||null,availableGames:[...CHALLENGE_READY_GAMES]}:null,
       host:room.hostUid===identity.uid,
-      players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,dogAvatar:validDogAvatar(p.dogAvatar)?p.dogAvatar:0,participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
+      players:room.players.map(p=>({uid:p.uid,seat:p.seat,name:p.name,ready:p.ready,colorPref:p.colorPref||null,dogAvatar:validDogAvatar(p.dogAvatar)?p.dogAvatar:0,
+        dogNameFrame:validDogNameFrame(p.dogNameFrame)?p.dogNameFrame:null,
+        dogActiveIcon:validDogActiveIcon(p.dogActiveIcon)?p.dogActiveIcon:null,
+        participating:!!p.participating,testBot:!!p.testBot,host:p.uid===room.hostUid,me:p.uid===identity.uid})),
       chatEnabled:true,
       chat:(Array.isArray(room.chat)?room.chat:[]).slice(-40).map(m=>({id:m.id,name:m.name,text:m.text,at:m.at})),
       allReady:allReady(room),
@@ -843,6 +848,12 @@ function finishEisstock(ch,members){
         dogSeat:room.match.game==='dog'?room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
         dogSeatColors:room.match.game==='dog'?room.match.dogRoster.map(r=>DOG_LOBBY_COLORS[r.seat]):null,
         dogAvatars:room.match.game==='dog'?room.match.dogRoster.map(r=>r.bot||r.inactive?null:(()=>{const a=room.players.find(p=>p.uid===r.uid)?.dogAvatar;return validDogAvatar(a)?a:0;})()):null,
+        dogCosmetics:room.match.game==='dog'?room.match.dogRoster.map(r=>{
+          if(r.bot||r.inactive)return null;
+          const player=room.players.find(p=>p.uid===r.uid);
+          return {nameFrame:validDogNameFrame(player?.dogNameFrame)?player.dogNameFrame:null,
+            activeIcon:validDogActiveIcon(player?.dogActiveIcon)?player.dogActiveIcon:null};
+        }):null,
         playerCount:room.match.members.length,
         myColor:room.match.members.find(m=>m.uid===identity.uid)?.color||null,
         participating:room.match.members.some(m=>m.uid===identity.uid)
@@ -2054,18 +2065,54 @@ function finishEisstock(ch,members){
     })};
   }));
   // DOG avatars are cosmetic metadata and never change cards, turns or readiness.
+  // Fixed catalogue IDs 16–35 require real wallet/tree ownership, checked in
+  // the same transaction as the only room write. Standard portraits stay free.
   app.post('/api/hub/rooms/:code/dog/avatar',handler(async req=>{
     const code=validCode(req.params.code),identity=req.hubIdentity,avatar=req.body?.avatar;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(!validDogAvatar(avatar))throw error(400,'INVALID_DOG_AVATAR');
-    return {room:await mutate(code,identity,room=>{
-      // The picker is available before DOG is selected in the shared lobby.
-      // Never interrupt an unrelated running game with an avatar-only update.
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
       if(room.phase==='playing'&&room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
       const me=room.players.find(p=>p.uid===identity.uid);
       if(!me)throw error(403,'NOT_A_MEMBER');
       if(me.dogAvatar===avatar)return {unchanged:true};
+      if(avatar>=16){
+        const id='christmas2026:avatar:'+String(avatar-15).padStart(2,'0');
+        const [wallet,tree]=await Promise.all([
+          tx.get(store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid)),
+          tx.get(store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid))
+        ]);
+        if(!dogScratchStatus(wallet.exists?wallet.data():null,tree.exists?tree.data():null,clock()).ownedUnlockIds.includes(id))
+          throw error(403,'DOG_AVATAR_NOT_UNLOCKED');
+      }
       me.dogAvatar=avatar;
+    })};
+  }));
+  // Nameframes and active-turn emblems are selected from fixed catalogues.
+  // Only the owning account can equip one; nil resets are always possible.
+  // One Firestore room write at most per deliberate selection, never per turn.
+  app.post('/api/hub/rooms/:code/dog/cosmetic',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const kind=req.body?.kind,unlockId=req.body?.unlockId??null;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    const matches=kind==='nameFrame'?validDogNameFrame:kind==='activeIcon'?validDogActiveIcon:null;
+    if(!matches||(unlockId!==null&&!matches(unlockId)))
+      throw error(400,'INVALID_DOG_COSMETIC');
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
+      if(room.phase==='playing'&&room.game!=='dog')throw error(409,'NOT_DOG_MATCH');
+      const me=room.players.find(p=>p.uid===identity.uid);
+      if(!me)throw error(403,'NOT_A_MEMBER');
+      const field=kind==='nameFrame'?'dogNameFrame':'dogActiveIcon';
+      if((me[field]||null)===unlockId)return {unchanged:true};
+      if(unlockId!==null){
+        const [wallet,tree]=await Promise.all([
+          tx.get(store.collection(DOG_SCRATCH_COLLECTION).doc(identity.uid)),
+          tx.get(store.collection(DOG_TREE_REWARDS_COLLECTION).doc(identity.uid))
+        ]);
+        if(!dogScratchStatus(wallet.exists?wallet.data():null,tree.exists?tree.data():null,clock()).ownedUnlockIds.includes(unlockId))
+          throw error(403,'DOG_COSMETIC_NOT_UNLOCKED');
+      }
+      me[field]=unlockId;
     })};
   }));
 
