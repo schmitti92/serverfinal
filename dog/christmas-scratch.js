@@ -20,6 +20,23 @@ export const DOG_SCRATCH_START_COINS=1000;
 // at the default configured category odds (includes 24-symbol unlocks).
 export const PREMIUM_20_MILESTONE_PER_1000=300;
 export const PREMIUM_20_MILESTONE_COINS=1000;
+// Every finite 500-ticket light-paying edition distributes 100 fewer lights
+// than its original base-odds expectation. Previously issued receipts are
+// immutable; existing editions migrate only their as-yet-unissued tickets.
+export const SCRATCH_EDITION_LIGHT_REDUCTION=100;
+export function remainingScratchEditionLights(edition){
+ const issued=Number.isInteger(edition?.issued)?edition.issued:0;
+ const left=Math.max(0,500-issued);
+ if(Number.isSafeInteger(edition?.lightBudgetRemaining)&&edition.lightBudgetRemaining>=0)
+  return edition.lightBudgetRemaining;
+ const c=edition?.config??{};
+ const chance=Number.isInteger(c.lightChancePer1000)?c.lightChancePer1000:100;
+ const min=Number.isInteger(c.lightMin)?c.lightMin:1;
+ const max=Number.isInteger(c.lightMax)?c.lightMax:10;
+ const originalBaseExpected=Math.round(left*chance/1000*(min+max)/2);
+ return Math.max(0,originalBaseExpected-SCRATCH_EDITION_LIGHT_REDUCTION);
+}
+
 export const DOG_SCRATCH_TIERS=Object.freeze({
  simple:Object.freeze({label:'Einfach',price:200,icon:'🟤',coinMax:100,weights:Object.freeze({none:200,coins:689,unlock:111}),extraCoinChance:30}),
  medium:Object.freeze({label:'Mittel',price:500,icon:'🔵',coinMax:800,weights:Object.freeze({none:200,coins:770,unlock:30}),extraCoinChance:40}),
@@ -1090,14 +1107,42 @@ export function buyScratchTicket(raw,tree,request,{draw=randomInt,now=Date.now,s
  // 🎄 Independent light bonus: verified and booked with the immutable server
  // receipt. It is separate from the visible three-in-a-row prize limit.
  const lightMin=config.lightMin??1,lightMax=config.lightMax??10;
- const baseLights=['gifts','snow_collect'].includes(variantId)&&random(1000)<(config.lightChancePer1000??100)?
-  lightMin+random(lightMax-lightMin+1):0;
- const totalLights=baseLights*(multiplier===2?2:1);
+ const isLightTicket=['gifts','snow_collect'].includes(variantId);
+ const editionLightControl=printControl?.editionLights;
+ let baseLights=0,totalLights=0;
+ if(isLightTicket&&editionLightControl){
+  // The issuer supplies this budget and the number of unsold tickets from
+  // the SAME transactional edition document. Prevent overspending and ensure
+  // the last ticket settles the complete reduced budget exactly.
+  const {remainingBudget,remainingTickets}=editionLightControl;
+  if(!Number.isSafeInteger(remainingBudget)||remainingBudget<0||
+     !Number.isInteger(remainingTickets)||remainingTickets<1||remainingTickets>500||
+     remainingBudget>remainingTickets*lightMax)
+   throw Error('SCRATCH_EDITION_LIGHT_BUDGET_INVALID');
+  const average=(lightMin+lightMax)/2;
+  const expectedMultiplier=1+(config.doubleChancePer1000??110)/1000;
+  const chance=remainingBudget===0?0:
+   (config.lightChancePer1000===1000?1000:
+    Math.min(1000,Math.round(remainingBudget/remainingTickets/average/expectedMultiplier*1000)));
+  const candidate=random(1000)<chance?lightMin+random(lightMax-lightMin+1):0;
+  const doubledCandidate=candidate*(multiplier===2?2:1);
+  // The remaining cards can always pay at most lightMax each even without
+  // a money multiplier. Do not leave an unpayable final remainder.
+  const requiredNow=Math.max(0,remainingBudget-(remainingTickets-1)*lightMax);
+  const upper=Math.min(remainingBudget,lightMax*(multiplier===2?2:1));
+  totalLights=Math.max(requiredNow,Math.min(upper,doubledCandidate));
+  // An odd quota adjustment cannot honestly display a 2x light badge.
+  baseLights=multiplier===2&&totalLights%2===0?totalLights/2:totalLights;
+ }else{
+  baseLights=isLightTicket&&random(1000)<(config.lightChancePer1000??100)?
+   lightMin+random(lightMax-lightMin+1):0;
+  totalLights=baseLights*(multiplier===2?2:1);
+ }
  // Show the real server-booked light and x2 bonuses on the scratched ticket.
  // Extra coin payouts have already been included in allWinnings amounts.
  const extraCoins=allWinnings.filter(prize=>prize?.x2&&Number.isSafeInteger(prize.baseAmount))
   .reduce((sum,prize)=>sum+prize.amount-prize.baseAmount,0);
- const extraLights=multiplier===2?baseLights:0;
+ const extraLights=multiplier===2?totalLights-baseLights:0;
  const doubleWin=['gifts','snow_collect'].includes(variantId)&&(extraCoins>0||extraLights>0)?
   {extraCoins,extraLights}:null;
  const lightBadgeIndex=['gifts','snow_collect'].includes(variantId)&&totalLights>0?random(board.cells.length):null;

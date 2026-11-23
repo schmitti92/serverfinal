@@ -4,7 +4,7 @@
  * slow 500-ticket preview. Firestore's transaction makes this budget atomic.
  * No other DOG ticket kind is changed.
  */
-import {buyScratchTicket,normalizedScratchWallet} from './christmas-scratch.js';
+import {buyScratchTicket,normalizedScratchWallet,remainingScratchEditionLights} from './christmas-scratch.js';
 import {normalizeScratchSettings} from './christmas-scratch-settings.js';
 import {createFixedEditionPlan,encodeFixedEditionPlan,decodeFixedEditionRows,
  remainingFixedEditionPlan} from './christmas-edition-plan.js';
@@ -24,6 +24,7 @@ export function createSnowEdition({id,createdAt,createdBy,maxTotalCoins,settings
  const snow_collect=normalizeScratchSettings(settings).variants.snow_collect;
  return {id,createdAt,createdBy,variantId:'snow_collect',size:SNOW_EDITION_SIZE,
   issued:0,maxTotalCoins,paidCoins:0,config:snow_collect,
+  lightBudgetRemaining:remainingScratchEditionLights({issued:0,config:snow_collect}),
   budgetMode:'fixed',revision:1,
   prizePlan:encodeFixedEditionPlan(
     createFixedEditionPlan(maxTotalCoins,snow_collect,SNOW_EDITION_SIZE))};
@@ -72,8 +73,12 @@ export function issueSnowEditionTicket(wallet,tree,request,rawEdition,liveSettin
  const normalized=normalizeScratchSettings(liveSettings);
  const settings={...normalized,
   variants:{...normalized.variants,snow_collect:rawEdition.config}};
+ const lightBudgetRemaining=remainingScratchEditionLights(rawEdition);
  const ticketOptions={...options,settings,
-  editionSpecial:{...options.editionSpecial,prizeCategory:rawEdition.prizeCategory??1}};
+  editionSpecial:{...options.editionSpecial,prizeCategory:rawEdition.prizeCategory??1},
+  printControl:{...options.printControl,editionLights:{
+   remainingBudget:lightBudgetRemaining,remainingTickets:500-issued
+  }}};
  if(saved){
   const replay=buyScratchTicket(wallet,tree,request,{...ticketOptions});
   return {purchase:replay,edition:rawEdition};
@@ -98,6 +103,7 @@ export function issueSnowEditionTicket(wallet,tree,request,rawEdition,liveSettin
   if(expectedBalance>1000000000||result.wallet.coins!==expectedBalance)
    throw Error('SCRATCH_EDITION_WALLET_LIMIT');
   const next={...rawEdition,issued:issued+1,paidCoins:paid+actual,
+   lightBudgetRemaining:lightBudgetRemaining-result.result.totalLights,
    revision:(Number.isInteger(rawEdition.revision)?rawEdition.revision:0)+1};
   if(next.paidCoins>next.maxTotalCoins||
       (next.issued===SNOW_EDITION_SIZE&&next.paidCoins!==next.maxTotalCoins))
@@ -127,6 +133,7 @@ export function issueSnowEditionTicket(wallet,tree,request,rawEdition,liveSettin
  }
  const next={...rawEdition,issued:issued+1,
   paidCoins:paid+purchase.result.totalCoins,
+  lightBudgetRemaining:lightBudgetRemaining-purchase.result.totalLights,
   revision:(Number.isInteger(rawEdition.revision)?rawEdition.revision:0)+1};
  if(next.paidCoins>next.maxTotalCoins)throw Error('SCRATCH_SNOW_EDITION_BUDGET_EXCEEDED');
  // Receipt numbers never influence the authoritative winnings, just display.
