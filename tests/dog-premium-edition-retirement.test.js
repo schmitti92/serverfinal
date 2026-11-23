@@ -7,7 +7,7 @@ import {OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,OTHER_EDITION_DEFAULT}
 const CURRENT=OTHER_EDITION_COLLECTION+'/current_premium_27';
 const ARCHIVE=OTHER_EDITION_HISTORY+'/premium_27_premium-latest';
 
-function fixture(){
+function fixture({scratchAdminUids=['creator','different-account'],christmasEventActive=()=>true}={}){
  const routes={get:new Map(),post:new Map()},documents=new Map();
  const edition={
   id:'premium-latest',variantId:'premium_27',createdBy:'creator',
@@ -42,7 +42,7 @@ function fixture(){
   get:(route,fn)=>routes.get.set(route,fn)};
  const admin={auth:()=>({verifyIdToken:async token=>({uid:token})})};
  installDogScratchEditionApi(app,{getFirestore:()=>db,admin,
-  scratchAdminUids:['creator','different-account'],christmasEventActive:()=>true});
+  scratchAdminUids,christmasEventActive});
  async function call(suffix,uid,body,method='post'){
   const req={body,get:key=>key==='authorization'?'Bearer '+uid:null};
   const res={statusCode:200,status(code){this.statusCode=code;return this},
@@ -128,4 +128,45 @@ test('Premium: live one-document status permits finding a run missing from cache
  assert.equal(after.statusCode,200);
  assert.equal(after.payload.otherEdition,null);
  assert.equal(after.payload.canRetire,false);
+});
+
+test('Premium: authenticated non-admin cannot create, edit or end any current edition',async()=>{
+ const env=fixture();
+ for(const [path,body] of [
+  ['', {maxTotalCoins:2000000,config:OTHER_EDITION_DEFAULT.premium_27}],
+  ['/edit',{...env.payload,config:OTHER_EDITION_DEFAULT.premium_27,maxTotalCoins:2000000}],
+  ['/retire',env.payload]
+ ]){
+  const response=await env.call(path,'viewer',body);
+  assert.equal(response.statusCode,403);
+  assert.equal(response.payload.error,'SCRATCH_ADMIN_ONLY');
+ }
+ const readonly=await env.call('/status','viewer',undefined,'get');
+ assert.equal(readonly.statusCode,200);
+ assert.equal(readonly.payload.canRetire,false);
+ assert.equal(env.documents.has(CURRENT),true);
+ assert.equal(env.documents.has(ARCHIVE),false);
+});
+test('Premium: a creator absent from configured UID allowlist cannot mutate',async()=>{
+ const env=fixture({scratchAdminUids:[]});
+ const retired=await env.call('/retire','creator',env.payload);
+ assert.equal(retired.statusCode,403);
+ assert.equal(retired.payload.error,'SCRATCH_ADMIN_ONLY');
+ const status=await env.call('/status','creator',undefined,'get');
+ assert.equal(status.payload.canRetire,false);
+ assert.equal(env.documents.has(CURRENT),true);
+});
+test('Premium: event season gates new series and edits, without blocking archival cleanup',async()=>{
+ const env=fixture({christmasEventActive:()=>false});
+ const created=await env.call('','creator',{maxTotalCoins:2000000,config:OTHER_EDITION_DEFAULT.premium_27});
+ assert.equal(created.statusCode,409);
+ assert.equal(created.payload.error,'DOG_CHRISTMAS_EVENT_ENDED');
+ const edited=await env.call('/edit','creator',{
+  editionId:env.edition.id,expectedRevision:env.edition.revision,
+  config:OTHER_EDITION_DEFAULT.premium_27,maxTotalCoins:2000000
+ });
+ assert.equal(edited.statusCode,409);
+ assert.equal(edited.payload.error,'DOG_CHRISTMAS_EVENT_ENDED');
+ const retired=await env.call('/retire','creator',env.payload);
+ assert.equal(retired.statusCode,200);
 });
