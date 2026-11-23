@@ -367,3 +367,43 @@ test('earned DOG cosmetics appear in the authorized match snapshot without expos
  assert.equal(started.room.match.dogCosmetics[2],null,'bot never gets human-owned cosmetics');
  assert.equal(started.room.match.dog.ownedUnlockIds,undefined,'wallets are never embedded in game state');
 });
+
+
+test('Christmas economy mutations require the same verified game-history or explicit grant',async()=>{
+ const h=harness({christmasEventActive:()=>true});
+ const uid='user_alice123';
+ const purchase='/api/hub/scratch/buy';
+ const body={tier:'simple',variantId:'gifts',commandId:'verified-scratch-00001'};
+ const denied=await h.api('POST',purchase,'alice',body);
+ assert.equal(denied.status,403,denied.error);
+ assert.equal(denied.error,'DOG_CHRISTMAS_EVENT_LOCKED');
+ assert.equal(h.docs.has('dog_christmas_scratch_wallet_v1/'+uid),false,
+  'failed access must not create a wallet or mint prizes');
+ const village=await h.api('POST','/api/hub/christmas-village/upgrade','alice',{
+  building:'academy',expectedLevel:1,commandId:'verified-upgrade-00001'});
+ assert.equal(village.status,403,village.error);
+ assert.equal(village.error,'DOG_CHRISTMAS_EVENT_LOCKED');
+ const tree=await h.api('POST','/api/hub/christmas-tree-rewards/claim','alice',{level:1});
+ assert.equal(tree.status,403,tree.error);
+ assert.equal(tree.error,'DOG_CHRISTMAS_EVENT_LOCKED');
+ const research=await h.api('POST','/api/hub/dog/research/upgrade','alice',{id:'discount'});
+ assert.equal(research.status,403,research.error);
+ assert.equal(research.error,'DOG_CHRISTMAS_EVENT_LOCKED');
+ // A server-created explicit grant from the founder-reset is authoritative,
+ // not a nickname submitted in the request.
+ h.docs.set('dog_christmas_event_access_v1/'+uid,{access:true,resetId:'verified-test'});
+ const admitted=await h.api('POST',purchase,'alice',body);
+ assert.equal(admitted.status,200,admitted.error);
+ assert.equal(h.docs.has('dog_christmas_scratch_wallet_v1/'+uid),true);
+ const replay=await h.api('POST',purchase,'alice',body);
+ assert.equal(replay.status,200,replay.error);
+ assert.equal(replay.replayed,true,'retry must not mint another ticket');
+});
+test('a signed-in player can qualify by a verified post-season DOG match, without a founder grant',async()=>{
+ const h=harness({christmasEventActive:()=>true});
+ const time=Date.parse('2026-11-22T12:00:00Z');
+ h.docs.set('dog_player_statistics_v1/user_alice123',{played:1,updatedAt:time});
+ const purchase=await h.api('POST','/api/hub/scratch/buy','alice',{
+  tier:'simple',variantId:'gifts',commandId:'after-first-match-0001'});
+ assert.equal(purchase.status,200,purchase.error);
+});
