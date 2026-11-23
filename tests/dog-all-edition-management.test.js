@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installDogScratchEditionApi} from '../christmas-scratch-api.js';
-import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_HISTORY_COLLECTION} from '../dog/christmas-gifts-edition.js';
-import {SNOW_EDITION_COLLECTION,SNOW_EDITION_HISTORY_COLLECTION} from '../dog/christmas-snow-edition.js';
+import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_HISTORY_COLLECTION,giftsEditionPublic} from '../dog/christmas-gifts-edition.js';
+import {SNOW_EDITION_COLLECTION,SNOW_EDITION_HISTORY_COLLECTION,snowEditionPublic} from '../dog/christmas-snow-edition.js';
 import {TIC_EDITION_COLLECTION,TIC_EDITION_HISTORY_COLLECTION,TIC_EDITION_DEFAULT}
  from '../dog/christmas-tic-edition.js';
-import {OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,OTHER_EDITION_DEFAULT}
+import {OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,OTHER_EDITION_DEFAULT,otherEditionPublic}
  from '../dog/christmas-other-editions.js';
 
 const variants={
@@ -96,3 +96,39 @@ for(const [variant,spec] of Object.entries(variants)){
   assert.notEqual(duplicate.statusCode,200,'retirement is not repeated');
  });
 }
+
+test('DOG: active fixed editions publish truthful aggregate money and no-money ticket counts',()=>{
+ const plan=Array(500).fill('');
+ plan[20]='0';plan[21]='12';plan[22]='3';
+ for(const [variant,publicFn] of [
+  ['gifts',giftsEditionPublic],['snow_collect',snowEditionPublic]
+ ]){
+  const raw={id:'test',variantId:variant,issued:20,paidCoins:200,
+   maxTotalCoins:100000,createdAt:Date.now(),
+   config:{coinAmounts:[10,40,100],price:200},budgetMode:'fixed',prizePlan:plan};
+  const published=publicFn(raw);
+  assert.equal(published.remaining,480);
+  assert.equal(published.payingTicketsRemaining,3);
+  assert.equal(published.nonPayingTicketsRemaining,477);
+  assert.equal(published.maxTicketCoinsRemaining,140);
+  const legacy=publicFn({...raw,prizePlan:[]});
+  assert.equal(legacy.payingTicketsRemaining,null,
+   'incomplete old ledgers must not claim every unsold ticket loses');
+  assert.equal(legacy.nonPayingTicketsRemaining,null);
+ }
+ const otherPlan=Array(500).fill('');
+ otherPlan[0]='0';otherPlan[1]='12';
+ const elf=otherEditionPublic({id:'elf',variantId:'elf',issued:0,
+  createdAt:Date.now(),paidCoins:0,maxTotalCoins:120000,
+  config:OTHER_EDITION_DEFAULT.elf,budgetMode:'fixed',prizePlan:otherPlan});
+ assert.equal(elf.payingTicketsRemaining,2);
+ assert.equal(elf.nonPayingTicketsRemaining,498);
+ const premiumPlan=Array(500).fill('v6:01');
+ for(let i=0;i<7;i++)premiumPlan[i]='v6:01g';
+ const premium=otherEditionPublic({id:'premium',variantId:'premium_27',issued:0,
+  createdAt:Date.now(),paidCoins:0,maxTotalCoins:500000,
+  config:OTHER_EDITION_DEFAULT.premium_27,budgetMode:'fixed',prizePlan:premiumPlan});
+ assert.equal(premium.payingTicketsRemaining,500);
+ assert.equal(premium.nonPayingTicketsRemaining,0);
+ assert.equal(premium.giftTicketsRemaining,7);
+});
