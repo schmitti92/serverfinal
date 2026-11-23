@@ -277,8 +277,12 @@ export function otherEditionPublic(raw){
   config:effectiveCurrentEditionConfig(raw),
   payingTicketsRemaining:future.filter(code=>otherTicketAmount(raw.variantId,code,raw.config)>0).length,
   nonPayingTicketsRemaining:future.filter(code=>otherTicketAmount(raw.variantId,code,raw.config)===0).length,
-  giftTicketsRemaining:future.filter(code=>raw.variantId==='premium_27'?code.endsWith('g'):
-   raw.variantId==='dog_jackpot_9'?code.includes('g'):false).length};
+  // Only Premium and DOG have gift positions pre-recorded in their payout
+  // plans. Elf and Lucky 1 roll cosmetic rewards at purchase time; returning
+  // zero here would falsely suggest that gifts are impossible.
+  giftTicketsRemaining:['premium_27','dog_jackpot_9'].includes(raw.variantId)?
+   future.filter(code=>raw.variantId==='premium_27'?code.endsWith('g'):
+    code.includes('g')).length:null};
 }
 export function editOtherEdition(raw,{config,maxTotalCoins,now=Date.now(),draw=randomInt}){
  if(!raw||!OTHER_EDITION_VARIANTS.includes(raw.variantId)||
