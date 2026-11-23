@@ -260,6 +260,9 @@ export function legalActions(s,seat=s.current){
     // Explicit choice: spend the remainder with the partner or let it lapse.
     // No other pawn can ever make this action available.
     if(s.seven.canForfeit&&rest>0)moves.push({type:'seven-finish',remaining:rest});
+    // Before any split movement, the selected 7 may be deselected without
+    // discarding it or changing the turn. This is a normal authoritative action.
+    if(s.seven.spent===0)moves.push({type:'seven-cancel',cardId:s.seven.cardId});
     return moves;
   }
   // A drawn rescue card may ONLY take a figure out of the house.
@@ -359,7 +362,11 @@ export function takeAction(original,seat,action,rng=Math.random){
     s.revision++;return s;
   }
   if(s.phase==='seven'){
-    if(action.type==='seven-finish'){
+    if(action.type==='seven-cancel'){
+      if(s.seven.spent!==0)throw Error('SEVEN_ALREADY_MOVED');
+      s.seven=null;s.phase='play';
+      history(s,s.players[seat].name+' wählt die 7 wieder ab');
+    }else if(action.type==='seven-finish'){
       if(!s.seven.canForfeit||s.seven.spent>=7)throw Error('SEVEN_REMAINDER_MUST_BE_USED');
       const rest=7-s.seven.spent;
       discardCard(s,seat,s.seven.cardId);s.seven=null;
