@@ -1227,7 +1227,8 @@ function finishEisstock(ch,members){
         [variant,otherEditionPublic(otherEditionSnaps[i]?.exists?otherEditionSnaps[i].data():null)])),
        playerLevel:dogPlayerLevelStatus(statsSnap.exists?statsSnap.data():null).level,
        variantUnlockLevels:DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,
-       canManageScratch:canManageScratch(identity)};
+       canManageScratch:canManageScratch(identity),
+       canManageAllScratchEditions:editionPermissions.isDeveloper(identity?.uid)};
    }));
    // Global scratch settings are NOT editable by regular players or room hosts.
    app.post('/api/hub/scratch/settings',authentication,handler(async req=>{
