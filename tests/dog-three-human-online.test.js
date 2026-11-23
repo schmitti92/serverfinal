@@ -41,8 +41,7 @@ function harness(options={}){
   };
   return call(0);
  };
- const routeFn=(path,handlers)=>path.startsWith('/api/hub/scratch')?
-  chain(handlers):handlers[0];
+ const routeFn=(_path,handlers)=>handlers.length>1?chain(handlers):handlers[0];
  const app={
   get(path,...handlers){routes.push({method:'GET',path,fn:routeFn(path,handlers)});},
   post(path,...handlers){routes.push({method:'POST',path,fn:routeFn(path,handlers)});},
