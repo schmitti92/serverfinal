@@ -13,8 +13,8 @@ test('movie catalogue unlocks only from verified intro and shared village progre
  assert.deepEqual(unlocked.available,DOG_VIDEO_IDS);
  assert.deepEqual(unlocked.watched,['welcome','tree-3','building-bakery']);
  assert.equal(unlocked.treeLevel,10);
- assert.equal(unlocked.unlockedCount,10);
- assert.equal(unlocked.totalCount,10);
+ assert.equal(unlocked.unlockedCount,11);
+ assert.equal(unlocked.totalCount,11);
 });
 
 test('early village stages do not reveal future tree and building movies',()=>{
@@ -39,6 +39,7 @@ test('seen receipts are idempotent, whitelisted and never grant unavailable film
  const replay=recordDogVideoSeen(first.record,'tree-2',unlocked,2000);
  assert.equal(replay.changed,false);assert.equal(replay.record.updatedAt,1000);
  assert.throws(()=>recordDogVideoSeen(null,'tree-3',unlocked,1000),/VIDEO_LOCKED/);
+ assert.throws(()=>recordDogVideoSeen(null,'tree-4',unlocked,1000),/VIDEO_LOCKED/);
  assert.throws(()=>recordDogVideoSeen(null,'evil',unlocked,1000),/VIDEO_UNKNOWN/);
  const next=recordDogVideoSeen(first.record,'welcome',unlocked,3000);
  assert.deepEqual(next.record.watched,['tree-2','welcome']);
