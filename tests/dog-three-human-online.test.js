@@ -406,3 +406,29 @@ test('a signed-in player can qualify by a verified post-season DOG match, withou
   tier:'simple',variantId:'gifts',commandId:'after-first-match-0001'});
  assert.equal(purchase.status,200,purchase.error);
 });
+
+test('DOG online bot difficulty is server-owned, host-only and persists to opponent views',async()=>{
+ const h=harness(),code=(await h.api('POST','/api/hub/rooms','alice')).room.code;
+ await h.api('POST','/api/hub/rooms/'+code+'/join','bob');
+ await h.api('POST','/api/hub/rooms/'+code+'/select','alice',{game:'dog'});
+ await h.api('POST','/api/hub/rooms/'+code+'/ready','alice',{ready:true});
+ const started=(await h.api('POST','/api/hub/rooms/'+code+'/ready','bob',{ready:true})).room;
+ const endpoint='/api/hub/rooms/'+code+'/dog/bot-difficulty';
+ const input={seat:2,difficulty:'expert',matchId:started.match.id};
+ assert.equal((await h.api('POST',endpoint,'bob',input)).status,403,'a participant cannot change server AI');
+ assert.equal((await h.api('POST',endpoint,'alice',{...input,difficulty:'maximum'})).status,400);
+ assert.equal((await h.api('POST',endpoint,'alice',{...input,seat:0})).status,409,'humans cannot be converted to bots');
+ assert.equal((await h.api('POST',endpoint,'alice',{...input,matchId:'wrong-match'})).status,409);
+ const updated=await h.api('POST',endpoint,'alice',input);
+ assert.equal(updated.status,200);
+ assert.equal(updated.room.match.dogBotDifficulties['2'],'expert');
+ const bob=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+ assert.equal(bob.match.dogBotDifficulties['2'],'expert');
+ assert.equal(bob.match.dogBotDifficulties.default,'medium');
+ const again=await h.api('POST',endpoint,'alice',input);
+ assert.equal(again.room.revision,updated.room.revision,'duplicate difficulty selection is a no-op');
+ assert.equal((await h.api('POST',endpoint,'alice',{...input,seat:3,difficulty:'easy'})).status,200);
+ const defaultSet=await h.api('POST',endpoint,'alice',{...input,seat:'default',difficulty:'expert'});
+ assert.equal(defaultSet.status,200);
+ assert.equal(defaultSet.room.match.dogBotDifficulties.default,'expert');
+});

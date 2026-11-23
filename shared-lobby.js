@@ -20,6 +20,7 @@ import {createGame as createDogGame,exchangeCard as dogExchangeCard,researchSwap
 import {DOG_PLAYER_STATS_COLLECTION,newDogMatchCounters,countDogKnockouts,dogPlayerStats,dogCompletedPlayerStats} from './dog/player-stats.js';
 import {christmasLeaderboard} from './dog/christmas-player-leaderboard.js';
 import {DOG_LOBBY_COLORS,dogLobbySeats} from './dog/lobby-colors.js';
+import {chooseDogBotAction,dogBotDifficultyForSeat,DOG_BOT_DIFFICULTIES} from './dog/bot-difficulty.js';
 import {dogPlayerLevelStatus,DOG_LEVEL_MAX,DOG_LEVEL_THRESHOLDS} from './dog/player-levels.js';
 import {DOG_CHRISTMAS_SCRATCH_MIN_LEVEL,dogChristmasScratchMinLevel,dogChristmasScratchUnlocked} from './dog/christmas-unlock-levels.js';
 import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearchLevel,dogResearchTicketMs,dogResearchPityThreshold} from './dog/christmas-research.js';
@@ -685,13 +686,13 @@ function finishEisstock(ch,members){
       if(s.phase==='exchange'){
         const seat=s.players.findIndex(p=>p.bot&&s.exchanges[p.seat]===null);
         if(seat<0)break;
-        const move=dogBotAction(s,seat);
+        const move=chooseDogBotAction(s,seat,dogBotDifficultyForSeat(match.dogBotDifficulties,seat));
         if(!move)throw Error('DOG_BOT_EXCHANGE_FAILED');
         const prior=s;
         s=dogExchangeCard(s,seat,move.cardId);
         if(s.round!==prior.round)onNewDeal(s.round);
       }else if(['play','seven','rescue'].includes(s.phase)&&s.players[s.current]?.bot){
-        const move=dogBotAction(s,s.current);
+        const move=chooseDogBotAction(s,s.current,dogBotDifficultyForSeat(match.dogBotDifficulties,s.current));
         if(!move)throw Error('DOG_BOT_MOVE_FAILED');
         const before=s,seat=s.current;
         s=dogTakeAction(s,seat,move);
@@ -717,7 +718,7 @@ function finishEisstock(ch,members){
       if(botsLeft-->0)return {seat,uid:'dog-bot:'+room.code+':'+seat,name:'🤖 DOG-Bot '+(seat+1),bot:true,inactive:false};
       return {seat,uid:null,name:'Freier Platz',bot:false,inactive:true};
     });
-    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1,botCount},dogRoster:roster,dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot),
+    room.match={id:randomUUID(),game:'dog',gameCode:null,startedAt:clock(),members:players.map(p=>({uid:p.uid,seat:roster.find(r=>r.uid===p.uid).seat,name:p.name})),settings:{mode:'classic',rulesetVersion:1,botCount},dogRoster:roster,dogBotDifficulties:{default:'medium'},dogCommands:[],dogCounters:newDogMatchCounters(),dog:createDogGame({names:roster.map(r=>r.name),bots:roster.map(r=>r.bot),
       inactiveSeats:roster.filter(r=>r.inactive).map(r=>r.seat)})};
     // No host or room switch: the active seasonal event is automatic for DOG.
     room.phase='playing';
@@ -829,6 +830,7 @@ function finishEisstock(ch,members){
         treasure:room.match.game==='drei-schatzkammern'?{...publicTreasureGame(room.match.treasure,identity.uid),lastReveal:room.match.treasureReveal,revealHistory:room.match.treasureHistory||[],myReady:!!room.match.engine2.match.ready[identity.uid],engine:(()=>{const m=projectEngine2(room.match.engine2,identity.uid).match;return m?.phase==='countdown'&&clock()>=m.startedAt?{...m,phase:'playing'}:m;})()}:null,
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
+        dogBotDifficulties:room.match.game==='dog'?(room.match.dogBotDifficulties||{default:'medium'}):null,
         grinch:room.match.game==='dog-grinch1'?publicGrinchMission1(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):
           room.match.game==='dog-grinch2'?publicGrinchMission2(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
         grinchSeat:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
@@ -2541,6 +2543,29 @@ function finishEisstock(ch,members){
     },'dog-action');
     return room;
   }
+  // Change online bot strength only through the verified room host.
+  // This changes decision policy, never the current pawn, card or hidden hand.
+  // One room write per actual change; repeat selections are no-ops.
+  app.post('/api/hub/rooms/:code/dog/bot-difficulty',handler(async req=>{
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    const {seat,difficulty,matchId}=req.body||{};
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    if(typeof matchId!=='string'||!DOG_BOT_DIFFICULTIES.includes(difficulty)||
+      !(seat==='default'||Number.isInteger(seat)&&seat>=0&&seat<4))
+      throw error(400,'INVALID_DOG_BOT_DIFFICULTY');
+    return {room:await mutate(code,identity,room=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      const match=room.match;
+      if(room.phase!=='playing'||match?.game!=='dog'||match.id!==matchId)
+        throw error(409,'DOG_MATCH_MISMATCH');
+      if(seat!=='default'&&!match.dogRoster?.[seat]?.bot)
+        throw error(409,'DOG_SEAT_NOT_BOT');
+      const previous=match.dogBotDifficulties||{default:'medium'};
+      if(dogBotDifficultyForSeat(previous,seat)===difficulty&&
+        (seat!=='default'||previous.default===difficulty))return {unchanged:true};
+      match.dogBotDifficulties={...previous,[seat]:difficulty};
+    })};
+  }));
   app.post('/api/hub/rooms/:code/dog/action',handler(async req=>({
     room:await commitDogAction(validCode(req.params.code),req.hubIdentity,req.body)
   })));
