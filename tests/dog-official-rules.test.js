@@ -540,6 +540,7 @@ test('DOG: selected 7 can be deselected before movement without losing card or t
 
 test('DOG blocking: a foreign figure on my start square does not authorize a house draw',()=>{
  let s=fixture('3');
+ for(let seat=1;seat<4;seat++)s.hands[seat]=[{id:2000+seat,type:'3'}];
  const enemy=s.pieces.find(p=>p.id===4);
  enemy.place='track';enemy.pos=0;
  assert.ok(s.pieces.filter(p=>p.owner===0).every(p=>p.place==='home'));
@@ -556,6 +557,7 @@ test('DOG blocking: a foreign figure on my start square does not authorize a hou
 
 test('DOG blocking: after a pawn leaves the house, no replacement is ever drawn for a dead hand',()=>{
  let s=fixture('swap');
+ for(let seat=1;seat<4;seat++)s.hands[seat]=[{id:2000+seat,type:'3'}];
  const pawn=s.pieces.find(p=>p.id===0);
  pawn.place='track';pawn.pos=0;
  s.deck=[{id:9600,type:'joker'}];
