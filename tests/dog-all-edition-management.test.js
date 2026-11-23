@@ -19,7 +19,7 @@ const archiveId=(variant,id)=>['gifts','snow_collect','tic_tac_toe'].includes(va
 const responseName=variant=>variant==='gifts'?'giftsEdition':
  variant==='snow_collect'?'snowEdition':variant==='tic_tac_toe'?'ticEdition':'otherEdition';
 
-function setup(){
+function setup({developerUids=[]}={}){
  const routes={get:new Map(),post:new Map()},storage=new Map();
  const app={get:(route,fn)=>routes.get.set(route,fn),
   post:(route,fn)=>routes.post.set(route,fn)};
@@ -42,7 +42,7 @@ function setup(){
   return result;
  }};
  installDogScratchEditionApi(app,{admin,getFirestore:()=>db,
-  scratchAdminUids:['creator','different-person'],christmasEventActive:()=>true});
+  scratchAdminUids:['creator','different-person'],developerUids,christmasEventActive:()=>true});
  async function call(method,variant,path,uid,body){
   const req={body,get:name=>name==='authorization'?'Bearer '+uid:null};
   const res={statusCode:200,status(n){this.statusCode=n;return this},
@@ -143,3 +143,27 @@ test('DOG: active fixed editions publish truthful aggregate money and no-money t
  assert.equal(premium.nonPayingTicketsRemaining,0);
  assert.equal(premium.giftTicketsRemaining,7);
 });
+
+for(const [variant,spec] of Object.entries(variants)){
+ test('DOG registered developer can manage an edition from another creator: '+variant,async()=>{
+  const env=setup({developerUids:['trusted_developer']});
+  const id='outsider-edition-'+variant;
+  env.storage.set(spec.collection+'/'+spec.doc,{
+   id,variantId:variant,createdBy:'other_creator',createdAt:Date.now(),
+   issued:20,paidCoins:2000,maxTotalCoins:100000,revision:8,
+   config:spec.config,prizePlan:Array(500).fill(''),budgetMode:'fixed'
+  });
+  const status=await env.call('get',variant,'/status','trusted_developer');
+  assert.equal(status.statusCode,200);
+  assert.equal(status.result.canRetire,true);
+  const retired=await env.call('post',variant,'/retire','trusted_developer',{
+   editionId:id,expectedRevision:8,confirmation:'RETIRE_'+variant.toUpperCase()
+  });
+  assert.equal(retired.statusCode,200,JSON.stringify(retired.result));
+  assert.equal(retired.result.retiredEdition.unsoldCancelled,480);
+  assert.equal(env.storage.has(spec.collection+'/'+spec.doc),false);
+  const archive=env.storage.get(spec.history+'/'+archiveId(variant,id));
+  assert.equal(archive.retiredBy,'trusted_developer');
+  assert.equal(archive.createdBy,'other_creator');
+ });
+}
