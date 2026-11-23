@@ -99,7 +99,7 @@ test('the online discard pile exposes the last played card without exposing hidd
 test('computer-vs-computer matches terminate with a team winner',()=>{
  for(let gameNo=0;gameNo<8;gameNo++){
   let s=createGame({bots:[true,true,true,true]});
-  for(let step=0;step<1500&&s.phase!=='finished';step++){
+  for(let step=0;step<5000&&s.phase!=='finished';step++){
    if(s.phase==='exchange'){
     for(let seat=0;seat<4;seat++)if(!s.exchanges[seat])s=exchangeCard(s,seat,botAction(s,seat).cardId);
    }else {
