@@ -67,6 +67,21 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
     return res.set('Cache-Control','no-store').json({ok:true,[meta.response]:meta.public(edition)});
    }catch(e){return fail(res,e)}
   });
+  // One on-demand Firestore document read for the Premium edition editor.
+  // This avoids a full personal scratch-wallet reload just to locate the
+  // current edition when the editor is opened from an old/stale client.
+  if(variant==='premium_27')app.get(root+variant+'/status',async(req,res)=>{
+   const uid=await identify(req,res);if(!uid)return;
+   const db=storage(res);if(!db)return;
+   try{
+    const snap=await db.collection(meta.collection).doc(meta.document).get();
+    const current=snap.exists?snap.data():null;
+    return res.set('Cache-Control','no-store').json({
+     ok:true,otherEdition:meta.public(current),
+     canRetire:Boolean(current&&current.createdBy===uid&&current.issued<500)
+    });
+   }catch(e){return fail(res,e)}
+  });
   // Creator-only retirement of the current Premium edition. Only the
   // unsold tickets stop being offered; paid receipts and all previous prizes
   // remain untouched. Archive the complete ledger before releasing "current".
