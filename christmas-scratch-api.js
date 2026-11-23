@@ -5,6 +5,7 @@
  * current tree entitlements and Christmas-event gating.
  */
 import {randomUUID} from 'node:crypto';
+import {isDogChristmasEventActive} from './dog/christmas-village.js';
 import {GIFTS_EDITION_COLLECTION,GIFTS_EDITION_CURRENT,GIFTS_EDITION_HISTORY_COLLECTION,
  giftsEditionPublic} from './dog/christmas-gifts-edition.js';
 import {SNOW_EDITION_COLLECTION,SNOW_EDITION_CURRENT,SNOW_EDITION_HISTORY_COLLECTION,
@@ -14,7 +15,25 @@ import {TIC_EDITION_COLLECTION,TIC_EDITION_CURRENT,TIC_EDITION_HISTORY_COLLECTIO
 import {OTHER_EDITION_VARIANTS,OTHER_EDITION_COLLECTION,OTHER_EDITION_HISTORY,
  createOtherEdition,otherEditionPublic,editOtherEdition} from './dog/christmas-other-editions.js';
 
-export function installDogScratchEditionApi(app,{getFirestore,admin}){
+export function installDogScratchEditionApi(app,{
+ getFirestore,admin,scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||'',
+ christmasEventActive=isDogChristmasEventActive
+}){
+ // Same explicit UID allowlist as shared-lobby.js. The room host,
+ // public profile and an arbitrary Firebase account are not sufficient.
+ // Missing configuration fails CLOSED for all edition mutations.
+ const allowedScratchAdmins=new Set(
+  (Array.isArray(scratchAdminUids)?scratchAdminUids:
+   String(scratchAdminUids||'').split(/[\s,;]+/))
+    .filter(uid=>typeof uid==='string'&&/^[A-Za-z0-9_-]{4,200}$/.test(uid))
+ );
+ const isScratchAdmin=uid=>typeof uid==='string'&&allowedScratchAdmins.has(uid);
+ const denyNonAdmin=(uid,res)=>{
+  if(isScratchAdmin(uid))return false;
+  res.status(403).set('Cache-Control','no-store').json({ok:false,error:'SCRATCH_ADMIN_ONLY'});
+  return true;
+ };
+ const eventActive=()=>christmasEventActive()===true;
  const root='/api/hub/scratch/editions/';
  const specs={
   tic_tac_toe:{collection:TIC_EDITION_COLLECTION,history:TIC_EDITION_HISTORY_COLLECTION,
@@ -34,7 +53,7 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
  const fail=(res,e)=>{
   const message=String(e?.message||'SCRATCH_SERVER_ERROR');
   const code=/^(SCRATCH_|EDITION_)/.test(message)?message:'SCRATCH_SERVER_ERROR';
-  const status=code==='SCRATCH_EDITION_ONLY_CREATOR'?403:
+  const status=['SCRATCH_EDITION_ONLY_CREATOR','SCRATCH_ADMIN_ONLY'].includes(code)?403:
    /(_CHANGED|_ACTIVE|_SOLD_OUT|_ALREADY_COMPLETE)$/.test(code)?409:
    code==='SCRATCH_SERVER_ERROR'?500:400;
   return res.status(status).set('Cache-Control','no-store').json({ok:false,error:code});
@@ -58,6 +77,8 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
  for(const [variant,meta] of Object.entries(specs)){
   app.post(root+variant,async(req,res)=>{
    const uid=await identify(req,res);if(!uid)return;
+   if(denyNonAdmin(uid,res))return;
+   if(!eventActive())return res.status(409).json({ok:false,error:'DOG_CHRISTMAS_EVENT_ENDED'});
    const db=storage(res);if(!db)return;
    try{
     const doc=db.collection(meta.collection).doc(meta.document);
@@ -80,6 +101,8 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
   });
   app.post(root+variant+'/edit',async(req,res)=>{
    const uid=await identify(req,res);if(!uid)return;
+   if(denyNonAdmin(uid,res))return;
+   if(!eventActive())return res.status(409).json({ok:false,error:'DOG_CHRISTMAS_EVENT_ENDED'});
    const db=storage(res);if(!db)return;
    try{
     const doc=db.collection(meta.collection).doc(meta.document);
@@ -112,13 +135,14 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
     const current=snap.exists?snap.data():null;
     return res.set('Cache-Control','no-store').json({
      ok:true,[meta.response]:meta.public(current),
-     canRetire:Boolean(current&&current.createdBy===uid&&
+     canRetire:Boolean(isScratchAdmin(uid)&&current&&current.createdBy===uid&&
       Number.isInteger(current.issued)&&current.issued>=0&&current.issued<500)
     });
    }catch(e){return fail(res,e)}
   });
   app.post(root+variant+'/retire',async(req,res)=>{
    const uid=await identify(req,res);if(!uid)return;
+   if(denyNonAdmin(uid,res))return;
    const db=storage(res);if(!db)return;
    try{
     if(req.body?.confirmation!=='RETIRE_'+variant.toUpperCase())
