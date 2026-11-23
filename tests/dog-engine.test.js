@@ -186,3 +186,19 @@ test('three-human DOG skips every possible vacant color and preserves original p
   assert.equal(result.pieces.length,12);
  }
 });
+
+test('bot can never get trapped in a playable seven cancel-and-retry loop',()=>{
+ let s=createGame({bots:[true,true,true,true],rng:()=>.25});
+ s.phase='play';s.current=0;
+ s.hands=[[{id:991,type:'7'}],[],[],[]];
+ const pawn=s.pieces.find(piece=>piece.id===0);pawn.place='track';pawn.pos=4;
+ const selected=legalActions(s,0).find(a=>a.type==='seven');
+ assert.ok(selected,'the seven must be playable');
+ s=takeAction(s,0,selected);
+ assert.equal(s.phase,'seven');
+ assert.ok(legalActions(s,0).some(a=>a.type==='seven-cancel'));
+ assert.ok(legalActions(s,0).some(a=>a.type==='seven-step'));
+ const next=botAction(s,0);
+ assert.notEqual(next?.type,'seven-cancel','AI must progress with a playable seven');
+ assert.ok(['seven-step','seven-finish'].includes(next?.type));
+});
