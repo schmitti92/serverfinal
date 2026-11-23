@@ -74,23 +74,33 @@ test('DOG videothek is identity-scoped, replays do not write, and future movies 
  const alice=await h.api('GET','/api/hub/dog/video-library','alice');
  assert.equal(alice.status,200);
  assert.deepEqual(alice.library.available,['welcome','intro','first-light','tree-2','tree-3','tree-4',
+  'building-bakery-3','building-workshop-3','building-tower-3','building-luckhouse-3',
   'building-bakery','building-workshop','building-tower','building-luckhouse']);
  assert.equal(alice.library.available.includes('building-inn'),false);
+ assert.equal(alice.library.available.includes('building-inn-3'),false);
+ assert.equal(alice.library.available.includes('building-academy-3'),false);
  assert.equal((await h.api('GET','/api/hub/dog/video-library','stranger')).status,401);
  const bob=await h.api('GET','/api/hub/dog/video-library','bob');
  assert.deepEqual(bob.library.available,['welcome'],'another user cannot borrow a completed intro');
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','bob',{id:'tree-3'})).status,403);
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','bob',{id:'tree-4'})).status,403);
+ assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','bob',{id:'building-bakery-3'})).status,403);
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'building-inn'})).status,403);
+ assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'building-inn-3'})).status,403);
+ assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'building-academy-3'})).status,403);
  assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'not-a-film'})).status,400);
+ const watchStage3=await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'building-bakery-3'});
+ assert.equal(watchStage3.status,200);
+ assert.equal(watchStage3.unchanged,false);
+ assert.equal((await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'building-bakery-3'})).unchanged,true);
  const oldVillage=structuredClone(h.docs.get(villageRef));
  const first=await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'tree-3'});
  assert.equal(first.status,200);assert.equal(first.watched,true);assert.equal(first.unchanged,false);
- assert.deepEqual(h.docs.get(seenRef).watched,['tree-3']);
+ assert.deepEqual(h.docs.get(seenRef).watched,['building-bakery-3','tree-3']);
  const repeated=await h.api('POST','/api/hub/dog/video-library/seen','alice',{id:'tree-3'});
  assert.equal(repeated.status,200);assert.equal(repeated.unchanged,true);
- assert.deepEqual(h.docs.get(seenRef).watched,['tree-3']);
+ assert.deepEqual(h.docs.get(seenRef).watched,['building-bakery-3','tree-3']);
  assert.deepEqual(h.docs.get(villageRef),oldVillage,'playing a movie cannot upgrade buildings or grant lights');
  const view=await h.api('GET','/api/hub/dog/video-library','alice');
- assert.deepEqual(view.library.watched,['tree-3']);
+ assert.deepEqual(view.library.watched,['building-bakery-3','tree-3']);
 });
