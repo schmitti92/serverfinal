@@ -148,7 +148,7 @@ test('three-player win requires four own pieces, not a phantom partner',()=>{
 test('three-player turn rotation skips the empty fourth color',()=>{
  let s=createGame({rng:()=>0.627,inactiveSeats:[3],bots:[false,false,false,false]});
  for(let seat=0;seat<3;seat++)s=exchangeCard(s,seat,s.hands[seat][0].id);
- assert.equal(s.current,0);
+ assert.equal(s.current,s.starter,'the random starter must be active');
  // Arrange legal start cards for each active player. The fourth seat never acts.
  s.hands=[ [{id:501,type:'13'}],[{id:502,type:'13'}],[{id:503,type:'13'}],[] ];
  s.phase='play';s.current=0;
