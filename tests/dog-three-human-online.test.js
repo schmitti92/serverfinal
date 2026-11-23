@@ -50,7 +50,7 @@ function harness(options={}){
  };
  const identities={alice:{uid:'user_alice123',name:'Alice'},bob:{uid:'user_bobby123',name:'Bob'},cara:{uid:'user_carol123',name:'Cara'},dana:{uid:'user_dana123',name:'Dana'}};
  let id=0,now=1000;
- adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,challengeRandomInt:options.challengeRandomInt,christmasEventActive:options.christmasEventActive,bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
+ adapter=installSharedLobby(app,{verifyProfile:options.verifyProfile|| (async token=>identities[token]||null),getFirestore:()=>store,clock:()=>now,codeGenerator:()=>`ABC23${['D','E','F'][id++%3]}`,isMatchFinished:async()=>finished,challengeRandomInt:options.challengeRandomInt,christmasEventActive:options.christmasEventActive,scratchAdminUids:options.scratchAdminUids||'',bootstrapSkyjo:async seat=>{skyjoBootstraps++;return {ok:true,rev:1,state:{kind:'skyjo-room-v2',version:2,lobby:{players:seat.members.map(p=>({id:'hub_'+p.uid,name:p.name})),hostId:'hub_'+seat.hostUid,settings:seat.settings,status:'lobby'},game:null}};}});
  async function api(method,path,user='alice',body){
   const route=routes.find(r=>r.method===method&&matches(r.path,path));if(!route)throw Error('NO_ROUTE '+method+' '+path);
   const params=Object.fromEntries(route.path.split('/').filter(x=>x.startsWith(':')).map((x,i)=>[x.slice(1),path.split('/')[route.path.split('/').indexOf(x)]]));
@@ -272,4 +272,37 @@ test('DOG bot choice is host-only, validated, idempotent and resets all readines
  assert.equal(updated.room.players.find(p=>!p.me).ready,false,'peer readiness reset');
  const repeated=await h.api('POST',endpoint,'alice',{botCount:0});
  assert.equal(repeated.room.revision,updated.room.revision,'repeat bot choice is a Firestore no-op');
+});
+
+test('DOG scratch administration is restricted to authenticated allowlisted UIDs',async()=>{
+ const h=harness({scratchAdminUids:'user_alice123',christmasEventActive:()=>true});
+ const regular=await h.api('GET','/api/hub/scratch','bob');
+ const owner=await h.api('GET','/api/hub/scratch','alice');
+ assert.equal(regular.status,200,regular.error);
+ assert.equal(regular.canManageScratch,false);
+ assert.equal(owner.status,200,owner.error);
+ assert.equal(owner.canManageScratch,true);
+ const routes=[
+  '/api/hub/scratch/settings',
+  '/api/hub/scratch/settings/gifts',
+  '/api/hub/scratch/editions/gifts',
+  '/api/hub/scratch/settings/snow_collect',
+  '/api/hub/scratch/editions/snow_collect',
+  '/api/hub/scratch/editions/gifts/edit',
+  '/api/hub/scratch/editions/snow_collect/edit'
+ ];
+ const before=h.docs.size;
+ for(const route of routes){
+  const forbidden=await h.api('POST',route,'bob',{});
+  assert.equal(forbidden.status,403,route+': '+forbidden.error);
+  assert.equal(forbidden.error,'SCRATCH_ADMIN_ONLY');
+ }
+ assert.equal(h.docs.size,before,'unauthorized writes must never create Firestore documents');
+ const invalidAdmin=await h.api('POST','/api/hub/scratch/settings','alice',{settings:null});
+ assert.equal(invalidAdmin.status,400,'a real admin passes authorization and reaches request validation');
+});
+test('DOG scratch administration fails closed when no verified UID list is configured',async()=>{
+ const h=harness({christmasEventActive:()=>true});
+ assert.equal((await h.api('GET','/api/hub/scratch','alice')).canManageScratch,false);
+ assert.equal((await h.api('POST','/api/hub/scratch/settings','alice',{settings:{}})).status,403);
 });
