@@ -6,12 +6,14 @@ on:
       - 'christmas-scratch-api.js'
       - 'dog/christmas-other-editions.js'
       - 'tests/dog-premium-edition-retirement.test.js'
+      - 'tests/dog-all-edition-management.test.js'
       - '.github/workflows/dog-premium-edition-retirement.yml'
   pull_request:
     paths:
       - 'christmas-scratch-api.js'
       - 'dog/christmas-other-editions.js'
       - 'tests/dog-premium-edition-retirement.test.js'
+      - 'tests/dog-all-edition-management.test.js'
       - '.github/workflows/dog-premium-edition-retirement.yml'
   workflow_dispatch:
 concurrency:
@@ -26,4 +28,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check christmas-scratch-api.js
-      - run: node --test tests/dog-premium-edition-retirement.test.js tests/dog-scratch-edition-bridge.test.js
+      - run: node --test tests/dog-premium-edition-retirement.test.js tests/dog-all-edition-management.test.js tests/dog-scratch-edition-bridge.test.js
