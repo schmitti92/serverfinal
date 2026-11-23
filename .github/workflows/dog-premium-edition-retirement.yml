@@ -5,6 +5,10 @@ on:
     paths:
       - 'christmas-scratch-api.js'
       - 'dog/christmas-other-editions.js'
+      - 'dog/scratch-edition-permissions.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-scratch-developer-permissions.test.js'
+      - 'tests/dog-scratch-edition-bridge.test.js'
       - 'tests/dog-premium-edition-retirement.test.js'
       - 'tests/dog-all-edition-management.test.js'
       - '.github/workflows/dog-premium-edition-retirement.yml'
@@ -12,6 +16,10 @@ on:
     paths:
       - 'christmas-scratch-api.js'
       - 'dog/christmas-other-editions.js'
+      - 'dog/scratch-edition-permissions.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-scratch-developer-permissions.test.js'
+      - 'tests/dog-scratch-edition-bridge.test.js'
       - 'tests/dog-premium-edition-retirement.test.js'
       - 'tests/dog-all-edition-management.test.js'
       - '.github/workflows/dog-premium-edition-retirement.yml'
@@ -28,4 +36,4 @@ jobs:
         with:
           node-version: '22'
       - run: node --check christmas-scratch-api.js
-      - run: node --test tests/dog-premium-edition-retirement.test.js tests/dog-all-edition-management.test.js tests/dog-scratch-edition-bridge.test.js
+      - run: node --test tests/dog-premium-edition-retirement.test.js tests/dog-all-edition-management.test.js tests/dog-scratch-developer-permissions.test.js tests/dog-scratch-edition-bridge.test.js
