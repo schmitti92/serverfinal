@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {dogVideoLibraryAccess,recordDogVideoSeen,DOG_VIDEO_IDS} from '../dog/video-library.js';
 
 test('movie catalogue unlocks only from verified intro and shared village progress',()=>{
- const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:3},
+ const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:5},
   giftsCollected:2};
  const closed=dogVideoLibraryAccess(null,village,{watched:['tree-3','building-bakery','welcome']});
  assert.deepEqual(closed.available,['welcome']);
