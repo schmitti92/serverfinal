@@ -254,7 +254,9 @@ test('DOG host can choose 0, 1, or 2 computer opponents for two real online play
    assert.equal(state.hands[p.seat].count,0);
    assert.equal(state.exchanges[p.seat],true);
   }
-  assert.deepEqual(launched.room.match.dogRoster.filter(p=>!p.bot&&!p.inactive).map(p=>p.uid),[h.identities.alice.uid,h.identities.bob.uid]);
+  assert.deepEqual(state.players.filter(p=>!p.bot&&!p.inactive).map(p=>p.name),['Alice','Bob']);
+  const bob=(await h.api('GET','/api/hub/rooms/'+code,'bob')).room;
+  assert.equal(bob.match.dogSeat,1,'second real player has a verified private seat');
  }
 });
 test('DOG bot choice is host-only, validated, idempotent and resets all readiness',async()=>{
