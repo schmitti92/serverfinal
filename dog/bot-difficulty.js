@@ -64,7 +64,7 @@ function expertScore(game,seat,action){
    '12':20,'swap':13,'7':8,'1/11':2,'13':1,'joker':-10};
   return value[card.type]??0;
  }
- if(action.type==='discardDraw')return 0;
+ if(['discard','discardDraw'].includes(action.type))return 0;
  if(action.type==='emptySwap')return -250;
  if(action.type==='seven-finish')return -120;
  if(action.type==='seven')return 75;
@@ -330,7 +330,7 @@ function actionBonus(game,seat,action){
  const card=cardAt(game,seat,action.cardId);
  if(action.type==='exchange')return 0;
  if(action.type==='seven-finish')return -(action.remaining||0)*3;
- if(action.type==='discardDraw')return 0;
+ if(['discard','discardDraw'].includes(action.type))return 0;
  let score=0;
  if(card?.type==='joker')score-=32;
  if(action.type==='swap'){
@@ -360,7 +360,7 @@ function expertSimulation(game,seat){
  return model;
 }
 function simulateAction(model,seat,action){
- if(action.type==='discardDraw')return null; // cannot predict unknown deck top
+ if(['discard','discardDraw'].includes(action.type))return null; // cannot predict unknown deck top
  try{
   const state=JSON.parse(JSON.stringify(model));
   state.current=seat;
@@ -454,7 +454,7 @@ export function chooseDogBotAction(game,seat=game?.current,difficulty=DEFAULT,rn
    Math.floor((Number.isFinite(roll)?roll:0)*actions.length)))];
  }
  if(actions.length===1)return actions[0];
- if(actions.every(action=>action.type==='discardDraw'))
+ if(actions.every(action=>['discard','discardDraw'].includes(action.type)))
   return bestDiscardAction(game,seat,actions);
  if(game.phase==='exchange'){
   // Exchanges need team-aware card reservation but no speculative opponent
