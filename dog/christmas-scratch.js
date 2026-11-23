@@ -27,8 +27,12 @@ export const SCRATCH_EDITION_LIGHT_REDUCTION=100;
 export function remainingScratchEditionLights(edition){
  const issued=Number.isInteger(edition?.issued)?edition.issued:0;
  const left=Math.max(0,500-issued);
- if(Number.isSafeInteger(edition?.lightBudgetRemaining)&&edition.lightBudgetRemaining>=0)
-  return edition.lightBudgetRemaining;
+ if(Number.isSafeInteger(edition?.lightBudgetRemaining)&&edition.lightBudgetRemaining>=0){
+  // Defensively cap migrated or administratively edited editions. The
+  // remaining printed cards can never owe more than their configured maximum.
+  const max=Number.isInteger(edition?.config?.lightMax)?edition.config.lightMax:10;
+  return Math.min(edition.lightBudgetRemaining,left*max);
+ }
  const c=edition?.config??{};
  const chance=Number.isInteger(c.lightChancePer1000)?c.lightChancePer1000:100;
  const min=Number.isInteger(c.lightMin)?c.lightMin:1;
