@@ -6,7 +6,7 @@ import {dogTreeLevelFromLevels} from './christmas-tree-rewards.js';
 
 export const DOG_VIDEO_LIBRARY_COLLECTION='dog_video_library_seen_v1';
 export const DOG_VIDEO_IDS=Object.freeze([
- 'welcome','intro','first-light','tree-2','tree-3',
+ 'welcome','intro','first-light','tree-2','tree-3','tree-4',
  'building-bakery','building-workshop','building-inn',
  'building-tower','building-luckhouse'
 ]);
@@ -24,7 +24,7 @@ export function dogVideoLibraryAccess(intro,village,rawWatched){
  if(completed){
   available.push('intro');
   if((Number(village?.giftsCollected)||0)>0)available.push('first-light');
-  for(const stage of [2,3])if(level>=stage)available.push('tree-'+stage);
+  for(const stage of [2,3,4])if(level>=stage)available.push('tree-'+stage);
   for(const building of BUILDING_IDS){
    if(Number(village?.levels?.[building])===5)available.push('building-'+building);
   }
