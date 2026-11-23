@@ -679,6 +679,17 @@ function finishEisstock(ch,members){
       applyKniffel(state,uid,choice);
     }
   }
+  // Record only public pawn positions, NOT bot hand cards, card IDs or the deck.
+  // Replaying these frames happens in the browser using a single existing
+  // room snapshot. One human action still produces one Firestore room write.
+  function dogReplayStep(match,state,seat,bot,kind){
+    const replay=match.dogReplay;
+    if(!replay)return;
+    if(replay.events.length>=24){replay.truncated=true;return;}
+    replay.events.push({revision:state.revision,seat,bot:!!bot,
+      kind:['exchange','move','seven','rescue','discardDraw','start','swap'].includes(kind)?kind:'action',
+      pieces:state.pieces.map(p=>({id:p.id,owner:p.owner,place:p.place,pos:p.pos}))});
+  }
   function advanceDogBots(match,onVerifiedMove=()=>{},onNewDeal=()=>{}){
     let s=match.dog;
     let guard=0;
@@ -690,12 +701,14 @@ function finishEisstock(ch,members){
         if(!move)throw Error('DOG_BOT_EXCHANGE_FAILED');
         const prior=s;
         s=dogExchangeCard(s,seat,move.cardId);
+        dogReplayStep(match,s,seat,true,'exchange');
         if(s.round!==prior.round)onNewDeal(s.round);
       }else if(['play','seven','rescue'].includes(s.phase)&&s.players[s.current]?.bot){
         const move=chooseDogBotAction(s,s.current,dogBotDifficultyForSeat(match.dogBotDifficulties,s.current));
         if(!move)throw Error('DOG_BOT_MOVE_FAILED');
         const before=s,seat=s.current;
         s=dogTakeAction(s,seat,move);
+        dogReplayStep(match,s,seat,true,move.type);
         onVerifiedMove(before,s,move,seat);
         if(s.round!==before.round)onNewDeal(s.round);
       }else break;
@@ -831,6 +844,7 @@ function finishEisstock(ch,members){
         kniffel:room.match.game==='kniffel'?{...room.match.kniffel,standings:room.match.kniffel.finished?standings(room.match.kniffel):null}:null,
         dog:room.match.game==='dog'?publicDogState(room.match.dog,room.match.dogRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
         dogBotDifficulties:room.match.game==='dog'?(room.match.dogBotDifficulties||{default:'medium'}):null,
+        dogReplay:room.match.game==='dog'?(room.match.dogReplay||null):null,
         grinch:room.match.game==='dog-grinch1'?publicGrinchMission1(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):
           room.match.game==='dog-grinch2'?publicGrinchMission2(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
         grinchSeat:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
@@ -2468,6 +2482,7 @@ function finishEisstock(ch,members){
       // teammate's pieces. Finish atomically WITHOUT taking another move.
       // A regular attempted action from an old client repairs this as well.
       const legacyCompleted=match.dog.phase!=='finished'&&completedDogSeat(match.dog)!==null;
+      match.dogReplay={fromRevision:match.dog.revision,events:[],truncated:false};
       try{
         if(legacyCompleted){
           match.dog=finalizeCompletedDogGame(match.dog);
@@ -2475,14 +2490,17 @@ function finishEisstock(ch,members){
           throw Error('DOG_NOT_READY_TO_FINISH');
         }else if(action.type==='research-swap'){
           match.dog=dogResearchSwapCard(match.dog,seat,action.cardId);
+          dogReplayStep(match,match.dog,seat,false,action.type);
         }else if(action.type==='exchange'){
           const prior=match.dog;
           match.dog=dogExchangeCard(match.dog,seat,action.cardId);
+          dogReplayStep(match,match.dog,seat,false,'exchange');
           if(prior.round!==match.dog.round)newDeal(match.dog.round);
         }else{
           // Cancellation is intentionally disallowed online until it is implemented atomically.
           const before=match.dog;
           match.dog=dogTakeAction(match.dog,seat,action);
+          dogReplayStep(match,match.dog,seat,false,action.type);
           collect(before,match.dog,action,seat);
           if(before.round!==match.dog.round)newDeal(match.dog.round);
         }
