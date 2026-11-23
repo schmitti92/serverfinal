@@ -1,0 +1,29 @@
+name: DOG Premium edition retirement
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'christmas-scratch-api.js'
+      - 'dog/christmas-other-editions.js'
+      - 'tests/dog-premium-edition-retirement.test.js'
+      - '.github/workflows/dog-premium-edition-retirement.yml'
+  pull_request:
+    paths:
+      - 'christmas-scratch-api.js'
+      - 'dog/christmas-other-editions.js'
+      - 'tests/dog-premium-edition-retirement.test.js'
+      - '.github/workflows/dog-premium-edition-retirement.yml'
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+jobs:
+  premium:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check christmas-scratch-api.js
+      - run: node --test tests/dog-premium-edition-retirement.test.js tests/dog-scratch-edition-bridge.test.js
