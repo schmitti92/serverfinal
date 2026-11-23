@@ -229,7 +229,7 @@ test('DOG official: protected and goal figures must never be swap candidates',()
  position(s,4,'track',16); // protected blue
  position(s,8,'goal',0);   // green partner already safe
  assert.equal(legalActions(s,0).some(a=>a.type==='swap'),false);
- assert.equal(legalActions(s,0).some(a=>a.type==='discardDraw'),true);
+ assert.equal(legalActions(s,0).some(a=>a.type==='discard'),true);
  position(s,4,'track',21);
  assert.ok(legalActions(s,0).some(a=>a.type==='swap'&&a.targetId===4));
 });
@@ -339,16 +339,20 @@ test('DOG: drawn Joker can only start, drawn 12 is automatically thrown away',()
  assert.equal(t.discard.at(-1).id,1002);
 });
 
-test('DOG: blocked starting square stops a drawn 13, even if 13 could move',()=>{
+test('DOG: blocked starting square discards without ever drawing a 13',()=>{
  let s=fixture('swap');
  for(let seat=1;seat<4;seat++)s.hands[seat]=[{id:2000+seat,type:'3'}];
  position(s,0,'track',0); // own protected start, other three still at home
  s.deck=[{id:1004,type:'13'}];
- assert.ok(legalActions(s,0).some(m=>m.type==='discardDraw'));
- s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.deepEqual(legalActions(s,0),[{type:'discard',cardId:999}]);
+ const deckBefore=s.deck.map(card=>card.id);
+ assert.throws(()=>takeAction(s,0,{type:'discardDraw',cardId:999}),/ILLEGAL_ACTION/);
+ s=takeAction(s,0,{type:'discard',cardId:999});
  assert.equal(s.phase,'play');
  assert.equal(s.current,1);
- assert.equal(s.discard.at(-1).id,1004);
+ assert.deepEqual(s.deck.map(card=>card.id),deckBefore,'blocked turns never touch the deck');
+ assert.equal(s.discard.at(-1).id,999,'only the selected card goes to discard');
+ assert.deepEqual(s.drawEvents,[],'no replacement animation is emitted');
  assert.equal(s.pieces[0].pos,0);
 });
 
@@ -489,9 +493,11 @@ test('DOG: replacement card reveal uses the existing public state without leakin
  assert.equal(publicState(s,1).rescue,undefined,'the private rescue card ID stays private');
 
  s=setup('13',true);
- s=takeAction(s,0,{type:'discardDraw',cardId:999});
- assert.equal(s.drawEvents.at(-1).canExit,false,'a blocked start goes to discard');
- assert.equal(s.lastPlayedCard.type,'13');
+ assert.deepEqual(legalActions(s,0),[{type:'discard',cardId:999}]);
+ s=takeAction(s,0,{type:'discard',cardId:999});
+ assert.deepEqual(s.drawEvents,[],'no card draw is published for a blocked turn');
+ assert.equal(s.deck.at(-1).type,'13','start card stays in the deck');
+ assert.equal(s.lastPlayedCard.type,'swap');
  assert.equal(s.phase,'play');
 });
 
@@ -530,4 +536,46 @@ test('DOG: selected 7 can be deselected before movement without losing card or t
  assert.equal(legalActions(s,0).some(m=>m.type==='seven-cancel'),false,
   'after a partial movement the 7 cannot simply be deselected');
  assert.throws(()=>takeAction(s,0,{type:'seven-cancel',cardId:991}),/ILLEGAL_ACTION/);
+});
+
+test('DOG blocking: a foreign figure on my start square does not authorize a house draw',()=>{
+ let s=fixture('3');
+ const enemy=s.pieces.find(p=>p.id===4);
+ enemy.place='track';enemy.pos=0;
+ assert.ok(s.pieces.filter(p=>p.owner===0).every(p=>p.place==='home'));
+ s.deck=[{id:9500,type:'13'}];
+ assert.deepEqual(legalActions(s,0),[{type:'discard',cardId:999}]);
+ s=takeAction(s,0,{type:'discard',cardId:999});
+ assert.equal(s.current,1);
+ assert.equal(s.hands[0].length,0);
+ assert.equal(s.deck.length,1);
+ assert.equal(s.deck[0].id,9500);
+ assert.equal(s.discard.at(-1).id,999);
+ assert.equal(s.drawEvents.length,0);
+});
+
+test('DOG blocking: after a pawn leaves the house, no replacement is ever drawn for a dead hand',()=>{
+ let s=fixture('swap');
+ const pawn=s.pieces.find(p=>p.id===0);
+ pawn.place='track';pawn.pos=0;
+ s.deck=[{id:9600,type:'joker'}];
+ assert.deepEqual(legalActions(s,0),[{type:'discard',cardId:999}]);
+ const before=s.deck.length;
+ s=takeAction(s,0,{type:'discard',cardId:999});
+ assert.equal(s.deck.length,before,'joker must not be drawn due to a blocked move');
+ assert.equal(s.current,1);
+ assert.equal(s.lastPlayedCard.type,'swap');
+ assert.deepEqual(s.drawEvents,[]);
+});
+
+test('DOG house exception: an empty start square with all four pieces home permits exactly one draw',()=>{
+ let s=fixture('3');
+ assert.equal(s.pieces.filter(p=>p.owner===0&&p.place==='home').length,4);
+ assert.deepEqual(legalActions(s,0),[{type:'discardDraw',cardId:999}]);
+ s.deck=[{id:9750,type:'13'}];
+ s=takeAction(s,0,{type:'discardDraw',cardId:999});
+ assert.equal(s.phase,'rescue');
+ assert.equal(s.rescue.cardId,9750);
+ assert.equal(s.current,0);
+ assert.equal(s.drawEvents.length,1);
 });
