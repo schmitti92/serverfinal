@@ -46,6 +46,6 @@ test('edition-only API never handles or bypasses the original purchase',()=>{
  assert.doesNotMatch(edition,/app\.post\(root\+'buy'/);
  assert.match(edition,/app\.post\(root\+variant,async\(req,res\)=>/);
  assert.match(edition,/app\.post\(root\+variant\+'\/edit'/);
- assert.match(edition,/current\.createdBy!==uid/);
+ assert.match(edition,/editionPermissions\.canEdit\(uid,current\.createdBy\)/);
  assert.match(edition,/current\.revision!==req\.body\.expectedRevision/);
 });
