@@ -123,6 +123,8 @@ test('DOG: active fixed editions publish truthful aggregate money and no-money t
   config:OTHER_EDITION_DEFAULT.elf,budgetMode:'fixed',prizePlan:otherPlan});
  assert.equal(elf.payingTicketsRemaining,2);
  assert.equal(elf.nonPayingTicketsRemaining,498);
+ assert.equal(elf.giftTicketsRemaining,null,
+  'random cosmetic gifts must not appear as zero reserved gift tickets');
  const premiumPlan=Array(500).fill('v6:01');
  for(let i=0;i<7;i++)premiumPlan[i]='v6:01g';
  const premium=otherEditionPublic({id:'premium',variantId:'premium_27',issued:0,
