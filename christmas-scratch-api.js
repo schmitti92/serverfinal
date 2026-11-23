@@ -67,6 +67,42 @@ export function installDogScratchEditionApi(app,{getFirestore,admin}){
     return res.set('Cache-Control','no-store').json({ok:true,[meta.response]:meta.public(edition)});
    }catch(e){return fail(res,e)}
   });
+  // Creator-only retirement of the current Premium edition. Only the
+  // unsold tickets stop being offered; paid receipts and all previous prizes
+  // remain untouched. Archive the complete ledger before releasing "current".
+  if(variant==='premium_27')app.post(root+variant+'/retire',async(req,res)=>{
+   const uid=await identify(req,res);if(!uid)return;
+   const db=storage(res);if(!db)return;
+   try{
+    if(req.body?.confirmation!=='RETIRE_PREMIUM_27')
+     throw Error('SCRATCH_EDITION_CONFIRMATION_REQUIRED');
+    const result=await db.runTransaction(async tx=>{
+     const ref=db.collection(meta.collection).doc(meta.document);
+     const snap=await tx.get(ref),current=snap.exists?snap.data():null;
+     if(!current||current.variantId!==variant||
+      current.id!==req.body?.editionId||
+      !Number.isSafeInteger(req.body?.expectedRevision)||
+      current.revision!==req.body.expectedRevision)
+      throw Error('SCRATCH_EDITION_CHANGED');
+     if(current.createdBy!==uid)throw Error('SCRATCH_EDITION_ONLY_CREATOR');
+     if(!Number.isInteger(current.issued)||current.issued<0||current.issued>500)
+      throw Error('SCRATCH_EDITION_INVALID_LEDGER');
+     if(current.issued===500)throw Error('SCRATCH_EDITION_ALREADY_COMPLETE');
+     const archive=db.collection(meta.history).doc(variant+'_'+current.id);
+     const oldArchive=await tx.get(archive);
+     if(oldArchive.exists)throw Error('SCRATCH_EDITION_ARCHIVE_CONFLICT');
+     const closedAt=Date.now();
+     tx.set(archive,{...current,retiredAt:closedAt,retiredBy:uid,
+      retiredUnsoldCount:500-current.issued,retirementReason:'creator_requested'});
+     tx.delete(ref);
+     return {id:current.id,variantId:variant,issued:current.issued,
+      unsoldCancelled:500-current.issued};
+    });
+    return res.set('Cache-Control','no-store').json({
+     ok:true,otherEdition:null,retiredEdition:result
+    });
+   }catch(e){return fail(res,e)}
+  });
   app.post(root+variant+'/edit',async(req,res)=>{
    const uid=await identify(req,res);if(!uid)return;
    const db=storage(res);if(!db)return;
