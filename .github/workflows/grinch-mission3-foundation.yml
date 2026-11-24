@@ -5,6 +5,8 @@ on:
     paths:
       - 'dog/grinch-mission3.js'
       - 'dog/grinch-mission3-match.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-grinch-mission3-hub.test.js'
       - 'tests/dog-grinch-mission3-match.test.js'
       - 'tests/dog-grinch-mission3-foundation.test.js'
       - 'tests/dog-grinch-mission3-ai.test.js'
@@ -15,6 +17,8 @@ on:
     paths:
       - 'dog/grinch-mission3.js'
       - 'dog/grinch-mission3-match.js'
+      - 'shared-lobby.js'
+      - 'tests/dog-grinch-mission3-hub.test.js'
       - 'tests/dog-grinch-mission3-match.test.js'
       - 'tests/dog-grinch-mission3-foundation.test.js'
       - 'tests/dog-grinch-mission3-ai.test.js'
@@ -30,4 +34,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test tests/dog-grinch-mission3-foundation.test.js tests/dog-grinch-mission3-ai.test.js tests/dog-grinch-mission3-attacks.test.js tests/dog-grinch-mission3-objectives.test.js tests/dog-grinch-mission3-match.test.js
+      - run: npm ci
+      - run: node --test tests/dog-grinch-mission3-foundation.test.js tests/dog-grinch-mission3-ai.test.js tests/dog-grinch-mission3-attacks.test.js tests/dog-grinch-mission3-objectives.test.js tests/dog-grinch-mission3-match.test.js tests/dog-grinch-mission3-hub.test.js

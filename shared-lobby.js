@@ -27,6 +27,7 @@ import {DOG_RESEARCH_COLLECTION,dogResearchStatus,dogResearchUpgrade,dogResearch
 import {dogTreeLevelFromLevels} from './dog/christmas-tree-rewards.js';
 import {dogChristmasTabBadges} from './dog/christmas-tab-badges.js';
 import {newGame as newGrinchMission1,play as playGrinchMission1,publicMissionState as publicGrinchMission1} from './dog/grinch-mission1.js';
+import {createMission3Match,viewMission3Match,applyMission3Command} from './dog/grinch-mission3-match.js';
 import {newGame as newGrinchMission2,play as playGrinchMission2,acknowledgeMission2Slot,publicMissionState as publicGrinchMission2} from './dog/grinch-mission2.js';
 import {DOG_VILLAGE_COLLECTION,DOG_GLOBAL_VILLAGE_ID,isDogChristmasEventActive,dogVillagePublic,buyDogVillageUpgrade,createDogChristmasMatch,refreshDogChristmasDeal,applyDogInnUpgradeToMatch,publicDogChristmasMatch,claimDogChristmasHumanFields,ensureDogChristmasGoldFields,finishDogChristmasMatch,creditDogVillage,mergeLegacyDogVillage,dogLuckhouseDiscountPercent,dogAcademyXpPercent} from './dog/christmas-village.js';
 import {DOG_TREE_REWARDS_COLLECTION,dogTreeRewardStatus,claimDogTreeReward} from './dog/christmas-tree-rewards.js';
@@ -59,6 +60,7 @@ export const HUB_GAMES = Object.freeze({
   dog: { title:'DOG Klassisch', min:1, max:4 },
   'dog-grinch1': {title:'DOG · Grinch-Mission 1',min:3,max:3},
   'dog-grinch2': {title:'DOG · Grinch-Mission 2',min:3,max:3},
+  'dog-grinch3': {title:'DOG · Grinch-Mission 3',min:3,max:3},
 });
 const CHALLENGE_READY_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','zeitgefuehl','recheninsel','huetchen-challenge','maulwurf-arena','flusssprung','lava-arena','snake-arena','bomber-strand-arena','preisjaeger']);
 const CHALLENGE_GAMES=Object.freeze(['eisstock','fallende-gegenstaende','lava-arena','maulwurf-arena','recheninsel','flusssprung','zeitgefuehl','huetchen-challenge','snake-arena','bomber-strand-arena','preisjaeger']);
@@ -97,7 +99,7 @@ const TTL_MS=24*60*60*1000;
 const cleanName=n=>String(n||'Spieler').replace(/[<>\u0000-\u001f\u007f]/g,'').trim().slice(0,24)||'Spieler';
 const codeNew=()=>String(randomInt(1000)).padStart(3,'0');
 
-export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1',scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||'',developerUids=process.env.DOG_DEVELOPER_UIDS||''}){
+export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Date.now(),codeGenerator=codeNew,isMatchFinished=async()=>false,bootstrapSkyjo=null,challengeRandomInt=randomInt,christmasEventActive=isDogChristmasEventActive,grinchOnlineEnabled=process.env.DOG_GRINCH_PART2_ONLINE_ENABLED==='1',grinchMission3Enabled=process.env.DOG_GRINCH_MISSION3_ONLINE_ENABLED==='1',fastCasEnabled=process.env.DOG_FAST_CAS_ENABLED==='1',scratchAdminUids=process.env.DOG_SCRATCH_ADMIN_UIDS||'',developerUids=process.env.DOG_DEVELOPER_UIDS||''}){
   const db=()=>{try{return getFirestore()||null;}catch{return null;}};
   // Only server-verified developer UIDs or scratch administrators may
   // manage global print runs. Client-side PIN / preview flags never count.
@@ -163,6 +165,7 @@ export function installSharedLobby(app,{verifyProfile,getFirestore,clock=()=>Dat
   const readDogMeta=(store,ref)=>dogMetaReadCoordinator.read(store,ref);
   const christmasActive=()=>christmasEventActive()===true;
   const grinchActive=()=>grinchOnlineEnabled===true;
+  const grinch3Active=()=>grinchActive()&&grinchMission3Enabled===true;
   const error=(status,message)=>Object.assign(new Error(message),{status});
   // One eligibility policy for the Christmas event. Verified DOG history or an
   // explicit Firestore grant; never a nickname, room-host flag or client claim.
@@ -769,6 +772,7 @@ function finishEisstock(ch,members){
   function startGame(room,village=null,dogEventEnabled=false){
     if(room.game==='dog-grinch1')return startGrinchMission(room,village);
     if(room.game==='dog-grinch2')throw error(409,'MISSION2_REQUIRES_VERIFIED_LAUNCH');
+    if(room.game==='dog-grinch3')throw error(409,'MISSION3_REQUIRES_VERIFIED_LAUNCH');
     if(room.game==='drei-schatzkammern'){
       const seats=activeSeats(room);
       let engine=createEngine2Room({roomId:room.code,hostId:room.hostUid,hostName:seats.find(p=>p.uid===room.hostUid)?.name||'Host',now:clock()});
@@ -844,11 +848,13 @@ function finishEisstock(ch,members){
         dogBotDifficulties:room.match.game==='dog'?(room.match.dogBotDifficulties||{default:'medium'}):null,
         dogReplay:room.match.game==='dog'?(room.match.dogReplay||null):null,
         grinch:room.match.game==='dog-grinch1'?publicGrinchMission1(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):
-          room.match.game==='dog-grinch2'?publicGrinchMission2(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):null,
-        grinchSeat:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
-        grinchRoster:['dog-grinch1','dog-grinch2'].includes(room.match.game)?room.match.grinchRoster.map(({seat,uid,name})=>({seat,uid,name})):null,
-        grinchCompletionRecorded:['dog-grinch1','dog-grinch2'].includes(room.match.game)&&room.match.grinchCompletionRecorded===true,
-        grinchResearch:['dog-grinch1','dog-grinch2'].includes(room.match.game)?
+          room.match.game==='dog-grinch2'?publicGrinchMission2(room.match.grinch,room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null):
+          room.match.game==='dog-grinch3'&&room.match.grinchRoster.some(r=>r.uid===identity.uid)?viewMission3Match(JSON.parse(room.match.grinch3Json),identity.uid).state:null,
+        grinchFrames:room.match.game==='dog-grinch3'&&room.match.grinchRoster.some(r=>r.uid===identity.uid)?viewMission3Match(JSON.parse(room.match.grinch3Json),identity.uid).frames:null,
+        grinchSeat:['dog-grinch1','dog-grinch2','dog-grinch3'].includes(room.match.game)?room.match.grinchRoster.find(r=>r.uid===identity.uid)?.seat??null:null,
+        grinchRoster:['dog-grinch1','dog-grinch2','dog-grinch3'].includes(room.match.game)?room.match.grinchRoster.map(({seat,uid,name})=>({seat,uid,name})):null,
+        grinchCompletionRecorded:['dog-grinch1','dog-grinch2','dog-grinch3'].includes(room.match.game)&&room.match.grinchCompletionRecorded===true,
+        grinchResearch:['dog-grinch1','dog-grinch2','dog-grinch3'].includes(room.match.game)?
           {thaw:room.match.grinchResearchUsed?.[identity.uid]?.thaw||0}:null,
         christmas:room.match.game==='dog'&&christmasActive()&&room.match.christmas?.enabled?
           {...publicDogChristmasMatch(room.match.christmas),...privateChristmasMarks(room.match,identity.uid)}:null,
@@ -894,13 +900,14 @@ function finishEisstock(ch,members){
     if(match.game==='drei-schatzkammern')return match.engine2?.match?.phase||'instructions';
     if(match.game==='kniffel')return match.kniffel?.finished?'finished':'playing';
     if(match.game==='dog')return match.dog?.phase==='finished'?'finished':'playing';
+    if(match.game==='dog-grinch3')return match.grinchCompletionRecorded?'finished':'playing';
     if(['dog-grinch1','dog-grinch2'].includes(match.game))return match.grinch?.complete?'finished':'playing';
     if(match.game==='farbenblitz')return match.farbenblitz?.finished?'finished':match.farbenblitz?.phase||'instructions';
     if(match.game==='eier-chaos')return match.eierChaos?.finished?'finished':match.eierChaos?.phase||'instructions';
     if(match.game==='merk-matrix')return match.merkMatrix?.finished?'finished':match.merkMatrix?.phase||'instructions';
     return engineMatchPhase(match)||'playing';
   }
-  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel','dog','dog-grinch1','dog-grinch2','drei-schatzkammern'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
+  function hubMatchFinished(match){return ['farbenblitz','eier-chaos','merk-matrix','kniffel','dog','dog-grinch1','dog-grinch2','dog-grinch3','drei-schatzkammern'].includes(match?.game)?hubMatchPhase(match)==='finished':engineMatchFinished(match);}
   function archiveCompletedMatch(room){
     const match=room.match;
     room.lastCompleted={id:match.id,game:match.game,finishedAt:clock()};
@@ -1925,7 +1932,8 @@ function finishEisstock(ch,members){
     return {progress:{completedMissions:Array.isArray(p?.completedMissions)?p.completedMissions:[],
       highestUnlocked:Number.isInteger(p?.highestUnlocked)?p.highestUnlocked:1,
       lastCompletedMatchId:p?.lastCompletedMatchId||null,updatedAt:p?.updatedAt||null},
-      treeLevel,canStartMission1:christmasActive()&&treeLevel>=10};
+      treeLevel,canStartMission1:christmasActive()&&treeLevel>=10,
+      mission3Available:grinch3Active(),canStartMission3:grinch3Active()&&christmasActive()&&treeLevel>=10&&p?.completedMissions?.includes(2)===true};
   }));
   app.use('/api/hub/rooms',authentication);
   // One read-only query per visitor action; at most six player wallets.
@@ -2031,6 +2039,7 @@ function finishEisstock(ch,members){
     const code=validCode(req.params.code),game=req.body?.game,identity=req.hubIdentity;
     if(!code)throw error(400,'INVALID_ROOM_CODE');
     if(!Object.hasOwn(HUB_GAMES,game))throw error(400,'INVALID_GAME');
+    if(game==='dog-grinch3')throw error(403,'MISSION3_REQUIRES_VERIFIED_LAUNCH');
     if(!grinchActive()&&['dog-grinch1','dog-grinch2'].includes(game))throw error(403,'GRINCH_PART2_NOT_RELEASED');
     return {room:await mutate(code,identity,room=>{
       if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
@@ -2276,6 +2285,75 @@ function finishEisstock(ch,members){
         throw error(409,'GRINCH_MISSION1_REQUIRED_FOR_ALL_PLAYERS');
       room.players.forEach(p=>{p.participating=members.some(m=>m.uid===p.uid);p.ready=false;});
       startGrinchMission2(room,village);
+    })};
+  }));
+  // Mission 3 uses the existing authenticated room stream. A JSON envelope
+  // keeps nested card arrays out of Firestore's array-of-array restriction.
+  app.post('/api/hub/rooms/:code/grinch/launch3',handler(async req=>{
+    if(!grinch3Active())throw error(403,'GRINCH_MISSION3_NOT_RELEASED');
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
+      if(room.hostUid!==identity.uid)throw error(403,'HOST_ONLY');
+      if(room.phase==='playing'){
+        if(room.match?.game==='dog-grinch3'&&!room.match.grinchCompletionRecorded)return {unchanged:true};
+        if(!hubMatchFinished(room.match))throw error(409,'MATCH_IN_PROGRESS');
+        archiveCompletedMatch(room);
+      }
+      if(!['lobby','preparing'].includes(room.phase))throw error(409,'ROOM_NOT_READY');
+      const members=room.players.filter(p=>!p.testBot&&!p.bot);
+      if(members.length!==3||new Set(members.map(p=>p.uid)).size!==3)
+        throw error(409,'GRINCH_REQUIRES_THREE_HUMAN_PLAYERS');
+      if(!christmasActive())throw error(409,'CHRISTMAS_EVENT_INACTIVE');
+      const [villageSnap,...progress]=await Promise.all([
+        tx.get(dogVillageFor(store)),
+        ...members.map(p=>tx.get(store.collection(GRINCH_PROGRESS_COLLECTION).doc(p.uid)))
+      ]);
+      if(dogTreeLevelFromLevels(villageSnap.exists?villageSnap.data():null)<10)
+        throw error(409,'GRINCH_TREE_LEVEL_10_REQUIRED');
+      if(progress.some(snap=>!snap.exists||!snap.data()?.completedMissions?.includes(2)))
+        throw error(409,'GRINCH_MISSION2_REQUIRED_FOR_ALL_PLAYERS');
+      const roster=members.map((p,seat)=>({seat,uid:p.uid,name:p.name}));
+      const id=randomUUID();
+      const match=createMission3Match({matchId:id,roster,seed:randomInt(1,2147483647)});
+      room.players.forEach(p=>{p.participating=members.some(m=>m.uid===p.uid);p.ready=false;});
+      room.match={id,game:'dog-grinch3',gameCode:null,startedAt:clock(),
+        members:roster,grinchRoster:roster,settings:{campaign:2,mission:3},
+        grinch3Json:JSON.stringify(match),grinchCompletionRecorded:false};
+      room.game='dog-grinch3';room.phase='playing';
+    })};
+  }));
+  app.post('/api/hub/rooms/:code/grinch/action3',handler(async req=>{
+    if(!grinch3Active())throw error(403,'GRINCH_MISSION3_NOT_RELEASED');
+    const code=validCode(req.params.code),identity=req.hubIdentity;
+    if(!code)throw error(400,'INVALID_ROOM_CODE');
+    return {room:await mutate(code,identity,async(room,tx,store)=>{
+      const m=room.match;
+      if(room.phase!=='playing'||m?.game!=='dog-grinch3'||m.id!==req.body?.matchId)
+        throw error(409,'GRINCH_MATCH_MISMATCH');
+      if(!m.grinchRoster.some(p=>p.uid===identity.uid))throw error(403,'GRINCH_SPECTATOR');
+      let result;
+      try{result=applyMission3Command(JSON.parse(m.grinch3Json),identity.uid,req.body);}
+      catch(e){throw error(409,e.message||'GRINCH_ILLEGAL_ACTION');}
+      if(result.unchanged)return {unchanged:true};
+      const next=result.match;
+      // No extra storage operations for individual AI steps. Only a verified
+      // completed game writes the three campaign progress documents.
+      if(next.state.complete&&!m.grinchCompletionRecorded){
+        const refs=m.grinchRoster.map(p=>store.collection(GRINCH_PROGRESS_COLLECTION).doc(p.uid));
+        const snaps=await Promise.all(refs.map(ref=>tx.get(ref)));
+        m.grinchRoster.forEach((p,i)=>{
+          const prior=snaps[i].exists?snaps[i].data():{};
+          const completed=[...new Set([...(Array.isArray(prior.completedMissions)?prior.completedMissions:[]),3])];
+          tx.set(refs[i],{...prior,uid:p.uid,name:p.name,completedMissions:completed,
+            highestUnlocked:Math.max(4,Number(prior.highestUnlocked)||1),
+            lastCompletedMatchId:m.id,updatedAt:clock(),
+            firstMission3CompletedAt:prior.firstMission3CompletedAt||clock(),
+            mission3Captive:next.state.pieces.find(x=>x.owner===p.seat&&x.place==='captured')?.id||null});
+        });
+        m.grinchCompletionRecorded=true;
+      }
+      m.grinch3Json=JSON.stringify(next);
     })};
   }));
   // Only the current participant may release the server-selected slot outcome.
