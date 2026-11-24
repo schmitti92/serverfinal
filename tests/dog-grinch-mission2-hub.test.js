@@ -56,7 +56,7 @@ function makeHarness({grinchOnlineEnabled=true}={}){
  return {docs,people,call};
 }
 
-const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:1,academy:1}};
+const village={levels:{tower:5,workshop:5,bakery:5,inn:5,luckhouse:5,academy:5}};
 const route='/api/hub/rooms/123/grinch';
 async function three(h){
  const created=await h.call('POST','/api/hub/rooms');
