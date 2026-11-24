@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {installSharedLobby} from '../shared-lobby.js';
-import {mission3LegalMoves} from '../dog/grinch-mission3.js';
+import {mission3LegalMoves,mission3SetPreviewStage,mission3Validate} from '../dog/grinch-mission3.js';
 
 const clone=value=>value===undefined?undefined:structuredClone(value);
 function makeHarness({grinchOnlineEnabled=true,grinchMission3Enabled=true}={}){
@@ -105,4 +105,37 @@ test('accepted human action, durable private state and idempotent retries',async
  const replay=await h.call('POST',route+'/action3',user,body);
  assert.equal(replay.status,200);assert.equal(room().revision,rev);assert.equal(room().match.grinch3Json,saved);
  assert.deepEqual(h.docs.get('dog_grinch_campaign_v1/'+initial.roster[seat].uid).completedMissions,[1,2]);
+});
+
+test('last verified rune commits progress for all three and never repeats the victory',async()=>{
+ const h=makeHarness();await three(h);grant(h);
+ assert.equal((await h.call('POST',route+'/launch3')).status,200);
+ const room=h.docs.get('spielesammlung_hub_v1/123'),m=JSON.parse(room.match.grinch3Json);
+ // Arrange a server-owned near-final state, never via a client action.
+ const s=mission3SetPreviewStage(m.state,2);
+ s.current=0;s.seven=null;
+ const p=s.pieces.find(x=>x.owner===0&&x.place==='track');
+ assert.ok(p);
+ const occupied=new Set(s.pieces.filter(x=>x.place==='track').map(x=>x.pos));
+ const target=Array.from({length:64},(_,i)=>i).find(i=>i%16!==0&&(i+63)%64%16!==0&&!occupied.has(i)&&!occupied.has((i+63)%64));
+ p.pos=(target+63)%64;
+ s.tasks.objectives.forEach((o,i)=>{o.collected=i<2;if(i===2)o.field=target;});
+ s.tasks.progress=[3,4,2];s.tasks.activeFields=[target];
+ s.hands[0][0].type='1/11';
+ assert.ok(mission3Validate(s));
+ m.state=s;room.match.grinch3Json=JSON.stringify(m);
+ const move=mission3LegalMoves(s,0).find(x=>x.pieceId===p.id&&x.kind==='move'&&x.distance===1);
+ assert.ok(move);
+ const user=Object.keys(h.people).find(k=>h.people[k].uid===m.roster[0].uid);
+ const body={matchId:m.id,actionId:'final-action-001',expectedRevision:s.revision,action:move};
+ const final=await h.call('POST',route+'/action3',user,body);
+ assert.equal(final.status,200,JSON.stringify(final));assert.equal(final.room.match.grinch.complete,true);
+ assert.equal(final.room.match.status.phase,'finished');
+ for(const person of m.roster){
+  const progress=h.docs.get('dog_grinch_campaign_v1/'+person.uid);
+  assert.deepEqual(progress.completedMissions,[1,2,3]);assert.equal(progress.highestUnlocked,4);assert.ok(progress.mission3Captive);
+ }
+ const rev=h.docs.get('spielesammlung_hub_v1/123').revision;
+ assert.equal((await h.call('POST',route+'/action3',user,body)).status,200);
+ assert.equal(h.docs.get('spielesammlung_hub_v1/123').revision,rev);
 });
