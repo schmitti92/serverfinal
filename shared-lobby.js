@@ -2315,7 +2315,9 @@ function finishEisstock(ch,members){
         throw error(409,'GRINCH_MISSION2_REQUIRED_FOR_ALL_PLAYERS');
       const roster=members.map((p,seat)=>({seat,uid:p.uid,name:p.name}));
       const id=randomUUID();
-      const match=createMission3Match({matchId:id,roster,seed:randomInt(1,2147483647)});
+      const research=await Promise.all(roster.map(p=>tx.get(store.collection(DOG_RESEARCH_COLLECTION).doc(p.uid))));
+      const thawRanks=Object.fromEntries(roster.map((p,i)=>[p.uid,dogResearchLevel(research[i].exists?research[i].data():null,'thaw')]));
+      const match=createMission3Match({matchId:id,roster,seed:randomInt(1,2147483647),thawRanks});
       room.players.forEach(p=>{p.participating=members.some(m=>m.uid===p.uid);p.ready=false;});
       room.match={id,game:'dog-grinch3',gameCode:null,startedAt:clock(),
         members:roster,grinchRoster:roster,settings:{campaign:2,mission:3},

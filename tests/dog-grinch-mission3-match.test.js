@@ -66,3 +66,18 @@ test('server executes Grinch in order, sends only safe animation frames, preserv
  }
  assert.equal(sawAI,true);
 });
+
+test('online research thaw requires a real rank and only affects temporary human frost, never captives',()=>{
+ const m=createMission3Match({matchId:'match-one',roster,seed:23,thawRanks:{alice:1}});
+ const seat=m.state.current,uid=m.roster[seat].uid;
+ m.thawRanks=[0,0,0];m.thawRanks[seat]=1;
+ const pawn=m.state.pieces.find(p=>p.owner<3&&p.place==='track');
+ pawn.frozenTurns=2;
+ const body={matchId:m.id,actionId:'thaw-test-001',expectedRevision:m.state.revision,action:{type:'research-thaw',pieceId:pawn.id}};
+ const next=applyMission3Command(m,uid,body).match;
+ assert.equal(next.state.pieces.find(p=>p.id===pawn.id).frozenTurns,0);
+ assert.equal(next.state.current,seat);assert.equal(next.state.hands[seat].length,m.state.hands[seat].length);
+ assert.equal(viewMission3Match(next,uid).state.researchThaws,1);
+ assert.throws(()=>applyMission3Command(next,uid,{...body,actionId:'thaw-test-002',expectedRevision:next.state.revision}),/RESEARCH_NOT_AVAILABLE/);
+ assert.equal(applyMission3Command(next,uid,body).unchanged,true);
+});

@@ -18,7 +18,7 @@ function seatFor(match,uid){
 function checkState(state){
  if(!mission3Validate(state))fail('GRINCH_INVALID_STATE');
 }
-export function createMission3Match({matchId,roster,seed}){
+export function createMission3Match({matchId,roster,seed,thawRanks={}}){
  if(!validId(matchId)||!Number.isInteger(seed)||!Array.isArray(roster)||roster.length!==3||
    roster.some(p=>!p||!validId(p.uid)||typeof p.name!=='string'||p.bot||p.testBot)||
    new Set(roster.map(p=>p.uid)).size!==3)fail('GRINCH_ROSTER_INVALID');
@@ -26,7 +26,8 @@ export function createMission3Match({matchId,roster,seed}){
  const state=createMission3(seed,members.map(p=>p.name));
  state.prototype=false;
  checkState(state);
- return {id:matchId,game:'dog-grinch3',roster:members,state,commands:[],frames:[]};
+ return {id:matchId,game:'dog-grinch3',roster:members,state,commands:[],frames:[],
+  thawRanks:members.map(p=>Math.max(0,Math.min(2,Number(thawRanks[p.uid])||0))),thawUsed:[0,0,0]};
 }
 export function viewMission3Match(match,uid){
  const seat=seatFor(match,uid);
@@ -34,6 +35,7 @@ export function viewMission3Match(match,uid){
  // A split 7 exposes progress but not the unplayed card ID to other seats.
  if(state.seven&&state.seven.seat!==seat)delete state.seven.cardId;
  state.online=true;
+ state.thawRank=match.thawRanks?.[seat]||0;state.researchThaws=match.thawUsed?.[seat]||0;
  return {id:match.id,game:match.game,seat,roster:copy(match.roster),state,
   frames:copy(match.frames||[])};
 }
@@ -62,6 +64,17 @@ export function applyMission3Command(match,uid,command){
  if(command.expectedRevision!==match.state.revision)fail('GRINCH_STALE_REVISION');
  if(match.state.current!==seat)fail('GRINCH_NOT_YOUR_TURN');
  const a=command.action;
+ if(a.type==='research-thaw'){
+  const used=[...(match.thawUsed||[0,0,0])];
+  if(used[seat]>=(match.thawRanks?.[seat]||0))fail('RESEARCH_NOT_AVAILABLE');
+  const state=copy(match.state),p=state.pieces.find(x=>x.id===a.pieceId&&x.owner<3&&x.place==='track'&&x.frozenTurns>0);
+  if(!p)fail('RESEARCH_NOT_FROZEN');
+  p.frozenTurns=0;used[seat]++;state.revision++;
+  state.history=['🛡️ '+state.players[seat].name+' befreit '+state.players[p.owner].name+'s Figur.',...state.history].slice(0,14);
+  checkState(state);
+  return {unchanged:false,match:{...match,state,thawUsed:used,frames:[publicFrame(state,seat)],
+   commands:[...match.commands.slice(-69),{id:command.actionId,uid}]}};
+ }
  // Whitelist the action shape by comparing it to a server-generated legal move.
  const move=mission3LegalMoves(match.state,seat).find(m=>
   ['kind','cardId','as','pieceId','targetId','distance'].every(k=>m[k]===a[k]));
